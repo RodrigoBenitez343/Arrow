@@ -1,0 +1,427 @@
+#!/usr/bin/env python3
+"""
+Settings and Configuration Management for OverWatch
+"""
+
+import os
+import json
+import logging
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class VLLMSettings:
+    """vLLM engine settings"""
+    gpu_memory_utilization: float = 0.8
+    max_model_len: int = 4096
+    tensor_parallel_size: int = 1
+    dtype: str = "auto"
+    trust_remote_code: bool = True
+    enforce_eager: bool = False
+    disable_log_stats: bool = True
+    default_models: List[str] = field(default_factory=lambda: [
+        "microsoft/DialoGPT-medium",
+        "microsoft/DialoGPT-small"
+    ])
+
+
+@dataclass
+class ComoRAGSettings:
+    """ComoRAG engine settings"""
+    memory_size: int = 1000
+    max_reasoning_cycles: int = 10
+    confidence_threshold: float = 0.8
+    memory_consolidation_threshold: float = 0.7
+    embedding_model: str = "all-MiniLM-L6-v2"
+    enable_faiss: bool = True
+    probing_queries_count: int = 3
+
+
+@dataclass
+class APISettings:
+    """API server settings"""
+    host: str = "0.0.0.0"
+    port: int = 8000
+    debug: bool = False
+    cors_origins: List[str] = field(default_factory=lambda: ["*"])
+    max_request_size: int = 10 * 1024 * 1024  # 10MB
+    timeout: int = 300  # 5 minutes
+
+
+@dataclass
+class TailscaleSettings:
+    """Tailscale network settings"""
+    enabled: bool = False
+    server_ip: Optional[str] = None
+    api_port: int = 8000
+    auth_key: Optional[str] = None
+    hostname: Optional[str] = None
+
+
+@dataclass
+class LoggingSettings:
+    """Logging configuration"""
+    level: str = "INFO"
+    format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    file_path: Optional[str] = None
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
+    backup_count: int = 5
+
+
+@dataclass
+class Settings:
+    """Main settings container"""
+    vllm: VLLMSettings = field(default_factory=VLLMSettings)
+    comorag: ComoRAGSettings = field(default_factory=ComoRAGSettings)
+    api: APISettings = field(default_factory=APISettings)
+    tailscale: TailscaleSettings = field(default_factory=TailscaleSettings)
+    logging: LoggingSettings = field(default_factory=LoggingSettings)
+    
+    # Additional properties for backward compatibility
+    @property
+    def comorag_memory_size(self) -> int:
+        return self.comorag.memory_size
+    
+    @property
+    def TAILSCALE_SERVER_IP(self) -> Optional[str]:
+        return self.tailscale.server_ip
+    
+    @property
+    def API_PORT(self) -> int:
+        return self.api.port
+
+
+def get_config_path() -> Path:
+    """Get the configuration file path"""
+    # Check environment variable first
+    config_path = os.getenv('OVERWATCH_CONFIG_PATH')
+    if config_path:
+        return Path(config_path)
+    
+    # Default to config.json in the same directory as this file
+    return Path(__file__).parent / 'config.json'
+
+
+def load_config_from_file(config_path: Path) -> Dict[str, Any]:
+    """Load configuration from JSON file"""
+    if not config_path.exists():
+        logger.info(f"Config file not found at {config_path}, using defaults")
+        return {}
+    
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        logger.info(f"Loaded configuration from {config_path}")
+        return config
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in config file {config_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"Failed to load config file {config_path}: {e}")
+        return {}
+
+
+def load_config_from_env() -> Dict[str, Any]:
+    """Load configuration from environment variables"""
+    config = {}
+    
+    # API settings
+    if os.getenv('OVERWATCH_HOST'):
+        config.setdefault('api', {})['host'] = os.getenv('OVERWATCH_HOST')
+    if os.getenv('OVERWATCH_PORT'):
+        config.setdefault('api', {})['port'] = int(os.getenv('OVERWATCH_PORT'))
+    if os.getenv('OVERWATCH_DEBUG'):
+        config.setdefault('api', {})['debug'] = os.getenv('OVERWATCH_DEBUG').lower() == 'true'
+    
+    # Tailscale settings
+    if os.getenv('TAILSCALE_SERVER_IP'):
+        config.setdefault('tailscale', {})['server_ip'] = os.getenv('TAILSCALE_SERVER_IP')
+        config.setdefault('tailscale', {})['enabled'] = True
+    if os.getenv('TAILSCALE_API_PORT'):
+        config.setdefault('tailscale', {})['api_port'] = int(os.getenv('TAILSCALE_API_PORT'))
+    if os.getenv('TAILSCALE_AUTH_KEY'):
+        config.setdefault('tailscale', {})['auth_key'] = os.getenv('TAILSCALE_AUTH_KEY')
+    if os.getenv('TAILSCALE_HOSTNAME'):
+        config.setdefault('tailscale', {})['hostname'] = os.getenv('TAILSCALE_HOSTNAME')
+    
+    # vLLM settings
+    if os.getenv('VLLM_GPU_MEMORY_UTILIZATION'):
+        config.setdefault('vllm', {})['gpu_memory_utilization'] = float(os.getenv('VLLM_GPU_MEMORY_UTILIZATION'))
+    if os.getenv('VLLM_MAX_MODEL_LEN'):
+        config.setdefault('vllm', {})['max_model_len'] = int(os.getenv('VLLM_MAX_MODEL_LEN'))
+    if os.getenv('VLLM_TENSOR_PARALLEL_SIZE'):
+        config.setdefault('vllm', {})['tensor_parallel_size'] = int(os.getenv('VLLM_TENSOR_PARALLEL_SIZE'))
+    
+    # ComoRAG settings
+    if os.getenv('COMORAG_MEMORY_SIZE'):
+        config.setdefault('comorag', {})['memory_size'] = int(os.getenv('COMORAG_MEMORY_SIZE'))
+    if os.getenv('COMORAG_MAX_CYCLES'):
+        config.setdefault('comorag', {})['max_reasoning_cycles'] = int(os.getenv('COMORAG_MAX_CYCLES'))
+    if os.getenv('COMORAG_CONFIDENCE_THRESHOLD'):
+        config.setdefault('comorag', {})['confidence_threshold'] = float(os.getenv('COMORAG_CONFIDENCE_THRESHOLD'))
+    
+    # Logging settings
+    if os.getenv('LOG_LEVEL'):
+        config.setdefault('logging', {})['level'] = os.getenv('LOG_LEVEL')
+    if os.getenv('LOG_FILE'):
+        config.setdefault('logging', {})['file_path'] = os.getenv('LOG_FILE')
+    
+    return config
+
+
+def merge_configs(*configs: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge multiple configuration dictionaries"""
+    result = {}
+    
+    for config in configs:
+        for key, value in config.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = merge_configs(result[key], value)
+            else:
+                result[key] = value
+    
+    return result
+
+
+def create_settings_from_dict(config_dict: Dict[str, Any]) -> Settings:
+    """Create Settings object from configuration dictionary"""
+    settings = Settings()
+    
+    # Update vLLM settings
+    if 'vllm' in config_dict:
+        vllm_config = config_dict['vllm']
+        for key, value in vllm_config.items():
+            if hasattr(settings.vllm, key):
+                setattr(settings.vllm, key, value)
+    
+    # Update ComoRAG settings
+    if 'comorag' in config_dict:
+        comorag_config = config_dict['comorag']
+        for key, value in comorag_config.items():
+            if hasattr(settings.comorag, key):
+                setattr(settings.comorag, key, value)
+    
+    # Update API settings
+    if 'api' in config_dict:
+        api_config = config_dict['api']
+        for key, value in api_config.items():
+            if hasattr(settings.api, key):
+                setattr(settings.api, key, value)
+    
+    # Update Tailscale settings
+    if 'tailscale' in config_dict:
+        tailscale_config = config_dict['tailscale']
+        for key, value in tailscale_config.items():
+            if hasattr(settings.tailscale, key):
+                setattr(settings.tailscale, key, value)
+    
+    # Update logging settings
+    if 'logging' in config_dict:
+        logging_config = config_dict['logging']
+        for key, value in logging_config.items():
+            if hasattr(settings.logging, key):
+                setattr(settings.logging, key, value)
+    
+    return settings
+
+
+def save_settings(settings: Settings, config_path: Optional[Path] = None) -> bool:
+    """Save settings to configuration file"""
+    if config_path is None:
+        config_path = get_config_path()
+    
+    try:
+        # Ensure directory exists
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Convert settings to dictionary
+        config_dict = asdict(settings)
+        
+        # Write to file
+        with open(config_path, 'w', encoding='utf-8') as f:
+            json.dump(config_dict, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Settings saved to {config_path}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to save settings to {config_path}: {e}")
+        return False
+
+
+def load_settings(config_path: Optional[Path] = None) -> Settings:
+    """Load settings from file and environment variables"""
+    if config_path is None:
+        config_path = get_config_path()
+    
+    # Load from file
+    file_config = load_config_from_file(config_path)
+    
+    # Load from environment
+    env_config = load_config_from_env()
+    
+    # Merge configurations (env overrides file)
+    merged_config = merge_configs(file_config, env_config)
+    
+    # Create settings object
+    settings = create_settings_from_dict(merged_config)
+    
+    logger.info("Settings loaded successfully")
+    return settings
+
+
+def setup_logging(settings: Settings):
+    """Setup logging based on settings"""
+    log_level = getattr(logging, settings.logging.level.upper(), logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(settings.logging.format)
+    
+    # Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    
+    # Clear existing handlers
+    root_logger.handlers.clear()
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler if specified
+    if settings.logging.file_path:
+        try:
+            from logging.handlers import RotatingFileHandler
+            
+            # Ensure log directory exists
+            log_path = Path(settings.logging.file_path)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            file_handler = RotatingFileHandler(
+                settings.logging.file_path,
+                maxBytes=settings.logging.max_file_size,
+                backupCount=settings.logging.backup_count
+            )
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            
+            logger.info(f"Logging to file: {settings.logging.file_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup file logging: {e}")
+
+
+def get_api_url(settings: Settings) -> str:
+    """Get the API URL based on settings"""
+    if settings.tailscale.enabled and settings.tailscale.server_ip:
+        host = settings.tailscale.server_ip
+        port = settings.tailscale.api_port
+    else:
+        host = settings.api.host
+        port = settings.api.port
+    
+    # Handle special case for 0.0.0.0
+    if host == "0.0.0.0":
+        host = "localhost"
+    
+    return f"http://{host}:{port}"
+
+
+def validate_settings_simple(settings: Settings) -> bool:
+    """Validate settings configuration"""
+    try:
+        # Validate API settings
+        if not (1 <= settings.api.port <= 65535):
+            logger.error(f"Invalid API port: {settings.api.port}")
+            return False
+        
+        # Validate vLLM settings
+        if not (0.0 < settings.vllm.gpu_memory_utilization <= 1.0):
+            logger.error(f"Invalid GPU memory utilization: {settings.vllm.gpu_memory_utilization}")
+            return False
+        
+        # Validate ComoRAG settings
+        if settings.comorag.memory_size <= 0:
+            logger.error(f"Invalid memory size: {settings.comorag.memory_size}")
+            return False
+        
+        if settings.comorag.max_reasoning_cycles <= 0:
+            logger.error(f"Invalid max reasoning cycles: {settings.comorag.max_reasoning_cycles}")
+            return False
+        
+        logger.info("Settings validation passed")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Settings validation failed: {e}")
+        return False
+
+
+def get_api_url(settings: Settings) -> str:
+    """Get API URL from settings"""
+    if settings.tailscale.enabled and settings.tailscale.server_ip:
+        return f"http://{settings.tailscale.server_ip}:{settings.tailscale.api_port}"
+    else:
+        return f"http://{settings.api.host}:{settings.api.port}"
+
+
+def validate_settings(settings: Settings) -> List[str]:
+    """Validate settings and return list of issues"""
+    issues = []
+    
+    # Validate vLLM settings
+    if not 0.1 <= settings.vllm.gpu_memory_utilization <= 1.0:
+        issues.append("vLLM GPU memory utilization must be between 0.1 and 1.0")
+    
+    if settings.vllm.max_model_len < 512:
+        issues.append("vLLM max model length should be at least 512")
+    
+    if settings.vllm.tensor_parallel_size < 1:
+        issues.append("vLLM tensor parallel size must be at least 1")
+    
+    # Validate ComoRAG settings
+    if settings.comorag.memory_size < 10:
+        issues.append("ComoRAG memory size should be at least 10")
+    
+    if not 0.0 <= settings.comorag.confidence_threshold <= 1.0:
+        issues.append("ComoRAG confidence threshold must be between 0.0 and 1.0")
+    
+    if settings.comorag.max_reasoning_cycles < 1:
+        issues.append("ComoRAG max reasoning cycles must be at least 1")
+    
+    # Validate API settings
+    if not 1024 <= settings.api.port <= 65535:
+        issues.append("API port must be between 1024 and 65535")
+    
+    if settings.api.timeout < 10:
+        issues.append("API timeout should be at least 10 seconds")
+    
+    # Validate Tailscale settings
+    if settings.tailscale.enabled and not settings.tailscale.server_ip:
+        issues.append("Tailscale server IP is required when Tailscale is enabled")
+    
+    return issues
+
+
+# Create a default settings instance for easy access
+_default_settings = None
+
+
+def get_default_settings() -> Settings:
+    """Get the default settings instance"""
+    global _default_settings
+    if _default_settings is None:
+        _default_settings = load_settings()
+    return _default_settings
+
+
+def reload_settings() -> Settings:
+    """Reload settings from configuration"""
+    global _default_settings
+    _default_settings = load_settings()
+    return _default_settings

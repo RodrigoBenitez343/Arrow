@@ -1,0 +1,46 @@
+{
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "debug": false,
+    "cors_origins": ["*"],
+    "max_request_size": 10485760,
+    "timeout": 300
+  },
+  "vllm": {
+    "gpu_memory_utilization": 0.8,
+    "max_model_len": 4096,
+    "tensor_parallel_size": 1,
+    "dtype": "auto",
+    "trust_remote_code": true,
+    "enforce_eager": false,
+    "disable_log_stats": true,
+    "default_models": [
+      "microsoft/DialoGPT-medium",
+      "microsoft/DialoGPT-small"
+    ]
+  },
+  "comorag": {
+    "memory_size": 1000,
+    "max_reasoning_cycles": 10,
+    "confidence_threshold": 0.8,
+    "memory_consolidation_threshold": 0.7,
+    "embedding_model": "all-MiniLM-L6-v2",
+    "enable_faiss": true,
+    "probing_queries_count": 3
+  },
+  "tailscale": {
+    "enabled": false,
+    "server_ip": null,
+    "api_port": 8000,
+    "auth_key": null,
+    "hostname": null
+  },
+  "logging": {
+    "level": "INFO",
+    "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    "file_path": null,
+    "max_file_size": 10485760,
+    "backup_count": 5
+  }
+}
