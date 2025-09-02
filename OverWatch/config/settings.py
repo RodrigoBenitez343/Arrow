@@ -14,18 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class VLLMSettings:
-    """vLLM engine settings"""
-    gpu_memory_utilization: float = 0.8
-    max_model_len: int = 4096
-    tensor_parallel_size: int = 1
-    dtype: str = "auto"
-    trust_remote_code: bool = True
-    enforce_eager: bool = False
-    disable_log_stats: bool = True
+class OllamaSettings:
+    """Ollama engine settings"""
+    base_url: str = "http://localhost:11434"
+    context_length: int = 4096
+    temperature: float = 0.7
+    top_p: float = 0.9
+    top_k: int = 40
+    repeat_penalty: float = 1.1
+    timeout: int = 300
     default_models: List[str] = field(default_factory=lambda: [
-        "microsoft/DialoGPT-medium",
-        "microsoft/DialoGPT-small"
+        "llama3.2:1b",
+        "llama3.2:3b"
     ])
 
 
@@ -75,7 +75,7 @@ class LoggingSettings:
 @dataclass
 class Settings:
     """Main settings container"""
-    vllm: VLLMSettings = field(default_factory=VLLMSettings)
+    ollama: OllamaSettings = field(default_factory=OllamaSettings)
     comorag: ComoRAGSettings = field(default_factory=ComoRAGSettings)
     api: APISettings = field(default_factory=APISettings)
     tailscale: TailscaleSettings = field(default_factory=TailscaleSettings)
@@ -191,12 +191,21 @@ def create_settings_from_dict(config_dict: Dict[str, Any]) -> Settings:
     """Create Settings object from configuration dictionary"""
     settings = Settings()
     
-    # Update vLLM settings
+    # Update Ollama settings
+    if 'ollama' in config_dict:
+        ollama_config = config_dict['ollama']
+        for key, value in ollama_config.items():
+            if hasattr(settings.ollama, key):
+                setattr(settings.ollama, key, value)
+    
+    # Backward compatibility: support 'vllm' key for migration
     if 'vllm' in config_dict:
         vllm_config = config_dict['vllm']
-        for key, value in vllm_config.items():
-            if hasattr(settings.vllm, key):
-                setattr(settings.vllm, key, value)
+        # Map vLLM settings to Ollama settings where possible
+        if 'max_model_len' in vllm_config:
+            settings.ollama.context_length = vllm_config['max_model_len']
+        if 'default_models' in vllm_config:
+            settings.ollama.default_models = vllm_config['default_models']
     
     # Update ComoRAG settings
     if 'comorag' in config_dict:
@@ -374,15 +383,18 @@ def validate_settings(settings: Settings) -> List[str]:
     """Validate settings and return list of issues"""
     issues = []
     
-    # Validate vLLM settings
-    if not 0.1 <= settings.vllm.gpu_memory_utilization <= 1.0:
-        issues.append("vLLM GPU memory utilization must be between 0.1 and 1.0")
+    # Validate Ollama settings
+    if settings.ollama.context_length < 512:
+        issues.append("Ollama context length should be at least 512")
     
-    if settings.vllm.max_model_len < 512:
-        issues.append("vLLM max model length should be at least 512")
+    if not 0.0 <= settings.ollama.temperature <= 2.0:
+        issues.append("Ollama temperature must be between 0.0 and 2.0")
     
-    if settings.vllm.tensor_parallel_size < 1:
-        issues.append("vLLM tensor parallel size must be at least 1")
+    if not 0.0 <= settings.ollama.top_p <= 1.0:
+        issues.append("Ollama top_p must be between 0.0 and 1.0")
+    
+    if settings.ollama.timeout < 30:
+        issues.append("Ollama timeout should be at least 30 seconds")
     
     # Validate ComoRAG settings
     if settings.comorag.memory_size < 10:

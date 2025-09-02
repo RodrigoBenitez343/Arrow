@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 # Add current directory to path for local imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from api.vllm_engine import VLLMEngine
+from api.ollama_engine import OllamaEngine
 from api.comorag_engine import ComoRAGEngine
 from config.settings import load_settings, setup_logging, validate_settings
 
@@ -40,31 +40,31 @@ if issues:
         logger.warning(f"  - {issue}")
 
 # Global instances
-vllm_engine: Optional[VLLMEngine] = None
+ollama_engine: Optional[OllamaEngine] = None
 comorag_engine: Optional[ComoRAGEngine] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan events"""
-    global vllm_engine, comorag_engine
+    global ollama_engine, comorag_engine
     
     # Startup
     logger.info("Starting OverWatch API server...")
     
     try:
-        # Initialize vLLM engine
-        logger.info("Initializing vLLM engine...")
-        vllm_engine = VLLMEngine(settings.vllm)
-        await vllm_engine.initialize()
+        # Initialize Ollama engine
+        logger.info("Initializing Ollama engine...")
+        ollama_engine = OllamaEngine(settings.ollama)
+        await ollama_engine.initialize()
         
         # Initialize ComoRAG engine
         logger.info("Initializing ComoRAG engine...")
-        comorag_engine = ComoRAGEngine(settings=settings, vllm_engine=vllm_engine)
+        comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
         await comorag_engine.initialize()
         
         # Store engines in app state
-        app.state.vllm_engine = vllm_engine
+        app.state.ollama_engine = ollama_engine
         app.state.comorag_engine = comorag_engine
         app.state.settings = settings
         
@@ -82,15 +82,15 @@ async def lifespan(app: FastAPI):
     if comorag_engine:
         await comorag_engine.cleanup()
     
-    if vllm_engine:
-        await vllm_engine.cleanup()
+    if ollama_engine:
+        await ollama_engine.cleanup()
     
     logger.info("OverWatch API server shutdown complete")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="OverWatch - vLLM API with ComoRAG",
+    title="OverWatch - Ollama API with ComoRAG",
     description="LLM inference API with cognitive-inspired memory-organized RAG",
     version="1.0.0",
     lifespan=lifespan,
@@ -136,7 +136,7 @@ class ComoRAGRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    vllm_status: str
+    ollama_status: str
     comorag_status: str
     models_loaded: int
     memory_usage: Dict[str, Any]
@@ -147,22 +147,22 @@ class HealthResponse(BaseModel):
 async def health_check():
     """Health check endpoint"""
     try:
-        vllm_status = "healthy" if vllm_engine and vllm_engine.is_ready() else "not_ready"
+        ollama_status = "healthy" if ollama_engine and ollama_engine.is_ready() else "not_ready"
         comorag_status = "healthy" if comorag_engine and comorag_engine.is_ready() else "not_ready"
         
-        models_loaded = len(vllm_engine.get_loaded_models()) if vllm_engine else 0
+        models_loaded = len(ollama_engine.get_loaded_models()) if ollama_engine else 0
         
         # Get memory usage info
         memory_usage = {
-            "vllm_memory": vllm_engine.get_memory_usage() if vllm_engine else {},
+            "ollama_memory": ollama_engine.get_memory_usage() if ollama_engine else {},
             "comorag_memory": comorag_engine.get_memory_usage() if comorag_engine else {}
         }
         
-        overall_status = "healthy" if vllm_status == "healthy" and comorag_status == "healthy" else "degraded"
+        overall_status = "healthy" if ollama_status == "healthy" and comorag_status == "healthy" else "degraded"
         
         return HealthResponse(
             status=overall_status,
-            vllm_status=vllm_status,
+            ollama_status=ollama_status,
             comorag_status=comorag_status,
             models_loaded=models_loaded,
             memory_usage=memory_usage
@@ -176,13 +176,56 @@ async def health_check():
 async def list_models():
     """List available models"""
     try:
-        if not vllm_engine:
-            raise HTTPException(status_code=503, detail="vLLM engine not initialized")
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
         
-        models = await vllm_engine.list_models()
+        models = await ollama_engine.list_models()
         return {"models": models}
     except Exception as e:
         logger.error(f"Failed to list models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/models/load")
+async def load_model(model_request: dict):
+    """Load a model into Ollama engine"""
+    try:
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
+        
+        model_name = model_request.get("model_name")
+        
+        if not model_name:
+            raise HTTPException(status_code=400, detail="model_name is required")
+        
+        success = await ollama_engine.load_model(model_name)
+        
+        if success:
+            return {"message": f"Model {model_name} loaded successfully", "model_name": model_name}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to load model {model_name}")
+            
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/models/{model_name}")
+async def unload_model(model_name: str):
+    """Unload a model from Ollama engine"""
+    try:
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
+        
+        success = await ollama_engine.unload_model(model_name)
+        
+        if success:
+            return {"message": f"Model {model_name} unloaded successfully"}
+        else:
+            raise HTTPException(status_code=404, detail=f"Model {model_name} not found")
+            
+    except Exception as e:
+        logger.error(f"Failed to unload model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -190,8 +233,8 @@ async def list_models():
 async def chat_completion(request: ChatRequest):
     """Chat completion endpoint"""
     try:
-        if not vllm_engine:
-            raise HTTPException(status_code=503, detail="vLLM engine not initialized")
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
         
         if request.use_comorag and comorag_engine:
             # Use ComoRAG for enhanced reasoning
@@ -202,8 +245,8 @@ async def chat_completion(request: ChatRequest):
                 max_tokens=request.max_tokens
             )
         else:
-            # Direct vLLM inference
-            response = await vllm_engine.chat_completion(
+            # Direct Ollama inference
+            response = await ollama_engine.chat_completions(
                 messages=request.messages,
                 model=request.model,
                 temperature=request.temperature,
@@ -221,8 +264,8 @@ async def chat_completion(request: ChatRequest):
 async def generate_text(request: GenerateRequest):
     """Text generation endpoint"""
     try:
-        if not vllm_engine:
-            raise HTTPException(status_code=503, detail="vLLM engine not initialized")
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
         
         if request.use_comorag and comorag_engine:
             # Convert prompt to messages format for ComoRAG
@@ -234,8 +277,8 @@ async def generate_text(request: GenerateRequest):
                 max_tokens=request.max_tokens
             )
         else:
-            # Direct vLLM inference
-            response = await vllm_engine.generate(
+            # Direct Ollama inference
+            response = await ollama_engine.generate(
                 prompt=request.prompt,
                 model=request.model,
                 temperature=request.temperature,

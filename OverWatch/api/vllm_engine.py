@@ -120,17 +120,33 @@ class VLLMEngine:
                 )
             
             # Create engine arguments
-            engine_args = AsyncEngineArgs(
-                model=config.model_path,
-                max_model_len=config.max_model_len,
-                tensor_parallel_size=config.tensor_parallel_size,
-                gpu_memory_utilization=config.gpu_memory_utilization,
-                trust_remote_code=config.trust_remote_code,
-                dtype=config.dtype,
-                quantization=config.quantization,
-                disable_log_stats=False,
-                enforce_eager=False,
-            )
+            # Handle CPU-only execution
+            if not torch.cuda.is_available():
+                # Set environment variable for CPU execution
+                os.environ["CUDA_VISIBLE_DEVICES"] = ""
+                # For CPU execution, use minimal configuration
+                engine_args = AsyncEngineArgs(
+                    model=config.model_path,
+                    max_model_len=min(config.max_model_len, 1024),  # Further reduce for CPU
+                    tensor_parallel_size=1,  # Force single process for CPU
+                    trust_remote_code=config.trust_remote_code,
+                    dtype="float32",  # Use float32 for CPU
+                    quantization=None,  # Disable quantization for CPU
+                    disable_log_stats=True,
+                    enforce_eager=True,  # Required for CPU
+                )
+            else:
+                engine_args = AsyncEngineArgs(
+                    model=config.model_path,
+                    max_model_len=config.max_model_len,
+                    tensor_parallel_size=config.tensor_parallel_size,
+                    gpu_memory_utilization=config.gpu_memory_utilization,
+                    trust_remote_code=config.trust_remote_code,
+                    dtype=config.dtype,
+                    quantization=config.quantization,
+                    disable_log_stats=False,
+                    enforce_eager=False,
+                )
             
             # Create async engine
             engine = AsyncLLMEngine.from_engine_args(engine_args)

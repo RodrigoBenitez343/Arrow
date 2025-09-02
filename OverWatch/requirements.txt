@@ -4,12 +4,15 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
-# Basic ML dependencies (without vLLM for now)
+# Basic ML dependencies with Ollama
 transformers>=4.36.0
 sentence-transformers>=2.2.2
 numpy>=1.24.0
 scipy>=1.11.0
 scikit-learn>=1.3.0
+
+# Ollama Python client
+ollama>=0.1.7
 
 # PyQt5 for GUI
 PyQt5>=5.15.0
@@ -41,4 +44,4 @@ cryptography>=41.0.0
 
 # Environment and system (built-in modules)
 # platform and getpass are built-in Python modules
-# Note: vLLM installation may require additional setup or pre-built wheels
+# Note: Ollama server should be installed separately on the system

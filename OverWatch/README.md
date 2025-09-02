@@ -1,10 +1,10 @@
-# OverWatch - vLLM API with ComoRAG Integration
+# OverWatch - Ollama API with ComoRAG Integration
 
-🔍 **OverWatch** is a comprehensive vLLM API server with FastAPI and ComoRAG (Cognitive-Inspired Memory-Organized RAG) integration for advanced language model inference and reasoning.
+🔍 **OverWatch** is a comprehensive Ollama API server with FastAPI and ComoRAG (Cognitive-Inspired Memory-Organized RAG) integration for advanced language model inference and reasoning.
 
 ## Features
 
-- **🚀 vLLM Integration**: High-performance inference for HuggingFace models
+- **🚀 Ollama Integration**: High-performance inference for local language models
 - **🧠 ComoRAG System**: Advanced reasoning with dynamic memory workspace
 - **🖥️ PyQt5 GUI**: User-friendly interface for model management and reasoning
 - **🌐 FastAPI Server**: RESTful API with automatic documentation
@@ -21,7 +21,7 @@ OverWatch/
 ├── requirements.txt        # Python dependencies
 ├── api/                    # API modules
 │   ├── __init__.py
-│   ├── vllm_engine.py     # vLLM model management
+│   ├── ollama_engine.py   # Ollama model management
 │   ├── comorag_engine.py  # ComoRAG reasoning engine
 │   └── api_client.py      # API client for GUI
 ├── config/                 # Configuration management
@@ -40,7 +40,7 @@ OverWatch/
 ### Prerequisites
 
 - Python 3.8 or higher
-- CUDA-compatible GPU (recommended for vLLM)
+- Ollama server installed locally
 - 8GB+ RAM (16GB+ recommended)
 
 ### Quick Setup
@@ -65,9 +65,26 @@ OverWatch/
    python launcher.py status
    ```
 
+### Ollama Setup
+
+1. **Install Ollama**:
+   ```bash
+   curl -fsSL https://ollama.ai/install.sh | sh
+   ```
+
+2. **Start Ollama service**:
+   ```bash
+   ollama serve
+   ```
+
+3. **Pull a model** (optional, OverWatch will auto-pull):
+   ```bash
+   ollama pull llama3.2:1b
+   ```
+
 ### GPU Setup (Optional but Recommended)
 
-For optimal performance with vLLM:
+For optimal performance with Ollama:
 
 ```bash
 # For CUDA 11.8
@@ -338,7 +355,7 @@ python -c "from config.settings import load_settings; print(load_settings())"
 1. **New API Endpoints**: Add to `main.py`
 2. **GUI Components**: Extend `ui/widgets.py`
 3. **Configuration Options**: Update `config/settings.py`
-4. **Model Support**: Modify `api/vllm_engine.py`
+4. **Model Support**: Modify `api/ollama_engine.py`
 
 ### Testing
 
@@ -364,7 +381,7 @@ This project is part of the LoOper ecosystem. See the main LoOper repository for
 
 ## References
 
-- [vLLM Documentation](https://docs.vllm.ai/)
+- [Ollama Documentation](https://ollama.ai/)
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [ComoRAG Paper](https://arxiv.org/abs/2508.10419)
 - [PyQt5 Documentation](https://doc.qt.io/qtforpython/)
@@ -381,4 +398,4 @@ For issues and questions:
 
 ---
 
-**OverWatch** - Empowering advanced AI reasoning with vLLM and ComoRAG 🔍🧠
+**OverWatch** - Empowering advanced AI reasoning with Ollama and ComoRAG 🔍🧠

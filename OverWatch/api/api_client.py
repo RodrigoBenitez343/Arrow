@@ -2,7 +2,7 @@
 """
 OverWatch API Client
 
-Client for communicating with the OverWatch vLLM API server.
+Client for communicating with the OverWatch Ollama API server.
 """
 
 import requests

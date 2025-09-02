@@ -199,9 +199,9 @@ class DynamicMemoryWorkspace:
 class ComoRAGEngine:
     """ComoRAG engine for cognitive-inspired reasoning"""
     
-    def __init__(self, settings, vllm_engine):
+    def __init__(self, settings, ollama_engine):
         self.settings = settings
-        self.vllm_engine = vllm_engine
+        self.ollama_engine = ollama_engine
         self.memory_workspace = None
         self.embedding_model = None
         self.reasoning_history: List[ReasoningCycle] = []
@@ -267,9 +267,9 @@ class ComoRAGEngine:
         
         # Use default model if not specified
         if model is None:
-            available_models = self.vllm_engine.get_loaded_models()
+            available_models = self.ollama_engine.get_loaded_models()
             if not available_models:
-                raise RuntimeError("No models loaded in vLLM engine")
+                raise RuntimeError("No models loaded in Ollama engine")
             model = available_models[0]
         
         # Adjust memory size if requested
@@ -394,7 +394,7 @@ Generate probing questions that explore different aspects, potential contradicti
 Probing Questions:"""
         
         try:
-            response = await self.vllm_engine.generate(
+            response = await self.ollama_engine.generate(
                 prompt=prompt,
                 model=model,
                 temperature=0.7,
