@@ -275,7 +275,9 @@ class LLMNode(BaseNode):
             'screenshot_enabled': True,
             'use_comorag': True,
             'max_cycles': 5,
-            'memory_size': 1000
+            'memory_size': 1000,
+            'typing_batch_size': 20,  # Characters per batch for optimized typing
+            'typing_batch_delay': 0.05  # Delay between batches in seconds
         }
         
         # Set a distinct color for LLM nodes (orange)
@@ -323,6 +325,8 @@ class LLMNode(BaseNode):
         self.set_property('use_comorag', str(config.get('use_comorag', True)).lower())
         self.set_property('max_cycles', str(config.get('max_cycles', 5)))
         self.set_property('memory_size', str(config.get('memory_size', 1000)))
+        self.set_property('typing_batch_size', str(config.get('typing_batch_size', 20)))
+        self.set_property('typing_batch_delay', str(config.get('typing_batch_delay', 0.05)))
     
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
@@ -347,7 +351,9 @@ class LLMNode(BaseNode):
             'screenshot_enabled': screenshot_enabled,
             'use_comorag': use_comorag,
             'max_cycles': int(self.get_property('max_cycles') or 5),
-            'memory_size': int(self.get_property('memory_size') or 1000)
+            'memory_size': int(self.get_property('memory_size') or 1000),
+            'typing_batch_size': int(self.get_property('typing_batch_size') or 20),
+            'typing_batch_delay': float(self.get_property('typing_batch_delay') or 0.05)
         }
     
     def is_vision_model(self, model_name):

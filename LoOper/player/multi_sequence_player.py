@@ -30,7 +30,7 @@ class MultiSequencePlayer(SeleniumBot):
     
     This class now uses modularized components for better maintainability.
     """
-    def __init__(self, chain_config):
+    def __init__(self, chain_config, chain_file_path=None):
         """
         Initializes the multi-sequence player.
 
@@ -38,8 +38,15 @@ class MultiSequencePlayer(SeleniumBot):
             chain_config (dict or list): Either a legacy list format or new dict format with:
                                         - sequences: list of sequence configurations
                                         - conditional_nodes: list of conditional node configurations
+            chain_file_path (str, optional): Path to the chain file for resolving relative sequence paths
         """
         super().__init__()
+        
+        # Store chain file directory for path resolution
+        self.chain_file_dir = None
+        if chain_file_path:
+            import os
+            self.chain_file_dir = os.path.dirname(os.path.abspath(chain_file_path))
         
         # Handle both legacy list format and new dict format
         if isinstance(chain_config, list):
@@ -68,7 +75,7 @@ class MultiSequencePlayer(SeleniumBot):
         self.fallback_handler = ConditionalFallbackHandler()
         self.workflow_navigator = WorkflowNavigator(self.workflow_graph) if self.workflow_graph else None
         self.llm_executor = LLMExecutor()
-        self.sequence_executor = SequenceExecutor(self.fallback_handler)
+        self.sequence_executor = SequenceExecutor(self.fallback_handler, self.chain_file_dir)
     
     def _find_starting_node(self):
         """
@@ -119,6 +126,21 @@ class MultiSequencePlayer(SeleniumBot):
             node_inputs = node_data.get('inputs', [])
             if not node_inputs:
                 continue  # No inputs, should already be in ready set
+            
+            # Special handling for nodes that have DIRECT conditional node inputs
+            # These should NOT be automatically marked as ready since conditional
+            # nodes handle their own branching logic
+            has_direct_conditional_input = False
+            for input_connection in node_inputs:
+                input_node_id = input_connection['from_node']
+                if input_node_id in self.workflow_graph:
+                    input_node = self.workflow_graph[input_node_id]
+                    if input_node.get('type') == 'conditional':
+                        has_direct_conditional_input = True
+                        break
+            
+            if has_direct_conditional_input:
+                continue  # Skip nodes with direct conditional inputs - they're handled by conditional branching logic
             
             # Check if all input dependencies are satisfied
             all_inputs_satisfied = True
@@ -461,10 +483,20 @@ class MultiSequencePlayer(SeleniumBot):
             
             # Execute the node based on its type
             success = False
+            conditional_result = None
+            
             if node['type'] == 'sequence':
                 success = self._execute_sequence_node(node, stop_flag) is not None
             elif node['type'] == 'conditional':
-                success = self._execute_conditional_node(node, stop_flag) is not None
+                # For conditional nodes, evaluate the condition and store the result
+                conditional_data = node['data']
+                condition_type = conditional_data.get('condition_type', 'presence')
+                if condition_type == 'loop':
+                    conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
+                else:
+                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag)
+                success = True  # Conditional evaluation always succeeds
+                logger.info(f"Conditional evaluation result: {conditional_result}")
             elif node['type'] == 'llm':
                 success = self._execute_llm_node(node, stop_flag) is not None
             elif node['type'] == 'tts':
@@ -478,12 +510,19 @@ class MultiSequencePlayer(SeleniumBot):
                 completed_nodes.add(current_node_id)
                 logger.info(f"Node {current_node_id} completed successfully")
                 
-                # Check which nodes are now ready to execute
-                newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
-                ready_nodes.update(newly_ready)
-                
-                if newly_ready:
-                    logger.info(f"Nodes now ready for execution: {newly_ready}")
+                # For conditional nodes, only add nodes from the chosen branch
+                if node['type'] == 'conditional':
+                    next_node_id = self._get_conditional_branch_node(node, conditional_result)
+                    if next_node_id and next_node_id not in completed_nodes:
+                        ready_nodes.add(next_node_id)
+                        logger.info(f"Conditional node chose branch leading to: {next_node_id}")
+                else:
+                    # For non-conditional nodes, check which nodes are now ready to execute
+                    newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
+                    ready_nodes.update(newly_ready)
+                    
+                    if newly_ready:
+                        logger.info(f"Nodes now ready for execution: {newly_ready}")
             else:
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
                 return
@@ -504,6 +543,34 @@ class MultiSequencePlayer(SeleniumBot):
         # Use the SequenceExecutor to handle sequence execution
         next_node_id = self.sequence_executor.execute_sequence_node(node, stop_flag)
         return next_node_id
+    
+    def _get_conditional_branch_node(self, node, conditional_result):
+        """
+        Returns the next node ID based on the conditional result without re-evaluating.
+        
+        Args:
+            node (dict): The conditional node from the workflow graph
+            conditional_result (bool): The already evaluated conditional result
+            
+        Returns:
+            str: Next node ID to execute based on conditional result
+        """
+        conditional_data = node['data']
+        logger.info(f"Processing conditional branch for node: {conditional_data.get('name', conditional_data['node_id'])}")
+        
+        # Determine next node based on result
+        connections = node['connections']
+        branch = 'true' if conditional_result else 'false'
+        
+        logger.info(f"Conditional result: {conditional_result}, taking '{branch}' branch")
+        
+        if branch in connections and connections[branch]:
+            # Take the first connection in the branch
+            next_connection = connections[branch][0]
+            return next_connection['node_id']
+        else:
+            logger.info(f"No connections found for '{branch}' branch, ending workflow")
+            return None
     
     def _execute_conditional_node(self, node, stop_flag):
         """
@@ -528,19 +595,7 @@ class MultiSequencePlayer(SeleniumBot):
             # Evaluate the conditional normally
             result = self._evaluate_conditional(conditional_data, stop_flag)
         
-        # Determine next node based on result
-        connections = node['connections']
-        branch = 'true' if result else 'false'
-        
-        logger.info(f"Conditional result: {result}, taking '{branch}' branch")
-        
-        if branch in connections and connections[branch]:
-            # Take the first connection in the branch
-            next_connection = connections[branch][0]
-            return next_connection['node_id']
-        else:
-            logger.info(f"No connections found for '{branch}' branch, ending workflow")
-            return None
+        return self._get_conditional_branch_node(node, result)
     
     def _execute_llm_node(self, node, stop_flag):
         """

@@ -63,12 +63,12 @@ def main():
         elif isinstance(data, list) and all("sequence_file" in item for item in data):
             # It's a legacy chain config file (list format)
             logger.info(f"Playing legacy chain configuration: {args.file}")
-            player = MultiSequencePlayer(data)
+            player = MultiSequencePlayer(data, args.file)
             player.play_chain(stop_flag=stop_flag)
         elif isinstance(data, dict) and "sequences" in data:
             # It's a new chain config file (dict format with sequences and conditional_nodes)
             logger.info(f"Playing workflow chain configuration: {args.file}")
-            player = MultiSequencePlayer(data)
+            player = MultiSequencePlayer(data, args.file)
             player.play_chain(stop_flag=stop_flag)
         else:
             logger.error("Invalid file format. Expected sequence file with 'actions', legacy chain config (list), or workflow chain config (dict with 'sequences').")

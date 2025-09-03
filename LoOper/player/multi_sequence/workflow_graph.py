@@ -151,18 +151,22 @@ class WorkflowGraphBuilder:
         # Build connections from TTS node outputs to other nodes
         for tts_node in self.tts_nodes:
             tts_id = tts_node.get('id') or tts_node.get('node_id')
-            outputs = tts_node.get('outputs', {})
             
-            for output_name, connections in outputs.items():
-                for connection in connections:
-                    target_node_id = connection['node_id']
-                    if target_node_id in graph:
-                        if 'inputs' not in graph[target_node_id]:
-                            graph[target_node_id]['inputs'] = []
-                        graph[target_node_id]['inputs'].append({
-                            'from_node': tts_id,
-                            'output_type': output_name
-                        })
+            # Get connections from the graph node we just created (which converted connections to outputs format)
+            if tts_id in graph:
+                tts_graph_node = graph[tts_id]
+                connections = tts_graph_node['connections']
+                
+                for output_name, output_connections in connections.items():
+                    for connection in output_connections:
+                        target_node_id = connection['node_id']
+                        if target_node_id in graph:
+                            if 'inputs' not in graph[target_node_id]:
+                                graph[target_node_id]['inputs'] = []
+                            graph[target_node_id]['inputs'].append({
+                                'from_node': tts_id,
+                                'output_type': output_name
+                            })
         
         # Build connections from sequence node outputs to other nodes
         for i, sequence in enumerate(self.sequences):

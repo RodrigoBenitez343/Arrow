@@ -253,14 +253,17 @@ class ActionHandlers:
 
     def handle_type_string_action(self, idx, action):
         """
-        Handles typing text actions.
+        Handles typing text actions with optimized speed and completion tracking.
         
         Args:
             idx (int): Action index
             action (dict): Action configuration
+            
+        Returns:
+            bool: True when typing is complete
         """
         if 'text' in action:
-            # Check if a specific delay is required after a click before typing.
+            # Check if a specific delay is required after a click before typing
             if 'delay_after_click' in action:
                 time_since_click = time.time() - self.bot.last_click_time
                 required_delay = action['delay_after_click']
@@ -268,11 +271,76 @@ class ActionHandlers:
                     wait_time = required_delay - time_since_click
                     logger.debug(f"Waiting {wait_time:.2f}s after click before typing")
                     time.sleep(wait_time)
-            # Type the text character by character with small random delays.
-            for char in action['text']:
-                pyautogui.write(char)
-                time.sleep(random.uniform(0.05, 0.15))
-            logger.info(f"Typed text: {action['text']}")
+            
+            # Get text to type and ensure it's a string
+            text = action['text']
+            if not isinstance(text, str):
+                try:
+                    text = str(text)
+                    logger.warning(f"Converted non-string text to string: {type(action['text'])} -> {text[:50]}...")
+                except Exception as str_error:
+                    logger.error(f"Failed to convert text to string: {str_error}")
+                    return False
+            
+            # Get typing speed configuration
+            # Check if we should use character-by-character typing for maximum reliability
+            char_by_char = action.get('char_by_char', False)  # Default to batch mode
+            
+            if char_by_char:
+                # Character-by-character typing for maximum reliability
+                batch_size = 1  # One character at a time
+                batch_delay = action.get('char_delay', 0.05)  # Default to 0.05s between characters
+                logger.info(f"Typing text character-by-character with delay={batch_delay}s")
+            else:
+                # Batch typing mode
+                batch_size = action.get('batch_size', 5)  # Default to 5 chars per batch
+                batch_delay = action.get('batch_delay', 0.15)  # Default to 0.15s between batches
+                logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}")
+            
+            # Type text in batches for significantly improved speed
+            for i in range(0, len(text), batch_size):
+                # Get the next batch of characters
+                batch = text[i:i+batch_size]
+                
+                try:
+                    # Filter out non-typeable characters that might cause issues with pyautogui
+                    # Keep only printable ASCII characters and common whitespace
+                    filtered_batch = ''.join(c for c in batch if c.isprintable() or c in '\n\t\r ')
+                    
+                    if filtered_batch != batch:
+                        logger.warning(f"Filtered out non-printable characters from batch")
+                    
+                    # Handle line breaks specially to ensure they're properly processed
+                    if '\n' in filtered_batch:
+                        # Split by newlines and type each segment separately with proper Enter key presses
+                        segments = filtered_batch.split('\n')
+                        for j, segment in enumerate(segments):
+                            if segment:  # Only type non-empty segments
+                                pyautogui.write(segment)
+                            # Press Enter after each segment except the last one
+                            if j < len(segments) - 1:
+                                time.sleep(0.05)  # Small delay before Enter key
+                                pyautogui.press('enter')
+                                time.sleep(0.05)  # Small delay after Enter key
+                    else:
+                        # Type the filtered batch as a single operation
+                        pyautogui.write(filtered_batch)
+                except Exception as write_error:
+                    logger.error(f"Error writing batch: {write_error}")
+                    logger.error(f"Problematic batch content: {repr(batch)}")
+                    return False
+                
+                # Small delay between batches for natural typing feel
+                if i + batch_size < len(text):
+                    time.sleep(batch_delay)
+            
+            logger.info(f"Typed text ({len(text)} chars) using optimized batching")
+            
+            # Set completion flag in action for workflow integration
+            action['completed'] = True
+            return True
+        
+        return False
 
     def handle_keystroke_action(self, idx, action):
         """

@@ -101,7 +101,7 @@ class OllamaClient:
             response = self.session.post(
                 f"{self.base_url}/generate",
                 json=payload,
-                timeout=120  # 2 minutes timeout
+                timeout=300  # 5 minutes timeout
             )
             response.raise_for_status()
             result = response.json()
@@ -202,7 +202,7 @@ class OllamaClient:
             response = self.session.post(
                 f"{self.base_url}/comorag/reason",
                 json=payload,
-                timeout=180  # Increased timeout for vision processing
+                timeout=360  # 6 minutes timeout for ComoRAG reasoning
             )
             response.raise_for_status()
             result = response.json()

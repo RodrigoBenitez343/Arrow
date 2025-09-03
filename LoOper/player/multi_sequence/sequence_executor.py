@@ -12,8 +12,9 @@ from ..sequence_player import SequencePlayer
 class SequenceExecutor:
     """Executes sequence nodes and handles conditions"""
     
-    def __init__(self, fallback_handler=None):
+    def __init__(self, fallback_handler=None, chain_file_dir=None):
         self.fallback_handler = fallback_handler
+        self.chain_file_dir = chain_file_dir  # Directory containing the chain file
     
     def execute_sequence_node(self, node, stop_flag):
         """
@@ -82,10 +83,15 @@ class SequenceExecutor:
         original_seq_file = seq_file
         
         if seq_file:
+            # Determine base directory for path resolution
+            base_dir = self.chain_file_dir if self.chain_file_dir else os.getcwd()
+            
             # Try multiple path resolution strategies
             possible_paths = [
-                seq_file,  # Original path
-                os.path.join('sequences', seq_file),  # sequences subdirectory
+                seq_file,  # Original path (absolute or relative to cwd)
+                os.path.join(base_dir, seq_file),  # relative to chain file directory
+                os.path.join(base_dir, 'sequences', seq_file),  # sequences subdirectory in chain dir
+                os.path.join('sequences', seq_file),  # sequences subdirectory in cwd
                 os.path.join(os.getcwd(), seq_file),  # current working directory
                 os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
             ]
@@ -94,6 +100,8 @@ class SequenceExecutor:
             if not seq_file.endswith('.json'):
                 possible_paths.extend([
                     seq_file + '.json',
+                    os.path.join(base_dir, seq_file + '.json'),
+                    os.path.join(base_dir, 'sequences', seq_file + '.json'),
                     os.path.join('sequences', seq_file + '.json'),
                     os.path.join(os.getcwd(), seq_file + '.json'),
                     os.path.join(os.getcwd(), 'sequences', seq_file + '.json'),

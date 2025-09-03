@@ -187,6 +187,26 @@ class LLMPropertiesDialog(QDialog):
         self.write_text_checkbox.setChecked(True)
         params_layout.addWidget(self.write_text_checkbox, 3, 1)
         
+        # Typing speed parameters (only visible when write_text is checked)
+        params_layout.addWidget(QLabel("Typing Batch Size:"), 4, 0)
+        self.typing_batch_size_spin = QSpinBox()
+        self.typing_batch_size_spin.setRange(1, 100)
+        self.typing_batch_size_spin.setValue(20)
+        self.typing_batch_size_spin.setToolTip("Number of characters to type at once (higher = faster typing)")
+        params_layout.addWidget(self.typing_batch_size_spin, 4, 1)
+        
+        params_layout.addWidget(QLabel("Typing Batch Delay:"), 5, 0)
+        self.typing_batch_delay_spin = QDoubleSpinBox()
+        self.typing_batch_delay_spin.setRange(0.01, 1.0)
+        self.typing_batch_delay_spin.setSingleStep(0.01)
+        self.typing_batch_delay_spin.setValue(0.05)
+        self.typing_batch_delay_spin.setToolTip("Delay between typing batches in seconds (lower = faster typing)")
+        params_layout.addWidget(self.typing_batch_delay_spin, 5, 1)
+        
+        # Connect write_text checkbox to enable/disable typing speed controls
+        self.write_text_checkbox.toggled.connect(self.typing_batch_size_spin.setEnabled)
+        self.write_text_checkbox.toggled.connect(self.typing_batch_delay_spin.setEnabled)
+        
         layout.addWidget(params_group)
         
         # Vision Configuration Group
@@ -272,6 +292,15 @@ class LLMPropertiesDialog(QDialog):
             self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
             self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
             
+            # Load typing speed parameters
+            self.typing_batch_size_spin.setValue(self.current_config.get('typing_batch_size', 20))
+            self.typing_batch_delay_spin.setValue(self.current_config.get('typing_batch_delay', 0.05))
+            
+            # Enable/disable typing speed controls based on write_text setting
+            write_text_enabled = self.current_config.get('write_text', True)
+            self.typing_batch_size_spin.setEnabled(write_text_enabled)
+            self.typing_batch_delay_spin.setEnabled(write_text_enabled)
+            
             # Load ComoRAG configuration
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
@@ -290,6 +319,10 @@ class LLMPropertiesDialog(QDialog):
             'write_text': self.write_text_checkbox.isChecked(),
             'use_vision': self.use_vision_checkbox.isChecked(),
             'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
+            
+            # Typing speed parameters
+            'typing_batch_size': self.typing_batch_size_spin.value(),
+            'typing_batch_delay': self.typing_batch_delay_spin.value(),
             
             # ComoRAG configuration
             'use_comorag': self.use_comorag_checkbox.isChecked(),

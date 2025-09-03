@@ -286,10 +286,30 @@ class LLMExecutor:
                     elif 'message' in response and isinstance(response['message'], dict) and 'content' in response['message']:
                         generated_text = response['message']['content']
                         logger.info(f"Extracted text from 'message.content': {generated_text}")
+                    elif 'choices' in response and isinstance(response['choices'], list) and len(response['choices']) > 0:
+                        # Handle OpenAI-style response format
+                        choice = response['choices'][0]
+                        if isinstance(choice, dict) and 'message' in choice and 'content' in choice['message']:
+                            generated_text = choice['message']['content']
+                            logger.info(f"Extracted text from 'choices[0].message.content': {generated_text}")
+                        elif isinstance(choice, dict) and 'text' in choice:
+                            generated_text = choice['text']
+                            logger.info(f"Extracted text from 'choices[0].text': {generated_text}")
                     else:
+                        # Last resort: try to convert the entire response to a string
                         logger.warning(f"Could not find expected response format in: {response}")
+                        try:
+                            generated_text = str(response)
+                            logger.info(f"Converted entire response to string: {generated_text[:100]}...")
+                        except Exception as str_error:
+                            logger.error(f"Failed to convert response to string: {str_error}")
                 else:
-                    logger.warning(f"Response is not a dict: {type(response)}")
+                    # If response is not a dict, try to use it directly as a string
+                    try:
+                        generated_text = str(response)
+                        logger.info(f"Response is not a dict, using as string: {type(response)} -> {generated_text[:100]}...")
+                    except Exception as str_error:
+                        logger.error(f"Failed to convert non-dict response to string: {str_error}")
             else:
                 logger.error("No response received from API")
 
@@ -307,25 +327,53 @@ class LLMExecutor:
                 should_write_text = write_text
                 logger.info(f"Should write text: {should_write_text}")
                 
-                if should_write_text and generated_text.strip():
+                if should_write_text and generated_text and generated_text.strip():
                     logger.info(f"=== ATTEMPTING TO WRITE TEXT ===")
-                    # Create a type_string action to write the generated text
+                    
+                    # Ensure generated_text is a string
+                    if not isinstance(generated_text, str):
+                        try:
+                            generated_text = str(generated_text)
+                            logger.warning(f"Converted non-string generated_text to string: {type(generated_text)}")
+                        except Exception as str_error:
+                            logger.error(f"Failed to convert generated_text to string: {str_error}")
+                            generated_text = "Error: Could not convert LLM response to text"
+                    
+                    # Create a type_string action to write the generated text with optimized typing parameters
                     type_action = {
                         'type': 'type_string',
                         'text': generated_text,
-                        'timestamp': time.time()
+                        'timestamp': time.time(),
+                        # Use character-by-character typing for maximum reliability
+                        'char_by_char': True,  # Enable character-by-character typing
+                        'char_delay': float(llm_config.get('char_delay', 0.03)),  # Default to 0.03s between characters
+                        # Keep batch parameters for fallback to batch mode
+                        'batch_size': int(llm_config.get('typing_batch_size', 5)),
+                        'batch_delay': float(llm_config.get('typing_batch_delay', 0.15))
                     }
-                    logger.info(f"Created type_action: {type_action}")
+                    logger.info(f"Created type_action with char_by_char=True, char_delay={type_action['char_delay']}")
+                    logger.info(f"Fallback batch parameters: batch_size={type_action['batch_size']}, batch_delay={type_action['batch_delay']}")
+                    logger.info(f"Text length: {len(generated_text)} characters")
                     
                     # Check if action_handlers exists
                     if action_handlers:
                         logger.info(f"Action handlers available: {type(action_handlers)}")
                         try:
-                            # Execute the typing action using action handlers
+                            # Execute the typing action using action handlers with optimized batching
                             logger.info(f"Calling handle_type_string_action with text: '{generated_text[:50]}...'")
-                            result = action_handlers.handle_type_string_action(0, type_action)
-                            logger.info(f"handle_type_string_action result: {result}")
-                            logger.info(f"=== TEXT WRITING COMPLETED ===")
+                            
+                            # Typing parameters are already configured from LLM node settings
+                            
+                            # Execute typing action and get completion status
+                            completed = action_handlers.handle_type_string_action(0, type_action)
+                            
+                            # Check completion flag
+                            if completed:
+                                logger.info(f"=== TEXT WRITING COMPLETED SUCCESSFULLY ===")
+                            else:
+                                logger.warning(f"Text writing was not completed successfully")
+                                # We continue execution even if typing fails, as the variable is still set
+                                
                         except Exception as write_error:
                             logger.error(f"Error during text writing: {write_error}")
                             import traceback
