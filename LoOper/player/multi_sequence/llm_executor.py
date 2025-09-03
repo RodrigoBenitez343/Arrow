@@ -75,6 +75,11 @@ class LLMExecutor:
             use_vision = llm_config.get('use_vision', False)
             screenshot_enabled = llm_config.get('screenshot_enabled', True)
             
+            # ComoRAG-specific configuration
+            use_comorag = str(llm_config.get('use_comorag', 'true')).lower() in ('true', '1', 'yes', 'on')
+            max_cycles = int(llm_config.get('max_cycles', 5))
+            memory_size = int(llm_config.get('memory_size', 1000))
+            
             logger.info(f"LLM Parameters:")
             logger.info(f"  Model: {model}")
             logger.info(f"  API URL: {api_url}")
@@ -100,7 +105,13 @@ class LLMExecutor:
             # Create OllamaClient and make request
             logger.info(f"Creating OllamaClient with base_url: {api_url}")
             try:
-                client = OllamaClient(base_url=api_url)
+                client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
+                
+                # Set ComoRAG parameters if enabled
+                if use_comorag and hasattr(client, 'set_comorag_config'):
+                    client.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
+                    logger.info(f"ComoRAG enabled with max_cycles={max_cycles}, memory_size={memory_size}")
+                
                 logger.info("OllamaClient created successfully")
             except Exception as client_error:
                 logger.error(f"Failed to create OllamaClient: {client_error}")
@@ -148,6 +159,15 @@ class LLMExecutor:
                                 ocr_text = "\n".join([item['text'] for item in ocr_results if item['confidence'] > 60])
                                 if ocr_text.strip():
                                     logger.info(f"Extracted OCR text ({len(ocr_text)} chars): {ocr_text[:200]}...")
+                                    # Add OCR text to context for ComoRAG integration
+                                    if hasattr(client, 'add_context'):
+                                        client.add_context({
+                                            'ocr_text': ocr_text,
+                                            'source': 'screen_capture',
+                                            'type': 'ocr',
+                                            'timestamp': time.time()
+                                        })
+                                        logger.info(f"Added OCR text to ComoRAG context: {len(ocr_text)} characters")
                                 else:
                                     logger.info("No high-confidence OCR text extracted")
                             else:
@@ -155,6 +175,17 @@ class LLMExecutor:
                         except Exception as ocr_error:
                             logger.warning(f"OCR extraction failed: {ocr_error}")
                             ocr_text = None
+                        
+                        # Add screenshot context for ComoRAG integration
+                        if hasattr(client, 'add_context'):
+                            client.add_context({
+                                'screenshot_path': screenshot_path,
+                                'description': f'Screen capture for vision analysis at {time.strftime("%Y-%m-%d %H:%M:%S")}',
+                                'source': 'screen_capture',
+                                'type': 'image',
+                                'timestamp': time.time()
+                            })
+                            logger.info(f"Added screenshot to ComoRAG context: {screenshot_path}")
                         
                     except Exception as screenshot_error:
                         logger.error(f"Failed to take screenshot: {screenshot_error}")
@@ -175,6 +206,35 @@ class LLMExecutor:
             # Collect context data for ComoRAG integration
             config = llm_config.get('comorag_config', {})
             context_data = self._collect_workflow_context(node, action_handlers, config=config)
+            
+            # Add workflow state context for ComoRAG
+            if hasattr(client, 'add_context'):
+                # Add current workflow state
+                workflow_state = {
+                    'current_node': node.get('id', 'unknown'),
+                    'node_type': 'llm',
+                    'variables': dict(self.variables),
+                    'timestamp': time.time()
+                }
+                client.add_context({
+                    'workflow_state': workflow_state,
+                    'source': 'workflow_execution',
+                    'type': 'state',
+                    'timestamp': time.time()
+                })
+                logger.info(f"Added workflow state to ComoRAG context")
+            
+            # Add context to client if available
+            if context_data and hasattr(client, 'add_context'):
+                for context_item in context_data:
+                    # Enhance context items with metadata
+                    enhanced_context = dict(context_item)
+                    if 'timestamp' not in enhanced_context:
+                        enhanced_context['timestamp'] = time.time()
+                    if 'source' not in enhanced_context:
+                        enhanced_context['source'] = 'workflow_context'
+                    client.add_context(enhanced_context)
+                logger.info(f"Added {len(context_data)} enhanced context items to ComoRAG client")
             
             # Add current screenshot to context if taken
             if images and self.context_collector:

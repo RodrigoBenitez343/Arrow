@@ -11,13 +11,22 @@ import sys
 import base64
 import os
 import time
+import io
 from typing import Optional, List, Dict, Any
 from urllib.parse import urljoin
+
+try:
+    from PIL import Image, ImageGrab
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+    Image = None
+    ImageGrab = None
 
 class OllamaClient:
     """Client for interacting with Ollama API Gateway"""
     
-    def __init__(self, base_url: str = None, debug: bool = False):
+    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True):
         """Initialize the client with the API base URL"""
         # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
@@ -27,13 +36,17 @@ class OllamaClient:
         
         self.base_url = base_url.rstrip('/')
         self.debug = debug
+        self.use_comorag = use_comorag
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         })
-        self.use_comorag = os.getenv("USE_COMORAG", "false").lower() == "true"
         self.context_data = []  # Store context for ComoRAG
+        self.comorag_config = {
+            'max_cycles': 5,
+            'memory_size': 1000
+        }
     
     def health_check(self) -> Dict[str, Any]:
         """Check if the API server and Ollama are healthy"""
@@ -91,7 +104,13 @@ class OllamaClient:
                 timeout=120  # 2 minutes timeout
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Normalize response format - convert 'text' to 'response' if needed
+            if 'text' in result and 'response' not in result:
+                result['response'] = result['text']
+            
+            return result
         except requests.exceptions.RequestException as e:
             return {"error": str(e)}
     
@@ -102,8 +121,8 @@ class OllamaClient:
                 images: Optional[List[str]] = None,
                 context: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """Generate text using the specified model with optional ComoRAG integration"""
-        # Use ComoRAG endpoint if enabled and context is available
-        if self.use_comorag and (context or self.context_data):
+        # Use ComoRAG if enabled (context is not required for ComoRAG)
+        if self.use_comorag:
             return self._comorag_reason(model, prompt, temperature, max_tokens, system, images, context)
         
         return self.chat(model, prompt, temperature, max_tokens, system, images)
@@ -128,13 +147,22 @@ class OllamaClient:
                     if 'content' in item:
                         content = item['content']
                         source = item.get('source', 'unknown')
-                        context_parts.append(f"[{source}]: {content}")
+                        item_type = item.get('type', 'context')
+                        context_parts.append(f"[{source} - {item_type}]: {content}")
                     elif 'ocr_text' in item:
                         ocr_text = item['ocr_text']
                         if ocr_text and ocr_text.strip():
-                            context_parts.append(f"[Screen Text]: {ocr_text}")
+                            context_parts.append(f"[Screen Text - OCR]: {ocr_text}")
                     elif 'text' in item:
                         context_parts.append(f"[Context]: {item['text']}")
+                    elif 'workflow_state' in item:
+                        # Handle workflow state context
+                        workflow_info = item['workflow_state']
+                        context_parts.append(f"[Workflow State]: Current node: {workflow_info.get('current_node', 'unknown')}, Variables: {workflow_info.get('variables', {})}")
+                    elif 'screenshot_path' in item:
+                        # Handle screenshot context
+                        screenshot_info = item.get('description', 'Screenshot captured')
+                        context_parts.append(f"[Screenshot Context]: {screenshot_info}")
                 elif isinstance(item, str):
                     context_parts.append(f"[Context]: {item}")
             
@@ -151,22 +179,36 @@ class OllamaClient:
         payload = {
             "query": prompt,
             "model": model,
-            "max_cycles": 3,  # Reasonable default for automation context
-            "memory_size": 1000
+            "max_cycles": self.comorag_config.get('max_cycles', 5),
+            "memory_size": self.comorag_config.get('memory_size', 1000)
         }
         
         # Add context if available
         if full_context:
             payload["context"] = full_context
         
+        # Process and add images for vision analysis
+        if images:
+            processed_images = self._process_images(images)
+            if processed_images:
+                payload["images"] = processed_images
+                if self.debug:
+                    print(f"Added {len(processed_images)} images to ComoRAG request")
+        
+        if self.debug:
+            print(f"ComoRAG request payload: {json.dumps(payload, indent=2)}")
+        
         try:
             response = self.session.post(
                 f"{self.base_url}/comorag/reason",
                 json=payload,
-                timeout=120
+                timeout=180  # Increased timeout for vision processing
             )
             response.raise_for_status()
             result = response.json()
+            
+            if self.debug:
+                print(f"ComoRAG response: {json.dumps(result, indent=2)}")
             
             # Transform ComoRAG response to match expected format
             if 'response' in result:
@@ -175,14 +217,32 @@ class OllamaClient:
                     'comorag_metadata': {
                         'confidence': result.get('confidence', 0.0),
                         'reasoning_cycles': result.get('reasoning_cycles', 0),
-                        'memory_items_used': result.get('memory_items_used', 0)
+                        'memory_items_used': result.get('memory_items_used', 0),
+                        'reasoning_history': result.get('reasoning_history', []),
+                        'vision_analysis': result.get('vision_analysis', None)
                     }
                 }
+            elif 'choices' in result and len(result['choices']) > 0:
+                # Handle OpenAI-compatible response format
+                choice = result['choices'][0]
+                response_text = choice.get('message', {}).get('content', '') or choice.get('text', '')
+                return {
+                    'response': response_text,
+                    'comorag_metadata': result.get('comorag_metadata', {})
+                }
             else:
-                return result
+                # If no expected response format, fall back to regular chat
+                if self.debug:
+                    print(f"ComoRAG endpoint returned unexpected format: {result}")
+                    print("Falling back to regular chat endpoint")
+                return self.chat(model, prompt, temperature, max_tokens, system, images)
                 
         except requests.exceptions.RequestException as e:
-            return {"error": str(e)}
+            if self.debug:
+                print(f"ComoRAG request failed: {e}")
+                print("Falling back to regular chat endpoint")
+            # Fall back to regular chat if ComoRAG fails
+            return self.chat(model, prompt, temperature, max_tokens, system, images)
     
     def add_context(self, context_item: Dict[str, Any]) -> None:
         """Add a context item to the ComoRAG context data"""
@@ -195,6 +255,13 @@ class OllamaClient:
     def get_context(self) -> List[Dict[str, Any]]:
         """Get current context data"""
         return self.context_data.copy()
+    
+    def set_comorag_config(self, max_cycles: int = None, memory_size: int = None) -> None:
+        """Set ComoRAG configuration parameters"""
+        if max_cycles is not None:
+            self.comorag_config['max_cycles'] = max_cycles
+        if memory_size is not None:
+            self.comorag_config['memory_size'] = memory_size
     
     def _process_images(self, images: List[str]) -> List[str]:
         """Process images for API request
@@ -262,6 +329,85 @@ class OllamaClient:
         
         model_lower = model_name.lower()
         return any(vision_model in model_lower for vision_model in vision_models)
+    
+    def capture_screen(self, quality: int = 85, max_size: Optional[int] = None) -> Optional[str]:
+        """Capture the current screen and return as base64 encoded string
+        
+        Args:
+            quality: JPEG quality (1-100)
+            max_size: Maximum width/height in pixels (maintains aspect ratio)
+            
+        Returns:
+            Base64 encoded image string or None if capture fails
+        """
+        if not PILLOW_AVAILABLE:
+            if self.debug:
+                print("PIL/Pillow not available. Install with: pip install Pillow")
+            return None
+            
+        try:
+            # Capture the screen
+            screenshot = ImageGrab.grab()
+            
+            # Resize if max_size is specified
+            if max_size and (screenshot.width > max_size or screenshot.height > max_size):
+                screenshot.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                if self.debug:
+                    print(f"Resized screenshot to {screenshot.width}x{screenshot.height}")
+            
+            # Convert to JPEG and encode to base64
+            buffer = io.BytesIO()
+            screenshot.save(buffer, format='JPEG', quality=quality, optimize=True)
+            img_data = buffer.getvalue()
+            img_base64 = base64.b64encode(img_data).decode('utf-8')
+            
+            if self.debug:
+                print(f"Screen captured: {screenshot.width}x{screenshot.height}, {len(img_base64)} chars")
+            
+            return img_base64
+            
+        except Exception as e:
+            if self.debug:
+                print(f"Screen capture failed: {e}")
+            return None
+    
+    def chat_with_screen(self, model: str, prompt: str,
+                        temperature: Optional[float] = None,
+                        max_tokens: Optional[int] = None,
+                        system: Optional[str] = None,
+                        capture_screen: bool = True,
+                        screen_quality: int = 85,
+                        max_screen_size: Optional[int] = None,
+                        additional_images: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Chat with automatic screen capture for vision models
+        
+        Args:
+            model: Model name to use
+            prompt: The prompt/question
+            temperature: Sampling temperature
+            max_tokens: Maximum tokens to generate
+            system: System message
+            capture_screen: Whether to capture screen automatically
+            screen_quality: JPEG quality for screen capture (1-100)
+            max_screen_size: Maximum screen capture size in pixels
+            additional_images: Additional images to include
+            
+        Returns:
+            API response dictionary
+        """
+        images = additional_images or []
+        
+        # Auto-capture screen for vision models
+        if capture_screen and self.is_vision_model(model):
+            screen_image = self.capture_screen(screen_quality, max_screen_size)
+            if screen_image:
+                images = [screen_image] + images
+                if self.debug:
+                    print(f"Added screen capture to images (total: {len(images)})")
+            elif self.debug:
+                print("Screen capture failed, proceeding without it")
+        
+        return self.chat(model, prompt, temperature, max_tokens, system, images)
 
 def format_model_info(models: List[Dict[str, Any]]) -> None:
     """Format and display model information"""
@@ -415,6 +561,22 @@ def main():
         nargs="*",
         help="Image file paths to include with the prompt"
     )
+    parser.add_argument(
+        "--capture-screen",
+        action="store_true",
+        help="Automatically capture screen for vision models"
+    )
+    parser.add_argument(
+        "--screen-quality",
+        type=int,
+        default=85,
+        help="JPEG quality for screen capture (1-100, default: 85)"
+    )
+    parser.add_argument(
+        "--max-screen-size",
+        type=int,
+        help="Maximum screen capture size in pixels (maintains aspect ratio)"
+    )
     
     args = parser.parse_args()
     
@@ -452,14 +614,27 @@ def main():
         sys.exit(1)
     
     # Send single request
-    response = client.chat(
-        args.model, 
-        args.prompt, 
-        args.temperature, 
-        args.max_tokens, 
-        args.system,
-        args.images
-    )
+    if args.capture_screen:
+        response = client.chat_with_screen(
+            args.model,
+            args.prompt,
+            args.temperature,
+            args.max_tokens,
+            args.system,
+            capture_screen=True,
+            screen_quality=args.screen_quality,
+            max_screen_size=args.max_screen_size,
+            additional_images=args.images
+        )
+    else:
+        response = client.chat(
+            args.model, 
+            args.prompt, 
+            args.temperature, 
+            args.max_tokens, 
+            args.system,
+            args.images
+        )
     
     if "error" in response:
         print(f"Error: {response['error']}")

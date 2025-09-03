@@ -44,6 +44,8 @@ class MemoryItem:
     access_count: int = 0
     source: str = "unknown"  # query, retrieval, reasoning
     metadata: Dict[str, Any] = None
+    image_data: Optional[str] = None  # Base64 encoded image data
+    image_description: Optional[str] = None  # AI-generated description of the image
     
     def __post_init__(self):
         if self.metadata is None:
@@ -257,7 +259,8 @@ class ComoRAGEngine:
         context: Optional[str] = None,
         model: Optional[str] = None,
         max_cycles: int = 5,
-        memory_size: Optional[int] = None
+        memory_size: Optional[int] = None,
+        images: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Perform ComoRAG reasoning"""
         if not self._initialized:
@@ -281,6 +284,13 @@ class ComoRAGEngine:
         current_query = query
         global_context = context or ""
         
+        # Process images if provided and vision is enabled
+        vision_context = ""
+        if images and getattr(self.settings.comorag, 'enable_vision_analysis', False):
+            vision_context = await self._analyze_images_with_vision(images, query, model)
+            if vision_context:
+                global_context = f"{global_context}\n\nVision Analysis:\n{vision_context}" if global_context else f"Vision Analysis:\n{vision_context}"
+        
         # Add initial query to memory
         query_embedding = self._get_embedding(query)
         initial_memory = MemoryItem(
@@ -288,7 +298,9 @@ class ComoRAGEngine:
             content=query,
             embedding=query_embedding,
             timestamp=time.time(),
-            source="query"
+            source="query",
+            image_data=images[0] if images else None,
+            image_description=vision_context if vision_context else None
         )
         self.memory_workspace.add_memory(initial_memory)
         
@@ -664,6 +676,53 @@ New Exploratory Question:"""
             "reasoning_history_length": len(self.reasoning_history),
             "embedding_model_loaded": self.embedding_model is not None
         }
+    
+    async def _analyze_images_with_vision(self, images: List[str], query: str, model: str) -> str:
+        """Analyze images using vision model to provide context for reasoning"""
+        try:
+            # Use vision model if available, otherwise fall back to default model
+            vision_model = getattr(self.settings.ollama, 'vision_model', model)
+            
+            # Prepare vision analysis prompt
+            vision_prompt = f"""
+Analyze the provided image(s) in the context of this query: "{query}"
+
+Provide a detailed description of:
+1. What you see in the image(s)
+2. How the visual content relates to the query
+3. Any relevant context that might help answer the query
+4. Key elements, text, or interface components visible
+
+Be specific and focus on details that could be relevant to understanding the current context and providing an appropriate response.
+"""
+            
+            # Generate vision analysis using the vision model
+            try:
+                response = await self.ollama_engine.generate(
+                    model=vision_model,
+                    prompt=vision_prompt,
+                    images=images,
+                    temperature=0.3,  # Lower temperature for more consistent analysis
+                    max_tokens=1024
+                )
+                
+                if isinstance(response, dict) and 'text' in response:
+                    vision_analysis = response['text']
+                elif isinstance(response, dict) and 'response' in response:
+                    vision_analysis = response['response']
+                else:
+                    vision_analysis = str(response)
+                
+                logger.info(f"Vision analysis completed for {len(images)} image(s)")
+                return vision_analysis
+                
+            except Exception as e:
+                logger.error(f"Error in vision model analysis: {e}")
+                return f"Vision analysis failed: {str(e)}"
+                
+        except Exception as e:
+            logger.error(f"Error in vision analysis setup: {e}")
+            return ""
     
     async def cleanup(self):
         """Cleanup resources"""

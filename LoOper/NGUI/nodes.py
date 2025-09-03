@@ -272,7 +272,10 @@ class LLMNode(BaseNode):
             'api_url': get_default_api_url(),
             'write_text': True,
             'use_vision': False,
-            'screenshot_enabled': True
+            'screenshot_enabled': True,
+            'use_comorag': True,
+            'max_cycles': 5,
+            'memory_size': 1000
         }
         
         # Set a distinct color for LLM nodes (orange)
@@ -294,6 +297,9 @@ class LLMNode(BaseNode):
         self.add_text_input('write_text', 'Write Text', 'true')
         self.add_text_input('use_vision', 'Use Vision', 'false')
         self.add_text_input('screenshot_enabled', 'Screenshot Enabled', 'true')
+        self.add_text_input('use_comorag', 'Use ComoRAG', 'true')
+        self.add_text_input('max_cycles', 'Max Cycles', '5')
+        self.add_text_input('memory_size', 'Memory Size', '1000')
         
     def set_llm_config(self, config):
         """Set the LLM configuration for this node"""

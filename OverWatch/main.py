@@ -132,6 +132,7 @@ class ComoRAGRequest(BaseModel):
     model: Optional[str] = Field(None, description="Model to use for reasoning")
     max_cycles: Optional[int] = Field(5, ge=1, le=20, description="Maximum reasoning cycles")
     memory_size: Optional[int] = Field(1000, ge=100, le=10000, description="Memory pool size")
+    images: Optional[List[str]] = Field(None, description="Base64 encoded images for vision analysis")
 
 
 class HealthResponse(BaseModel):
@@ -304,7 +305,8 @@ async def comorag_reasoning(request: ComoRAGRequest):
             context=request.context,
             model=request.model,
             max_cycles=request.max_cycles,
-            memory_size=request.memory_size
+            memory_size=request.memory_size,
+            images=request.images
         )
         
         return response

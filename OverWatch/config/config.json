@@ -15,7 +15,9 @@
     "top_k": 40,
     "repeat_penalty": 1.1,
     "timeout": 300,
-    "default_models": ["llama3.1:8b-instruct-q8_0"]
+    "default_models": ["llama3.1:8b-instruct-q8_0", "minicpm-v:latest"],
+    "vision_model": "minicpm-v:latest",
+    "enable_vision": true
   },
   "comorag": {
     "memory_size": 1000,
@@ -24,7 +26,10 @@
     "memory_consolidation_threshold": 0.7,
     "embedding_model": "all-MiniLM-L6-v2",
     "enable_faiss": true,
-    "probing_queries_count": 3
+    "probing_queries_count": 3,
+    "enable_vision_analysis": true,
+    "vision_context_weight": 0.3,
+    "max_image_size": 2048
   },
   "tailscale": {
     "enabled": true,
