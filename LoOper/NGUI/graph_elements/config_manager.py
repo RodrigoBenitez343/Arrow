@@ -528,8 +528,8 @@ class ConfigManager:
                     # Set properties
                     node.set_property('prompt', prompt)
                     node.set_property('model', model)
-                    node.set_property('temperature', temperature)
-                    node.set_property('max_tokens', max_tokens)
+                    node.set_property('temperature', str(temperature))
+                    node.set_property('max_tokens', str(max_tokens))
                     logger.debug(f"Set properties for LLM node with model: {model}")
                     
                     # Set position
