@@ -628,6 +628,17 @@ class NodeOperations:
             screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
             dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
             
+            # Handle ComoRAG properties
+            use_comorag_str = node.get_property('use_comorag') or 'true'
+            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_comorag_checkbox.setChecked(use_comorag)
+            
+            max_cycles = int(node.get_property('max_cycles') or 5)
+            dialog.max_cycles_spin.setValue(max_cycles)
+            
+            memory_size = int(node.get_property('memory_size') or 1000)
+            dialog.memory_size_spin.setValue(memory_size)
+            
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
                 # Update node properties
@@ -641,6 +652,9 @@ class NodeOperations:
                 node.set_property('write_text', str(dialog.write_text_checkbox.isChecked()).lower())
                 node.set_property('use_vision', str(dialog.use_vision_checkbox.isChecked()).lower())
                 node.set_property('screenshot_enabled', str(dialog.screenshot_enabled_checkbox.isChecked()).lower())
+                node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
+                node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
+                node.set_property('memory_size', str(dialog.memory_size_spin.value()))
                 
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:

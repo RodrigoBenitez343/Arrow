@@ -320,6 +320,9 @@ class LLMNode(BaseNode):
         self.set_property('write_text', str(config.get('write_text', True)).lower())
         self.set_property('use_vision', str(config.get('use_vision', False)).lower())
         self.set_property('screenshot_enabled', str(config.get('screenshot_enabled', True)).lower())
+        self.set_property('use_comorag', str(config.get('use_comorag', True)).lower())
+        self.set_property('max_cycles', str(config.get('max_cycles', 5)))
+        self.set_property('memory_size', str(config.get('memory_size', 1000)))
     
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
@@ -329,6 +332,8 @@ class LLMNode(BaseNode):
         use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
         screenshot_enabled_str = self.get_property('screenshot_enabled') or 'true'
         screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
+        use_comorag_str = self.get_property('use_comorag') or 'true'
+        use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
         return {
             'model': self.get_property('model'),
             'prompt': self.get_property('prompt'),
@@ -339,7 +344,10 @@ class LLMNode(BaseNode):
             'api_url': self.get_property('api_url'),
             'write_text': write_text,
             'use_vision': use_vision,
-            'screenshot_enabled': screenshot_enabled
+            'screenshot_enabled': screenshot_enabled,
+            'use_comorag': use_comorag,
+            'max_cycles': int(self.get_property('max_cycles') or 5),
+            'memory_size': int(self.get_property('memory_size') or 1000)
         }
     
     def is_vision_model(self, model_name):
