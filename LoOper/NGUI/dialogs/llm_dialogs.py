@@ -215,6 +215,49 @@ class LLMPropertiesDialog(QDialog):
         
         layout.addWidget(vision_group)
         
+        # ComoRAG Configuration Group
+        comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
+        comorag_layout = QGridLayout(comorag_group)
+        comorag_layout.setContentsMargins(10, 15, 10, 10)
+        comorag_layout.setSpacing(10)
+        
+        # Enable ComoRAG checkbox
+        comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
+        self.enable_comorag_checkbox = QCheckBox("Use context-aware reasoning with workflow data")
+        self.enable_comorag_checkbox.setChecked(True)
+        comorag_layout.addWidget(self.enable_comorag_checkbox, 0, 1)
+        
+        # Context collection options
+        comorag_layout.addWidget(QLabel("Collect Screenshots:"), 1, 0)
+        self.collect_screenshots_checkbox = QCheckBox("Include recent screenshots in context")
+        self.collect_screenshots_checkbox.setChecked(True)
+        comorag_layout.addWidget(self.collect_screenshots_checkbox, 1, 1)
+        
+        comorag_layout.addWidget(QLabel("Collect Automations:"), 2, 0)
+        self.collect_automations_checkbox = QCheckBox("Include automation JSON files in context")
+        self.collect_automations_checkbox.setChecked(True)
+        comorag_layout.addWidget(self.collect_automations_checkbox, 2, 1)
+        
+        comorag_layout.addWidget(QLabel("Collect Workflow State:"), 3, 0)
+        self.collect_workflow_checkbox = QCheckBox("Include current workflow state in context")
+        self.collect_workflow_checkbox.setChecked(True)
+        comorag_layout.addWidget(self.collect_workflow_checkbox, 3, 1)
+        
+        # Context limit
+        comorag_layout.addWidget(QLabel("Max Context Items:"), 4, 0)
+        self.max_context_spin = QSpinBox()
+        self.max_context_spin.setRange(1, 20)
+        self.max_context_spin.setValue(10)
+        comorag_layout.addWidget(self.max_context_spin, 4, 1)
+        
+        # Add help text for ComoRAG
+        comorag_help_label = QLabel("ComoRAG enhances LLM responses by providing context from screenshots, automation files, and workflow state. This enables more intelligent and context-aware automation decisions.")
+        comorag_help_label.setWordWrap(True)
+        comorag_help_label.setStyleSheet("color: #888; font-size: 11px; margin-top: 5px;")
+        comorag_layout.addWidget(comorag_help_label, 5, 0, 1, 2)
+        
+        layout.addWidget(comorag_group)
+        
         # Dialog buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
@@ -234,6 +277,13 @@ class LLMPropertiesDialog(QDialog):
             self.write_text_checkbox.setChecked(self.current_config.get('write_text', True))
             self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
             self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
+            
+            # Load ComoRAG configuration
+            self.enable_comorag_checkbox.setChecked(self.current_config.get('enable_comorag', True))
+            self.collect_screenshots_checkbox.setChecked(self.current_config.get('collect_screenshots', True))
+            self.collect_automations_checkbox.setChecked(self.current_config.get('collect_automations', True))
+            self.collect_workflow_checkbox.setChecked(self.current_config.get('collect_workflow_state', True))
+            self.max_context_spin.setValue(self.current_config.get('max_context_items', 10))
     
     def get_config(self):
         """Get the LLM configuration from the dialog"""
@@ -247,5 +297,12 @@ class LLMPropertiesDialog(QDialog):
             'output_variable': self.output_variable_entry.text() or 'llm_output',
             'write_text': self.write_text_checkbox.isChecked(),
             'use_vision': self.use_vision_checkbox.isChecked(),
-            'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked()
+            'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
+            
+            # ComoRAG configuration
+            'enable_comorag': self.enable_comorag_checkbox.isChecked(),
+            'collect_screenshots': self.collect_screenshots_checkbox.isChecked(),
+            'collect_automations': self.collect_automations_checkbox.isChecked(),
+            'collect_workflow_state': self.collect_workflow_checkbox.isChecked(),
+            'max_context_items': self.max_context_spin.value()
         }

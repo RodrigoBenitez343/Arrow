@@ -9,6 +9,8 @@ import os
 import time
 from ..config import logger
 from ..screenshot_cleanup import register_temporal_screenshot, cleanup_screenshot
+import glob
+import json
 
 
 # Get default API URL from environment variables (same as consult.py)
@@ -24,6 +26,8 @@ class LLMExecutor:
     
     def __init__(self, variables=None):
         self.variables = variables or {}
+        self.context_collector = None
+        self._initialize_context_collector()
     
     def execute_llm_node(self, node, stop_flag, action_handlers=None):
         """
@@ -49,6 +53,7 @@ class LLMExecutor:
                 sys.path.append(project_root)
             
             from AI.consult import OllamaClient
+            from AI.context_collector import ContextCollector
             
             # Get LLM configuration - handle both nested and direct formats
             llm_config = llm_data.get('llm_configuration', {})
@@ -150,17 +155,33 @@ class LLMExecutor:
                 messages.append({"role": "user", "content": prompt})
             logger.info(f"Prepared messages (legacy): {messages}")
 
-            logger.info(f"Making LLM API request...")
+            # Collect context data for ComoRAG integration
+            config = llm_config.get('comorag_config', {})
+            context_data = self._collect_workflow_context(node, action_handlers, config=config)
+            
+            # Add current screenshot to context if taken
+            if images and self.context_collector:
+                for image_path in images:
+                    screenshot_context = self.context_collector.collect_screenshot_context(
+                        image_path, 
+                        f"Screenshot for LLM node: {llm_data.get('name', 'Unknown')}"
+                    )
+                    if screenshot_context:
+                        context_data.append(screenshot_context)
+            
+            logger.info(f"Making LLM API request with {len(context_data)} context items...")
             logger.info(f"Request parameters: model={model}, prompt='{prompt}', system='{system_message}', temperature={temperature}, max_tokens={max_tokens}")
             
             try:
-                response = client.chat(
+                # Use generate method with context for ComoRAG integration
+                response = client.generate(
                     model=model,
                     prompt=prompt,
-                    system=system_message if system_message else None,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    images=images
+                    system=system_message if system_message else None,
+                    image_path=images[0] if images else None,
+                    context=context_data if context_data else None
                 )
                 logger.info(f"Raw API response: {response}")
                 logger.info(f"Response type: {type(response)}")
@@ -267,3 +288,93 @@ class LLMExecutor:
     def get_all_variables(self):
         """Get all variables"""
         return self.variables.copy()
+    
+    def _initialize_context_collector(self):
+        """Initialize the context collector for ComoRAG integration"""
+        try:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if project_root not in sys.path:
+                sys.path.append(project_root)
+            
+            from AI.context_collector import ContextCollector
+            self.context_collector = ContextCollector(workspace_path=project_root)
+            logger.info("Context collector initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize context collector: {e}")
+            self.context_collector = None
+    
+    def _collect_workflow_context(self, node, action_handlers=None, config=None):
+        """Collect context data for the current workflow state based on configuration"""
+        if not self.context_collector:
+            return []
+        
+        # Default configuration if none provided
+        if config is None:
+            config = {
+                'collect_workflow_state': True,
+                'collect_screenshots': True,
+                'collect_automations': True,
+                'max_context_items': 10,
+                'screenshot_limit': 3,
+                'automation_limit': 2
+            }
+        
+        context_items = []
+        max_items = config.get('max_context_items', 10)
+        
+        try:
+            # Collect workflow state context if enabled
+            if config.get('collect_workflow_state', True):
+                workflow_data = {
+                    "current_node": node.get('id', 'unknown'),
+                    "node_type": node.get('type', 'unknown'),
+                    "variables": self.variables.copy(),
+                    "status": "executing",
+                    "name": node.get('data', {}).get('name', 'unknown_workflow')
+                }
+                
+                workflow_context = self.context_collector.collect_workflow_state_context(workflow_data)
+                if workflow_context:
+                    context_items.append(workflow_context)
+            
+            # Collect recent screenshots from screenshots directory if enabled
+            if config.get('collect_screenshots', True):
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                screenshots_dir = os.path.join(project_root, 'screenshots')
+                if os.path.exists(screenshots_dir):
+                    screenshot_limit = min(config.get('screenshot_limit', 3), max_items - len(context_items))
+                    recent_screenshots = self.context_collector.collect_recent_screenshots(screenshots_dir, limit=screenshot_limit)
+                    context_items.extend(recent_screenshots)
+            
+            # Collect recent automation JSON files if enabled
+            if config.get('collect_automations', True):
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                automations_dir = os.path.join(project_root, 'automations')
+                if os.path.exists(automations_dir):
+                    automation_limit = min(config.get('automation_limit', 2), max_items - len(context_items))
+                    recent_automations = self.context_collector.collect_recent_automations(automations_dir, limit=automation_limit)
+                    context_items.extend(recent_automations)
+                
+                # Look for workflow JSON files in common locations
+                remaining_slots = max_items - len(context_items)
+                if remaining_slots > 0:
+                    for search_dir in [project_root, os.path.join(project_root, 'workflows'), os.path.join(project_root, 'sequences')]:
+                        if os.path.exists(search_dir) and remaining_slots > 0:
+                            json_files = glob.glob(os.path.join(search_dir, '*.json'))
+                            for json_file in json_files[:remaining_slots]:  # Limit based on remaining slots
+                                automation_context = self.context_collector.collect_automation_json_context(json_file)
+                                if automation_context:
+                                    context_items.append(automation_context)
+                                    remaining_slots -= 1
+                                    if remaining_slots <= 0:
+                                        break
+            
+            # Limit total context items
+            context_items = context_items[:max_items]
+            
+            logger.info(f"Collected {len(context_items)} context items for ComoRAG")
+            return context_items
+            
+        except Exception as e:
+            logger.error(f"Error collecting workflow context: {e}")
+            return []

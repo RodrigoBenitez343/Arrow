@@ -10,6 +10,7 @@ import argparse
 import sys
 import base64
 import os
+import time
 from typing import Optional, List, Dict, Any
 from urllib.parse import urljoin
 
@@ -31,6 +32,8 @@ class OllamaClient:
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         })
+        self.use_comorag = os.getenv("USE_COMORAG", "false").lower() == "true"
+        self.context_data = []  # Store context for ComoRAG
     
     def health_check(self) -> Dict[str, Any]:
         """Check if the API server and Ollama are healthy"""
@@ -96,9 +99,60 @@ class OllamaClient:
                 temperature: Optional[float] = None,
                 max_tokens: Optional[int] = None,
                 system: Optional[str] = None,
-                images: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Generate text using the specified model (alias for chat)"""
+                images: Optional[List[str]] = None,
+                context: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        """Generate text using the specified model with optional ComoRAG integration"""
+        # Use ComoRAG endpoint if enabled and context is available
+        if self.use_comorag and (context or self.context_data):
+            return self._comorag_reason(model, prompt, temperature, max_tokens, system, images, context)
+        
         return self.chat(model, prompt, temperature, max_tokens, system, images)
+    
+    def _comorag_reason(self, model: str, prompt: str, 
+                       temperature: Optional[float] = None,
+                       max_tokens: Optional[int] = None,
+                       system: Optional[str] = None,
+                       images: Optional[List[str]] = None,
+                       context: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        """Use ComoRAG reasoning endpoint for enhanced context-aware generation"""
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "context": context or self.context_data,
+            "stream": False
+        }
+        
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if system is not None:
+            payload["system"] = system
+        if images is not None:
+            payload["images"] = self._process_images(images)
+        
+        try:
+            response = self.session.post(
+                f"{self.base_url}/comorag/reason",
+                json=payload,
+                timeout=120
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            return {"error": str(e)}
+    
+    def add_context(self, context_item: Dict[str, Any]) -> None:
+        """Add a context item to the ComoRAG context data"""
+        self.context_data.append(context_item)
+    
+    def clear_context(self) -> None:
+        """Clear all context data"""
+        self.context_data.clear()
+    
+    def get_context(self) -> List[Dict[str, Any]]:
+        """Get current context data"""
+        return self.context_data.copy()
     
     def _process_images(self, images: List[str]) -> List[str]:
         """Process images for API request
