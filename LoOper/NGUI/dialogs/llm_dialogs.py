@@ -31,8 +31,8 @@ class LLMPropertiesDialog(QDialog):
         
         self.setWindowTitle("LLM Node Configuration")
         self.setModal(True)
-        self.resize(600, 500)
-        self.setMinimumSize(500, 400)
+        self.resize(600, 380)  # Wider but shorter dialog
+        self.setMinimumSize(600, 380)
         
         # Apply styling consistent with other dialogs
         self.setStyleSheet(f"""
@@ -95,14 +95,14 @@ class LLMPropertiesDialog(QDialog):
     def setup_ui(self):
         """Setup the UI for the dialog"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
+        layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
+        layout.setSpacing(8)  # Reduced spacing between elements
         
         # Model Configuration Group
         model_group = QGroupBox("Model Configuration")
         model_layout = QGridLayout(model_group)
-        model_layout.setContentsMargins(10, 15, 10, 10)
-        model_layout.setSpacing(10)
+        model_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
+        model_layout.setSpacing(6)  # Reduced spacing
         
         # Model selection
         model_layout.addWidget(QLabel("Model:"), 0, 0)
@@ -135,20 +135,20 @@ class LLMPropertiesDialog(QDialog):
         # Prompt Configuration Group
         prompt_group = QGroupBox("Prompt Configuration")
         prompt_layout = QVBoxLayout(prompt_group)
-        prompt_layout.setContentsMargins(10, 15, 10, 10)
-        prompt_layout.setSpacing(10)
+        prompt_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
+        prompt_layout.setSpacing(6)  # Reduced spacing
         
         # System message
         prompt_layout.addWidget(QLabel("System Message (optional):"))
         self.system_message_edit = QTextEdit()
-        self.system_message_edit.setMaximumHeight(80)
+        self.system_message_edit.setMaximumHeight(60)  # Reduced height
         self.system_message_edit.setPlaceholderText("Enter system instructions for the AI model...")
         prompt_layout.addWidget(self.system_message_edit)
         
         # User prompt
         prompt_layout.addWidget(QLabel("Prompt:"))
         self.prompt_edit = QTextEdit()
-        self.prompt_edit.setMaximumHeight(120)
+        self.prompt_edit.setMaximumHeight(80)  # Reduced height
         self.prompt_edit.setPlaceholderText("Enter your prompt here...")
         prompt_layout.addWidget(self.prompt_edit)
         
@@ -157,8 +157,8 @@ class LLMPropertiesDialog(QDialog):
         # Parameters Group
         params_group = QGroupBox("Generation Parameters")
         params_layout = QGridLayout(params_group)
-        params_layout.setContentsMargins(10, 15, 10, 10)
-        params_layout.setSpacing(10)
+        params_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
+        params_layout.setSpacing(6)  # Reduced spacing
         
         # Temperature
         params_layout.addWidget(QLabel("Temperature:"), 0, 0)
@@ -212,8 +212,8 @@ class LLMPropertiesDialog(QDialog):
         # Vision Configuration Group
         vision_group = QGroupBox("Vision Configuration")
         vision_layout = QGridLayout(vision_group)
-        vision_layout.setContentsMargins(10, 15, 10, 10)
-        vision_layout.setSpacing(10)
+        vision_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
+        vision_layout.setSpacing(6)  # Reduced spacing
         
         # Use vision checkbox
         vision_layout.addWidget(QLabel("Use Vision:"), 0, 0)
@@ -228,9 +228,9 @@ class LLMPropertiesDialog(QDialog):
         vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
         
         # Add help text
-        help_label = QLabel("Note: Vision models can analyze screenshots along with text prompts. Enable 'Use Vision' to force vision mode, or leave unchecked for automatic detection.")
+        help_label = QLabel("Note: Vision models can analyze screenshots along with text prompts.")
         help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: #888; font-size: 11px; margin-top: 5px;")
+        help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         vision_layout.addWidget(help_label, 2, 0, 1, 2)
         
         layout.addWidget(vision_group)
@@ -238,8 +238,8 @@ class LLMPropertiesDialog(QDialog):
         # ComoRAG Configuration Group
         comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
         comorag_layout = QGridLayout(comorag_group)
-        comorag_layout.setContentsMargins(10, 15, 10, 10)
-        comorag_layout.setSpacing(10)
+        comorag_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
+        comorag_layout.setSpacing(6)  # Reduced spacing
         
         # Enable ComoRAG checkbox
         comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
@@ -265,18 +265,22 @@ class LLMPropertiesDialog(QDialog):
         comorag_layout.addWidget(self.memory_size_spin, 2, 1)
         
         # Add help text for ComoRAG
-        comorag_help_label = QLabel("ComoRAG enhances LLM responses by providing context-aware reasoning through OverWatch. It automatically includes screenshots, OCR text, and workflow state for better automation decisions.")
+        comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning.")
         comorag_help_label.setWordWrap(True)
-        comorag_help_label.setStyleSheet("color: #888; font-size: 11px; margin-top: 5px;")
+        comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
         
         layout.addWidget(comorag_group)
         
-        # Dialog buttons
+        # Dialog buttons in a more compact layout
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(button_box)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addLayout(button_layout)
     
     def load_current_config(self):
         """Load current configuration into the dialog"""

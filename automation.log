@@ -1,0 +1,601 @@
+2025-09-03 04:40:32,770 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:41:42,058 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:42:49,784 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:42:49,784 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 04:42:49,785 - INFO - Context collector initialized successfully
+2025-09-03 04:42:49,786 - INFO - Starting chain playback
+2025-09-03 04:42:51,787 - DEBUG - Found starting node: 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:42:51,788 - INFO - Starting workflow execution from nodes: ['0x1e1c38743e0']
+2025-09-03 04:42:51,791 - INFO - Executing node 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:42:51,792 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:42:51,792 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:42:51,793 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:42:51,860 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:51,898 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:51,934 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:51,981 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:52,027 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:52,077 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:52,077 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:52,079 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:52,136 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:52,180 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:52,231 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:52,272 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:52,313 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:52,360 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:52,361 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:52,365 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:52,365 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:52,912 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:52,949 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:52,985 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:53,030 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:53,073 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:53,118 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:53,119 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:53,121 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:53,162 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:53,201 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:53,239 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:53,283 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:53,327 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:53,370 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:53,370 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:53,372 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:53,372 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:53,927 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:53,965 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:54,002 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:54,051 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:54,147 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:54,214 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:54,214 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:54,217 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:54,267 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:54,307 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:54,347 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:54,389 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:54,443 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:54,488 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:54,488 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:54,490 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:54,490 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:55,059 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:55,107 - DEBUG - Scale 0.8: confidence 0.673 at (1826, 882)
+2025-09-03 04:42:55,167 - DEBUG - Scale 0.9: confidence 0.642 at (1822, 877)
+2025-09-03 04:42:55,228 - DEBUG - Scale 1.0: confidence 0.566 at (1818, 880)
+2025-09-03 04:42:55,275 - DEBUG - Scale 1.1: confidence 0.547 at (1816, 877)
+2025-09-03 04:42:55,316 - DEBUG - Scale 1.2: confidence 0.470 at (1809, 651)
+2025-09-03 04:42:55,317 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:55,319 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:55,362 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:55,398 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:42:55,435 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:42:55,478 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:42:55,522 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:42:55,603 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:42:55,603 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:55,606 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:55,607 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:56,168 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:56,207 - DEBUG - Scale 0.8: confidence 0.536 at (1695, 149)
+2025-09-03 04:42:56,243 - DEBUG - Scale 0.9: confidence 0.511 at (1337, 951)
+2025-09-03 04:42:56,286 - DEBUG - Scale 1.0: confidence 0.492 at (1025, 777)
+2025-09-03 04:42:56,328 - DEBUG - Scale 1.1: confidence 0.545 at (1020, 772)
+2025-09-03 04:42:56,370 - DEBUG - Scale 1.2: confidence 0.541 at (1013, 769)
+2025-09-03 04:42:56,370 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:56,373 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:56,474 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:56,573 - DEBUG - Scale 0.8: confidence 0.536 at (1695, 149)
+2025-09-03 04:42:56,658 - DEBUG - Scale 0.9: confidence 0.511 at (1337, 951)
+2025-09-03 04:42:56,731 - DEBUG - Scale 1.0: confidence 0.492 at (1025, 777)
+2025-09-03 04:42:56,778 - DEBUG - Scale 1.1: confidence 0.545 at (1020, 772)
+2025-09-03 04:42:56,827 - DEBUG - Scale 1.2: confidence 0.541 at (1013, 769)
+2025-09-03 04:42:56,828 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:56,830 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:56,831 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:56,832 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:56,832 - INFO - Conditional evaluation result: False
+2025-09-03 04:42:56,833 - INFO - Node 0x1e1c38743e0 completed successfully
+2025-09-03 04:42:56,833 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 04:42:56,833 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:42:56,834 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:42:56,834 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:42:56,897 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:56,937 - DEBUG - Scale 0.8: confidence 0.603 at (1804, 39)
+2025-09-03 04:42:56,974 - DEBUG - Scale 0.9: confidence 0.571 at (1752, 219)
+2025-09-03 04:42:57,014 - DEBUG - Scale 1.0: confidence 0.524 at (1745, 217)
+2025-09-03 04:42:57,057 - DEBUG - Scale 1.1: confidence 0.522 at (1739, 214)
+2025-09-03 04:42:57,100 - DEBUG - Scale 1.2: confidence 0.507 at (1398, 860)
+2025-09-03 04:42:57,100 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:57,102 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:57,144 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:57,180 - DEBUG - Scale 0.8: confidence 0.603 at (1804, 39)
+2025-09-03 04:42:57,212 - DEBUG - Scale 0.9: confidence 0.571 at (1752, 219)
+2025-09-03 04:42:57,265 - DEBUG - Scale 1.0: confidence 0.524 at (1745, 217)
+2025-09-03 04:42:57,356 - DEBUG - Scale 1.1: confidence 0.522 at (1739, 214)
+2025-09-03 04:42:57,463 - DEBUG - Scale 1.2: confidence 0.507 at (1398, 860)
+2025-09-03 04:42:57,463 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:57,469 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:57,470 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:58,017 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:58,052 - DEBUG - Scale 0.8: confidence 0.583 at (1758, 223)
+2025-09-03 04:42:58,086 - DEBUG - Scale 0.9: confidence 0.574 at (1752, 220)
+2025-09-03 04:42:58,129 - DEBUG - Scale 1.0: confidence 0.534 at (1745, 218)
+2025-09-03 04:42:58,171 - DEBUG - Scale 1.1: confidence 0.534 at (1739, 214)
+2025-09-03 04:42:58,214 - DEBUG - Scale 1.2: confidence 0.507 at (1398, 860)
+2025-09-03 04:42:58,214 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:58,216 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:58,263 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:58,297 - DEBUG - Scale 0.8: confidence 0.567 at (1690, 222)
+2025-09-03 04:42:58,331 - DEBUG - Scale 0.9: confidence 0.549 at (1683, 219)
+2025-09-03 04:42:58,376 - DEBUG - Scale 1.0: confidence 0.502 at (1676, 217)
+2025-09-03 04:42:58,419 - DEBUG - Scale 1.1: confidence 0.515 at (1740, 214)
+2025-09-03 04:42:58,462 - DEBUG - Scale 1.2: confidence 0.507 at (1398, 860)
+2025-09-03 04:42:58,462 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:58,463 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:58,464 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:42:59,039 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:42:59,108 - DEBUG - Scale 0.8: confidence 0.585 at (1758, 222)
+2025-09-03 04:42:59,166 - DEBUG - Scale 0.9: confidence 0.574 at (1752, 219)
+2025-09-03 04:42:59,216 - DEBUG - Scale 1.0: confidence 0.531 at (1745, 218)
+2025-09-03 04:42:59,269 - DEBUG - Scale 1.1: confidence 0.530 at (1739, 214)
+2025-09-03 04:42:59,326 - DEBUG - Scale 1.2: confidence 0.508 at (1733, 214)
+2025-09-03 04:42:59,327 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:42:59,330 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:42:59,400 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:42:59,442 - DEBUG - Scale 0.8: confidence 0.442 at (338, 285)
+2025-09-03 04:42:59,484 - DEBUG - Scale 0.9: confidence 0.440 at (332, 278)
+2025-09-03 04:42:59,531 - DEBUG - Scale 1.0: confidence 0.429 at (327, 273)
+2025-09-03 04:42:59,575 - DEBUG - Scale 1.1: confidence 0.456 at (320, 264)
+2025-09-03 04:42:59,617 - DEBUG - Scale 1.2: confidence 0.451 at (314, 256)
+2025-09-03 04:42:59,618 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:42:59,620 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:42:59,620 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:43:00,221 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:43:00,257 - DEBUG - Scale 0.8: confidence 0.442 at (338, 285)
+2025-09-03 04:43:00,297 - DEBUG - Scale 0.9: confidence 0.440 at (332, 278)
+2025-09-03 04:43:00,366 - DEBUG - Scale 1.0: confidence 0.429 at (327, 273)
+2025-09-03 04:43:00,425 - DEBUG - Scale 1.1: confidence 0.456 at (320, 264)
+2025-09-03 04:43:00,481 - DEBUG - Scale 1.2: confidence 0.451 at (314, 256)
+2025-09-03 04:43:00,481 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:43:00,483 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:43:00,544 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:43:00,580 - DEBUG - Scale 0.8: confidence 0.449 at (1847, 941)
+2025-09-03 04:43:00,616 - DEBUG - Scale 0.9: confidence 0.426 at (343, 289)
+2025-09-03 04:43:00,660 - DEBUG - Scale 1.0: confidence 0.406 at (337, 281)
+2025-09-03 04:43:00,706 - DEBUG - Scale 1.1: confidence 0.430 at (331, 275)
+2025-09-03 04:43:00,752 - DEBUG - Scale 1.2: confidence 0.428 at (325, 267)
+2025-09-03 04:43:00,753 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:43:00,755 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:43:00,755 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:43:01,256 - INFO - Presence trigger check stopped by user request
+2025-09-03 04:43:01,256 - INFO - Conditional result: False, taking 'false' branch
+2025-09-03 04:43:01,257 - INFO - Conditional node chose branch leading to: 0x1e1c38742b0
+2025-09-03 04:43:01,257 - INFO - Workflow execution stopped by user request
+2025-09-03 04:43:20,426 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:43:20,427 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 04:43:20,429 - INFO - Context collector initialized successfully
+2025-09-03 04:43:20,429 - INFO - Starting chain playback
+2025-09-03 04:43:22,430 - DEBUG - Found starting node: 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:43:22,431 - INFO - Starting workflow execution from nodes: ['0x1e1c38743e0']
+2025-09-03 04:43:22,431 - INFO - Executing node 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:43:22,432 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:43:22,432 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:43:22,432 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:43:22,504 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:43:22,544 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:22,582 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:22,629 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:22,629 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:22,674 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:22,716 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:22,717 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:22,718 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:43:22,771 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:43:22,813 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:22,849 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:22,892 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:22,892 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:22,943 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:22,987 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:22,987 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:22,990 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:43:23,042 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:43:23,080 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:23,117 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:23,164 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:23,164 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,226 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:23,269 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:23,269 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,271 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:43:23,272 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:43:23,272 - INFO - [FOUND] Presence trigger satisfied after 0.84s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:43:23,272 - INFO - Conditional evaluation result: True
+2025-09-03 04:43:23,272 - INFO - Node 0x1e1c38743e0 completed successfully
+2025-09-03 04:43:23,273 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 04:43:23,273 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:43:23,273 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:43:23,273 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:43:23,319 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:43:23,355 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:23,389 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:23,430 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:23,431 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,475 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:23,521 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:23,522 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,524 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:43:23,568 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:43:23,602 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:23,639 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:23,682 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:23,682 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,723 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:23,765 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:23,765 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,767 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:43:23,817 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:43:23,851 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:43:23,883 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:43:23,931 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:43:23,931 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:23,975 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:43:24,017 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:43:24,017 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:43:24,019 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:43:24,019 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:43:24,020 - INFO - [FOUND] Presence trigger satisfied after 0.75s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:43:24,020 - INFO - Conditional result: True, taking 'true' branch
+2025-09-03 04:43:24,021 - INFO - Conditional node chose branch leading to: 0x1e1ba123950
+2025-09-03 04:43:24,021 - INFO - Executing node 0x1e1ba123950 (type: tts)
+2025-09-03 04:43:24,022 - INFO - Executing TTS node: we are in the desktop...
+2025-09-03 04:43:24,084 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\david.benitez\\OneDrive - Motivus\\Documents\\LoOper\\venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-09-03 04:43:24,085 - INFO - Using writeable comtypes cache directory: 'C:\Users\david.benitez\OneDrive - Motivus\Documents\LoOper\venv\Lib\site-packages\comtypes\gen'
+2025-09-03 04:43:26,783 - INFO - TTS execution successful: TTS spoke: "we are in the desktop"
+2025-09-03 04:43:26,783 - INFO - Node 0x1e1ba123950 completed successfully
+2025-09-03 04:43:26,784 - DEBUG - Node 0x1e1ba1236f0 is now ready (all inputs satisfied)
+2025-09-03 04:43:26,784 - INFO - Nodes now ready for execution: ['0x1e1ba1236f0']
+2025-09-03 04:43:26,784 - INFO - Executing node 0x1e1ba1236f0 (type: sequence)
+2025-09-03 04:43:26,784 - INFO - === STARTING SEQUENCE NODE EXECUTION ===
+2025-09-03 04:43:26,784 - INFO - Executing sequence node: carpeta.json
+2025-09-03 04:43:26,784 - INFO - Full node data: {'type': 'sequence', 'data': {'name': 'carpeta.json', 'sequence_file': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json', 'actions': [], 'node_id': '0x1e1ba1236f0', 'position': [-523.0587364456314, -781.3249912638981], 'connections': [{'output_port': 'output_1', 'target_node_id': '0x1e1c3874510', 'input_port': 'input_1'}]}, 'index': 0, 'connections': {'output': [{'node_id': '0x1e1c3874510'}]}, 'inputs': [{'from_node': '0x1e1ba123950', 'output_type': 'output'}]}
+2025-09-03 04:43:26,784 - INFO - Found sequence file at: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json
+2025-09-03 04:43:26,785 - INFO - Executing sequence: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json (loops: 1, extra_delay: 0)
+2025-09-03 04:43:26,785 - INFO - Starting loop 1/1 for sequence: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json
+2025-09-03 04:43:26,785 - INFO - Sequence contains 2 actions
+2025-09-03 04:43:26,785 - INFO - Loaded sequence for playback: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json
+2025-09-03 04:43:26,785 - INFO - Sequence contains 2 actions
+2025-09-03 04:43:26,786 - INFO - Loaded sequence for playback: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/sequences/carpeta.json
+2025-09-03 04:43:26,786 - INFO - Starting desktop playback
+2025-09-03 04:43:28,786 - DEBUG - Action 0: Waiting 0.94s before action
+2025-09-03 04:43:28,989 - INFO - Action execution stopped during delay
+2025-09-03 04:43:28,989 - INFO - Playback stopped by user request
+2025-09-03 04:43:28,990 - INFO - Node 0x1e1ba1236f0 completed successfully
+2025-09-03 04:43:28,990 - DEBUG - Node 0x1e1c3874510 is now ready (all inputs satisfied)
+2025-09-03 04:43:28,990 - INFO - Nodes now ready for execution: ['0x1e1c3874510']
+2025-09-03 04:43:28,991 - INFO - Workflow execution stopped by user request
+2025-09-03 04:43:59,608 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:43:59,608 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 04:43:59,610 - INFO - Context collector initialized successfully
+2025-09-03 04:43:59,610 - INFO - Starting chain playback
+2025-09-03 04:44:01,611 - DEBUG - Found starting node: 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:44:01,611 - INFO - Starting workflow execution from nodes: ['0x1e1c38743e0']
+2025-09-03 04:44:01,612 - INFO - Executing node 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:44:01,612 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:44:01,612 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:44:01,613 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:44:01,667 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:01,709 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:44:01,747 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:44:01,794 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:44:01,837 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:44:01,881 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:44:01,881 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:44:01,883 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:44:01,929 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:44:01,963 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:44:01,998 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:44:02,039 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:44:02,083 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:44:02,124 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:44:02,125 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:44:02,126 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:44:02,127 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:44:02,695 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:02,761 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:44:02,832 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:44:02,905 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:44:02,970 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:44:03,034 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:44:03,034 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:44:03,037 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:44:03,100 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:44:03,136 - DEBUG - Scale 0.8: confidence 0.676 at (1826, 882)
+2025-09-03 04:44:03,172 - DEBUG - Scale 0.9: confidence 0.644 at (1822, 877)
+2025-09-03 04:44:03,221 - DEBUG - Scale 1.0: confidence 0.568 at (1818, 880)
+2025-09-03 04:44:03,265 - DEBUG - Scale 1.1: confidence 0.549 at (1816, 877)
+2025-09-03 04:44:03,308 - DEBUG - Scale 1.2: confidence 0.473 at (1809, 651)
+2025-09-03 04:44:03,308 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:44:03,310 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:44:03,310 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:44:03,873 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:03,906 - DEBUG - Scale 0.8: confidence 0.574 at (1758, 223)
+2025-09-03 04:44:03,942 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:03,984 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:03,985 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,025 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:04,066 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:04,066 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,068 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:44:04,122 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:44:04,155 - DEBUG - Scale 0.8: confidence 0.574 at (1758, 223)
+2025-09-03 04:44:04,192 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:04,240 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:04,240 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,286 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:04,333 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:04,334 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,336 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:44:04,388 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:04,424 - DEBUG - Scale 0.8: confidence 0.573 at (1758, 223)
+2025-09-03 04:44:04,458 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:04,502 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:04,502 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,548 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:04,595 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:04,596 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,599 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:44:04,599 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:44:04,599 - INFO - [FOUND] Presence trigger satisfied after 2.99s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:44:04,600 - INFO - Conditional evaluation result: True
+2025-09-03 04:44:04,600 - INFO - Node 0x1e1c38743e0 completed successfully
+2025-09-03 04:44:04,600 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 04:44:04,600 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:44:04,601 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:44:04,601 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:44:04,657 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:04,734 - DEBUG - Scale 0.8: confidence 0.574 at (1758, 223)
+2025-09-03 04:44:04,784 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:04,854 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:04,854 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,911 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:04,955 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:04,955 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:04,957 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:44:05,007 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:44:05,085 - DEBUG - Scale 0.8: confidence 0.574 at (1758, 223)
+2025-09-03 04:44:05,133 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:05,186 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:05,187 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:05,306 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:05,413 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:05,414 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:05,417 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:44:05,485 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:44:05,574 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:44:05,656 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:44:05,724 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:44:05,725 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:05,789 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:44:05,861 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:44:05,862 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:44:05,865 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:44:05,865 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:44:05,866 - INFO - [FOUND] Presence trigger satisfied after 1.26s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:44:05,866 - INFO - Conditional result: True, taking 'true' branch
+2025-09-03 04:44:05,867 - INFO - Conditional node chose branch leading to: 0x1e1ba123950
+2025-09-03 04:44:05,867 - INFO - Executing node 0x1e1ba123950 (type: tts)
+2025-09-03 04:44:05,868 - INFO - Executing TTS node: we are in the desktop...
+2025-09-03 04:44:05,951 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\david.benitez\\OneDrive - Motivus\\Documents\\LoOper\\venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-09-03 04:44:05,952 - INFO - Using writeable comtypes cache directory: 'C:\Users\david.benitez\OneDrive - Motivus\Documents\LoOper\venv\Lib\site-packages\comtypes\gen'
+2025-09-03 04:44:08,738 - INFO - TTS execution successful: TTS spoke: "we are in the desktop"
+2025-09-03 04:44:08,739 - INFO - Node 0x1e1ba123950 completed successfully
+2025-09-03 04:44:08,739 - INFO - Workflow execution completed successfully
+2025-09-03 04:44:32,420 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:45:16,259 - INFO - Built workflow graph with 13 nodes
+2025-09-03 04:45:16,259 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 04:45:16,261 - INFO - Context collector initialized successfully
+2025-09-03 04:45:16,261 - INFO - Starting chain playback
+2025-09-03 04:45:18,261 - DEBUG - Found starting node: 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:45:18,262 - INFO - Starting workflow execution from nodes: ['0x1e1c38743e0']
+2025-09-03 04:45:18,262 - INFO - Executing node 0x1e1c38743e0 (type: conditional)
+2025-09-03 04:45:18,262 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:45:18,262 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:45:18,262 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:45:18,332 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:18,378 - DEBUG - Scale 0.8: confidence 0.673 at (1826, 882)
+2025-09-03 04:45:18,422 - DEBUG - Scale 0.9: confidence 0.642 at (1822, 877)
+2025-09-03 04:45:18,465 - DEBUG - Scale 1.0: confidence 0.566 at (1818, 880)
+2025-09-03 04:45:18,507 - DEBUG - Scale 1.1: confidence 0.547 at (1816, 877)
+2025-09-03 04:45:18,551 - DEBUG - Scale 1.2: confidence 0.452 at (1806, 707)
+2025-09-03 04:45:18,551 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:45:18,553 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:45:18,600 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:45:18,639 - DEBUG - Scale 0.8: confidence 0.673 at (1826, 882)
+2025-09-03 04:45:18,675 - DEBUG - Scale 0.9: confidence 0.642 at (1822, 877)
+2025-09-03 04:45:18,719 - DEBUG - Scale 1.0: confidence 0.566 at (1818, 880)
+2025-09-03 04:45:18,763 - DEBUG - Scale 1.1: confidence 0.547 at (1816, 877)
+2025-09-03 04:45:18,807 - DEBUG - Scale 1.2: confidence 0.452 at (1806, 707)
+2025-09-03 04:45:18,808 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:45:18,810 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:45:18,810 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:45:19,379 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:19,429 - DEBUG - Scale 0.8: confidence 0.673 at (1826, 882)
+2025-09-03 04:45:19,465 - DEBUG - Scale 0.9: confidence 0.642 at (1822, 877)
+2025-09-03 04:45:19,510 - DEBUG - Scale 1.0: confidence 0.566 at (1818, 880)
+2025-09-03 04:45:19,556 - DEBUG - Scale 1.1: confidence 0.547 at (1816, 877)
+2025-09-03 04:45:19,605 - DEBUG - Scale 1.2: confidence 0.452 at (1806, 707)
+2025-09-03 04:45:19,605 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.8
+2025-09-03 04:45:19,607 - DEBUG - [VALIDATION 1/3] Multi-scale match failed
+2025-09-03 04:45:19,649 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:45:19,690 - DEBUG - Scale 0.8: confidence 0.673 at (1826, 882)
+2025-09-03 04:45:19,733 - DEBUG - Scale 0.9: confidence 0.642 at (1822, 877)
+2025-09-03 04:45:19,783 - DEBUG - Scale 1.0: confidence 0.566 at (1818, 880)
+2025-09-03 04:45:19,829 - DEBUG - Scale 1.1: confidence 0.547 at (1816, 877)
+2025-09-03 04:45:19,875 - DEBUG - Scale 1.2: confidence 0.452 at (1806, 707)
+2025-09-03 04:45:19,876 - DEBUG - Multi-scale matching failed: best confidence 0.000 < threshold 0.9
+2025-09-03 04:45:19,879 - DEBUG - [VALIDATION 2/3] High confidence match failed (threshold: 0.9)
+2025-09-03 04:45:19,879 - DEBUG - [SINGLE CHECK FAILED] Image validation failed (0/2): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:45:20,459 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:20,497 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:20,533 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:20,573 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:20,574 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:20,615 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:20,659 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:20,659 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:20,661 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:45:20,712 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:45:20,748 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:20,783 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:20,834 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:20,834 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:20,877 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:20,920 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:20,920 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:20,921 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:45:20,961 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:20,995 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:21,036 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:21,079 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:21,079 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,121 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:21,164 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:21,164 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,165 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:45:21,166 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:45:21,166 - INFO - [FOUND] Presence trigger satisfied after 2.90s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:45:21,166 - INFO - Conditional evaluation result: True
+2025-09-03 04:45:21,166 - INFO - Node 0x1e1c38743e0 completed successfully
+2025-09-03 04:45:21,166 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 04:45:21,166 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 04:45:21,166 - DEBUG - Condition config: {'image_path': 'C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png', 'confidence': 0.8, 'timeout': 5.0, 'max_loops': 10, 'target_text': '', 'case_sensitive': 'true', 'language': 'eng', 'region': None}
+2025-09-03 04:45:21,166 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 04:45:21,213 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:21,249 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:21,286 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:21,330 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:21,330 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,374 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:21,418 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:21,418 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,420 - DEBUG - [VALIDATION 1/3] Multi-scale match found at (60, 202)
+2025-09-03 04:45:21,464 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.9
+2025-09-03 04:45:21,498 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:21,533 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:21,577 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:21,578 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,621 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:21,664 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:21,664 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,666 - DEBUG - [VALIDATION 2/3] High confidence match found at (60, 202)
+2025-09-03 04:45:21,712 - DEBUG - Multi-scale matching with 5 scales, confidence threshold: 0.8
+2025-09-03 04:45:21,748 - DEBUG - Scale 0.8: confidence 0.553 at (21, 139)
+2025-09-03 04:45:21,781 - DEBUG - Scale 0.9: confidence 0.685 at (18, 141)
+2025-09-03 04:45:21,823 - DEBUG - Scale 1.0: confidence 1.000 at (14, 135)
+2025-09-03 04:45:21,823 - DEBUG - New best match at scale 1.0: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,867 - DEBUG - Scale 1.1: confidence 0.722 at (10, 130)
+2025-09-03 04:45:21,913 - DEBUG - Scale 1.2: confidence 0.610 at (3, 414)
+2025-09-03 04:45:21,913 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 04:45:21,915 - DEBUG - [VALIDATION 3/3] Grayscale match found at (60, 202)
+2025-09-03 04:45:21,916 - DEBUG - [SINGLE CHECK PASSED] Image validation passed (3/3): C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png at coordinates (60, 202)
+2025-09-03 04:45:21,916 - INFO - [FOUND] Presence trigger satisfied after 0.75s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 04:45:21,916 - INFO - Conditional result: True, taking 'true' branch
+2025-09-03 04:45:21,916 - INFO - Conditional node chose branch leading to: 0x1e1ba123950
+2025-09-03 04:45:21,917 - INFO - Executing node 0x1e1ba123950 (type: tts)
+2025-09-03 04:45:21,917 - INFO - Executing TTS node: we are in the desktop...
+2025-09-03 04:45:21,970 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\david.benitez\\OneDrive - Motivus\\Documents\\LoOper\\venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-09-03 04:45:21,970 - INFO - Using writeable comtypes cache directory: 'C:\Users\david.benitez\OneDrive - Motivus\Documents\LoOper\venv\Lib\site-packages\comtypes\gen'
+2025-09-03 04:45:23,982 - INFO - TTS execution successful: TTS spoke: "we are in the desktop"
+2025-09-03 04:45:23,983 - INFO - Node 0x1e1ba123950 completed successfully
+2025-09-03 04:45:23,983 - INFO - Workflow execution completed successfully
+2025-09-03 08:38:02,375 - INFO - Built workflow graph with 13 nodes
+2025-09-03 08:38:02,376 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 08:38:02,378 - INFO - Context collector initialized successfully
+2025-09-03 08:38:02,384 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:38:02,385 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:38:07,386 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:38:07,388 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 08:38:07,389 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:38:07,390 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:38:07,977 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:38:07,979 - INFO - [FOUND] Presence trigger satisfied after 0.59s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:38:07,980 - INFO - Conditional result: True, taking 'true' branch
+2025-09-03 08:38:07,980 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:38:07,981 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:38:13,317 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
+2025-09-03 08:38:13,317 - INFO - Executing conditional node: 0x1e1ba123100
+2025-09-03 08:38:13,318 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:38:13,318 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:38:18,671 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
+2025-09-03 08:38:18,671 - INFO - Conditional result: False, taking 'false' branch
+2025-09-03 08:41:52,794 - INFO - Built workflow graph with 13 nodes
+2025-09-03 08:41:52,795 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 08:41:52,796 - INFO - Context collector initialized successfully
+2025-09-03 08:41:53,407 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:41:53,407 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 0.0s)
+2025-09-03 08:41:53,668 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:53,934 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:54,196 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:54,199 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:41:54,199 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:41:54,439 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:54,688 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:54,945 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:54,948 - INFO - [FOUND] Presence trigger satisfied after 0.75s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:41:54,948 - INFO - Executing conditional node: 0x1e1c38743e0
+2025-09-03 08:41:54,949 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:41:54,949 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:41:55,199 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:55,464 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:55,714 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:41:55,717 - INFO - [FOUND] Presence trigger satisfied after 0.77s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:41:55,717 - INFO - Conditional result: True, taking 'true' branch
+2025-09-03 08:41:56,217 - INFO - Multi-scale match found: confidence 0.622, coords (1712, 148)
+2025-09-03 08:41:56,220 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:41:56,220 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 0.0s)
+2025-09-03 08:41:56,745 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:41:56,745 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:42:02,347 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
+2025-09-03 08:42:02,349 - INFO - Executing conditional node: 0x1e1ba123100
+2025-09-03 08:42:02,349 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:42:02,349 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 5.0s)
+2025-09-03 08:42:07,350 - INFO - [TIMEOUT] Presence trigger timeout after 5.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
+2025-09-03 08:42:07,351 - INFO - Conditional result: False, taking 'false' branch
+2025-09-03 08:45:37,753 - INFO - Built workflow graph with 13 nodes
+2025-09-03 08:45:37,754 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 08:45:37,757 - INFO - Context collector initialized successfully
+2025-09-03 08:46:39,623 - INFO - Built workflow graph with 13 nodes
+2025-09-03 08:46:39,623 - INFO - Loaded workflow chain with 5 sequences, 2 conditional nodes, 1 LLM nodes, and 5 TTS nodes
+2025-09-03 08:46:39,628 - INFO - Context collector initialized successfully
+2025-09-03 08:46:39,631 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:39,632 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 0.0s)
+2025-09-03 08:46:39,999 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:40,235 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:40,492 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:40,495 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:40,496 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.8, timeout: 1.0s)
+2025-09-03 08:46:40,743 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:40,988 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:41,240 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:41,242 - INFO - [FOUND] Presence trigger satisfied after 0.75s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:46:41,243 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:41,243 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png (confidence: 0.5, timeout: 1.0s)
+2025-09-03 08:46:41,495 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:41,747 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:41,997 - INFO - Multi-scale match found: confidence 1.000, coords (60, 202)
+2025-09-03 08:46:42,000 - INFO - [FOUND] Presence trigger satisfied after 0.76s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040242.png
+2025-09-03 08:46:42,036 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:42,037 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 0.0s)
+2025-09-03 08:46:42,568 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:42,569 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.8, timeout: 1.0s)
+2025-09-03 08:46:44,110 - INFO - [TIMEOUT] Presence trigger timeout after 1.0s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
+2025-09-03 08:46:44,110 - INFO - Evaluating conditional with raw trigger type: presence -> mapped to: presence_trigger
+2025-09-03 08:46:44,111 - INFO - Checking presence of image: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png (confidence: 0.5, timeout: 1.0s)
+2025-09-03 08:46:44,363 - INFO - Multi-scale match found: confidence 0.622, coords (1712, 148)
+2025-09-03 08:46:44,607 - INFO - Multi-scale match found: confidence 0.622, coords (1712, 148)
+2025-09-03 08:46:44,856 - INFO - Multi-scale match found: confidence 0.622, coords (1712, 148)
+2025-09-03 08:46:44,858 - INFO - [FOUND] Presence trigger satisfied after 0.75s: C:/Users/david.benitez/OneDrive - Motivus/Documents/LoOper/LoOper/chains/conditions/Screenshot 2025-09-03 040941.png
