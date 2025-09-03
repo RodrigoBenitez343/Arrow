@@ -108,6 +108,7 @@ class LLMExecutor:
             
             # Check if this is a vision model and handle screenshots
             images = None
+            ocr_text = None
             is_vision_model = client.is_vision_model(model)
             should_use_vision = use_vision or is_vision_model
             
@@ -139,6 +140,22 @@ class LLMExecutor:
                         images = [screenshot_path]
                         logger.info(f"Screenshot saved: {screenshot_path}")
                         
+                        # Extract OCR text from screenshot for enhanced context
+                        try:
+                            from ..computer_vision import TemplateMatching
+                            ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path)
+                            if ocr_results:
+                                ocr_text = "\n".join([item['text'] for item in ocr_results if item['confidence'] > 60])
+                                if ocr_text.strip():
+                                    logger.info(f"Extracted OCR text ({len(ocr_text)} chars): {ocr_text[:200]}...")
+                                else:
+                                    logger.info("No high-confidence OCR text extracted")
+                            else:
+                                logger.info("No OCR text extracted from screenshot")
+                        except Exception as ocr_error:
+                            logger.warning(f"OCR extraction failed: {ocr_error}")
+                            ocr_text = None
+                        
                     except Exception as screenshot_error:
                         logger.error(f"Failed to take screenshot: {screenshot_error}")
                         logger.warning("Continuing without screenshot")
@@ -169,18 +186,24 @@ class LLMExecutor:
                     if screenshot_context:
                         context_data.append(screenshot_context)
             
+            # Enhance prompt with OCR text if available
+            enhanced_prompt = prompt
+            if ocr_text and ocr_text.strip():
+                enhanced_prompt = f"{prompt}\n\n[Current Screen Text (OCR):]\n{ocr_text}"
+                logger.info(f"Enhanced prompt with OCR text ({len(ocr_text)} chars)")
+            
             logger.info(f"Making LLM API request with {len(context_data)} context items...")
-            logger.info(f"Request parameters: model={model}, prompt='{prompt}', system='{system_message}', temperature={temperature}, max_tokens={max_tokens}")
+            logger.info(f"Request parameters: model={model}, prompt='{enhanced_prompt[:200]}...', system='{system_message}', temperature={temperature}, max_tokens={max_tokens}")
             
             try:
                 # Use generate method with context for ComoRAG integration
                 response = client.generate(
                     model=model,
-                    prompt=prompt,
+                    prompt=enhanced_prompt,
                     temperature=temperature,
                     max_tokens=max_tokens,
                     system=system_message if system_message else None,
-                    image_path=images[0] if images else None,
+                    images=images if images else None,
                     context=context_data if context_data else None
                 )
                 logger.info(f"Raw API response: {response}")

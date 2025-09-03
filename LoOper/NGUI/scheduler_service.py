@@ -194,6 +194,13 @@ class SchedulerService:
         # Launch player as a subprocess (non-blocking)
         python_exe = sys.executable or 'python'
         cmd = [python_exe, '-m', 'player.main', chain_path]
+        
+        # On Linux, use xvfb-run to provide virtual display for GUI automation
+        import platform
+        import shutil
+        if platform.system() == "Linux" and shutil.which("xvfb-run"):
+            cmd = ["xvfb-run", "-a"] + cmd
+        
         subprocess.Popen(cmd, cwd=self.project_root)
 
     def _compute_next_run(self, schedule: Dict, from_time: Optional[datetime] = None) -> Optional[str]:

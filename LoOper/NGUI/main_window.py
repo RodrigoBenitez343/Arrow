@@ -230,7 +230,20 @@ class MainWindow(QMainWindow):
                 # Run the player with the saved chain config using subprocess
                 logger.info(f"Starting player subprocess with file: {temp_filename}")
                 try:
+                    # Construct base command
                     cmd = [sys.executable, "-m", "player.main", temp_filename]
+                    
+                    # On Linux, use xvfb-run to provide virtual display for GUI automation
+                    import platform
+                    if platform.system() == "Linux":
+                        # Check if xvfb-run is available
+                        import shutil
+                        if shutil.which("xvfb-run"):
+                            cmd = ["xvfb-run", "-a"] + cmd
+                            logger.debug("Using xvfb-run for virtual display on Linux")
+                        else:
+                            logger.warning("xvfb-run not found, player may fail on headless systems")
+                    
                     logger.debug(f"Running command: {' '.join(cmd)}")
                     result = subprocess.run(cmd, check=True, capture_output=True, text=True)
                     logger.info("Player subprocess completed successfully")

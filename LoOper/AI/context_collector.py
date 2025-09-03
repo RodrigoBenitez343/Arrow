@@ -6,6 +6,16 @@ from datetime import datetime
 import glob
 from pathlib import Path
 
+# Import OCR functionality
+try:
+    import pytesseract
+    from PIL import Image
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    pytesseract = None
+    Image = None
+
 class ContextCollector:
     """Collects context data for ComoRAG integration including screenshots, automation data, and workflow state"""
     
@@ -14,14 +24,23 @@ class ContextCollector:
         self.context_data = []
         self.max_context_items = 50  # Limit context size
         
-    def collect_screenshot_context(self, screenshot_path: str, action_description: str = None) -> Dict[str, Any]:
-        """Collect screenshot context with optional action description"""
+    def collect_screenshot_context(self, screenshot_path: str, action_description: str = None, extract_ocr: bool = True) -> Dict[str, Any]:
+        """Collect screenshot context with optional action description and OCR text extraction"""
         if not os.path.exists(screenshot_path):
             return None
             
         try:
             with open(screenshot_path, 'rb') as img_file:
                 img_data = base64.b64encode(img_file.read()).decode('utf-8')
+            
+            # Extract OCR text if enabled and available
+            ocr_text = None
+            ocr_elements = []
+            if extract_ocr and OCR_AVAILABLE:
+                try:
+                    ocr_text, ocr_elements = self._extract_ocr_text(screenshot_path)
+                except Exception as ocr_error:
+                    print(f"OCR extraction failed for {screenshot_path}: {ocr_error}")
                 
             context_item = {
                 "type": "screenshot",
@@ -29,9 +48,13 @@ class ContextCollector:
                 "image_data": img_data,
                 "file_path": screenshot_path,
                 "action_description": action_description or "Screen capture",
+                "ocr_text": ocr_text,
+                "ocr_elements": ocr_elements,
                 "metadata": {
                     "file_size": os.path.getsize(screenshot_path),
-                    "file_name": os.path.basename(screenshot_path)
+                    "file_name": os.path.basename(screenshot_path),
+                    "has_ocr": ocr_text is not None,
+                    "ocr_element_count": len(ocr_elements) if ocr_elements else 0
                 }
             }
             return context_item
@@ -110,6 +133,73 @@ class ContextCollector:
         except Exception as e:
             print(f"Error collecting recent screenshots: {e}")
             return []
+    
+    def _extract_ocr_text(self, image_path: str, min_confidence: float = 0.6) -> tuple[str, List[Dict[str, Any]]]:
+        """Extract text from image using OCR (Tesseract)
+        
+        Args:
+            image_path: Path to the image file
+            min_confidence: Minimum confidence threshold for text extraction
+            
+        Returns:
+            tuple: (combined_text, list_of_text_elements)
+        """
+        if not OCR_AVAILABLE:
+            return None, []
+            
+        try:
+            # Load image
+            image = Image.open(image_path)
+            
+            # Configure OCR settings for better accuracy
+            custom_config = '--oem 3 --psm 6 -l eng'
+            
+            # Get detailed OCR data with confidence scores
+            ocr_data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DICT)
+            
+            # Process OCR results
+            text_elements = []
+            all_text_parts = []
+            
+            for i in range(len(ocr_data['text'])):
+                text = ocr_data['text'][i].strip()
+                conf = float(ocr_data['conf'][i])
+                
+                if not text:  # Skip empty text
+                    continue
+                    
+                # Normalize confidence to 0-1 range (pytesseract uses 0-100)
+                normalized_conf = conf / 100.0
+                
+                # Check if confidence meets threshold
+                if normalized_conf < min_confidence:
+                    continue
+                
+                # Calculate bounding box
+                x = ocr_data['left'][i]
+                y = ocr_data['top'][i]
+                w = ocr_data['width'][i]
+                h = ocr_data['height'][i]
+                
+                text_element = {
+                    'text': text,
+                    'confidence': normalized_conf,
+                    'bbox': (x, y, w, h),
+                    'center': (x + w // 2, y + h // 2)
+                }
+                
+                text_elements.append(text_element)
+                all_text_parts.append(text)
+            
+            # Combine all text into a single string
+            combined_text = ' '.join(all_text_parts) if all_text_parts else None
+            
+            print(f"OCR extracted {len(text_elements)} text elements from {os.path.basename(image_path)}")
+            return combined_text, text_elements
+            
+        except Exception as e:
+            print(f"OCR text extraction failed: {e}")
+            return None, []
     
     def collect_recent_automations(self, automations_dir: str, limit: int = 3) -> List[Dict[str, Any]]:
         """Collect recent automation JSON files from a directory"""

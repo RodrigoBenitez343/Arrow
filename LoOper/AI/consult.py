@@ -86,7 +86,7 @@ class OllamaClient:
         
         try:
             response = self.session.post(
-                f"{self.base_url}/chat",
+                f"{self.base_url}/generate",
                 json=payload,
                 timeout=120  # 2 minutes timeout
             )
@@ -115,21 +115,49 @@ class OllamaClient:
                        images: Optional[List[str]] = None,
                        context: Optional[List[Dict]] = None) -> Dict[str, Any]:
         """Use ComoRAG reasoning endpoint for enhanced context-aware generation"""
+        
+        # Prepare context string from context items
+        context_str = ""
+        if context or self.context_data:
+            context_items = context or self.context_data
+            context_parts = []
+            
+            for item in context_items:
+                if isinstance(item, dict):
+                    # Handle different context item formats
+                    if 'content' in item:
+                        content = item['content']
+                        source = item.get('source', 'unknown')
+                        context_parts.append(f"[{source}]: {content}")
+                    elif 'ocr_text' in item:
+                        ocr_text = item['ocr_text']
+                        if ocr_text and ocr_text.strip():
+                            context_parts.append(f"[Screen Text]: {ocr_text}")
+                    elif 'text' in item:
+                        context_parts.append(f"[Context]: {item['text']}")
+                elif isinstance(item, str):
+                    context_parts.append(f"[Context]: {item}")
+            
+            if context_parts:
+                context_str = "\n\n".join(context_parts)
+        
+        # Add system message to context if provided
+        if system:
+            full_context = f"System: {system}\n\n{context_str}" if context_str else f"System: {system}"
+        else:
+            full_context = context_str
+        
+        # ComoRAG API expects 'query' not 'prompt'
         payload = {
+            "query": prompt,
             "model": model,
-            "prompt": prompt,
-            "context": context or self.context_data,
-            "stream": False
+            "max_cycles": 3,  # Reasonable default for automation context
+            "memory_size": 1000
         }
         
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        if system is not None:
-            payload["system"] = system
-        if images is not None:
-            payload["images"] = self._process_images(images)
+        # Add context if available
+        if full_context:
+            payload["context"] = full_context
         
         try:
             response = self.session.post(
@@ -138,7 +166,21 @@ class OllamaClient:
                 timeout=120
             )
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            
+            # Transform ComoRAG response to match expected format
+            if 'response' in result:
+                return {
+                    'response': result['response'],
+                    'comorag_metadata': {
+                        'confidence': result.get('confidence', 0.0),
+                        'reasoning_cycles': result.get('reasoning_cycles', 0),
+                        'memory_items_used': result.get('memory_items_used', 0)
+                    }
+                }
+            else:
+                return result
+                
         except requests.exceptions.RequestException as e:
             return {"error": str(e)}
     
