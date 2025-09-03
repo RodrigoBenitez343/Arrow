@@ -203,6 +203,9 @@ class LLMExecutor:
                     if 'response' in response:
                         generated_text = response['response']
                         logger.info(f"Extracted text from 'response' key: {generated_text}")
+                    elif 'text' in response:
+                        generated_text = response['text']
+                        logger.info(f"Extracted text from 'text' key: {generated_text}")
                     elif 'message' in response and isinstance(response['message'], dict) and 'content' in response['message']:
                         generated_text = response['message']['content']
                         logger.info(f"Extracted text from 'message.content': {generated_text}")
