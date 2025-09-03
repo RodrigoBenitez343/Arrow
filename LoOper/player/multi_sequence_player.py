@@ -81,6 +81,59 @@ class MultiSequencePlayer(SeleniumBot):
             return self.workflow_navigator.find_starting_node()
         return None
     
+    def _find_all_starting_nodes(self):
+        """
+        Find all starting nodes for workflow execution (nodes with no inputs).
+        
+        Returns:
+            list: List of node IDs that have no input dependencies
+        """
+        starting_nodes = []
+        
+        for node_id, node_data in self.workflow_graph.items():
+            if 'inputs' not in node_data or not node_data['inputs']:
+                starting_nodes.append(node_id)
+                logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
+        
+        return starting_nodes
+    
+    def _find_newly_ready_nodes(self, completed_node_id, completed_nodes):
+        """
+        Find nodes that are now ready to execute after a node completes.
+        
+        Args:
+            completed_node_id (str): The node that just completed
+            completed_nodes (set): Set of all completed node IDs
+        
+        Returns:
+            list: List of node IDs that are now ready to execute
+        """
+        newly_ready = []
+        
+        # Check all nodes to see if any are now ready
+        for node_id, node_data in self.workflow_graph.items():
+            if node_id in completed_nodes:
+                continue  # Skip already completed nodes
+            
+            # Check if this node has the completed node as an input
+            node_inputs = node_data.get('inputs', [])
+            if not node_inputs:
+                continue  # No inputs, should already be in ready set
+            
+            # Check if all input dependencies are satisfied
+            all_inputs_satisfied = True
+            for input_connection in node_inputs:
+                input_node_id = input_connection['from_node']
+                if input_node_id not in completed_nodes:
+                    all_inputs_satisfied = False
+                    break
+            
+            if all_inputs_satisfied:
+                newly_ready.append(node_id)
+                logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
+        
+        return newly_ready
+    
     def _evaluate_conditional(self, conditional_node, stop_flag):
         """
         Evaluate a conditional node using the fallback handler.
@@ -370,54 +423,72 @@ class MultiSequencePlayer(SeleniumBot):
     
     def _play_workflow_graph(self, stop_flag):
         """
-        Plays sequences following the workflow graph with conditional branching.
+        Plays sequences following the workflow graph with proper dependency resolution.
+        Nodes with multiple inputs will only execute after all their dependencies are satisfied.
         """
-        # Find the starting node (node with no inputs)
-        starting_node_id = self._find_starting_node()
-        if not starting_node_id:
-            logger.warning("No starting node found in workflow graph")
-            return
-
-        logger.info(f"Starting workflow execution from node: {starting_node_id}")
-        current_node_id = starting_node_id
-        visited_nodes = set()
+        # Track completed nodes and nodes ready for execution
+        completed_nodes = set()
+        ready_nodes = set()
         
-        while current_node_id and current_node_id not in visited_nodes:
+        # Find all starting nodes (nodes with no inputs)
+        starting_nodes = self._find_all_starting_nodes()
+        if not starting_nodes:
+            logger.warning("No starting nodes found in workflow graph")
+            return
+        
+        logger.info(f"Starting workflow execution from nodes: {starting_nodes}")
+        ready_nodes.update(starting_nodes)
+        
+        # Execute nodes in dependency order
+        while ready_nodes:
             # Check stop flag
             if stop_flag and stop_flag():
                 logger.info("Workflow execution stopped by user request")
                 return
             
-            visited_nodes.add(current_node_id)
+            # Get next ready node to execute
+            current_node_id = ready_nodes.pop()
+            
+            if current_node_id in completed_nodes:
+                continue  # Skip already completed nodes
             
             if current_node_id not in self.workflow_graph:
                 logger.warning(f"Node {current_node_id} not found in workflow graph")
-                break
+                continue
             
             node = self.workflow_graph[current_node_id]
+            logger.info(f"Executing node {current_node_id} (type: {node['type']})")
             
+            # Execute the node based on its type
+            success = False
             if node['type'] == 'sequence':
-                # Execute sequence
-                next_node_id = self._execute_sequence_node(node, stop_flag)
-                current_node_id = next_node_id
+                success = self._execute_sequence_node(node, stop_flag) is not None
             elif node['type'] == 'conditional':
-                # Evaluate conditional and determine next node
-                next_node_id = self._execute_conditional_node(node, stop_flag)
-                current_node_id = next_node_id
+                success = self._execute_conditional_node(node, stop_flag) is not None
             elif node['type'] == 'llm':
-                # Execute LLM node
-                next_node_id = self._execute_llm_node(node, stop_flag)
-                current_node_id = next_node_id
+                success = self._execute_llm_node(node, stop_flag) is not None
             elif node['type'] == 'tts':
-                # Execute TTS node
-                next_node_id = self._execute_tts_node(node, stop_flag)
-                current_node_id = next_node_id
+                success = self._execute_tts_node(node, stop_flag) is not None
             else:
                 logger.warning(f"Unknown node type: {node['type']}")
-                break
+                continue
+            
+            if success:
+                # Mark node as completed
+                completed_nodes.add(current_node_id)
+                logger.info(f"Node {current_node_id} completed successfully")
+                
+                # Check which nodes are now ready to execute
+                newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
+                ready_nodes.update(newly_ready)
+                
+                if newly_ready:
+                    logger.info(f"Nodes now ready for execution: {newly_ready}")
+            else:
+                logger.error(f"Node {current_node_id} execution failed, stopping workflow")
+                return
         
-        if current_node_id in visited_nodes:
-            logger.warning(f"Detected cycle in workflow graph at node {current_node_id}")
+        logger.info("Workflow execution completed successfully")
     
     def _execute_sequence_node(self, node, stop_flag):
         """
