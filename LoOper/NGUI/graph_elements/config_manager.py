@@ -278,9 +278,21 @@ class ConfigManager:
         """Save a sequence node to configuration."""
         logger.debug(f"Saving sequence node {node.id} to configuration")
         try:
+            # Get sequence file, handling numbered node names
+            sequence_file = node.get_property('sequence_file')
+            if not sequence_file:
+                # Fallback to node name, but remove numbered suffix
+                node_name = node.name()
+                import re
+                if re.match(r'^(.+\.json)\s+\d+$', node_name):
+                    sequence_file = re.match(r'^(.+\.json)\s+\d+$', node_name).group(1)
+                    logger.debug(f"Extracted base filename '{sequence_file}' from numbered node name '{node_name}'")
+                else:
+                    sequence_file = node_name
+            
             sequence_data = {
                 "name": node.get_property('sequence_name') or node.name(),
-                "sequence_file": node.get_property('sequence_file') or node.name(),  # CRITICAL: Include sequence_file to prevent playback failures
+                "sequence_file": sequence_file,  # Use cleaned sequence file name
                 "actions": node.get_property('actions') or [],
                 "node_id": node.id,
                 "position": node.pos(),  # pos() returns [x, y] list directly
