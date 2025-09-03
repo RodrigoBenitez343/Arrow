@@ -259,6 +259,9 @@ class LLMNode(BaseNode):
     
     __identifier__ = 'llm'
     NODE_NAME = 'LLM'
+
+
+
     
     def __init__(self):
         super(LLMNode, self).__init__()
@@ -603,3 +606,45 @@ class TTSNode(BaseNode):
             return {
                 'error': f'TTS execution failed: {str(e)}'
             }
+
+
+class ContextBuilderNode(LLMNode):
+    """Node representing a context builder that uses LLM capabilities to build context without text output"""
+    
+    __identifier__ = 'context_builder'
+    NODE_NAME = 'Context Builder'
+    
+    def __init__(self):
+        super(ContextBuilderNode, self).__init__()
+        # Override default LLM config with context-specific defaults
+        self.llm_config.update({
+            'write_text': False,  # Don't write text to screen
+            'output_variable': 'context',  # Default variable name
+            'model': 'llama3.2:latest',
+            'system_message': 'You are a context builder assistant. Extract relevant information from the screen.',
+            'use_vision': True,  # Default to using vision
+            'screenshot_enabled': True,
+            'use_async': True  # Use async processing by default
+        })
+        
+        # Set a distinct color for Context Builder nodes (a variation of LLM color)
+        self.set_color(*[int(LLM_COLOR.strip('#')[i:i+2], 16) - 20 for i in (0, 2, 4)])
+        
+        # Update the node name
+        self.set_name("Context Builder")
+        
+    def set_context_builder_config(self, config):
+        """Set the Context Builder configuration for this node"""
+        # Ensure write_text is always False for context builders
+        config['write_text'] = False
+        super().set_llm_config(config)
+        
+        # Always update the name to reflect this is a context builder
+        self.set_name(f"Context Builder: {config.get('output_variable', 'context')}")
+        
+    def get_context_builder_config(self):
+        """Get the current Context Builder configuration"""
+        config = super().get_llm_config()
+        # Ensure write_text is always False
+        config['write_text'] = False
+        return config

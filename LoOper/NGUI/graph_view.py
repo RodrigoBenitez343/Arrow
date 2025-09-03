@@ -172,6 +172,17 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error adding TTS node: {str(e)}", exc_info=True)
             return None
+            
+    def add_context_builder_node(self, position=None):
+        """Add a new Context Builder node to the graph"""
+        logger.debug(f"Adding Context Builder node at position: {position}")
+        try:
+            result = self.node_operations.add_context_builder_node(position)
+            logger.info(f"Context Builder node added successfully: {result.name() if result else 'None'}")
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Context Builder node: {str(e)}", exc_info=True)
+            return None
     
     def add_sequence(self):
         """Add a new sequence node to the graph"""
@@ -336,6 +347,15 @@ class GraphViewWidget(QWidget):
             logger.info("TTS node edited successfully")
         except Exception as e:
             logger.error(f"Error editing TTS node: {str(e)}", exc_info=True)
+    
+    def edit_context_builder_node(self, node):
+        """Edit a Context Builder node configuration"""
+        logger.debug(f"Editing Context Builder node: {node.name() if node else 'None'}")
+        try:
+            self.node_operations.edit_context_builder_node(node)
+            logger.info("Context Builder node edited successfully")
+        except Exception as e:
+            logger.error(f"Error editing Context Builder node: {str(e)}", exc_info=True)
     
     def delete_node(self, node):
         """Delete a node from the graph"""

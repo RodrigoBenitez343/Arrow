@@ -3,7 +3,7 @@ import logging
 import os
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QFileDialog
 from ..dialogs import AdvancedConditionalDialog, LLMPropertiesDialog, TTSPropertiesDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ContextBuilderNode
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -308,6 +308,38 @@ class NodeOperations:
                 self.parent_widget, 
                 "Error", 
                 f"Failed to add LLM node: {str(e)}"
+            )
+            
+        return None
+        
+    def add_context_builder_node(self, pos=None):
+        """Add a new Context Builder node."""
+        logger.info(f"Adding Context Builder node at position: {pos}")
+        try:
+            # Create the node
+            logger.debug("Creating Context Builder node")
+            node = self.parent_widget.graph_manager.create_node(
+                'context_builder.ContextBuilderNode', 
+                name='Context Builder', 
+                pos=pos
+            )
+            
+            if node:
+                logger.debug(f"Setting default properties for Context Builder node {node.id}")
+                # Default properties are set in the ContextBuilderNode class
+                # We don't need to set them here as they're already configured in the node class
+                
+                logger.info(f"Successfully added Context Builder node {node.id}")
+                return node
+            else:
+                logger.error("Failed to create Context Builder node")
+                
+        except Exception as e:
+            logger.error(f"Error adding Context Builder node: {e}")
+            QMessageBox.critical(
+                self.parent_widget, 
+                "Error", 
+                f"Failed to add Context Builder node: {str(e)}"
             )
             
         return None
@@ -639,6 +671,31 @@ class NodeOperations:
             memory_size = int(node.get_property('memory_size') or 1000)
             dialog.memory_size_spin.setValue(memory_size)
             
+            use_vision_str = node.get_property('use_vision') or 'false'
+            use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_vision_checkbox.setChecked(use_vision)
+            
+            screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
+            screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
+            
+            # Handle ComoRAG properties
+            use_comorag_str = node.get_property('use_comorag') or 'true'
+            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_comorag_checkbox.setChecked(use_comorag)
+            
+            max_cycles = int(node.get_property('max_cycles') or 5)
+            dialog.max_cycles_spin.setValue(max_cycles)
+            
+            memory_size = int(node.get_property('memory_size') or 1000)
+            dialog.memory_size_spin.setValue(memory_size)
+            
+            # Handle async processing
+            use_async_str = node.get_property('use_async') or 'false'
+            use_async = use_async_str.lower() in ('true', '1', 'yes', 'on')
+            if hasattr(dialog, 'use_async_checkbox'):
+                dialog.use_async_checkbox.setChecked(use_async)
+            
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
                 # Update node properties
@@ -655,6 +712,10 @@ class NodeOperations:
                 node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
                 node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
                 node.set_property('memory_size', str(dialog.memory_size_spin.value()))
+                
+                # Save async setting if available
+                if hasattr(dialog, 'use_async_checkbox'):
+                    node.set_property('use_async', str(dialog.use_async_checkbox.isChecked()).lower())
                 
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:
@@ -704,6 +765,90 @@ class NodeOperations:
                 self.parent_widget, 
                 "Error", 
                 f"Failed to edit TTS node: {str(e)}"
+            )
+            
+    def edit_context_builder_node(self, node):
+        """Edit a Context Builder node's properties."""
+        logger.info(f"Editing Context Builder node: {node.id}")
+        try:
+            # Use the same dialog as LLM nodes since they share properties
+            logger.debug("Creating LLM dialog for Context Builder node")
+            dialog = LLMPropertiesDialog(self.parent_widget)
+            
+            # Set current values
+            logger.debug("Loading current values into dialog")
+            dialog.prompt_edit.setPlainText(node.get_property('prompt') or '')
+            dialog.model_combo.setCurrentText(node.get_property('model') or 'llama3.2:latest')
+            dialog.system_message_edit.setPlainText(node.get_property('system_message') or '')
+            dialog.api_url_entry.setText(node.get_property('api_url') or '')
+            dialog.temperature_spin.setValue(float(node.get_property('temperature') or 0.7))
+            dialog.max_tokens_spin.setValue(int(node.get_property('max_tokens') or 500))
+            dialog.output_variable_entry.setText(node.get_property('output_variable') or 'context')
+            
+            # For Context Builder, write_text is always false
+            dialog.write_text_checkbox.setChecked(False)
+            dialog.write_text_checkbox.setEnabled(False)  # Disable the checkbox
+            
+            # Handle boolean properties
+            use_vision_str = node.get_property('use_vision') or 'true'
+            use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_vision_checkbox.setChecked(use_vision)
+            
+            screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
+            screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
+            
+            # Handle ComoRAG properties
+            use_comorag_str = node.get_property('use_comorag') or 'true'
+            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_comorag_checkbox.setChecked(use_comorag)
+            
+            max_cycles = int(node.get_property('max_cycles') or 5)
+            dialog.max_cycles_spin.setValue(max_cycles)
+            
+            memory_size = int(node.get_property('memory_size') or 1000)
+            dialog.memory_size_spin.setValue(memory_size)
+            
+            # Handle async processing
+            use_async_str = node.get_property('use_async') or 'true'
+            use_async = use_async_str.lower() in ('true', '1', 'yes', 'on')
+            if hasattr(dialog, 'use_async_checkbox'):
+                dialog.use_async_checkbox.setChecked(use_async)
+            
+            if dialog.exec_() == dialog.Accepted:
+                logger.debug("Dialog accepted, updating node properties")
+                # Update node properties
+                node.set_property('prompt', dialog.prompt_edit.toPlainText())
+                node.set_property('model', dialog.model_combo.currentText())
+                node.set_property('system_message', dialog.system_message_edit.toPlainText())
+                node.set_property('api_url', dialog.api_url_entry.text())
+                node.set_property('temperature', str(dialog.temperature_spin.value()))
+                node.set_property('max_tokens', str(dialog.max_tokens_spin.value()))
+                node.set_property('output_variable', dialog.output_variable_entry.text())
+                
+                # For Context Builder, write_text is always false
+                node.set_property('write_text', 'false')
+                
+                node.set_property('use_vision', str(dialog.use_vision_checkbox.isChecked()).lower())
+                node.set_property('screenshot_enabled', str(dialog.screenshot_enabled_checkbox.isChecked()).lower())
+                node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
+                node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
+                node.set_property('memory_size', str(dialog.memory_size_spin.value()))
+                
+                # Save async setting if available
+                if hasattr(dialog, 'use_async_checkbox'):
+                    node.set_property('use_async', str(dialog.use_async_checkbox.isChecked()).lower())
+                
+                logger.info(f"Successfully edited Context Builder node: {node.id}")
+            else:
+                logger.debug("Dialog cancelled")
+                
+        except Exception as e:
+            logger.error(f"Error editing Context Builder node: {e}")
+            QMessageBox.critical(
+                self.parent_widget, 
+                "Error", 
+                f"Failed to edit Context Builder node: {str(e)}"
             )
             
     def _create_sequence_file(self, sequence_name):

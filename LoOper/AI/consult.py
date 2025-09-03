@@ -12,7 +12,9 @@ import base64
 import os
 import time
 import io
-from typing import Optional, List, Dict, Any
+import queue
+import threading
+from typing import Optional, List, Dict, Any, Tuple, Callable
 from urllib.parse import urljoin
 
 try:
@@ -24,9 +26,9 @@ except ImportError:
     ImageGrab = None
 
 class OllamaClient:
-    """Client for interacting with Ollama API Gateway"""
+    """Client for interacting with Ollama API Gateway with queue system for ComoRAG requests"""
     
-    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True):
+    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10):
         """Initialize the client with the API base URL"""
         # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
@@ -47,6 +49,13 @@ class OllamaClient:
             'max_cycles': 5,
             'memory_size': 1000
         }
+        
+        # Queue system for ComoRAG requests
+        self.request_queue = queue.Queue(maxsize=max_queue_size)
+        self.queue_processing = False
+        self.queue_lock = threading.Lock()
+        self.queue_thread = None
+        self.active_requests = {}  # Track active requests by ID
     
     def health_check(self) -> Dict[str, Any]:
         """Check if the API server and Ollama are healthy"""
@@ -119,13 +128,221 @@ class OllamaClient:
                 max_tokens: Optional[int] = None,
                 system: Optional[str] = None,
                 images: Optional[List[str]] = None,
-                context: Optional[List[Dict]] = None) -> Dict[str, Any]:
-        """Generate text using the specified model with optional ComoRAG integration"""
+                context: Optional[List[Dict]] = None,
+                async_request: bool = False,
+                callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+        """Generate text using the specified model with optional ComoRAG integration
+        
+        Args:
+            model: Model name to use
+            prompt: Text prompt
+            temperature: Temperature for generation
+            max_tokens: Maximum tokens to generate
+            system: System message
+            images: List of image paths or base64 encoded images
+            context: Additional context items for ComoRAG
+            async_request: Whether to process the request asynchronously using the queue
+            callback: Function to call when async request completes (receives request_id and result)
+            
+        Returns:
+            If async_request is False: The generation result
+            If async_request is True: A dict with request_id and status
+        """
         # Use ComoRAG if enabled (context is not required for ComoRAG)
         if self.use_comorag:
-            return self._comorag_reason(model, prompt, temperature, max_tokens, system, images, context)
+            if async_request:
+                return self._queue_comorag_request(model, prompt, temperature, max_tokens, 
+                                                 system, images, context, callback)
+            else:
+                return self._comorag_reason(model, prompt, temperature, max_tokens, 
+                                           system, images, context)
         
+        # For non-ComoRAG requests, we don't use the queue system
         return self.chat(model, prompt, temperature, max_tokens, system, images)
+    
+    def _queue_comorag_request(self, model: str, prompt: str,
+                              temperature: Optional[float] = None,
+                              max_tokens: Optional[int] = None,
+                              system: Optional[str] = None,
+                              images: Optional[List[str]] = None,
+                              context: Optional[List[Dict]] = None,
+                              callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
+        """Queue a ComoRAG request for asynchronous processing
+        
+        Args:
+            model: Model name to use
+            prompt: Text prompt
+            temperature: Temperature for generation
+            max_tokens: Maximum tokens to generate
+            system: System message
+            images: List of image paths or base64 encoded images
+            context: Additional context items for ComoRAG
+            callback: Function to call when request completes
+            
+        Returns:
+            Dict with request_id and status
+        """
+        # Generate a unique request ID
+        request_id = f"req_{int(time.time())}_{threading.get_ident()}_{len(self.active_requests)}"
+        
+        # Create request object
+        request = {
+            "id": request_id,
+            "model": model,
+            "prompt": prompt,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "system": system,
+            "images": images.copy() if images else None,
+            "context": context.copy() if context else None,
+            "callback": callback,
+            "timestamp": time.time()
+        }
+        
+        # Add to queue
+        try:
+            self.request_queue.put(request, block=False)
+            self.active_requests[request_id] = {"status": "queued", "timestamp": time.time()}
+            
+            if self.debug:
+                print(f"Queued ComoRAG request {request_id} (queue size: {self.request_queue.qsize()})")
+            
+            # Start queue processing if not already running
+            self._ensure_queue_processing()
+            
+            return {"request_id": request_id, "status": "queued"}
+        except queue.Full:
+            if self.debug:
+                print(f"ComoRAG request queue full, processing synchronously")
+            # If queue is full, process synchronously
+            result = self._comorag_reason(model, prompt, temperature, max_tokens, system, images, context)
+            return result
+    
+    def _ensure_queue_processing(self):
+        """Ensure the queue processing thread is running"""
+        with self.queue_lock:
+            if not self.queue_processing:
+                self.queue_processing = True
+                self.queue_thread = threading.Thread(target=self._process_queue, daemon=True)
+                self.queue_thread.start()
+                if self.debug:
+                    print("Started ComoRAG queue processing thread")
+    
+    def _process_queue(self):
+        """Process queued ComoRAG requests"""
+        while True:
+            try:
+                # Get next request from queue with timeout
+                try:
+                    request = self.request_queue.get(timeout=1.0)
+                except queue.Empty:
+                    # Check if we should continue processing
+                    with self.queue_lock:
+                        if self.request_queue.empty():
+                            self.queue_processing = False
+                            if self.debug:
+                                print("ComoRAG queue empty, stopping processing thread")
+                            break
+                        continue
+                
+                # Update request status
+                request_id = request["id"]
+                self.active_requests[request_id] = {"status": "processing", "timestamp": time.time()}
+                
+                if self.debug:
+                    print(f"Processing ComoRAG request {request_id}")
+                
+                # Process the request
+                try:
+                    result = self._comorag_reason(
+                        request["model"], 
+                        request["prompt"],
+                        request["temperature"],
+                        request["max_tokens"],
+                        request["system"],
+                        request["images"],
+                        request["context"]
+                    )
+                    
+                    # Update request status
+                    self.active_requests[request_id] = {"status": "completed", "timestamp": time.time()}
+                    
+                    # Call callback if provided
+                    if request["callback"]:
+                        try:
+                            request["callback"](request_id, result)
+                        except Exception as e:
+                            if self.debug:
+                                print(f"Error in callback for request {request_id}: {e}")
+                    
+                    if self.debug:
+                        print(f"Completed ComoRAG request {request_id}")
+                        
+                except Exception as e:
+                    # Update request status on error
+                    self.active_requests[request_id] = {"status": "error", "error": str(e), "timestamp": time.time()}
+                    
+                    if self.debug:
+                        print(f"Error processing ComoRAG request {request_id}: {e}")
+                    
+                    # Call callback with error if provided
+                    if request["callback"]:
+                        try:
+                            request["callback"](request_id, {"error": str(e)})
+                        except Exception as cb_error:
+                            if self.debug:
+                                print(f"Error in callback for request {request_id}: {cb_error}")
+                
+                # Mark task as done
+                self.request_queue.task_done()
+                
+            except Exception as e:
+                if self.debug:
+                    print(f"Error in ComoRAG queue processing: {e}")
+                time.sleep(1)  # Prevent tight loop on persistent errors
+    
+    def get_request_status(self, request_id: str) -> Dict[str, Any]:
+        """Get the status of a queued or processing request
+        
+        Args:
+            request_id: The request ID returned from _queue_comorag_request
+            
+        Returns:
+            Dict with status information
+        """
+        if request_id in self.active_requests:
+            return self.active_requests[request_id]
+        return {"status": "not_found"}
+    
+    def get_queue_status(self) -> Dict[str, Any]:
+        """Get the status of the request queue
+        
+        Returns:
+            Dict with queue status information
+        """
+        return {
+            "queue_size": self.request_queue.qsize(),
+            "active_requests": len(self.active_requests),
+            "is_processing": self.queue_processing
+        }
+    
+    def clear_queue(self) -> Dict[str, Any]:
+        """Clear all pending requests from the queue
+        
+        Returns:
+            Dict with operation status
+        """
+        # Create a new queue to replace the old one
+        with self.queue_lock:
+            old_size = self.request_queue.qsize()
+            self.request_queue = queue.Queue(maxsize=self.request_queue.maxsize)
+            
+            # Update status for queued requests
+            for req_id, status in self.active_requests.items():
+                if status["status"] == "queued":
+                    self.active_requests[req_id] = {"status": "cancelled", "timestamp": time.time()}
+        
+        return {"status": "success", "cleared_requests": old_size}
     
     def _comorag_reason(self, model: str, prompt: str, 
                        temperature: Optional[float] = None,

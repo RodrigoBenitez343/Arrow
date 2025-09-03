@@ -27,7 +27,9 @@ class LLMExecutor:
     def __init__(self, variables=None):
         self.variables = variables or {}
         self.context_collector = None
+        self.context_db = None
         self._initialize_context_collector()
+        self._initialize_context_database()
     
     def execute_llm_node(self, node, stop_flag, action_handlers=None):
         """
@@ -160,14 +162,39 @@ class LLMExecutor:
                                 if ocr_text.strip():
                                     logger.info(f"Extracted OCR text ({len(ocr_text)} chars): {ocr_text[:200]}...")
                                     # Add OCR text to context for ComoRAG integration
+                                    ocr_timestamp = time.time()
+                                    ocr_context = {
+                                        'ocr_text': ocr_text,
+                                        'source': 'screen_capture',
+                                        'type': 'ocr',
+                                        'timestamp': ocr_timestamp
+                                    }
+                                    
                                     if hasattr(client, 'add_context'):
-                                        client.add_context({
-                                            'ocr_text': ocr_text,
-                                            'source': 'screen_capture',
-                                            'type': 'ocr',
-                                            'timestamp': time.time()
-                                        })
+                                        client.add_context(ocr_context)
                                         logger.info(f"Added OCR text to ComoRAG context: {len(ocr_text)} characters")
+                                    
+                                    # Store OCR text in database for permanent storage
+                                    if self.context_db:
+                                        try:
+                                            chain_id = node.get('chain_id') or node.get('data', {}).get('chain_id')
+                                            sequence_id = node.get('sequence_id') or node.get('data', {}).get('sequence_id')
+                                            node_id = node.get('id') or node.get('data', {}).get('id')
+                                            
+                                            # Add OCR text to database
+                                            context_id = self.context_db.add_context_item(
+                                                content=ocr_text,
+                                                content_type="ocr_text",
+                                                source="screen_capture",
+                                                chain_id=chain_id,
+                                                sequence_id=sequence_id,
+                                                node_id=node_id,
+                                                metadata={"screenshot_path": screenshot_path},
+                                                timestamp=ocr_timestamp
+                                            )
+                                            logger.info(f"Stored OCR text in context database: context_id={context_id}")                                
+                                        except Exception as db_error:
+                                            logger.error(f"Failed to store OCR text in context database: {db_error}")
                                 else:
                                     logger.info("No high-confidence OCR text extracted")
                             else:
@@ -176,16 +203,42 @@ class LLMExecutor:
                             logger.warning(f"OCR extraction failed: {ocr_error}")
                             ocr_text = None
                         
-                        # Add screenshot context for ComoRAG integration
+                        # Add screenshot context for ComoRAG integration and store in database
+                        screenshot_timestamp = time.time()
+                        screenshot_context = {
+                            'screenshot_path': screenshot_path,
+                            'description': f'Screen capture for vision analysis at {time.strftime("%Y-%m-%d %H:%M:%S")}',
+                            'source': 'screen_capture',
+                            'type': 'image',
+                            'timestamp': screenshot_timestamp
+                        }
+                        
                         if hasattr(client, 'add_context'):
-                            client.add_context({
-                                'screenshot_path': screenshot_path,
-                                'description': f'Screen capture for vision analysis at {time.strftime("%Y-%m-%d %H:%M:%S")}',
-                                'source': 'screen_capture',
-                                'type': 'image',
-                                'timestamp': time.time()
-                            })
+                            client.add_context(screenshot_context)
                             logger.info(f"Added screenshot to ComoRAG context: {screenshot_path}")
+                        
+                        # Store screenshot in database for permanent storage
+                        if self.context_db:
+                            try:
+                                chain_id = node.get('chain_id') or node.get('data', {}).get('chain_id')
+                                sequence_id = node.get('sequence_id') or node.get('data', {}).get('sequence_id')
+                                node_id = node.get('id') or node.get('data', {}).get('id')
+                                
+                                # Add screenshot to database with metadata
+                                context_id, image_id = self.context_db.add_context_with_image(
+                                    content=f"Screenshot captured during LLM node execution: {node_id}",
+                                    content_type="screenshot",
+                                    source="llm_node",
+                                    image_path=screenshot_path,
+                                    chain_id=chain_id,
+                                    sequence_id=sequence_id,
+                                    node_id=node_id,
+                                    metadata={"description": screenshot_context['description']},
+                                    timestamp=screenshot_timestamp
+                                )
+                                logger.info(f"Stored screenshot in context database: context_id={context_id}, image_id={image_id}")                                
+                            except Exception as db_error:
+                                logger.error(f"Failed to store screenshot in context database: {db_error}")
                         
                     except Exception as screenshot_error:
                         logger.error(f"Failed to take screenshot: {screenshot_error}")
@@ -208,20 +261,48 @@ class LLMExecutor:
             context_data = self._collect_workflow_context(node, action_handlers, config=config)
             
             # Add only essential current workflow state context for ComoRAG
+            workflow_timestamp = time.time()
+            workflow_state = {
+                'current_node': node.get('id', 'unknown'),
+                'node_type': 'llm',
+                'timestamp': workflow_timestamp
+            }
+            
+            workflow_context = {
+                'workflow_state': workflow_state,
+                'source': 'current_execution',
+                'type': 'state',
+                'timestamp': workflow_timestamp
+            }
+            
             if hasattr(client, 'add_context'):
-                # Add minimal current workflow state (only essential info)
-                workflow_state = {
-                    'current_node': node.get('id', 'unknown'),
-                    'node_type': 'llm',
-                    'timestamp': time.time()
-                }
-                client.add_context({
-                    'workflow_state': workflow_state,
-                    'source': 'current_execution',
-                    'type': 'state',
-                    'timestamp': time.time()
-                })
+                client.add_context(workflow_context)
                 logger.info(f"Added current workflow state to ComoRAG context")
+                
+            # Store workflow state in database for permanent storage
+            if self.context_db:
+                try:
+                    chain_id = node.get('chain_id') or node.get('data', {}).get('chain_id')
+                    sequence_id = node.get('sequence_id') or node.get('data', {}).get('sequence_id')
+                    node_id = node.get('id') or node.get('data', {}).get('id')
+                    
+                    # Add workflow state to database
+                    context_id = self.context_db.add_context_item(
+                        content=json.dumps(workflow_state),
+                        content_type="workflow_state",
+                        source="current_execution",
+                        chain_id=chain_id,
+                        sequence_id=sequence_id,
+                        node_id=node_id,
+                        metadata={
+                            "node_name": node.get('data', {}).get('name', 'unknown'),
+                            "node_type": node.get('type', 'unknown')
+                        },
+                        timestamp=workflow_timestamp
+                    )
+                    logger.info(f"Stored workflow state in context database: context_id={context_id}")
+                except Exception as db_error:
+                    logger.error(f"Failed to store workflow state in context database: {db_error}")
             
             # Only add minimal context data (no historical data)
             if context_data and hasattr(client, 'add_context'):
@@ -249,19 +330,89 @@ class LLMExecutor:
             logger.info(f"Making LLM API request with {len(context_data)} context items...")
             logger.info(f"Request parameters: model={model}, prompt='{enhanced_prompt[:200]}...', system='{system_message}', temperature={temperature}, max_tokens={max_tokens}")
             
+            # Check if async processing is enabled in the node configuration
+            use_async = llm_config.get('use_async', False)
+            logger.info(f"Async processing enabled: {use_async}")
+            
             try:
-                # Use generate method with context for ComoRAG integration
-                response = client.generate(
-                    model=model,
-                    prompt=enhanced_prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    system=system_message if system_message else None,
-                    images=images if images else None,
-                    context=context_data if context_data else None
-                )
-                logger.info(f"Raw API response: {response}")
-                logger.info(f"Response type: {type(response)}")
+                if use_async:
+                    # Define callback function to handle async response
+                    def async_response_callback(request_id, result):
+                        logger.info(f"Received async response for request {request_id}")
+                        # Store the result in a variable for later retrieval
+                        self.variables[f"async_response_{request_id}"] = result
+                        # Store the request ID for reference
+                        self.variables[f"last_async_request_id"] = request_id
+                        logger.info(f"Stored async response in variables: async_response_{request_id}")
+                    
+                    # Use generate method with async processing
+                    queue_result = client.generate(
+                        model=model,
+                        prompt=enhanced_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system=system_message if system_message else None,
+                        images=images if images else None,
+                        context=context_data if context_data else None,
+                        async_request=True,
+                        callback=async_response_callback
+                    )
+                    
+                    logger.info(f"Queued async request: {queue_result}")
+                    
+                    # Store the request ID in the output variable
+                    if 'request_id' in queue_result:
+                        request_id = queue_result['request_id']
+                        self.variables[output_variable] = f"Async request queued with ID: {request_id}"
+                        logger.info(f"Stored request ID in variable '{output_variable}': {request_id}")
+                        
+                        # Store request metadata in database
+                        if self.context_db:
+                            try:
+                                chain_id = node.get('chain_id') or node.get('data', {}).get('chain_id')
+                                sequence_id = node.get('sequence_id') or node.get('data', {}).get('sequence_id')
+                                node_id = node.get('id') or node.get('data', {}).get('id')
+                                
+                                # Add async request info to database
+                                context_id = self.context_db.add_context_item(
+                                    content=f"Async LLM request queued with ID: {request_id}",
+                                    content_type="async_request",
+                                    source="llm_node",
+                                    chain_id=chain_id,
+                                    sequence_id=sequence_id,
+                                    node_id=node_id,
+                                    metadata={
+                                        "request_id": request_id,
+                                        "model": model,
+                                        "status": queue_result.get('status', 'unknown'),
+                                        "node_name": node.get('data', {}).get('name', 'unknown')
+                                    },
+                                    timestamp=time.time()
+                                )
+                                logger.info(f"Stored async request info in context database: context_id={context_id}")
+                            except Exception as db_error:
+                                logger.error(f"Failed to store async request info in context database: {db_error}")
+                        
+                        # For async requests, we return success immediately
+                        # The actual response will be handled by the callback
+                        response = queue_result
+                    else:
+                        # If no request_id, the request was processed synchronously due to queue being full
+                        logger.info(f"Async request processed synchronously: {queue_result}")
+                        response = queue_result
+                else:
+                    # Use generate method with context for ComoRAG integration (synchronous)
+                    response = client.generate(
+                        model=model,
+                        prompt=enhanced_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system=system_message if system_message else None,
+                        images=images if images else None,
+                        context=context_data if context_data else None
+                    )
+                    logger.info(f"Raw API response: {response}")
+                    logger.info(f"Response type: {type(response)}")
                 
                 # Clean up screenshot after API call
                 if images:
@@ -322,6 +473,36 @@ class LLMExecutor:
                 self.variables[output_variable] = generated_text
                 logger.info(f"Stored LLM output in variable '{output_variable}': {generated_text}")
                 logger.info(f"Current variables state: {self.variables}")
+                
+                # Store LLM response in database for permanent storage
+                if self.context_db:
+                    try:
+                        chain_id = node.get('chain_id') or node.get('data', {}).get('chain_id')
+                        sequence_id = node.get('sequence_id') or node.get('data', {}).get('sequence_id')
+                        node_id = node.get('id') or node.get('data', {}).get('id')
+                        
+                        # Add LLM response to database
+                        context_id = self.context_db.add_context_item(
+                            content=generated_text,
+                            content_type="llm_response",
+                            source="llm_node",
+                            chain_id=chain_id,
+                            sequence_id=sequence_id,
+                            node_id=node_id,
+                            metadata={
+                                "model": model,
+                                "prompt": prompt,
+                                "system_message": system_message,
+                                "temperature": temperature,
+                                "max_tokens": max_tokens,
+                                "use_comorag": use_comorag,
+                                "node_name": node.get('data', {}).get('name', 'unknown')
+                            },
+                            timestamp=time.time()
+                        )
+                        logger.info(f"Stored LLM response in context database: context_id={context_id}")
+                    except Exception as db_error:
+                        logger.error(f"Failed to store LLM response in context database: {db_error}")
 
                 # Check if LLM should write the text (default behavior for text models)
                 should_write_text = write_text
@@ -430,6 +611,20 @@ class LLMExecutor:
         except Exception as e:
             logger.error(f"Failed to initialize context collector: {e}")
             self.context_collector = None
+            
+    def _initialize_context_database(self):
+        """Initialize the context database for permanent storage"""
+        try:
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if project_root not in sys.path:
+                sys.path.append(project_root)
+            
+            from AI.context_database import ContextDatabase
+            self.context_db = ContextDatabase()
+            logger.info("Context database initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize context database: {e}")
+            self.context_db = None
     
     def _collect_workflow_context(self, node, action_handlers=None, config=None):
         """Collect context data for the current workflow state based on configuration
