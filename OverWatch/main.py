@@ -343,10 +343,20 @@ async def clear_comorag_memory():
 
 if __name__ == "__main__":
     # Run the server
+    # Use Tailscale IP if enabled, otherwise use API host
+    if settings.tailscale.enabled and settings.tailscale.server_ip:
+        host = settings.tailscale.server_ip
+        port = settings.tailscale.api_port
+        logger.info(f"Starting server with Tailscale configuration: {host}:{port}")
+    else:
+        host = settings.api.host
+        port = settings.api.port
+        logger.info(f"Starting server with standard configuration: {host}:{port}")
+    
     uvicorn.run(
         "main:app",
-        host=settings.api.host,
-        port=settings.api.port,
+        host=host,
+        port=port,
         reload=settings.api.debug,
         log_level=settings.logging.level.lower()
     )
