@@ -68,6 +68,14 @@ class SequenceExecutor:
                 seq_file = name.split(': ', 1)[1]
             else:
                 seq_file = name
+                
+            # Handle numbered sequence names (e.g., "1.json 2" -> "1.json")
+            # Remove trailing space and number pattern
+            import re
+            if seq_file and re.match(r'^(.+\.json)\s+\d+$', seq_file):
+                base_name = re.match(r'^(.+\.json)\s+\d+$', seq_file).group(1)
+                logger.info(f"Detected numbered sequence name '{seq_file}', using base name '{base_name}'")
+                seq_file = base_name
         
         # Enhanced path resolution with better error handling
         import os
