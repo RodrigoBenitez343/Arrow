@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Script to download a Llama model from Hugging Face Hub for testing ComoRAG API.
-This script downloads the Llama-3.2-1B model which is suitable for CPU testing.
+This script downloads the Llama-3.1-8B-Instruct model which is optimized for instruction following and ComoRAG tasks.
 """
 
 import os
@@ -10,25 +10,26 @@ from pathlib import Path
 
 def download_llama_model():
     """
-    Download Llama-3.2-1B model from Hugging Face Hub.
-    This is a smaller model suitable for CPU testing.
+    Download Llama-3.1-8B-Instruct model from Hugging Face Hub.
+    This model is optimized for instruction following and provides excellent performance for ComoRAG tasks.
     """
     
     # Create models directory if it doesn't exist
     models_dir = Path("./models")
     models_dir.mkdir(exist_ok=True)
     
-    print("Starting download of TinyLlama-1.1B-Chat model...")
-    print("This is an open-source model that doesn't require gated access.")
-    print("Model info: https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0")
+    print("Starting download of Llama-3.1-8B-Instruct model...")
+    print("This model is optimized for instruction following and ComoRAG tasks.")
+    print("Model info: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct")
+    print("Note: This model requires accepting the license terms on Hugging Face.")
     
     try:
         # Download the model to local models directory
         model_path = snapshot_download(
-            repo_id="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+            repo_id="meta-llama/Llama-3.1-8B-Instruct",
             cache_dir="./models",
             # Only download essential files to save space
-            allow_patterns=["*.json", "*.safetensors", "*.txt", "*.md", "*.model"]
+            allow_patterns=["*.json", "*.safetensors", "*.txt", "*.md", "*.model", "tokenizer.model"]
         )
         
         print(f"\nModel downloaded successfully!")

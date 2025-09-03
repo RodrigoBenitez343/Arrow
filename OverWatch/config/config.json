@@ -15,7 +15,7 @@
     "top_k": 40,
     "repeat_penalty": 1.1,
     "timeout": 300,
-    "default_models": ["llama3.2:1b"]
+    "default_models": ["llama3.1:8b-instruct-q8_0"]
   },
   "comorag": {
     "memory_size": 1000,

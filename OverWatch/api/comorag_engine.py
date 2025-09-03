@@ -459,7 +459,7 @@ New Evidence:
 Consolidated Context:"""
         
         try:
-            response = await self.vllm_engine.generate(
+            response = await self.ollama_engine.generate(
                 prompt=prompt,
                 model=model,
                 temperature=0.3,
@@ -499,7 +499,7 @@ Context: {context}
 Reasoned Response:"""
         
         try:
-            response = await self.vllm_engine.generate(
+            response = await self.ollama_engine.generate(
                 prompt=prompt,
                 model=model,
                 temperature=0.5,
@@ -531,7 +531,7 @@ Provide a confidence score between 0.0 and 1.0, where 1.0 means completely confi
 Confidence Score:"""
         
         try:
-            response = await self.vllm_engine.generate(
+            response = await self.ollama_engine.generate(
                 prompt=prompt,
                 model=model,
                 temperature=0.1,
@@ -565,7 +565,7 @@ Current Output: {current_output}
 New Exploratory Question:"""
         
         try:
-            response = await self.vllm_engine.generate(
+            response = await self.ollama_engine.generate(
                 prompt=prompt,
                 model=model,
                 temperature=0.8,
