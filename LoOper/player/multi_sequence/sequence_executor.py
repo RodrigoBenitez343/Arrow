@@ -69,12 +69,50 @@ class SequenceExecutor:
             else:
                 seq_file = name
         
-        # If file doesn't exist in current directory, try sequences directory
+        # Enhanced path resolution with better error handling
         import os
-        if seq_file and not os.path.exists(seq_file):
-            sequences_path = os.path.join('sequences', seq_file)
-            if os.path.exists(sequences_path):
-                seq_file = sequences_path
+        original_seq_file = seq_file
+        
+        if seq_file:
+            # Try multiple path resolution strategies
+            possible_paths = [
+                seq_file,  # Original path
+                os.path.join('sequences', seq_file),  # sequences subdirectory
+                os.path.join(os.getcwd(), seq_file),  # current working directory
+                os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
+            ]
+            
+            # Add .json extension if missing
+            if not seq_file.endswith('.json'):
+                possible_paths.extend([
+                    seq_file + '.json',
+                    os.path.join('sequences', seq_file + '.json'),
+                    os.path.join(os.getcwd(), seq_file + '.json'),
+                    os.path.join(os.getcwd(), 'sequences', seq_file + '.json'),
+                ])
+            
+            # Find the first existing file
+            seq_file = None
+            for path in possible_paths:
+                if os.path.exists(path):
+                    seq_file = path
+                    logger.info(f"Found sequence file at: {seq_file}")
+                    break
+            
+            if not seq_file:
+                logger.error(f"Sequence file not found: '{original_seq_file}'")
+                logger.error(f"Searched in paths: {possible_paths}")
+                logger.error(f"Current working directory: {os.getcwd()}")
+                logger.error(f"Available files in current directory: {os.listdir(os.getcwd()) if os.path.exists(os.getcwd()) else 'N/A'}")
+                
+                # Check if sequences directory exists
+                sequences_dir = os.path.join(os.getcwd(), 'sequences')
+                if os.path.exists(sequences_dir):
+                    logger.error(f"Available files in sequences directory: {os.listdir(sequences_dir)}")
+                else:
+                    logger.error("Sequences directory does not exist")
+                
+                return False
         
         # Handle both old format (loops) and new format (loop_count)
         loops = item.get('loop_count', item.get('loops', 1))
