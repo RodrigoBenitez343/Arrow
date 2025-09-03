@@ -203,48 +203,42 @@ class LLMExecutor:
                 messages.append({"role": "user", "content": prompt})
             logger.info(f"Prepared messages (legacy): {messages}")
 
-            # Collect context data for ComoRAG integration
+            # Collect minimal context data for ComoRAG integration (current context only)
             config = llm_config.get('comorag_config', {})
             context_data = self._collect_workflow_context(node, action_handlers, config=config)
             
-            # Add workflow state context for ComoRAG
+            # Add only essential current workflow state context for ComoRAG
             if hasattr(client, 'add_context'):
-                # Add current workflow state
+                # Add minimal current workflow state (only essential info)
                 workflow_state = {
                     'current_node': node.get('id', 'unknown'),
                     'node_type': 'llm',
-                    'variables': dict(self.variables),
                     'timestamp': time.time()
                 }
                 client.add_context({
                     'workflow_state': workflow_state,
-                    'source': 'workflow_execution',
+                    'source': 'current_execution',
                     'type': 'state',
                     'timestamp': time.time()
                 })
-                logger.info(f"Added workflow state to ComoRAG context")
+                logger.info(f"Added current workflow state to ComoRAG context")
             
-            # Add context to client if available
+            # Only add minimal context data (no historical data)
             if context_data and hasattr(client, 'add_context'):
-                for context_item in context_data:
-                    # Enhance context items with metadata
+                # Filter to only current execution context, skip historical data
+                current_context_items = [item for item in context_data if item.get('type') == 'workflow_state']
+                for context_item in current_context_items:
                     enhanced_context = dict(context_item)
                     if 'timestamp' not in enhanced_context:
                         enhanced_context['timestamp'] = time.time()
                     if 'source' not in enhanced_context:
-                        enhanced_context['source'] = 'workflow_context'
+                        enhanced_context['source'] = 'current_workflow'
                     client.add_context(enhanced_context)
-                logger.info(f"Added {len(context_data)} enhanced context items to ComoRAG client")
+                logger.info(f"Added {len(current_context_items)} current context items to ComoRAG client (historical data excluded)")
             
-            # Add current screenshot to context if taken
-            if images and self.context_collector:
-                for image_path in images:
-                    screenshot_context = self.context_collector.collect_screenshot_context(
-                        image_path, 
-                        f"Screenshot for LLM node: {llm_data.get('name', 'Unknown')}"
-                    )
-                    if screenshot_context:
-                        context_data.append(screenshot_context)
+            # Current screenshot context is already handled above via OCR and vision analysis
+            # No need to add additional screenshot context to avoid duplication
+            logger.info("Current screenshot and OCR context handled via vision analysis and prompt enhancement")
             
             # Enhance prompt with OCR text if available
             enhanced_prompt = prompt
@@ -390,19 +384,23 @@ class LLMExecutor:
             self.context_collector = None
     
     def _collect_workflow_context(self, node, action_handlers=None, config=None):
-        """Collect context data for the current workflow state based on configuration"""
+        """Collect context data for the current workflow state based on configuration
+        
+        Modified to limit context collection to only current execution context,
+        avoiding loading all historical data from chains, screenshots, and sequences folders.
+        """
         if not self.context_collector:
             return []
         
-        # Default configuration if none provided
+        # Default configuration - disabled historical data collection by default
         if config is None:
             config = {
                 'collect_workflow_state': True,
-                'collect_screenshots': True,
-                'collect_automations': True,
-                'max_context_items': 10,
-                'screenshot_limit': 3,
-                'automation_limit': 2
+                'collect_screenshots': False,  # Disabled: historical screenshots not needed
+                'collect_automations': False,  # Disabled: historical automations not needed
+                'max_context_items': 3,  # Reduced: only current context needed
+                'screenshot_limit': 1,  # Only current screenshot if enabled
+                'automation_limit': 0   # No historical automations
             }
         
         context_items = []
@@ -423,42 +421,23 @@ class LLMExecutor:
                 if workflow_context:
                     context_items.append(workflow_context)
             
-            # Collect recent screenshots from screenshots directory if enabled
-            if config.get('collect_screenshots', True):
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                screenshots_dir = os.path.join(project_root, 'screenshots')
-                if os.path.exists(screenshots_dir):
-                    screenshot_limit = min(config.get('screenshot_limit', 3), max_items - len(context_items))
-                    recent_screenshots = self.context_collector.collect_recent_screenshots(screenshots_dir, limit=screenshot_limit)
-                    context_items.extend(recent_screenshots)
+            # Historical data collection disabled by default to avoid loading all context
+            # Only collect if explicitly enabled in config (for backward compatibility)
+            if config.get('collect_screenshots', False):
+                logger.info("Historical screenshot collection is disabled by default for LLM nodes")
+                logger.info("Current screenshot is captured separately and added via OCR and vision analysis")
             
-            # Collect recent automation JSON files if enabled
-            if config.get('collect_automations', True):
-                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                automations_dir = os.path.join(project_root, 'automations')
-                if os.path.exists(automations_dir):
-                    automation_limit = min(config.get('automation_limit', 2), max_items - len(context_items))
-                    recent_automations = self.context_collector.collect_recent_automations(automations_dir, limit=automation_limit)
-                    context_items.extend(recent_automations)
+            if config.get('collect_automations', False):
+                logger.info("Historical automation data collection is disabled by default for LLM nodes")
+                logger.info("LLM nodes now focus on current screen context and user query only")
                 
-                # Look for workflow JSON files in common locations
-                remaining_slots = max_items - len(context_items)
-                if remaining_slots > 0:
-                    for search_dir in [project_root, os.path.join(project_root, 'workflows'), os.path.join(project_root, 'sequences')]:
-                        if os.path.exists(search_dir) and remaining_slots > 0:
-                            json_files = glob.glob(os.path.join(search_dir, '*.json'))
-                            for json_file in json_files[:remaining_slots]:  # Limit based on remaining slots
-                                automation_context = self.context_collector.collect_automation_json_context(json_file)
-                                if automation_context:
-                                    context_items.append(automation_context)
-                                    remaining_slots -= 1
-                                    if remaining_slots <= 0:
-                                        break
+            # Note: Current screenshot and OCR data are handled separately in execute_llm_node
+            # This ensures LLM nodes only receive current context, not historical data
             
             # Limit total context items
             context_items = context_items[:max_items]
             
-            logger.info(f"Collected {len(context_items)} context items for ComoRAG")
+            logger.info(f"Collected {len(context_items)} context items for ComoRAG (historical data collection disabled)")
             return context_items
             
         except Exception as e:
