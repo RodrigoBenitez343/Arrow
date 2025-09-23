@@ -2,7 +2,7 @@
 
 import os
 from NodeGraphQt import BaseNode
-from .constants import FALLBACK_COLOR, SCREENSHOT_COLOR, ACTION_COLOR, DARK_GREY, CONDITIONAL_COLOR, LLM_COLOR, TTS_COLOR
+from .constants import FALLBACK_COLOR, SCREENSHOT_COLOR, ACTION_COLOR, DARK_GREY, CONDITIONAL_COLOR, LLM_COLOR, TTS_COLOR, CHAIN_IMPORT_COLOR
 
 # Get default API URL from environment variables (same as consult.py)
 def get_default_api_url():
@@ -648,3 +648,103 @@ class ContextBuilderNode(LLMNode):
         # Ensure write_text is always False
         config['write_text'] = False
         return config
+
+
+class ChainImportNode(BaseNode):
+    """Node representing an imported chain that can be composed with other chains to create larger automations"""
+    
+    __identifier__ = 'chain_import'
+    NODE_NAME = 'Chain Import'
+    
+    def __init__(self):
+        super(ChainImportNode, self).__init__()
+        self.chain_file_path = ''
+        self.chain_config = {}
+        self.import_mode = 'full'  # 'full', 'sequences_only', 'nodes_only'
+        self.prefix = ''  # Optional prefix for imported node names
+        
+        # Set a distinct color for chain import nodes (lime green)
+        self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        
+        # Add multiple inputs and outputs for flexible connections
+        for i in range(5):
+            self.add_input(f'input_{i+1}')
+            self.add_output(f'output_{i+1}')
+        
+        # Add configuration inputs
+        self.add_text_input('chain_file', 'Chain File', '')
+        self.add_text_input('import_mode', 'Import Mode', 'full')
+        self.add_text_input('prefix', 'Node Prefix', '')
+        self.add_text_input('enabled', 'Enabled', 'true')
+        
+    def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', enabled=True):
+        """Set the chain import data for this node"""
+        self.chain_file_path = chain_file_path
+        self.import_mode = import_mode
+        self.prefix = prefix
+        
+        # Load the chain configuration
+        try:
+            if os.path.exists(chain_file_path):
+                import json
+                with open(chain_file_path, 'r') as f:
+                    self.chain_config = json.load(f)
+                
+                # Update node name to reflect the imported chain
+                chain_name = os.path.basename(chain_file_path).replace('.json', '')
+                if prefix:
+                    self.set_name(f"Import: {prefix}_{chain_name}")
+                else:
+                    self.set_name(f"Import: {chain_name}")
+                
+                # Update properties
+                self.set_property('chain_file', chain_file_path)
+                self.set_property('import_mode', import_mode)
+                self.set_property('prefix', prefix)
+                self.set_property('enabled', str(enabled).lower())
+                
+                # Change color based on status
+                if enabled:
+                    self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+                else:
+                    # Darker color when disabled
+                    self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) // 2 for i in (0, 2, 4)])
+                    
+        except Exception as e:
+            self.set_name(f"Import: ERROR - {os.path.basename(chain_file_path)}")
+            # Red color for error state
+            self.set_color(200, 50, 50)
+    
+    def get_chain_import_config(self):
+        """Get the chain import configuration for this node"""
+        return {
+            'chain_file': self.get_property('chain_file'),
+            'import_mode': self.get_property('import_mode'),
+            'prefix': self.get_property('prefix'),
+            'enabled': self.get_property('enabled').lower() == 'true'
+        }
+    
+    def get_imported_chain_config(self):
+        """Get the loaded chain configuration"""
+        return self.chain_config
+    
+    def get_sequences_count(self):
+        """Get the number of sequences in the imported chain"""
+        return len(self.chain_config.get('sequences', []))
+    
+    def get_nodes_count(self):
+        """Get the total number of nodes in the imported chain"""
+        sequences = len(self.chain_config.get('sequences', []))
+        conditionals = len(self.chain_config.get('conditional_nodes', []))
+        llm_nodes = len(self.chain_config.get('llm_nodes', []))
+        tts_nodes = len(self.chain_config.get('tts_nodes', []))
+        return sequences + conditionals + llm_nodes + tts_nodes
+    
+    def is_valid_chain(self):
+        """Check if the imported chain is valid"""
+        return bool(self.chain_config and (
+            self.chain_config.get('sequences') or 
+            self.chain_config.get('conditional_nodes') or 
+            self.chain_config.get('llm_nodes') or 
+            self.chain_config.get('tts_nodes')
+        ))

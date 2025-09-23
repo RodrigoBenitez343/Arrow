@@ -29,14 +29,17 @@ class SequenceExecutor:
         """
         sequence_data = node['data']
         logger.info(f"=== STARTING SEQUENCE NODE EXECUTION ===")
-        logger.info(f"Executing sequence node: {sequence_data.get('name', sequence_data['node_id'])}")
+        # Support both 'id' and 'node_id' fields
+        node_identifier = sequence_data.get('id') or sequence_data.get('node_id', 'unknown')
+        logger.info(f"Executing sequence node: {sequence_data.get('name', node_identifier)}")
         logger.info(f"Full node data: {node}")
         
         # Execute the sequence
         success = self.execute_sequence(sequence_data, stop_flag)
         
         if not success:
-            logger.error(f"Sequence execution failed: {sequence_data.get('name', sequence_data['node_id'])}")
+            node_identifier = sequence_data.get('id') or sequence_data.get('node_id', 'unknown')
+            logger.error(f"Sequence execution failed: {sequence_data.get('name', node_identifier)}")
             return None
         
         # Find next node in the workflow

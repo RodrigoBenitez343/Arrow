@@ -26,6 +26,8 @@ class NodeContextMenuManager:
             self.add_context_builder_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'tts':
             self.add_tts_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'chain_import':
+            self.add_chain_import_node_actions(menu, node)
         else:
             # Show graph actions for background clicks or any other case
             self.add_graph_actions(menu, pos)
@@ -103,6 +105,20 @@ class NodeContextMenuManager:
         menu.addAction(edit_action)
         
         delete_action = QAction("Delete TTS Node", menu)
+        delete_action.triggered.connect(lambda: self.graph_view.delete_node(node))
+        menu.addAction(delete_action)
+    
+    def add_chain_import_node_actions(self, menu, node):
+        """Add actions for a Chain Import node to the context menu"""
+        edit_action = QAction("Edit Chain Import Configuration", menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_chain_import_node(node))
+        menu.addAction(edit_action)
+        
+        expand_action = QAction("Expand Chain (Edit in Separate View)", menu)
+        expand_action.triggered.connect(lambda: self.graph_view.expand_chain_import(node))
+        menu.addAction(expand_action)
+        
+        delete_action = QAction("Delete Chain Import Node", menu)
         delete_action.triggered.connect(lambda: self.graph_view.delete_node(node))
         menu.addAction(delete_action)
     

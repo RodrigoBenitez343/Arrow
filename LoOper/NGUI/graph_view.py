@@ -184,6 +184,17 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error adding Context Builder node: {str(e)}", exc_info=True)
             return None
     
+    def add_chain_import_node(self, position=None):
+        """Add a new Chain Import node to the graph"""
+        logger.debug(f"Adding Chain Import node at position: {position}")
+        try:
+            result = self.node_operations.add_chain_import_node(position)
+            logger.info(f"Chain Import node added successfully: {result.name() if result else 'None'}")
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Chain Import node: {str(e)}", exc_info=True)
+            return None
+    
     def add_sequence(self):
         """Add a new sequence node to the graph"""
         logger.debug("Adding sequence node")
@@ -356,6 +367,26 @@ class GraphViewWidget(QWidget):
             logger.info("Context Builder node edited successfully")
         except Exception as e:
             logger.error(f"Error editing Context Builder node: {str(e)}", exc_info=True)
+    
+    def edit_chain_import_node(self, node):
+        """Edit a Chain Import node configuration"""
+        logger.debug(f"Editing Chain Import node: {node.name() if node else 'None'}")
+        try:
+            self.node_operations.edit_chain_import_node(node)
+            logger.info("Chain Import node edited successfully")
+        except Exception as e:
+            logger.error(f"Error editing Chain Import node: {str(e)}", exc_info=True)
+    
+    def expand_chain_import(self, node):
+        """Expand a Chain Import node by opening it in a separate dialog for editing"""
+        logger.debug(f"Opening chain editor for: {node.name() if node else 'None'}")
+        try:
+            from .dialogs.chain_expansion_dialog import ChainExpansionDialog
+            dialog = ChainExpansionDialog(node, self)
+            dialog.exec_()
+            logger.info("Chain editor dialog closed")
+        except Exception as e:
+            logger.error(f"Error opening chain editor: {str(e)}", exc_info=True)
     
     def delete_node(self, node):
         """Delete a node from the graph"""

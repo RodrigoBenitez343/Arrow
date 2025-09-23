@@ -10,11 +10,12 @@ from ..config import logger
 class WorkflowGraphBuilder:
     """Builds and manages workflow graphs from sequences and conditional nodes"""
     
-    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None):
+    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None):
         self.sequences = sequences or []
         self.conditional_nodes = conditional_nodes or []
         self.llm_nodes = llm_nodes or []
         self.tts_nodes = tts_nodes or []
+        self.chain_import_nodes = chain_import_nodes or []
     
     def build_workflow_graph(self):
         """
@@ -111,6 +112,22 @@ class WorkflowGraphBuilder:
                 }
             }
         
+        # Add chain import nodes to graph
+        for chain_import_node in self.chain_import_nodes:
+            node_id = chain_import_node.get('id') or chain_import_node.get('node_id')
+            # Convert connections format to outputs format for chain import nodes
+            output_connections = [{
+                'node_id': conn['target_node_id']
+            } for conn in chain_import_node.get('connections', [])]
+            
+            graph[node_id] = {
+                'type': 'chain_import',
+                'data': chain_import_node,
+                'connections': {
+                    'output': output_connections
+                }
+            }
+        
         # Build connections from conditional outputs to other nodes
         for conditional in self.conditional_nodes:
             conditional_id = conditional.get('id') or conditional.get('node_id')
@@ -168,6 +185,26 @@ class WorkflowGraphBuilder:
                                 'output_type': output_name
                             })
         
+        # Build connections from chain import node outputs to other nodes
+        for chain_import_node in self.chain_import_nodes:
+            chain_import_id = chain_import_node.get('id') or chain_import_node.get('node_id')
+            
+            # Get connections from the graph node we just created
+            if chain_import_id in graph:
+                chain_import_graph_node = graph[chain_import_id]
+                connections = chain_import_graph_node['connections']
+                
+                for output_name, output_connections in connections.items():
+                    for connection in output_connections:
+                        target_node_id = connection['node_id']
+                        if target_node_id in graph:
+                            if 'inputs' not in graph[target_node_id]:
+                                graph[target_node_id]['inputs'] = []
+                            graph[target_node_id]['inputs'].append({
+                                'from_node': chain_import_id,
+                                'output_type': output_name
+                            })
+
         # Build connections from sequence node outputs to other nodes
         for i, sequence in enumerate(self.sequences):
             if isinstance(sequence, dict) and ('outputs' in sequence or 'connections' in sequence):
@@ -244,6 +281,20 @@ class WorkflowGraphBuilder:
                     if 'inputs' not in graph[tts_id]:
                         graph[tts_id]['inputs'] = []
                     graph[tts_id]['inputs'].append({
+                        'from_node': source_node_id,
+                        'output_type': connection_info['output_name']
+                    })
+        
+        # Handle chain import node inputs
+        for chain_import_node in self.chain_import_nodes:
+            chain_import_id = chain_import_node.get('id') or chain_import_node.get('node_id')
+            inputs = chain_import_node.get('inputs', {})
+            for input_name, connection_info in inputs.items():
+                source_node_id = connection_info['node_id']
+                if source_node_id in graph:
+                    if 'inputs' not in graph[chain_import_id]:
+                        graph[chain_import_id]['inputs'] = []
+                    graph[chain_import_id]['inputs'].append({
                         'from_node': source_node_id,
                         'output_type': connection_info['output_name']
                     })

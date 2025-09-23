@@ -15,3 +15,4 @@ ACTION_COLOR = '#464646'
 CONDITIONAL_COLOR = '#800080' # Purple for conditionals
 LLM_COLOR = '#FF6B35' # Orange for LLM nodes
 TTS_COLOR = '#00CED1' # Dark turquoise for TTS nodes
+CHAIN_IMPORT_COLOR = '#32CD32' # Lime green for chain import nodes

@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class ConfigManager:
         logger.info("Initializing ConfigManager")
         try:
             self.parent_widget = parent_widget
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
             logger.debug("ConfigManager initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing ConfigManager: {e}")
@@ -36,7 +36,7 @@ class ConfigManager:
         try:
             self.save_current_state()
             config_copy = self.chain_config.copy()
-            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes")
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes")
             return config_copy
         except Exception as e:
             logger.error(f"Error getting chain config: {e}")
@@ -48,7 +48,7 @@ class ConfigManager:
         try:
             # Clear current config
             logger.debug("Clearing current configuration")
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
             
             # Get all nodes
             logger.debug("Getting all nodes from graph")
@@ -69,10 +69,13 @@ class ConfigManager:
                 elif isinstance(node, TTSNode):
                     logger.debug(f"Saving TTS node: {node.id}")
                     self._save_tts_node(node)
+                elif isinstance(node, ChainImportNode):
+                    logger.debug(f"Saving chain import node: {node.id}")
+                    self._save_chain_import_node(node)
                 else:
                     logger.warning(f"Unknown node type: {type(node).__name__}")
             
-            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes")
+            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes")
                     
         except Exception as e:
             logger.error(f"Error saving current state: {e}")
@@ -106,10 +109,11 @@ class ConfigManager:
                     "sequences": loaded_config.get("sequences", []),
                     "conditional_nodes": loaded_config.get("conditional_nodes", []),
                     "llm_nodes": loaded_config.get("llm_nodes", []),
-                    "tts_nodes": loaded_config.get("tts_nodes", [])
+                    "tts_nodes": loaded_config.get("tts_nodes", []),
+                    "chain_import_nodes": loaded_config.get("chain_import_nodes", [])
                 }
                 
-                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes")
+                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes")
                     
                 # Build graph from config
                 logger.debug("Building graph from loaded configuration")
@@ -189,6 +193,9 @@ class ConfigManager:
             if hasattr(self.parent_widget, 'tts_nodes'):
                 self.parent_widget.tts_nodes.clear()
                 logger.debug("Cleared tts_nodes tracking list")
+            if hasattr(self.parent_widget, 'chain_import_nodes'):
+                self.parent_widget.chain_import_nodes.clear()
+                logger.debug("Cleared chain_import_nodes tracking list")
             
             # Store node references for connections
             node_map = {}
@@ -209,6 +216,10 @@ class ConfigManager:
             # Create TTS nodes
             logger.debug("Creating TTS nodes")
             self._create_tts_nodes(node_map)
+            
+            # Create chain import nodes
+            logger.debug("Creating chain import nodes")
+            self._create_chain_import_nodes(node_map)
             
             # Restore connections
             logger.debug("Restoring node connections")
@@ -372,6 +383,28 @@ class ConfigManager:
             logger.debug(f"Successfully saved TTS node with text: {tts_data['text'][:30]}...")
         except Exception as e:
             logger.error(f"Error saving TTS node {node.id}: {e}")
+            raise
+    
+    def _save_chain_import_node(self, node):
+        """Save a chain import node to configuration."""
+        logger.debug(f"Saving chain import node {node.id} to configuration")
+        try:
+            import_config = node.get_chain_import_config()
+            chain_import_data = {
+                "type": "chain_import",
+                "chain_file_path": import_config.get('chain_file', ''),
+                "import_mode": import_config.get('import_mode', 'full'),
+                "prefix": import_config.get('prefix', ''),
+                "enabled": import_config.get('enabled', True),
+                "node_id": node.id,
+                "position": node.pos(),
+                "connections": self._get_node_connections(node)
+            }
+            
+            self.chain_config["chain_import_nodes"].append(chain_import_data)
+            logger.debug(f"Successfully saved chain import node with file: {chain_import_data['chain_file_path']}")
+        except Exception as e:
+            logger.error(f"Error saving chain import node {node.id}: {e}")
             raise
         
     def _get_node_connections(self, node):
@@ -609,6 +642,62 @@ class ConfigManager:
                     logger.error(f"Failed to create TTS node with text: {text[:30]}...")
         except Exception as e:
             logger.error(f"Error creating TTS nodes: {e}")
+            raise
+                
+    def _create_chain_import_nodes(self, node_map):
+        """Create chain import nodes from configuration."""
+        logger.debug("Creating chain import nodes from configuration")
+        try:
+            chain_import_nodes = self.chain_config.get("chain_import_nodes", [])
+            logger.debug(f"Found {len(chain_import_nodes)} chain import nodes to create")
+            
+            for import_data in chain_import_nodes:
+                file_path = import_data.get('chain_file_path', '')
+                import_mode = import_data.get('import_mode', 'full')
+                prefix = import_data.get('prefix', '')
+                
+                logger.debug(f"Creating chain import node with file: {file_path}")
+                node = self.parent_widget.graph_manager.create_node(
+                    'chain_import.ChainImportNode',
+                    name='Chain Import'
+                )
+                
+                if node:
+                    # Set chain import data (this loads the chain configuration)
+                    enabled = import_data.get('enabled', True)
+                    if isinstance(enabled, str):
+                        enabled = enabled.lower() == 'true'
+                    
+                    if file_path:  # Only set data if we have a file path
+                        node.set_chain_import_data(file_path, import_mode, prefix, enabled)
+                        logger.debug(f"Set chain import data for node: {file_path}")
+                    else:
+                        # Set properties manually if no file path
+                        node.set_property('chain_file', file_path)
+                        node.set_property('import_mode', import_mode)
+                        node.set_property('prefix', prefix)
+                        node.set_property('enabled', str(enabled).lower())
+                        node.set_name("Import: No file")
+                        logger.debug(f"Set properties for chain import node with no file path")
+                    
+                    # Set position
+                    position = import_data.get("position", [0, 0])
+                    node.set_pos(*position)
+                    logger.debug(f"Set position for chain import node: {position}")
+                    
+                    # Add to parent widget's tracking list
+                    if hasattr(self.parent_widget, 'chain_import_nodes'):
+                        self.parent_widget.chain_import_nodes.append(node)
+                        logger.debug(f"Added chain import node to parent widget tracking list")
+                        
+                    # Store in node map
+                    node_id = import_data.get("node_id", node.id)
+                    node_map[node_id] = node
+                    logger.debug(f"Added chain import node to node map: {node_id}")
+                else:
+                    logger.error(f"Failed to create chain import node with file: {file_path}")
+        except Exception as e:
+            logger.error(f"Error creating chain import nodes: {e}")
             raise
                 
     def _restore_connections(self, node_map):

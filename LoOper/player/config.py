@@ -30,7 +30,7 @@ except ImportError:
 # Sets up how the script will log information. It will both save to a file ('automation.log')
 # and print to the console.
 logging.basicConfig(
-    level=logging.INFO,  # Sets the minimum level of messages to log (INFO, DEBUG, WARNING, ERROR).
+    level=logging.DEBUG,  # Sets the minimum level of messages to log (INFO, DEBUG, WARNING, ERROR).
     format='%(asctime)s - %(levelname)s - %(message)s',  # Defines the format of the log messages.
     handlers=[
         logging.FileHandler("automation.log"),  # Handler to write logs to a file.

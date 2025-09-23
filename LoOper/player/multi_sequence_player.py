@@ -63,13 +63,17 @@ class MultiSequencePlayer(SeleniumBot):
             self.conditional_nodes = chain_config.get('conditional_nodes', [])
             self.llm_nodes = chain_config.get('llm_nodes', [])
             self.tts_nodes = chain_config.get('tts_nodes', [])
+            self.chain_import_nodes = chain_config.get('chain_import_nodes', [])
             
             # Use modularized workflow graph builder
-            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes)
+            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes)
             self.workflow_graph = graph_builder.build_workflow_graph()
-            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, and {len(self.tts_nodes)} TTS nodes")
+            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, and {len(self.chain_import_nodes)} chain import nodes")
         
         self.current_sequence_index = 0
+        
+        # Initialize skipped nodes tracking
+        self.skipped_nodes = set()
         
         # Initialize modularized components
         self.fallback_handler = ConditionalFallbackHandler()
@@ -97,6 +101,17 @@ class MultiSequencePlayer(SeleniumBot):
         """
         starting_nodes = []
         
+        logger.debug(f"Looking for starting nodes in graph with {len(self.workflow_graph)} nodes")
+        
+        # Debug: Log all nodes and their inputs
+        for node_id, node_data in self.workflow_graph.items():
+            inputs = node_data.get('inputs', [])
+            logger.debug(f"Node {node_id} (type: {node_data['type']}) has {len(inputs)} inputs: {inputs}")
+            if node_data['type'] == 'conditional':
+                logger.debug(f"  Conditional node {node_id} connections: {node_data.get('connections', {})}")
+            elif node_data['type'] == 'sequence':
+                logger.debug(f"  Sequence node {node_id} connections: {node_data.get('connections', {})}")
+        
         for node_id, node_data in self.workflow_graph.items():
             if 'inputs' not in node_data or not node_data['inputs']:
                 starting_nodes.append(node_id)
@@ -117,30 +132,59 @@ class MultiSequencePlayer(SeleniumBot):
         """
         newly_ready = []
         
-        # Check all nodes to see if any are now ready
+        # First, check for direct output connections from the completed node
+        if completed_node_id in self.workflow_graph:
+            completed_node = self.workflow_graph[completed_node_id]
+            connections = completed_node.get('connections', {})
+            
+            # Check all output connections
+            for output_type, output_connections in connections.items():
+                for connection in output_connections:
+                    target_node_id = connection.get('node_id')
+                    if target_node_id and target_node_id not in completed_nodes:
+                        # Check if this target node's dependencies are satisfied
+                        if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
+                            if target_node_id not in newly_ready:
+                                newly_ready.append(target_node_id)
+                                logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
+        
+        # Then check all nodes to see if any are now ready based on input dependencies
         for node_id, node_data in self.workflow_graph.items():
-            if node_id in completed_nodes:
-                continue  # Skip already completed nodes
+            if node_id in completed_nodes or node_id in newly_ready:
+                continue  # Skip already completed or already identified nodes
             
             # Check if this node has the completed node as an input
             node_inputs = node_data.get('inputs', [])
             if not node_inputs:
-                continue  # No inputs, should already be in ready set
+                continue  # No inputs, should already be in ready set or handled by output connections
             
-            # Special handling for nodes that have DIRECT conditional node inputs
-            # These should NOT be automatically marked as ready since conditional
-            # nodes handle their own branching logic
-            has_direct_conditional_input = False
+            # Skip nodes that are handled by conditional branching logic
+            # Only skip if ALL inputs are from conditional nodes that haven't chosen this path
+            should_skip_conditional_handling = False
+            conditional_inputs = []
             for input_connection in node_inputs:
                 input_node_id = input_connection['from_node']
                 if input_node_id in self.workflow_graph:
                     input_node = self.workflow_graph[input_node_id]
                     if input_node.get('type') == 'conditional':
-                        has_direct_conditional_input = True
-                        break
+                        conditional_inputs.append(input_node_id)
             
-            if has_direct_conditional_input:
-                continue  # Skip nodes with direct conditional inputs - they're handled by conditional branching logic
+            # If this node has conditional inputs, check if any of them have chosen this node
+            if conditional_inputs:
+                has_chosen_path = False
+                for conditional_id in conditional_inputs:
+                    conditional_node = self.workflow_graph[conditional_id]
+                    chosen_branch = conditional_node.get('chosen_branch_node')
+                    if chosen_branch == node_id:
+                        has_chosen_path = True
+                        break
+                
+                # If no conditional has chosen this path yet, skip it
+                if not has_chosen_path:
+                    should_skip_conditional_handling = True
+            
+            if should_skip_conditional_handling:
+                continue  # Skip nodes that haven't been chosen by conditional branching
             
             # Check if all input dependencies are satisfied
             all_inputs_satisfied = True
@@ -155,6 +199,70 @@ class MultiSequencePlayer(SeleniumBot):
                 logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
         
         return newly_ready
+    
+    def _get_output_connected_nodes(self, node_id):
+        """
+        Get all nodes that are connected to the outputs of the given node.
+        
+        Args:
+            node_id (str): The node ID to get output connections for
+            
+        Returns:
+            list: List of node IDs that are connected to this node's outputs
+        """
+        connected_nodes = []
+        
+        if node_id not in self.workflow_graph:
+            return connected_nodes
+            
+        node = self.workflow_graph[node_id]
+        connections = node.get('connections', {})
+        
+        # For most nodes, check 'output' connections
+        # For conditional nodes, this method shouldn't be called (they use branch logic)
+        for output_type, output_connections in connections.items():
+            for connection in output_connections:
+                target_node_id = connection.get('node_id')
+                if target_node_id:
+                    connected_nodes.append(target_node_id)
+                    
+        return connected_nodes
+    
+    def _are_all_dependencies_satisfied(self, node_id, completed_nodes):
+        """
+        Check if dependencies for a node are satisfied.
+        For conditional branching, only ONE input path needs to be satisfied.
+        
+        Args:
+            node_id (str): The node ID to check dependencies for
+            completed_nodes (set): Set of completed node IDs
+            
+        Returns:
+            bool: True if dependencies are satisfied, False otherwise
+        """
+        if node_id not in self.workflow_graph:
+            logger.debug(f"Node {node_id} not found in workflow graph")
+            return False
+            
+        node = self.workflow_graph[node_id]
+        inputs = node.get('inputs', [])
+        logger.debug(f"Node {node_id} inputs: {inputs}")
+        
+        # If no inputs, node is ready
+        if not inputs:
+            logger.debug(f"Node {node_id} has no inputs, marking as ready")
+            return True
+            
+        # For conditional branching: if ANY input dependency is satisfied, node is ready
+        # This allows dynamic workflow execution based on conditions
+        for input_connection in inputs:
+            input_node_id = input_connection.get('from_node')
+            if input_node_id in completed_nodes:
+                logger.debug(f"Node {node_id} dependency {input_node_id} satisfied - node is ready")
+                return True
+                
+        logger.debug(f"No dependencies satisfied for node {node_id}")
+        return False
     
     def _evaluate_conditional(self, conditional_node, stop_flag):
         """
@@ -459,6 +567,7 @@ class MultiSequencePlayer(SeleniumBot):
             return
         
         logger.info(f"Starting workflow execution from nodes: {starting_nodes}")
+        logger.debug(f"Workflow graph has {len(self.workflow_graph)} nodes: {list(self.workflow_graph.keys())}")
         ready_nodes.update(starting_nodes)
         
         # Execute nodes in dependency order
@@ -497,10 +606,14 @@ class MultiSequencePlayer(SeleniumBot):
                     conditional_result = self._evaluate_conditional(conditional_data, stop_flag)
                 success = True  # Conditional evaluation always succeeds
                 logger.info(f"Conditional evaluation result: {conditional_result}")
+                # Store the result in the node for later reference
+                node['last_conditional_result'] = conditional_result
             elif node['type'] == 'llm':
                 success = self._execute_llm_node(node, stop_flag) is not None
             elif node['type'] == 'tts':
                 success = self._execute_tts_node(node, stop_flag) is not None
+            elif node['type'] == 'chain_import':
+                success = self._execute_chain_import_node(node, stop_flag)
             else:
                 logger.warning(f"Unknown node type: {node['type']}")
                 continue
@@ -513,16 +626,32 @@ class MultiSequencePlayer(SeleniumBot):
                 # For conditional nodes, only add nodes from the chosen branch
                 if node['type'] == 'conditional':
                     next_node_id = self._get_conditional_branch_node(node, conditional_result)
+                    # Cache the chosen branch node and result to avoid recalculating
+                    node['chosen_branch_node'] = next_node_id
+                    node['conditional_result'] = conditional_result
                     if next_node_id and next_node_id not in completed_nodes:
                         ready_nodes.add(next_node_id)
                         logger.info(f"Conditional node chose branch leading to: {next_node_id}")
                 else:
-                    # For non-conditional nodes, check which nodes are now ready to execute
+                    # For all other nodes, check output connections to find next nodes
+                    logger.debug(f"Node {current_node_id} connections: {node.get('connections', {})}")
+                    next_nodes = self._get_output_connected_nodes(current_node_id)
+                    logger.debug(f"Output connected nodes from {current_node_id}: {next_nodes}")
+                    for next_node_id in next_nodes:
+                        if next_node_id not in completed_nodes:
+                            # Check if all dependencies for this node are satisfied
+                            if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
+                                ready_nodes.add(next_node_id)
+                                logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
+                    
+                    # Also check for nodes that might be ready due to dependency satisfaction
                     newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
                     ready_nodes.update(newly_ready)
                     
                     if newly_ready:
-                        logger.info(f"Nodes now ready for execution: {newly_ready}")
+                        logger.info(f"Additional nodes now ready for execution: {newly_ready}")
+                    
+                    logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
             else:
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
                 return
@@ -564,12 +693,26 @@ class MultiSequencePlayer(SeleniumBot):
         
         logger.info(f"Conditional result: {conditional_result}, taking '{branch}' branch")
         
-        if branch in connections and connections[branch]:
+        # Mark nodes in the unchosen branch as skipped
+        unchosen_branch = 'false' if conditional_result else 'true'
+        skipped = self._mark_skipped(node['data']['node_id'], unchosen_branch)
+        self.skipped_nodes.update(skipped)
+        
+        # Handle the connections structure - it's organized by branch (true/false)
+        if isinstance(connections, str):
+            connections = json.loads(connections)
+
+        target_node = None
+        # Get connections for the chosen branch
+        branch_connections = connections.get(branch, [])
+        if branch_connections:
             # Take the first connection in the branch
-            next_connection = connections[branch][0]
-            return next_connection['node_id']
+            target_node = branch_connections[0].get('node_id')
+        
+        if target_node:
+            return target_node
         else:
-            logger.info(f"No connections found for '{branch}' branch, ending workflow")
+            logger.info(f"No connection for '{branch}' branch, ending workflow")
             return None
     
     def _execute_conditional_node(self, node, stop_flag):
@@ -737,7 +880,114 @@ class MultiSequencePlayer(SeleniumBot):
                 'error': f'TTS execution failed: {str(e)}'
             }
     
+    def _execute_chain_import_node(self, node, stop_flag):
+        """
+        Executes a chain import node by loading and running the specified chain file.
+        
+        Args:
+            node (dict): The chain import node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            bool: True if chain import executed successfully, False otherwise
+        """
+        chain_import_data = node['data']
+        logger.info(f"Executing chain import node: {chain_import_data.get('name', chain_import_data['node_id'])}")
+        
+        try:
+            # Get the chain file path from the node data
+            chain_file_path = chain_import_data.get('chain_file_path')
+            if not chain_file_path:
+                logger.error("Chain import node missing chain_file_path")
+                return False
+            
+            # Check if file exists
+            if not os.path.exists(chain_file_path):
+                logger.error(f"Chain file not found: {chain_file_path}")
+                return False
+            
+            # Load the chain configuration
+            with open(chain_file_path, 'r', encoding='utf-8') as f:
+                imported_chain_config = json.load(f)
+            
+            # Create a new MultiSequencePlayer instance for the imported chain
+            imported_player = MultiSequencePlayer(imported_chain_config, chain_file_path)
+            
+            # Share the same automation context (action handlers, timing, etc.)
+            imported_player.action_count = self.action_count
+            imported_player.last_action_time = self.last_action_time
+            imported_player.last_click_time = self.last_click_time
+            imported_player.mouse_movement_history = self.mouse_movement_history
+            
+            # Execute the imported chain completely
+            logger.info(f"Starting execution of imported chain: {chain_file_path}")
+            result = imported_player.play_chain(stop_flag)
+            
+            # Update our context with the imported chain's final state
+            self.action_count = imported_player.action_count
+            self.last_action_time = imported_player.last_action_time
+            self.last_click_time = imported_player.last_click_time
+            self.mouse_movement_history = imported_player.mouse_movement_history
+            
+            # No need to clean up driver since SeleniumBot doesn't use actual WebDriver
+            
+            logger.info(f"Chain import node completed successfully: {chain_import_data.get('name', chain_import_data['node_id'])}")
+            return result is not False  # Return True if play_chain didn't explicitly return False
+            
+        except Exception as e:
+            logger.error(f"Chain import node execution failed: {str(e)}")
+            return False
+    
     # _find_next_sequence_node method removed - now handled by WorkflowNavigator
     
     # Old sequence execution methods removed - now handled by SequenceExecutor
     # _execute_sequence, _handle_pre_sequence_conditions, _handle_post_sequence_conditions
+
+    def _mark_skipped(self, conditional_id, unchosen_port):
+        from collections import deque
+        skipped = set()
+        conditional_data = self.workflow_graph[conditional_id]
+        connections = conditional_data.get('connections', {})
+        if isinstance(connections, str):
+            connections = json.loads(connections)
+        
+        # Handle the connections structure - it's organized by branch (true/false)
+        unchosen_starts = []
+        if isinstance(connections, dict) and unchosen_port in connections:
+            unchosen_starts = [conn['node_id'] for conn in connections[unchosen_port]]
+        
+        queue = deque(unchosen_starts)
+        visited = set()
+        while queue:
+            current = queue.popleft()
+            if current in visited:
+                continue
+            visited.add(current)
+            current_data = self.workflow_graph.get(current, {})
+            inputs = current_data.get('inputs', [])
+            all_inputs_skippable = True
+            for inp in inputs:
+                from_id = inp['from_node']
+                from_port = inp.get('output_type', inp.get('output_port'))
+                if from_id == conditional_id and from_port == unchosen_port:
+                    continue
+                elif from_id in skipped:
+                    continue
+                else:
+                    all_inputs_skippable = False
+                    break
+            if all_inputs_skippable:
+                skipped.add(current)
+                # Handle connections for non-conditional nodes
+                node_connections = current_data.get('connections', {})
+                if isinstance(node_connections, dict) and 'output' in node_connections:
+                    for conn in node_connections['output']:
+                        target = conn.get('target_node_id') or conn.get('node_id')
+                        if target and target not in visited:
+                            queue.append(target)
+                elif isinstance(node_connections, list):
+                    for conn in node_connections:
+                        target = conn.get('target_node_id') or conn.get('node_id')
+                        if target and target not in visited:
+                            queue.append(target)
+        return skipped

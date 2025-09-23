@@ -204,11 +204,17 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "No Chain", "No chain configuration available to run.")
                 return
 
-            # Check if there are any sequences to run
+            # Check if there are any nodes to run (sequences, conditionals, LLM, TTS, or chain imports)
             sequences = chain_config.get('sequences', [])
-            if not sequences:
-                logger.warning("No sequences in chain configuration")
-                QMessageBox.warning(self, "Empty Chain", "No sequences found in the current chain.")
+            conditional_nodes = chain_config.get('conditional_nodes', [])
+            llm_nodes = chain_config.get('llm_nodes', [])
+            tts_nodes = chain_config.get('tts_nodes', [])
+            chain_import_nodes = chain_config.get('chain_import_nodes', [])
+            
+            total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes)
+            if total_nodes == 0:
+                logger.warning("No nodes in chain configuration")
+                QMessageBox.warning(self, "Empty Chain", "No nodes found in the current chain.")
                 return
 
             # Create a temporary file for the chain configuration

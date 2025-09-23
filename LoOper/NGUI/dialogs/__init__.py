@@ -8,6 +8,7 @@ from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, WaitCo
 from .llm_dialogs import LLMPropertiesDialog
 from .tts_dialogs import TTSPropertiesDialog
 from .ai_settings_dialog import AISettingsDialog
+from .chain_expansion_dialog import ChainExpansionDialog
 from .utils import get_default_api_url
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     'LLMPropertiesDialog',
     'TTSPropertiesDialog',
     'AISettingsDialog',
+    'ChainExpansionDialog',
     'get_default_api_url'
 ]
