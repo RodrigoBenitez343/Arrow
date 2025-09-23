@@ -388,7 +388,7 @@ class NodeOperations:
             elif isinstance(node, ActionNode):
                 logger.debug("Deleting action node")
                 self.delete_action_node(node)
-            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode)):
+            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode)):
                 logger.debug(f"Deleting {type(node).__name__} node")
                 self.parent_widget.graph_manager.delete_node(node)
             else:

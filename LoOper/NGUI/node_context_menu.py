@@ -145,3 +145,7 @@ class NodeContextMenuManager:
         add_tts_action = QAction("Add TTS Node", menu)
         add_tts_action.triggered.connect(lambda: self.graph_view.add_tts_node())
         menu.addAction(add_tts_action)
+        
+        add_chain_import_action = QAction("Add Chain Import Node", menu)
+        add_chain_import_action.triggered.connect(lambda: self.graph_view.add_chain_import_node())
+        menu.addAction(add_chain_import_action)
