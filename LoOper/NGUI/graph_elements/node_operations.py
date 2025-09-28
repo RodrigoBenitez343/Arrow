@@ -118,18 +118,20 @@ class NodeOperations:
                 
                 if node:
                     logger.debug(f"Setting properties for sequence node {node.id}")
-                    # Set node properties with the selected file
-                    node.set_property('sequence_file', file_path)
+                    # CRITICAL: Store only the filename in sequence_file property to prevent path issues
+                    # The player should look for sequences by filename only, not full paths
+                    sequence_filename_only = os.path.basename(file_path)
+                    node.set_property('sequence_file', sequence_filename_only)
                     
                     # Use the set_sequence_data method like the old implementation
                     sequence_config = {
-                        'sequence_file': file_path,
+                        'sequence_file': sequence_filename_only,  # Use filename only
                         'loop_count': 1,
                         'extra_delay': 1.0
                     }
                     node.set_sequence_data(0, sequence_config)
                     
-                    logger.info(f"Successfully added sequence: {file_path}")
+                    logger.info(f"Successfully added sequence: {sequence_filename_only} (from {file_path})")
                     return node
                 else:
                     logger.error("Failed to create sequence node")
@@ -966,6 +968,8 @@ class NodeOperations:
                     config['chain_file'],
                     config['import_mode'],
                     config['prefix'],
+                    config['loop_count'],
+                    config['extra_delay'],
                     config['enabled']
                 )
                 

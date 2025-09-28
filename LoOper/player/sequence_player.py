@@ -52,21 +52,32 @@ class SequencePlayer(SeleniumBot):
             stop_flag (callable): Optional function that returns True when playback should stop.
         """
         logger.info("Starting desktop playback")
+        logger.debug(f"Sequence contains {len(self.sequence_data['actions'])} actions")
+        
         time.sleep(2) # Give the user time to switch to the target window.
         self.last_action_time = time.time()
+        
         # Loop through each action in the sequence.
         for idx, action in enumerate(self.sequence_data['actions']):
             # Check stop flag before each action
             if stop_flag and stop_flag():
                 logger.info("Playback stopped by user request")
                 return
+                
+            logger.debug(f"Executing action {idx + 1}/{len(self.sequence_data['actions'])}: {action.get('type', 'unknown')}")
+            
             try:
                 # Use the execute_with_timing method from the base class.
                 success = self.execute_with_timing(idx, action, fallback_callback, stop_flag)
+                logger.debug(f"Action {idx} execution result: {success}")
+                
                 if not success:
                     logger.info(f"Fallback triggered for action {idx}. Stopping current sequence.")
                     return  # Exit current sequence to allow fallback to run
             except Exception as e:
                 logger.error(f"Action {idx} failed: {str(e)}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
                 break # Stop playback on failure.
+                
         logger.info("Playback completed")

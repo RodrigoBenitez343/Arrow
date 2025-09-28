@@ -5,7 +5,7 @@ Provides modular components for complex workflow automation.
 """
 
 from .conditional_fallback_handler import ConditionalFallbackHandler
-from .workflow_graph import WorkflowGraphBuilder, WorkflowNavigator
+from .workflow_graph import WorkflowGraphBuilder, WorkflowNavigator, WorkflowExecutor
 from .llm_executor import LLMExecutor
 from .sequence_executor import SequenceExecutor
 

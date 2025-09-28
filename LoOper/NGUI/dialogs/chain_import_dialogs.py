@@ -77,6 +77,8 @@ class ChainImportDialog(QDialog):
             'chain_file': '',
             'import_mode': 'full',
             'prefix': '',
+            'loop_count': 1,
+            'extra_delay': 0,
             'enabled': True
         }
         
@@ -144,6 +146,26 @@ class ChainImportDialog(QDialog):
         self.prefix_input.setPlaceholderText("Optional prefix for imported node names")
         prefix_row.addWidget(self.prefix_input)
         config_layout.addLayout(prefix_row)
+        
+        # Loop count
+        loop_row = QHBoxLayout()
+        loop_row.addWidget(QLabel("Loop Count:"))
+        self.loop_count_input = QLineEdit()
+        self.loop_count_input.setPlaceholderText("1")
+        self.loop_count_input.setToolTip("Number of times to execute the imported chain")
+        loop_row.addWidget(self.loop_count_input)
+        loop_row.addStretch()
+        config_layout.addLayout(loop_row)
+        
+        # Extra delay
+        delay_row = QHBoxLayout()
+        delay_row.addWidget(QLabel("Extra Delay (s):"))
+        self.extra_delay_input = QLineEdit()
+        self.extra_delay_input.setPlaceholderText("0")
+        self.extra_delay_input.setToolTip("Extra delay between loop iterations in seconds")
+        delay_row.addWidget(self.extra_delay_input)
+        delay_row.addStretch()
+        config_layout.addLayout(delay_row)
         
         # Enabled checkbox
         self.enabled_checkbox = QCheckBox("Enable this chain import")
@@ -219,6 +241,8 @@ class ChainImportDialog(QDialog):
         self.chain_file_input.setText(self.config.get('chain_file', ''))
         self.import_mode_combo.setCurrentText(self.config.get('import_mode', 'full'))
         self.prefix_input.setText(self.config.get('prefix', ''))
+        self.loop_count_input.setText(str(self.config.get('loop_count', 1)))
+        self.extra_delay_input.setText(str(self.config.get('extra_delay', 0)))
         self.enabled_checkbox.setChecked(self.config.get('enabled', True))
         
         # Validate the loaded file
@@ -230,16 +254,27 @@ class ChainImportDialog(QDialog):
             'chain_file': '',
             'import_mode': 'full',
             'prefix': '',
+            'loop_count': 1,
+            'extra_delay': 0,
             'enabled': True
         }
         self.load_config()
     
     def get_config(self):
         """Get the configuration from the dialog"""
+        try:
+            loop_count = int(self.loop_count_input.text()) if self.loop_count_input.text() else 1
+            extra_delay = float(self.extra_delay_input.text()) if self.extra_delay_input.text() else 0
+        except ValueError:
+            loop_count = 1
+            extra_delay = 0
+            
         return {
             'chain_file': self.chain_file_input.text(),
             'import_mode': self.import_mode_combo.currentText(),
             'prefix': self.prefix_input.text().strip(),
+            'loop_count': loop_count,
+            'extra_delay': extra_delay,
             'enabled': self.enabled_checkbox.isChecked()
         }
     

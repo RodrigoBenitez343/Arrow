@@ -36,49 +36,248 @@ class ConditionalFallbackHandler:
             if not image_path or not os.path.exists(image_path):
                 logger.warning(f"Presence trigger image not found: {image_path}")
                 return False
-            
+                
             logger.info(f"Checking presence of image: {image_path} (confidence: {confidence}, timeout: {timeout}s)")
             
-            # Use multi-scale template matching for better detection
-            scales = trigger_config.get('scales', [0.8, 0.9, 1.0, 1.1, 1.2])
-            
-            # If timeout is 0, perform single check (no waiting)
-            if timeout <= 0:
-                return self._perform_single_presence_check(image_path, confidence, scales, trigger_config)
-            
-            # Implement timeout loop for waiting
+            # Use template matching with timeout support
             start_time = time.time()
-            check_interval = 0.5  # Check every 500ms
+            scales = [1.0, 0.9, 1.1, 0.8, 1.2]  # Multi-scale detection
             
             while time.time() - start_time < timeout:
-                # Check stop flag before each validation attempt
                 if self.stop_flag and self.stop_flag():
                     logger.info("Presence trigger check stopped by user request")
                     return False
-                
-                # Perform presence check
+                    
+                # Perform single presence check using the existing method
                 found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config)
-                
                 if found:
-                    elapsed_time = time.time() - start_time
-                    logger.info(f"[FOUND] Presence trigger satisfied after {elapsed_time:.2f}s: {image_path}")
+                    logger.info(f"Presence trigger satisfied - element found: {image_path}")
                     return True
-                
-                # Wait before next check (unless we're close to timeout)
-                remaining_time = timeout - (time.time() - start_time)
-                if remaining_time > check_interval:
-                    time.sleep(check_interval)
-                elif remaining_time > 0:
-                    time.sleep(remaining_time)
-                else:
-                    break
+                    
+                time.sleep(0.5)
             
-            logger.info(f"[TIMEOUT] Presence trigger timeout after {timeout}s: {image_path}")
+            logger.info(f"Presence trigger timeout - element not found: {image_path}")
             return False
             
         except Exception as e:
             logger.error(f"Error checking presence trigger: {e}")
             return False
+    
+    def execute_conditional_node(self, node, stop_flag=None):
+        """
+        Executes a conditional node and returns the next node ID based on the result.
+        
+        Args:
+            node (dict): The conditional node from the workflow graph
+            stop_flag (callable): Function to check if execution should stop
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        conditional_data = node['data']
+        logger.info(f"Executing conditional node: {conditional_data.get('name', conditional_data['node_id'])}")
+        
+        # Check if this is a loop condition
+        condition_type = conditional_data.get('condition_type', 'presence')
+        if condition_type == 'loop':
+            result = self.execute_conditional_loop_from_node(conditional_data, stop_flag)
+        else:
+            result = self.evaluate_conditional_from_node(conditional_data, stop_flag)
+        
+        return self.get_conditional_branch_node(node, result)
+    
+    def evaluate_conditional_from_node(self, conditional_node, stop_flag=None):
+        """
+        Evaluate a conditional node using the fallback handler.
+        
+        Args:
+            conditional_node (dict): The conditional node configuration
+            stop_flag (callable): Function to check if execution should stop
+        
+        Returns:
+            bool: True if condition is met, False otherwise
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        # Fix: The JSON stores 'trigger_type' with values like 'absence', 'presence', 'ocr'
+        # We need to map these to the expected condition types for evaluation
+        raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        
+        # Map the raw trigger type to the expected condition type format
+        condition_type_mapping = {
+            'presence': 'presence_trigger',
+            'absence': 'absence_trigger', 
+            'ocr': 'ocr_trigger',
+            'presence_trigger': 'presence_trigger',  # backward compatibility
+            'absence_trigger': 'absence_trigger',    # backward compatibility
+            'ocr_trigger': 'ocr_trigger'             # backward compatibility
+        }
+        
+        condition_type = condition_type_mapping.get(raw_trigger_type, 'presence_trigger')
+        
+        # Build condition_config from the conditional node properties
+        # The JSON stores properties directly, not nested under 'condition_data'
+        condition_config = {
+            'image_path': conditional_node.get('image_path', ''),
+            'confidence': float(conditional_node.get('threshold', 0.8)),
+            'timeout': float(conditional_node.get('wait_time', 10)),
+            'max_loops': int(conditional_node.get('max_loops', 10)),
+            'target_text': conditional_node.get('ocr_text', '') or conditional_node.get('target_text', ''),
+            'case_sensitive': conditional_node.get('case_sensitive', True),
+            'language': conditional_node.get('language', 'eng'),
+            'region': conditional_node.get('region')
+        }
+        
+        # Also check if there's a nested condition_data (for backward compatibility)
+        if 'condition_data' in conditional_node:
+            nested_config = conditional_node['condition_data']
+            condition_config.update(nested_config)
+        
+        logger.info(f"Evaluating conditional with raw trigger type: {raw_trigger_type} -> mapped to: {condition_type}")
+        logger.debug(f"Condition config: {condition_config}")
+        
+        if condition_type == 'presence_trigger':
+            return self.check_presence_trigger(condition_config)
+        elif condition_type == 'absence_trigger':
+            timeout = float(condition_config.get('timeout', 10))
+            return self.check_absence_trigger(condition_config, timeout)
+        elif condition_type == 'ocr_trigger':
+            return self.check_ocr_trigger(condition_config)
+        else:
+            logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
+            return False
+    
+    def execute_conditional_loop_from_node(self, conditional_data, stop_flag=None):
+        """
+        Execute a conditional loop by reconstructing the loop configuration and calling the fallback handler.
+        
+        Args:
+            conditional_data (dict): The conditional node data containing loop configuration
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            bool: True if loop completed successfully, False otherwise
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        try:
+            import json
+            from ..sequence_player import SequencePlayer
+            
+            # Reconstruct loop configuration from conditional node data
+            loop_type = conditional_data.get('loop_type', 'while_present')
+            max_iterations = int(conditional_data.get('max_loops', 10))
+            sequence_file = conditional_data.get('sequence_file', '')
+            iteration_delay = float(conditional_data.get('iteration_delay', 1.0))
+            
+            # Parse the stored loop condition
+            loop_condition_json = conditional_data.get('loop_condition', '{}')
+            try:
+                condition = json.loads(loop_condition_json) if loop_condition_json else {}
+            except (json.JSONDecodeError, TypeError):
+                # Fallback to basic image condition if JSON parsing fails
+                condition = {
+                    'trigger_type': 'presence',
+                    'image_path': conditional_data.get('image_path', ''),
+                    'confidence': float(conditional_data.get('threshold', 0.8))
+                }
+            
+            # Build loop configuration
+            loop_config = {
+                'type': loop_type,
+                'max_iterations': max_iterations,
+                'sequence_file': sequence_file,
+                'iteration_delay': iteration_delay,
+                'condition': condition
+            }
+            
+            logger.info(f"Executing conditional loop: {loop_type}, sequence: {sequence_file}, max_iterations: {max_iterations}")
+            
+            # Execute the conditional loop using the fallback handler
+            # Create a temporary SequencePlayer for loop execution with the sequence file
+            sequence_file = loop_config.get('sequence_file', '')
+            if not sequence_file:
+                logger.error(f"No sequence file specified for conditional loop")
+                return False
+            
+            temp_sequence_player = SequencePlayer(sequence_file)
+            return self.execute_conditional_loop(loop_config, temp_sequence_player)
+            
+        except Exception as e:
+            logger.error(f"Error executing conditional loop: {e}")
+            return False
+    
+    def get_conditional_branch_node(self, node, result):
+        """
+        Get the next node ID based on conditional result.
+        
+        Args:
+            node (dict): The conditional node
+            result (bool): The conditional evaluation result
+            
+        Returns:
+            str: Next node ID, or None if no connection found
+        """
+        # Determine which branch to follow based on result
+        branch = 'true' if result else 'false'
+        
+        # Get connections for this branch
+        connections = node.get('connections', {})
+        branch_connections = connections.get(branch, [])
+        
+        target_node = None
+        if branch_connections:
+            # Take the first connection in the branch
+            target_node = branch_connections[0].get('node_id')
+        
+        if target_node:
+            return target_node
+        else:
+            logger.info(f"No connection for '{branch}' branch, ending workflow")
+            return None
+    
+    def handle_until_present_condition(self, conditional_node, stop_flag=None):
+        """
+        Handle until present condition for backward compatibility.
+        
+        Args:
+            conditional_node (dict): The conditional node configuration
+            stop_flag (callable): Function to check if execution should stop
+            
+        Returns:
+            bool: True if condition is met, False otherwise
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        condition_data = conditional_node.get('condition_data', {})
+        
+        # Build the loop configuration for until_present
+        loop_config = {
+            'type': 'until_present',
+            'max_iterations': int(condition_data.get('max_loops', 10)),
+            'sequence_file': condition_data.get('sequence_file') or conditional_node.get('sequence_to_execute'),
+            'iteration_delay': float(condition_data.get('iteration_delay', 1.0)),
+            'condition': {
+                'trigger_type': 'presence',
+                'image_path': condition_data.get('image_path', ''),
+                'confidence': float(condition_data.get('threshold', 0.8))
+            }
+        }
+        
+        # Create a temporary SequencePlayer for loop execution
+        sequence_file = loop_config.get('sequence_file', '')
+        if not sequence_file:
+            logger.error(f"No sequence file specified for until_present condition")
+            return False
+        
+        temp_sequence_player = SequencePlayer(sequence_file)
+        return self.execute_conditional_loop(loop_config, temp_sequence_player)
     
     def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config):
         """
@@ -135,9 +334,10 @@ class ConditionalFallbackHandler:
         # Determine validation requirements based on strict_validation flag
         strict_validation = trigger_config.get('strict_validation', False)
         if strict_validation:
-            # For strict validation (until_present loops), require ALL validations to pass
-            min_validations_required = total_validations
-            logger.debug(f"[STRICT MODE] Requiring ALL {min_validations_required}/{total_validations} validations to pass")
+            # For strict validation (until_present loops), require at least 2 out of 3 validations to pass
+            # This is more reasonable than requiring ALL validations
+            min_validations_required = max(1, min(2, total_validations))
+            logger.debug(f"[STRICT MODE] Requiring at least {min_validations_required}/{total_validations} validations to pass")
         else:
             # Normal validation
             min_validations_required = 1
@@ -259,10 +459,10 @@ class ConditionalFallbackHandler:
                 if loop_type == 'until_present':
                     # For until_present loops, use stricter validation to prevent false positives
                     condition['strict_validation'] = True
-                    # Increase confidence threshold for until_present to ensure accuracy
+                    # Use original confidence threshold instead of increasing it
                     original_confidence = condition.get('confidence', 0.8)
-                    condition['confidence'] = max(0.9, original_confidence)
-                    logger.info(f"until_present: Using enhanced confidence threshold: {condition['confidence']}")
+                    condition['confidence'] = original_confidence
+                    logger.info(f"until_present: Using confidence threshold: {condition['confidence']}")
                 
                 # Determine condition type and evaluate accordingly
                 # Fix: Map raw trigger types to expected condition types
@@ -319,7 +519,7 @@ class ConditionalFallbackHandler:
                     post_condition = condition.copy()
                     if loop_type == 'until_present':
                         post_condition['strict_validation'] = True
-                        post_condition['confidence'] = max(0.9, post_condition.get('confidence', 0.8))
+                        post_condition['confidence'] = condition.get('confidence', 0.8)
                     
                     # Check condition based on type (not just presence)
                     if condition_type == 'ocr_trigger':
@@ -385,3 +585,97 @@ class ConditionalFallbackHandler:
         except Exception as e:
             logger.error(f"Error in conditional loop: {e}")
             return False
+
+    def handle_pre_sequence_conditions(self, item, stop_flag, advanced_conditions):
+        """
+        Handle conditional checks before executing a sequence
+        
+        Args:
+            item (dict): Sequence configuration item
+            stop_flag (callable): Stop flag function
+            advanced_conditions (dict): Advanced conditions configuration
+        
+        Returns:
+            bool: True if sequence should be skipped
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        # Check for presence triggers that must be met before execution
+        presence_triggers = advanced_conditions.get('presence_triggers', [])
+        for trigger in presence_triggers:
+            if stop_flag and stop_flag():
+                return True
+                
+            if not self.check_presence_trigger(trigger):
+                logger.info(f"Presence trigger not met, skipping sequence: {trigger.get('image_path')}")
+                return True
+        
+        # Check for absence triggers that must be met before execution
+        absence_triggers = advanced_conditions.get('absence_triggers', [])
+        for trigger in absence_triggers:
+            if stop_flag and stop_flag():
+                return True
+                
+            timeout = trigger.get('timeout', 10)
+            if not self.check_absence_trigger(trigger, timeout):
+                logger.info(f"Absence trigger not met, skipping sequence: {trigger.get('image_path')}")
+                return True
+        
+        # Handle conditional loops that should execute before the main sequence
+        pre_conditional_loops = advanced_conditions.get('pre_conditional_loops', [])
+        for loop_config in pre_conditional_loops:
+            if stop_flag and stop_flag():
+                return True
+                
+            logger.info("Executing pre-sequence conditional loop")
+            from ..sequence_player import SequencePlayer
+            sequence_file = loop_config.get('sequence_file', '')
+            if sequence_file:
+                temp_sequence_player = SequencePlayer(sequence_file)
+                self.execute_conditional_loop(loop_config, temp_sequence_player)
+        
+        return False
+
+    def handle_post_sequence_conditions(self, item, stop_flag, advanced_conditions):
+        """
+        Handle conditional actions after executing a sequence
+        
+        Args:
+            item (dict): Sequence configuration item
+            stop_flag (callable): Stop flag function
+            advanced_conditions (dict): Advanced conditions configuration
+        """
+        if stop_flag:
+            self.stop_flag = stop_flag
+            
+        # Handle conditional loops that should execute after the main sequence
+        post_conditional_loops = advanced_conditions.get('post_conditional_loops', [])
+        for loop_config in post_conditional_loops:
+            if stop_flag and stop_flag():
+                return
+                
+            logger.info("Executing post-sequence conditional loop")
+            from ..sequence_player import SequencePlayer
+            sequence_file = loop_config.get('sequence_file', '')
+            if sequence_file:
+                temp_sequence_player = SequencePlayer(sequence_file)
+                self.execute_conditional_loop(loop_config, temp_sequence_player)
+        
+        # Handle wait conditions (wait for presence/absence of elements or OCR text)
+        wait_conditions = advanced_conditions.get('wait_conditions', [])
+        for condition in wait_conditions:
+            if stop_flag and stop_flag():
+                return
+                
+            condition_type = condition.get('type', 'presence')
+            timeout = float(condition.get('timeout', 30))
+            
+            logger.info(f"Waiting for {condition_type} condition: {condition.get('image_path') or condition.get('target_text')}")
+            
+            if condition_type == 'presence':
+                self.check_presence_trigger(condition)
+            elif condition_type == 'absence':
+                self.check_absence_trigger(condition, timeout)
+            elif condition_type == 'ocr':
+                self.check_ocr_trigger(condition)

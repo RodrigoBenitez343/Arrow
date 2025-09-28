@@ -147,13 +147,16 @@ class SequenceNode(BaseNode):
         if isinstance(sequence_config, str):
             # Legacy format - sequence_config is just the file path
             seq_name = os.path.basename(sequence_config)
-            sequence_file = sequence_config
+            sequence_file = os.path.basename(sequence_config)  # Store filename only
             loop_count = 1
             extra_delay = 1.0
         else:
             # New format - sequence_config is a dictionary
-            seq_name = os.path.basename(sequence_config.get('sequence_file', ''))
             sequence_file = sequence_config.get('sequence_file', '')
+            # Ensure we store only the filename, not full path
+            if sequence_file and (os.path.sep in sequence_file or '/' in sequence_file):
+                sequence_file = os.path.basename(sequence_file)
+            seq_name = sequence_file or 'unknown'
             loop_count = sequence_config.get('loop_count', 1)
             extra_delay = sequence_config.get('extra_delay', 1.0)
         
@@ -162,6 +165,8 @@ class SequenceNode(BaseNode):
         # The node name should be just the filename (e.g., "test.json") not "test.json 2"
         self.set_name(seq_name)
         
+        # CRITICAL: Always store only the filename in sequence_file property
+        # This ensures the player looks for the correct file regardless of GUI numbering
         self.set_property('sequence_file', sequence_file)
         self.set_property('loop_count', str(loop_count))
         self.set_property('extra_delay', str(extra_delay))
@@ -662,6 +667,8 @@ class ChainImportNode(BaseNode):
         self.chain_config = {}
         self.import_mode = 'full'  # 'full', 'sequences_only', 'nodes_only'
         self.prefix = ''  # Optional prefix for imported node names
+        self.loop_count = 1  # Number of times to execute the imported chain
+        self.extra_delay = 0  # Extra delay between loop iterations
         
         # Set a distinct color for chain import nodes (lime green)
         self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
@@ -675,13 +682,17 @@ class ChainImportNode(BaseNode):
         self.add_text_input('chain_file', 'Chain File', '')
         self.add_text_input('import_mode', 'Import Mode', 'full')
         self.add_text_input('prefix', 'Node Prefix', '')
+        self.add_text_input('loop_count', 'Loop Count', '1')
+        self.add_text_input('extra_delay', 'Extra Delay (s)', '0')
         self.add_text_input('enabled', 'Enabled', 'true')
         
-    def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', enabled=True):
+    def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', loop_count=1, extra_delay=0, enabled=True):
         """Set the chain import data for this node"""
         self.chain_file_path = chain_file_path
         self.import_mode = import_mode
         self.prefix = prefix
+        self.loop_count = loop_count
+        self.extra_delay = extra_delay
         
         # Load the chain configuration
         try:
@@ -701,6 +712,8 @@ class ChainImportNode(BaseNode):
                 self.set_property('chain_file', chain_file_path)
                 self.set_property('import_mode', import_mode)
                 self.set_property('prefix', prefix)
+                self.set_property('loop_count', str(loop_count))
+                self.set_property('extra_delay', str(extra_delay))
                 self.set_property('enabled', str(enabled).lower())
                 
                 # Change color based on status
@@ -721,6 +734,8 @@ class ChainImportNode(BaseNode):
             'chain_file': self.get_property('chain_file'),
             'import_mode': self.get_property('import_mode'),
             'prefix': self.get_property('prefix'),
+            'loop_count': int(self.get_property('loop_count') or '1'),
+            'extra_delay': float(self.get_property('extra_delay') or '0'),
             'enabled': self.get_property('enabled').lower() == 'true'
         }
     

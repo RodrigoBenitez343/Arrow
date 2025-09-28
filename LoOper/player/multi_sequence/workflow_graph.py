@@ -445,3 +445,695 @@ class WorkflowNavigator:
         """
         return [(node_id, node_data) for node_id, node_data in self.workflow_graph.items() 
                 if node_data.get('type') == node_type]
+
+
+class WorkflowExecutor:
+    """Executes workflow graphs with proper dependency resolution and node execution"""
+    
+    def __init__(self, workflow_graph, sequence_executor, llm_executor, fallback_handler):
+        self.workflow_graph = workflow_graph
+        self.sequence_executor = sequence_executor
+        self.llm_executor = llm_executor
+        self.fallback_handler = fallback_handler
+        self.skipped_nodes = set()
+    
+    def execute_workflow(self, stop_flag=None, action_handlers=None):
+        """
+        Executes the workflow graph with proper dependency resolution.
+        Nodes with multiple inputs will only execute after all their dependencies are satisfied.
+        
+        Args:
+            stop_flag (callable): Optional function that returns True when execution should stop
+            action_handlers: Action handlers for text writing and other actions
+            
+        Returns:
+            bool: True if workflow completed successfully, False otherwise
+        """
+        if not self.workflow_graph:
+            logger.warning("No workflow graph to execute")
+            return False
+            
+        # Track completed nodes and nodes ready for execution
+        completed_nodes = set()
+        ready_nodes = set()
+        
+        # Find all starting nodes (nodes with no inputs)
+        starting_nodes = self._find_all_starting_nodes()
+        if not starting_nodes:
+            logger.warning("No starting nodes found in workflow graph")
+            return False
+        
+        logger.info(f"Starting workflow execution from nodes: {starting_nodes}")
+        logger.debug(f"Workflow graph has {len(self.workflow_graph)} nodes: {list(self.workflow_graph.keys())}")
+        ready_nodes.update(starting_nodes)
+        
+        # Execute nodes in dependency order
+        while ready_nodes:
+            # Check stop flag
+            if stop_flag and stop_flag():
+                logger.info("Workflow execution stopped by user request")
+                return True
+            
+            # Get next ready node to execute
+            current_node_id = ready_nodes.pop()
+            
+            if current_node_id in completed_nodes:
+                continue  # Skip already completed nodes
+            
+            if current_node_id not in self.workflow_graph:
+                logger.warning(f"Node {current_node_id} not found in workflow graph")
+                continue
+            
+            node = self.workflow_graph[current_node_id]
+            logger.info(f"Executing node {current_node_id} (type: {node['type']})")
+            
+            # Execute the node based on its type
+            success = False
+            conditional_result = None
+            
+            if node['type'] == 'sequence':
+                success = self._execute_sequence_node(node, stop_flag) is not None
+            elif node['type'] == 'conditional':
+                # For conditional nodes, evaluate the condition and store the result
+                conditional_data = node['data']
+                condition_type = conditional_data.get('condition_type', 'presence')
+                if condition_type == 'loop':
+                    conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
+                else:
+                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag)
+                success = True  # Conditional evaluation always succeeds
+                logger.info(f"Conditional evaluation result: {conditional_result}")
+                # Store the result in the node for later reference
+                node['last_conditional_result'] = conditional_result
+            elif node['type'] == 'llm':
+                success = self._execute_llm_node(node, stop_flag, action_handlers) is not None
+            elif node['type'] == 'tts':
+                success = self._execute_tts_node(node, stop_flag) is not None
+            elif node['type'] == 'chain_import':
+                success = self._execute_chain_import_node(node, stop_flag) is not None
+            else:
+                logger.warning(f"Unknown node type: {node['type']}")
+                success = False
+            
+            if success:
+                # Mark node as completed
+                completed_nodes.add(current_node_id)
+                logger.info(f"Node {current_node_id} completed successfully")
+                
+                # Handle conditional branching
+                if node['type'] == 'conditional':
+                    # For conditional nodes, determine which branch to follow
+                    branch_node = self._get_conditional_branch_node(node, conditional_result)
+                    if branch_node:
+                        # Mark the chosen branch in the conditional node
+                        node['chosen_branch_node'] = branch_node
+                        # Add the chosen branch node to ready nodes if dependencies are satisfied
+                        if self._are_all_dependencies_satisfied(branch_node, completed_nodes):
+                            ready_nodes.add(branch_node)
+                            logger.info(f"Conditional branch chosen: {branch_node}")
+                        
+                        # Mark nodes in the unchosen branch as skipped
+                        unchosen_branch = 'false' if conditional_result else 'true'
+                        self._mark_skipped(current_node_id, unchosen_branch)
+                else:
+                    # For non-conditional nodes, find all output connected nodes
+                    next_nodes = self._get_output_connected_nodes(current_node_id)
+                    logger.debug(f"Output connected nodes from {current_node_id}: {next_nodes}")
+                    for next_node_id in next_nodes:
+                        if next_node_id not in completed_nodes:
+                            # Check if all dependencies for this node are satisfied
+                            if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
+                                ready_nodes.add(next_node_id)
+                                logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
+                    
+                    # Also check for nodes that might be ready due to dependency satisfaction
+                    newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
+                    ready_nodes.update(newly_ready)
+                    
+                    if newly_ready:
+                        logger.info(f"Additional nodes now ready for execution: {newly_ready}")
+                    
+                    logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
+            else:
+                logger.error(f"Node {current_node_id} execution failed, stopping workflow")
+                return False
+        
+        logger.info("Workflow execution completed successfully")
+        return True
+    
+    def _find_all_starting_nodes(self):
+        """
+        Find all starting nodes for workflow execution (nodes with no inputs).
+        
+        Returns:
+            list: List of node IDs that have no input dependencies
+        """
+        starting_nodes = []
+        
+        logger.debug(f"Looking for starting nodes in graph with {len(self.workflow_graph)} nodes")
+        
+        # Debug: Log all nodes and their inputs
+        for node_id, node_data in self.workflow_graph.items():
+            inputs = node_data.get('inputs', [])
+            logger.debug(f"Node {node_id} (type: {node_data['type']}) has {len(inputs)} inputs: {inputs}")
+            if node_data['type'] == 'conditional':
+                logger.debug(f"  Conditional node {node_id} connections: {node_data.get('connections', {})}")
+            elif node_data['type'] == 'sequence':
+                logger.debug(f"  Sequence node {node_id} connections: {node_data.get('connections', {})}")
+        
+        for node_id, node_data in self.workflow_graph.items():
+            if 'inputs' not in node_data or not node_data['inputs']:
+                starting_nodes.append(node_id)
+                logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
+        
+        return starting_nodes
+    
+    def _find_newly_ready_nodes(self, completed_node_id, completed_nodes):
+        """
+        Find nodes that are now ready to execute after a node completes.
+        
+        Args:
+            completed_node_id (str): The node that just completed
+            completed_nodes (set): Set of all completed node IDs
+        
+        Returns:
+            list: List of node IDs that are now ready to execute
+        """
+        newly_ready = []
+        
+        # First, check for direct output connections from the completed node
+        if completed_node_id in self.workflow_graph:
+            completed_node = self.workflow_graph[completed_node_id]
+            connections = completed_node.get('connections', {})
+            
+            # Check all output connections
+            for output_type, output_connections in connections.items():
+                for connection in output_connections:
+                    target_node_id = connection.get('node_id')
+                    if target_node_id and target_node_id not in completed_nodes:
+                        # Check if this target node's dependencies are satisfied
+                        if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
+                            if target_node_id not in newly_ready:
+                                newly_ready.append(target_node_id)
+                                logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
+        
+        # Then check all nodes to see if any are now ready based on input dependencies
+        for node_id, node_data in self.workflow_graph.items():
+            if node_id in completed_nodes or node_id in newly_ready:
+                continue  # Skip already completed or already identified nodes
+            
+            # Check if this node has the completed node as an input
+            node_inputs = node_data.get('inputs', [])
+            if not node_inputs:
+                continue  # No inputs, should already be in ready set or handled by output connections
+            
+            # Skip nodes that are handled by conditional branching logic
+            # Only skip if ALL inputs are from conditional nodes that haven't chosen this path
+            should_skip_conditional_handling = False
+            conditional_inputs = []
+            for input_connection in node_inputs:
+                input_node_id = input_connection['from_node']
+                if input_node_id in self.workflow_graph:
+                    input_node = self.workflow_graph[input_node_id]
+                    if input_node.get('type') == 'conditional':
+                        conditional_inputs.append(input_node_id)
+            
+            # If this node has conditional inputs, check if any of them have chosen this node
+            if conditional_inputs:
+                has_chosen_path = False
+                for conditional_id in conditional_inputs:
+                    conditional_node = self.workflow_graph[conditional_id]
+                    chosen_branch = conditional_node.get('chosen_branch_node')
+                    if chosen_branch == node_id:
+                        has_chosen_path = True
+                        break
+                
+                # If no conditional has chosen this path yet, skip it
+                if not has_chosen_path:
+                    should_skip_conditional_handling = True
+            
+            if should_skip_conditional_handling:
+                continue  # Skip nodes that haven't been chosen by conditional branching
+            
+            # Check if all input dependencies are satisfied
+            all_inputs_satisfied = True
+            for input_connection in node_inputs:
+                input_node_id = input_connection['from_node']
+                if input_node_id not in completed_nodes:
+                    all_inputs_satisfied = False
+                    break
+            
+            if all_inputs_satisfied:
+                newly_ready.append(node_id)
+                logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
+        
+        return newly_ready
+    
+    def _get_output_connected_nodes(self, node_id):
+        """
+        Get all nodes that are connected to the outputs of the given node.
+        
+        Args:
+            node_id (str): The node ID to get output connections for
+            
+        Returns:
+            list: List of node IDs that are connected to this node's outputs
+        """
+        connected_nodes = []
+        
+        if node_id not in self.workflow_graph:
+            return connected_nodes
+            
+        node = self.workflow_graph[node_id]
+        connections = node.get('connections', {})
+        
+        # For most nodes, check 'output' connections
+        # For conditional nodes, this method shouldn't be called (they use branch logic)
+        for output_type, output_connections in connections.items():
+            for connection in output_connections:
+                target_node_id = connection.get('node_id')
+                if target_node_id:
+                    connected_nodes.append(target_node_id)
+                    
+        return connected_nodes
+    
+    def _are_all_dependencies_satisfied(self, node_id, completed_nodes):
+        """
+        Check if dependencies for a node are satisfied.
+        For conditional branching, only ONE input path needs to be satisfied.
+        
+        Args:
+            node_id (str): The node ID to check dependencies for
+            completed_nodes (set): Set of completed node IDs
+            
+        Returns:
+            bool: True if dependencies are satisfied, False otherwise
+        """
+        if node_id not in self.workflow_graph:
+            logger.debug(f"Node {node_id} not found in workflow graph")
+            return False
+            
+        node = self.workflow_graph[node_id]
+        inputs = node.get('inputs', [])
+        logger.debug(f"Node {node_id} inputs: {inputs}")
+        
+        # If no inputs, node is ready
+        if not inputs:
+            logger.debug(f"Node {node_id} has no inputs, marking as ready")
+            return True
+            
+        # For conditional branching: if ANY input dependency is satisfied, node is ready
+        # This allows dynamic workflow execution based on conditions
+        for input_connection in inputs:
+            input_node_id = input_connection.get('from_node')
+            if input_node_id in completed_nodes:
+                logger.debug(f"Node {node_id} dependency {input_node_id} satisfied - node is ready")
+                return True
+                
+        logger.debug(f"No dependencies satisfied for node {node_id}")
+        return False
+    
+    def _execute_sequence_node(self, node, stop_flag):
+        """
+        Executes a sequence node and returns the next node ID.
+        
+        Args:
+            node (dict): The sequence node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        # Use the SequenceExecutor to handle sequence execution
+        next_node_id = self.sequence_executor.execute_sequence_node(node, stop_flag)
+        return next_node_id
+    
+    def _execute_llm_node(self, node, stop_flag, action_handlers=None):
+        """
+        Executes an LLM node and returns the next node ID.
+        
+        Args:
+            node (dict): The LLM node from the workflow graph
+            stop_flag (callable): Stop flag function
+            action_handlers: Action handlers for text writing
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        # Use the LLMExecutor to handle LLM execution
+        success = self.llm_executor.execute_llm_node(node, stop_flag, action_handlers)
+        
+        if success:
+            # Find next node in the workflow
+            connections = node['connections']
+            if 'output' in connections and connections['output']:
+                # Take the first connection
+                next_connection = connections['output'][0]
+                return next_connection['node_id']
+            else:
+                logger.info("No output connections found for LLM node, ending workflow")
+                return None
+        else:
+            # LLM execution failed, stop workflow
+            return None
+    
+    def _execute_tts_node(self, node, stop_flag):
+        """
+        Executes a TTS node (placeholder for future implementation).
+        
+        Args:
+            node (dict): The TTS node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        logger.info("TTS node execution not yet implemented")
+        # For now, just continue to the next node
+        connections = node.get('connections', {})
+        if 'output' in connections and connections['output']:
+            next_connection = connections['output'][0]
+            return next_connection['node_id']
+        return None
+    
+    def _execute_chain_import_node(self, node, stop_flag):
+        """
+        Executes a chain import node with loop count support using direct chain execution.
+        
+        Args:
+            node (dict): The chain import node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        import os
+        import time
+        from ..multi_sequence_player import MultiSequencePlayer
+        
+        chain_import_data = node.get('data', {})
+        logger.debug(f"Chain import node data: {chain_import_data}")
+        
+        # Try both property names for backward compatibility
+        chain_file_path = chain_import_data.get('chain_file_path', '') or chain_import_data.get('chain_file', '')
+        loop_count = chain_import_data.get('loop_count', 1)
+        extra_delay = chain_import_data.get('extra_delay', 0)
+        import_mode = chain_import_data.get('import_mode', 'full')
+        prefix = chain_import_data.get('prefix', '')
+        
+        logger.debug(f"Initial chain file path: '{chain_file_path}'")
+        
+        # If we still don't have a chain file path, try to get it from import_data
+        if not chain_file_path and 'import_data' in chain_import_data:
+            import_data = chain_import_data['import_data']
+            logger.debug(f"Found import_data: {import_data}")
+            chain_file_path = import_data.get('chain_file_path', '') or import_data.get('chain_file', '')
+            loop_count = import_data.get('loop_count', loop_count)
+            extra_delay = import_data.get('extra_delay', extra_delay)
+            import_mode = import_data.get('import_mode', import_mode)
+            prefix = import_data.get('prefix', prefix)
+            logger.debug(f"Updated chain file path from import_data: '{chain_file_path}'")
+        
+        logger.info(f"Executing chain import node: {chain_file_path} (loops: {loop_count}, extra_delay: {extra_delay})")
+        
+        if not chain_file_path:
+            logger.error(f"No chain file path specified in chain import node data: {chain_import_data}")
+            # Continue to next node even if chain file is missing
+            connections = node.get('connections', {})
+            if 'output' in connections and connections['output']:
+                next_connection = connections['output'][0]
+                return next_connection['node_id']
+            return None
+            
+        if not os.path.exists(chain_file_path):
+            logger.error(f"Chain import file not found: {chain_file_path}")
+            # Continue to next node even if chain file is missing
+            connections = node.get('connections', {})
+            if 'output' in connections and connections['output']:
+                next_connection = connections['output'][0]
+                return next_connection['node_id']
+            return None
+        
+        # Execute the imported chain for the specified number of loops using direct execution
+        for i in range(loop_count):
+            if stop_flag and stop_flag():
+                logger.info("Chain import execution stopped by user request")
+                return None
+            
+            logger.info(f"Starting chain import loop {i + 1}/{loop_count}")
+            
+            try:
+                # Load and execute the imported chain directly using MultiSequencePlayer
+                logger.info(f"Loading imported chain: {chain_file_path}")
+                
+                # Load the JSON configuration from the file
+                import json
+                with open(chain_file_path, 'r', encoding='utf-8') as f:
+                    chain_config = json.load(f)
+                
+                imported_player = MultiSequencePlayer(chain_config)
+                
+                # Execute the imported chain using the same method as normal chains
+                logger.info(f"Executing imported chain: {chain_file_path}")
+                success = imported_player.play_chain(stop_flag)
+                
+                if not success:
+                    logger.error(f"Imported chain execution failed: {chain_file_path}")
+                    # Continue to next loop iteration
+                    continue
+                else:
+                    logger.info(f"Imported chain executed successfully: {chain_file_path}")
+                
+            except Exception as e:
+                logger.error(f"Error during chain import execution: {e}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                # Continue to next loop iteration
+                continue
+            
+            # Add extra delay between loops if specified
+            if extra_delay > 0 and i < loop_count - 1:  # Don't delay after the last loop
+                logger.info(f"Adding extra delay of {extra_delay} seconds between loops")
+                delay_remaining = extra_delay
+                while delay_remaining > 0:
+                    if stop_flag and stop_flag():
+                        logger.info("Chain import execution stopped during delay")
+                        return None
+                    sleep_time = min(0.1, delay_remaining)
+                    time.sleep(sleep_time)
+                    delay_remaining -= sleep_time
+        
+        logger.info("Chain import node execution completed")
+        
+        # Continue to next node in the workflow
+        connections = node.get('connections', {})
+        if 'output' in connections and connections['output']:
+            next_connection = connections['output'][0]
+            return next_connection['node_id']
+        
+        return None
+    
+    def _evaluate_conditional(self, conditional_node, stop_flag):
+        """
+        Evaluate a conditional node using the fallback handler.
+        
+        Args:
+            conditional_node (dict): The conditional node configuration
+            stop_flag (callable): Function to check if execution should stop
+        
+        Returns:
+            bool: True if condition is met, False otherwise
+        """
+        # Fix: The JSON stores 'trigger_type' with values like 'absence', 'presence', 'ocr'
+        # We need to map these to the expected condition types for evaluation
+        raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        
+        # Map the raw trigger type to the expected condition type format
+        condition_type_mapping = {
+            'presence': 'presence_trigger',
+            'absence': 'absence_trigger', 
+            'ocr': 'ocr_trigger',
+            'presence_trigger': 'presence_trigger',  # backward compatibility
+            'absence_trigger': 'absence_trigger',    # backward compatibility
+            'ocr_trigger': 'ocr_trigger'             # backward compatibility
+        }
+        
+        condition_type = condition_type_mapping.get(raw_trigger_type, 'presence_trigger')
+        
+        # Build condition_config from the conditional node properties
+        # The JSON stores properties directly, not nested under 'condition_data'
+        condition_config = {
+            'image_path': conditional_node.get('image_path', ''),
+            'confidence': float(conditional_node.get('threshold', 0.8)),
+            'timeout': float(conditional_node.get('wait_time', 10)),
+            'max_loops': int(conditional_node.get('max_loops', 10)),
+            'target_text': conditional_node.get('ocr_text', '') or conditional_node.get('target_text', ''),
+            'case_sensitive': conditional_node.get('case_sensitive', True),
+            'language': conditional_node.get('language', 'eng'),
+            'region': conditional_node.get('region')
+        }
+        
+        # Also check if there's a nested condition_data (for backward compatibility)
+        if 'condition_data' in conditional_node:
+            nested_config = conditional_node['condition_data']
+            condition_config.update(nested_config)
+        
+        logger.info(f"Evaluating conditional with raw trigger type: {raw_trigger_type} -> mapped to: {condition_type}")
+        logger.debug(f"Condition config: {condition_config}")
+        
+        # Set stop flag for the fallback handler
+        self.fallback_handler.stop_flag = stop_flag
+        
+        if condition_type == 'presence_trigger':
+            return self.fallback_handler.check_presence_trigger(condition_config)
+        elif condition_type == 'absence_trigger':
+            timeout = float(condition_config.get('timeout', 10))
+            return self.fallback_handler.check_absence_trigger(condition_config, timeout)
+        elif condition_type == 'ocr_trigger':
+            return self.fallback_handler.check_ocr_trigger(condition_config)
+        else:
+            logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
+            return False
+    
+    def _execute_conditional_loop(self, conditional_data, stop_flag):
+        """
+        Execute a conditional loop by reconstructing the loop configuration and calling the fallback handler.
+        
+        Args:
+            conditional_data (dict): The conditional node data containing loop configuration
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            bool: True if loop completed successfully, False otherwise
+        """
+        try:
+            import json
+            from ..sequence_player import SequencePlayer
+            
+            # Reconstruct loop configuration from conditional node data
+            loop_type = conditional_data.get('loop_type', 'while_present')
+            max_iterations = int(conditional_data.get('max_loops', 10))
+            sequence_file = conditional_data.get('sequence_file', '')
+            iteration_delay = float(conditional_data.get('iteration_delay', 1.0))
+            
+            # Parse the stored loop condition
+            loop_condition_json = conditional_data.get('loop_condition', '{}')
+            try:
+                condition = json.loads(loop_condition_json) if loop_condition_json else {}
+            except (json.JSONDecodeError, TypeError):
+                # Fallback to basic image condition if JSON parsing fails
+                condition = {
+                    'trigger_type': 'presence',
+                    'image_path': conditional_data.get('image_path', ''),
+                    'confidence': float(conditional_data.get('threshold', 0.8))
+                }
+            
+            # Build loop configuration
+            loop_config = {
+                'type': loop_type,
+                'max_iterations': max_iterations,
+                'sequence_file': sequence_file,
+                'iteration_delay': iteration_delay,
+                'condition': condition
+            }
+            
+            logger.info(f"Executing conditional loop: {loop_type}, sequence: {sequence_file}, max_iterations: {max_iterations}")
+            
+            # Set stop flag for the fallback handler
+            self.fallback_handler.stop_flag = stop_flag
+            
+            # Execute the conditional loop using the fallback handler
+            # Create a temporary SequencePlayer for loop execution with the sequence file
+            sequence_file = loop_config.get('sequence_file', '')
+            if not sequence_file:
+                logger.error(f"No sequence file specified for conditional loop")
+                return False
+            
+            temp_sequence_player = SequencePlayer(sequence_file)
+            return self.fallback_handler.execute_conditional_loop(loop_config, temp_sequence_player)
+            
+        except Exception as e:
+            logger.error(f"Error executing conditional loop: {e}")
+            return False
+    
+    def _get_conditional_branch_node(self, node, result):
+        """
+        Get the next node ID based on conditional result.
+        
+        Args:
+            node (dict): The conditional node
+            result (bool): The conditional evaluation result
+            
+        Returns:
+            str: Next node ID, or None if no connection found
+        """
+        # Determine which branch to follow based on result
+        branch = 'true' if result else 'false'
+        
+        # Get connections for this branch
+        connections = node.get('connections', {})
+        branch_connections = connections.get(branch, [])
+        
+        target_node = None
+        if branch_connections:
+            # Take the first connection in the branch
+            target_node = branch_connections[0].get('node_id')
+        
+        if target_node:
+            return target_node
+        else:
+            logger.info(f"No connection for '{branch}' branch, ending workflow")
+            return None
+    
+    def _mark_skipped(self, conditional_id, unchosen_port):
+        """
+        Mark nodes in the unchosen branch as skipped.
+        
+        Args:
+            conditional_id (str): The conditional node ID
+            unchosen_port (str): The unchosen branch ('true' or 'false')
+        """
+        import json
+        from collections import deque
+        
+        skipped = set()
+        conditional_data = self.workflow_graph[conditional_id]
+        connections = conditional_data.get('connections', {})
+        if isinstance(connections, str):
+            connections = json.loads(connections)
+        
+        # Handle the connections structure - it's organized by branch (true/false)
+        unchosen_starts = []
+        if isinstance(connections, dict) and unchosen_port in connections:
+            unchosen_starts = [conn['node_id'] for conn in connections[unchosen_port]]
+        
+        queue = deque(unchosen_starts)
+        visited = set()
+        while queue:
+            current = queue.popleft()
+            if current in visited:
+                continue
+            visited.add(current)
+            current_data = self.workflow_graph.get(current, {})
+            inputs = current_data.get('inputs', [])
+            all_inputs_skippable = True
+            for inp in inputs:
+                from_id = inp['from_node']
+                from_port = inp.get('output_type', inp.get('output_port'))
+                if from_id == conditional_id and from_port == unchosen_port:
+                    continue
+                elif from_id in skipped:
+                    continue
+                else:
+                    all_inputs_skippable = False
+                    break
+            if all_inputs_skippable:
+                skipped.add(current)
+                # Add connected nodes to queue
+                current_connections = current_data.get('connections', {})
+                for output_type, output_list in current_connections.items():
+                    for conn in output_list:
+                        queue.append(conn['node_id'])
+        
+        self.skipped_nodes.update(skipped)
+        logger.info(f"Marked {len(skipped)} nodes as skipped from unchosen branch: {skipped}")

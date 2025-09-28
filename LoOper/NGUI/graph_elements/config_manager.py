@@ -289,21 +289,35 @@ class ConfigManager:
         """Save a sequence node to configuration."""
         logger.debug(f"Saving sequence node {node.id} to configuration")
         try:
-            # Get sequence file, handling numbered node names
+            # CRITICAL: Always use the sequence_file property which contains the original file path
+            # The node name may have GUI numbering (e.g., "test.json 2") but sequence_file should be clean
             sequence_file = node.get_property('sequence_file')
+            
             if not sequence_file:
-                # Fallback to node name, but remove numbered suffix
+                # Fallback: extract base filename from node name if sequence_file is missing
                 node_name = node.name()
                 import re
                 if re.match(r'^(.+\.json)\s+\d+$', node_name):
+                    # Remove GUI numbering from node name
                     sequence_file = re.match(r'^(.+\.json)\s+\d+$', node_name).group(1)
-                    logger.debug(f"Extracted base filename '{sequence_file}' from numbered node name '{node_name}'")
+                    logger.warning(f"sequence_file property missing! Extracted '{sequence_file}' from numbered node name '{node_name}'")
                 else:
                     sequence_file = node_name
+                    logger.warning(f"sequence_file property missing! Using node name '{sequence_file}' as fallback")
+            else:
+                logger.debug(f"Using sequence_file property: '{sequence_file}' for node '{node.name()}'")
+                
+            # Ensure we only store the filename, not the full path for consistency
+            import os
+            if os.path.sep in sequence_file or '/' in sequence_file:
+                sequence_file = os.path.basename(sequence_file)
+                logger.debug(f"Extracted filename '{sequence_file}' from full path")
             
             sequence_data = {
                 "name": node.get_property('sequence_name') or node.name(),
                 "sequence_file": sequence_file,  # Use cleaned sequence file name
+                "loop_count": int(node.get_property('loop_count') or 1),
+                "extra_delay": float(node.get_property('extra_delay') or 1.0),
                 "actions": node.get_property('actions') or [],
                 "node_id": node.id,
                 "position": node.pos(),  # pos() returns [x, y] list directly
@@ -395,6 +409,8 @@ class ConfigManager:
                 "chain_file_path": import_config.get('chain_file', ''),
                 "import_mode": import_config.get('import_mode', 'full'),
                 "prefix": import_config.get('prefix', ''),
+                "loop_count": import_config.get('loop_count', 1),
+                "extra_delay": import_config.get('extra_delay', 0),
                 "enabled": import_config.get('enabled', True),
                 "node_id": node.id,
                 "position": node.pos(),
@@ -438,33 +454,43 @@ class ConfigManager:
             logger.debug(f"Found {len(sequences)} sequence nodes to create")
             
             for seq_data in sequences:
-                # Create node with proper filename to prevent automatic numbering
+                # CRITICAL: Use sequence_file property directly, not the display name
+                # The sequence_file should contain the original filename without GUI numbering
+                sequence_file = seq_data.get("sequence_file", "")
                 node_name = seq_data.get("name", "Sequence")
-                logger.debug(f"Creating sequence node: {node_name}")
                 
-                # Extract just the filename from the node name to prevent numbering issues
-                # Node names might be in format "Seq X: filename.json" or just "filename.json"
-                if ": " in node_name:
-                    sequence_filename = node_name.split(": ", 1)[1]
-                else:
-                    sequence_filename = node_name
+                logger.debug(f"Creating sequence node: {node_name} with sequence_file: {sequence_file}")
+                
+                # Use the sequence filename for the node name to prevent numbering issues
+                display_name = os.path.basename(sequence_file) if sequence_file else node_name
                 
                 node = self.parent_widget.graph_manager.create_node(
                     'sequence.SequenceNode',
-                    name=sequence_filename
+                    name=display_name
                 )
                 
                 if node:
-                    # Extract sequence file from name (format: "Seq X: filename.json")
-                    sequence_name = seq_data.get("name", "")
-                    if ": " in sequence_name:
-                        sequence_file = sequence_name.split(": ", 1)[1]
-                    else:
-                        sequence_file = sequence_name
+                    # CRITICAL: Always use the sequence_file from config, not derived from name
+                    # This ensures we reference the correct file regardless of GUI display
+                    if not sequence_file:
+                        # Fallback: extract from name if sequence_file is missing
+                        if ": " in node_name:
+                            sequence_file = node_name.split(": ", 1)[1]
+                        else:
+                            sequence_file = node_name
+                        logger.warning(f"sequence_file missing in config, using fallback: {sequence_file}")
+                    
+                    # Ensure we store only the filename, not full path
+                    if sequence_file and (os.path.sep in sequence_file or '/' in sequence_file):
+                        sequence_file = os.path.basename(sequence_file)
                     
                     # Set properties that exist on SequenceNode
                     node.set_property('sequence_file', sequence_file)
+                    node.set_property('loop_count', str(seq_data.get('loop_count', 1)))
+                    node.set_property('extra_delay', str(seq_data.get('extra_delay', 1.0)))
                     logger.debug(f"Set sequence_file property for sequence node: {sequence_file}")
+                    logger.debug(f"Set loop_count property for sequence node: {seq_data.get('loop_count', 1)}")
+                    logger.debug(f"Set extra_delay property for sequence node: {seq_data.get('extra_delay', 1.0)}")
                     
                     # Set position
                     if "position" in seq_data:
@@ -668,14 +694,20 @@ class ConfigManager:
                     if isinstance(enabled, str):
                         enabled = enabled.lower() == 'true'
                     
+                    # Get loop_count and extra_delay from import_data
+                    loop_count = import_data.get('loop_count', 1)
+                    extra_delay = import_data.get('extra_delay', 0)
+                    
                     if file_path:  # Only set data if we have a file path
-                        node.set_chain_import_data(file_path, import_mode, prefix, enabled)
+                        node.set_chain_import_data(file_path, import_mode, prefix, loop_count, extra_delay, enabled)
                         logger.debug(f"Set chain import data for node: {file_path}")
                     else:
                         # Set properties manually if no file path
                         node.set_property('chain_file', file_path)
                         node.set_property('import_mode', import_mode)
                         node.set_property('prefix', prefix)
+                        node.set_property('loop_count', str(loop_count))
+                        node.set_property('extra_delay', str(extra_delay))
                         node.set_property('enabled', str(enabled).lower())
                         node.set_name("Import: No file")
                         logger.debug(f"Set properties for chain import node with no file path")
@@ -708,7 +740,8 @@ class ConfigManager:
                 self.chain_config.get("sequences", []) +
                 self.chain_config.get("conditional_nodes", []) +
                 self.chain_config.get("llm_nodes", []) +
-                self.chain_config.get("tts_nodes", [])
+                self.chain_config.get("tts_nodes", []) +
+                self.chain_config.get("chain_import_nodes", [])
             )
             
             total_connections = sum(len(node_data.get("connections", [])) for node_data in all_node_data)

@@ -231,46 +231,64 @@ class MainWindow(QMainWindow):
             logger.debug("Minimizing main window for playback")
             self.showMinimized()
             
-            # Use QTimer to delay subprocess start, allowing window to minimize properly
+            # Use QTimer to delay chain execution start, allowing window to minimize properly
             def start_playback_delayed():
-                # Run the player with the saved chain config using subprocess
-                logger.info(f"Starting player subprocess with file: {temp_filename}")
+                # Execute the chain directly using MultiSequencePlayer
+                logger.info(f"Starting direct chain execution with config: {temp_filename}")
                 try:
-                    # Construct base command
-                    cmd = [sys.executable, "-m", "player.main", temp_filename]
+                    # Import MultiSequencePlayer for direct execution
+                    from player.multi_sequence_player import MultiSequencePlayer
                     
-                    # On Linux, use xvfb-run to provide virtual display for GUI automation
-                    import platform
-                    if platform.system() == "Linux":
-                        # Check if xvfb-run is available
-                        import shutil
-                        if shutil.which("xvfb-run"):
-                            cmd = ["xvfb-run", "-a"] + cmd
-                            logger.debug("Using xvfb-run for virtual display on Linux")
-                        else:
-                            logger.warning("xvfb-run not found, player may fail on headless systems")
+                    # Load the chain configuration from the temporary file
+                    with open(temp_filename, 'r') as f:
+                        chain_config = json.load(f)
                     
-                    logger.debug(f"Running command: {' '.join(cmd)}")
-                    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-                    logger.info("Player subprocess completed successfully")
-                    logger.debug(f"Player output: {result.stdout}")
-                    if result.stderr:
-                        logger.warning(f"Player stderr: {result.stderr}")
+                    # Create and execute the chain directly
+                    player = MultiSequencePlayer(chain_config, temp_filename)
+                    
+                    # Execute the chain in a separate thread to avoid blocking the UI
+                    import threading
+                    
+                    def execute_chain():
+                        try:
+                            logger.info("Starting chain execution in background thread")
+                            result = player.play_chain()
+                            logger.info(f"Chain execution completed with result: {result}")
+                            
+                            # Clean up temporary file
+                            try:
+                                os.remove(temp_filename)
+                                logger.debug(f"Temporary file {temp_filename} cleaned up")
+                            except OSError as cleanup_error:
+                                logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
+                            
+                            # Restore window after playback completes
+                            QTimer.singleShot(0, lambda: self._restore_window())
+                            
+                        except Exception as e:
+                            logger.error(f"Error during chain execution: {e}")
+                            import traceback
+                            logger.error(f"Chain execution traceback: {traceback.format_exc()}")
+                            
+                            # Restore window and show error
+                            error_msg = str(e)
+                            QTimer.singleShot(0, lambda: self._handle_playback_error(error_msg))
+                            
+                            # Clean up temporary file even on error
+                            try:
+                                os.remove(temp_filename)
+                            except OSError:
+                                pass
+                    
+                    # Start execution in background thread
+                    execution_thread = threading.Thread(target=execute_chain, daemon=True)
+                    execution_thread.start()
+                    logger.info("Chain execution thread started")
                         
-                    # Clean up temporary file
-                    try:
-                        os.remove(temp_filename)
-                        logger.debug(f"Temporary file {temp_filename} cleaned up")
-                    except OSError as cleanup_error:
-                        logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
-                    
-                    # Restore window after playback completes
-                    QTimer.singleShot(0, lambda: self._restore_window())
-                        
-                except subprocess.CalledProcessError as e:
-                    logger.error(f"Player subprocess failed with exit code {e.returncode}")
-                    logger.error(f"Player stdout: {e.stdout}")
-                    logger.error(f"Player stderr: {e.stderr}")
+                except Exception as e:
+                    logger.error(f"Error initializing chain execution: {e}")
+                    import traceback
+                    logger.error(f"Chain initialization traceback: {traceback.format_exc()}")
                     
                     # Restore window and show error
                     error_msg = str(e)
