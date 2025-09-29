@@ -598,6 +598,122 @@ class LLMExecutor:
         """Get all variables"""
         return self.variables.copy()
     
+    def execute_tts_standalone(self, tts_data, context_variables=None):
+        """
+        Execute TTS without GUI dependencies.
+        
+        Args:
+            tts_data (dict): TTS configuration data
+            context_variables (dict): Optional context variables for text substitution
+            
+        Returns:
+            dict: Result dictionary with success status and message/error
+        """
+        logger.info(f"=== STARTING TTS STANDALONE EXECUTION ===")
+        logger.info(f"TTS data: {tts_data}")
+        logger.info(f"Context variables: {context_variables}")
+        
+        try:
+            import pyttsx3
+            
+            # Extract TTS configuration from the data
+            tts_config = tts_data.get('tts_configuration', {})
+            
+            # If no nested configuration, use direct properties from tts_data
+            if not tts_config:
+                tts_config = tts_data
+            
+            # Get TTS parameters with defaults
+            text_to_speak = tts_config.get('text', 'Hello, this is a text to speech message.')
+            language = tts_config.get('language', 'en')
+            rate = tts_config.get('rate', 200)
+            volume = tts_config.get('volume', 0.9)
+            voice_id = tts_config.get('voice_id', 0)
+            save_to_file = tts_config.get('save_to_file', False)
+            output_file = tts_config.get('output_file', '')
+            wait_for_completion = tts_config.get('wait_for_completion', True)
+            
+            logger.info(f"TTS Parameters:")
+            logger.info(f"  Text: {text_to_speak}")
+            logger.info(f"  Language: {language}")
+            logger.info(f"  Rate: {rate}")
+            logger.info(f"  Volume: {volume}")
+            logger.info(f"  Voice ID: {voice_id}")
+            logger.info(f"  Save to file: {save_to_file}")
+            logger.info(f"  Output file: {output_file}")
+            logger.info(f"  Wait for completion: {wait_for_completion}")
+            
+            # Replace context variables in text if provided
+            if context_variables:
+                logger.info(f"Replacing context variables in text")
+                for var_name, var_value in context_variables.items():
+                    text_to_speak = text_to_speak.replace(f'{{{var_name}}}', str(var_value))
+                logger.info(f"Text after variable substitution: {text_to_speak}")
+            
+            # Also replace variables from the executor's stored variables
+            if self.variables:
+                logger.info(f"Replacing executor variables in text")
+                for var_name, var_value in self.variables.items():
+                    text_to_speak = text_to_speak.replace(f'{{{var_name}}}', str(var_value))
+                logger.info(f"Text after executor variable substitution: {text_to_speak}")
+            
+            # Initialize TTS engine
+            logger.info("Initializing TTS engine")
+            engine = pyttsx3.init()
+            
+            # Configure TTS settings
+            engine.setProperty('rate', rate)
+            engine.setProperty('volume', volume)
+            
+            # Set voice if specified
+            voices = engine.getProperty('voices')
+            if voices and 0 <= voice_id < len(voices):
+                engine.setProperty('voice', voices[voice_id].id)
+                logger.info(f"Set voice to: {voices[voice_id].name}")
+            else:
+                logger.info(f"Using default voice (voice_id {voice_id} not available)")
+            
+            # Save to file if requested
+            if save_to_file and output_file:
+                logger.info(f"Saving TTS to file: {output_file}")
+                engine.save_to_file(text_to_speak, output_file)
+                if wait_for_completion:
+                    engine.runAndWait()
+                logger.info(f"TTS saved to file successfully")
+                return {
+                    'success': True,
+                    'text': text_to_speak,
+                    'saved_to_file': output_file,
+                    'message': f'TTS saved to file: {output_file}'
+                }
+            else:
+                # Speak the text
+                logger.info(f"Speaking text: {text_to_speak}")
+                engine.say(text_to_speak)
+                if wait_for_completion:
+                    engine.runAndWait()
+                logger.info(f"TTS execution completed successfully")
+                return {
+                    'success': True,
+                    'text': text_to_speak,
+                    'message': f'TTS spoke: "{text_to_speak[:50]}..."' if len(text_to_speak) > 50 else f'TTS spoke: "{text_to_speak}"'
+                }
+                
+        except ImportError as e:
+            error_msg = 'pyttsx3 library not installed. Please install it using: pip install pyttsx3'
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg
+            }
+        except Exception as e:
+            error_msg = f'TTS execution failed: {str(e)}'
+            logger.error(error_msg)
+            return {
+                'success': False,
+                'error': error_msg
+            }
+    
     def _initialize_context_collector(self):
         """Initialize the context collector for ComoRAG integration"""
         try:
