@@ -45,6 +45,10 @@ class GraphViewWidget(QWidget):
         logger.info("Initializing GraphViewWidget")
         try:
             super().__init__(parent)
+            # Initialize clipboard for copied nodes
+            self.copied_nodes = []
+            # Initialize paste counter for positioning
+            self._paste_counter = 0
             self.chain_config = []
             self.sequence_nodes = []
             self.action_nodes = []
@@ -119,6 +123,194 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error setting up node graph: {str(e)}", exc_info=True)
             raise
+
+    def keyPressEvent(self, event):
+        """Handle keyboard events for copy/paste functionality"""
+        from PyQt5.QtCore import Qt
+        
+        if event.key() == Qt.Key_C and event.modifiers() & Qt.ControlModifier:
+            # Ctrl+C - Copy selected nodes
+            self.copy_selected_nodes()
+            event.accept()
+        elif event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
+            # Ctrl+V - Paste copied nodes
+            self.paste_copied_nodes()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+    
+    def copy_selected_nodes(self):
+        """Copy the currently selected nodes to the clipboard"""
+        try:
+            selected_nodes = self.node_graph.selected_nodes()
+            if not selected_nodes:
+                logger.info("No nodes selected for copying")
+                return
+            
+            # Store node data for copying
+            self.copied_nodes = []
+            for node in selected_nodes:
+                try:
+                    node_data = {
+                        'type': node.__identifier__,
+                        'name': node.name(),
+                        'properties': {},
+                        'inputs': {},
+                        'outputs': {}
+                    }
+                    
+                    # Copy all properties with error handling
+                    try:
+                        for prop_name in node.properties().keys():
+                            try:
+                                prop_value = node.get_property(prop_name)
+                                # Only store serializable values
+                                if isinstance(prop_value, (str, int, float, bool, list, dict, type(None))):
+                                    node_data['properties'][prop_name] = prop_value
+                                else:
+                                    logger.warning(f"Skipping non-serializable property {prop_name} of type {type(prop_value)}")
+                            except Exception as prop_error:
+                                logger.warning(f"Failed to copy property {prop_name}: {prop_error}")
+                    except Exception as props_error:
+                        logger.warning(f"Failed to access properties for node {node.name()}: {props_error}")
+                    
+                    # Store input/output port information (but not connections) with error handling
+                    try:
+                        for input_port in node.inputs().values():
+                            try:
+                                node_data['inputs'][input_port.name()] = input_port.data_type if hasattr(input_port, 'data_type') else None
+                            except Exception as input_error:
+                                logger.warning(f"Failed to copy input port {input_port.name()}: {input_error}")
+                    except Exception as inputs_error:
+                        logger.warning(f"Failed to access inputs for node {node.name()}: {inputs_error}")
+                    
+                    try:
+                        for output_port in node.outputs().values():
+                            try:
+                                node_data['outputs'][output_port.name()] = output_port.data_type if hasattr(output_port, 'data_type') else None
+                            except Exception as output_error:
+                                logger.warning(f"Failed to copy output port {output_port.name()}: {output_error}")
+                    except Exception as outputs_error:
+                        logger.warning(f"Failed to access outputs for node {node.name()}: {outputs_error}")
+                    
+                    self.copied_nodes.append(node_data)
+                    
+                except Exception as node_error:
+                    logger.error(f"Failed to copy node {node.name() if hasattr(node, 'name') else 'unknown'}: {node_error}")
+                    continue
+            
+            logger.info(f"Copied {len(self.copied_nodes)} nodes to clipboard")
+            
+        except Exception as e:
+            logger.error(f"Error copying nodes: {str(e)}", exc_info=True)
+            # Initialize empty copied_nodes to prevent issues
+            self.copied_nodes = []
+    
+    def paste_copied_nodes(self):
+        """Paste the copied nodes from the clipboard"""
+        try:
+            if not self.copied_nodes:
+                logger.info("No nodes to paste")
+                return
+            
+            # Use a fixed offset strategy to prevent infinite positioning feedback loops
+            # Initialize paste counter if it doesn't exist
+            if not hasattr(self, '_paste_counter'):
+                self._paste_counter = 0
+            
+            self._paste_counter += 1
+            
+            # Calculate paste position using a fixed offset pattern
+            # This prevents the feedback loop where pasted nodes become the reference for next paste
+            base_offset = 50
+            paste_pos = [100 + (self._paste_counter * base_offset), 100 + (self._paste_counter * base_offset)]
+            
+            # Reset counter after reasonable number of pastes to prevent positions from growing too large
+            if self._paste_counter > 20:
+                self._paste_counter = 0
+            
+            pasted_nodes = []
+            for i, node_data in enumerate(self.copied_nodes):
+                # Create new position with offset for each node
+                node_pos = [paste_pos[0] + (i * 150), paste_pos[1]]
+                
+                # Create the appropriate node type
+                new_node = None
+                try:
+                    if node_data['type'] == 'sequence':
+                        # For sequence nodes, create directly using graph manager
+                        # to avoid file selection prompt
+                        sequence_file = node_data['properties'].get('sequence_file', '')
+                        if sequence_file:
+                            new_node = self.node_graph.create_node(
+                                'sequence.SequenceNode', 
+                                name=sequence_file, 
+                                pos=node_pos
+                            )
+                            if new_node:
+                                # Restore all sequence properties
+                                for prop_name, prop_value in node_data['properties'].items():
+                                    try:
+                                        new_node.set_property(prop_name, prop_value)
+                                    except Exception as prop_error:
+                                        logger.warning(f"Failed to set property {prop_name}: {prop_error}")
+                    elif node_data['type'] == 'conditional':
+                        new_node = self.node_operations.add_conditional_node(node_pos)
+                    elif node_data['type'] == 'llm':
+                        new_node = self.node_operations.add_llm_node(node_pos)
+                    elif node_data['type'] == 'tts':
+                        new_node = self.node_operations.add_tts_node(node_pos)
+                    elif node_data['type'] == 'context_builder':
+                        new_node = self.node_operations.add_context_builder_node(node_pos)
+                    elif node_data['type'] == 'chain_import':
+                        new_node = self.node_operations.add_chain_import_node(node_pos)
+                    elif node_data['type'] == 'action':
+                        # Actions need to be added to a sequence
+                        logger.warning("Cannot paste action nodes independently - they must be part of a sequence")
+                        continue
+                    
+                    if new_node:
+                        # Restore properties with error handling
+                        for prop_name, prop_value in node_data['properties'].items():
+                            if prop_name != 'sequence_name' or node_data['type'] != 'sequence':
+                                try:
+                                    new_node.set_property(prop_name, prop_value)
+                                except Exception as prop_error:
+                                    logger.warning(f"Failed to set property {prop_name} on {new_node.name()}: {prop_error}")
+                        
+                        # Set a modified name to indicate it's a copy with unique identifier
+                        original_name = node_data['name']
+                        new_name = f"{original_name}_copy_{self._paste_counter}_{i}"
+                        try:
+                            new_node.set_name(new_name)
+                        except Exception as name_error:
+                            logger.warning(f"Failed to set name {new_name}: {name_error}")
+                            # Use a fallback name
+                            new_node.set_name(f"copy_{self._paste_counter}_{i}")
+                        
+                        pasted_nodes.append(new_node)
+                        logger.info(f"Pasted node: {new_node.name()}")
+                        
+                except Exception as node_error:
+                    logger.error(f"Failed to create node of type {node_data['type']}: {node_error}")
+                    continue
+            
+            logger.info(f"Successfully pasted {len(pasted_nodes)} nodes")
+            
+            # Select the newly pasted nodes with error handling
+            if pasted_nodes:
+                try:
+                    self.node_graph.clear_selection()
+                    for node in pasted_nodes:
+                        if node and hasattr(node, 'set_selected'):
+                            node.set_selected(True)
+                except Exception as selection_error:
+                    logger.warning(f"Failed to select pasted nodes: {selection_error}")
+            
+        except Exception as e:
+            logger.error(f"Error pasting nodes: {str(e)}", exc_info=True)
+            # Don't re-raise the exception to prevent app crashes
+            # Just log the error and continue
 
     def show_custom_context_menu(self, pos):
         """Show the context menu for the graph"""

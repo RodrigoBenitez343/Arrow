@@ -63,6 +63,30 @@ class ChainExpansionDialog(QDialog):
         header_layout.addWidget(header_label)
         header_layout.addStretch()
         
+        # Add maximize button
+        self.maximize_button = QPushButton("⛶")
+        self.maximize_button.setFixedSize(30, 30)
+        self.maximize_button.setToolTip("Maximize/Restore")
+        self.maximize_button.setStyleSheet(f"""
+            QPushButton {{
+                color: {TEXT_COLOR};
+                background-color: #3a3a3a;
+                border: 1px solid #555;
+                border-radius: 4px;
+                font-size: 16px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #4a4a4a;
+                border-color: #666;
+            }}
+            QPushButton:pressed {{
+                background-color: #2a2a2a;
+            }}
+        """)
+        self.maximize_button.clicked.connect(self.toggle_maximize)
+        header_layout.addWidget(self.maximize_button)
+        
         layout.addLayout(header_layout)
         
         # Create splitter for graph view and info panel
@@ -239,3 +263,12 @@ Node Types:
         if self.graph_view:
             return self.graph_view.get_chain_config()
         return None
+    
+    def toggle_maximize(self):
+        """Toggle between maximized and normal window state"""
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize_button.setToolTip("Maximize")
+        else:
+            self.showMaximized()
+            self.maximize_button.setToolTip("Restore")

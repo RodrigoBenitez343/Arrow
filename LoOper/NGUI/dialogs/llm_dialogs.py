@@ -7,12 +7,14 @@ prompt configuration, generation parameters, and vision capabilities.
 
 import sys
 import os
+import json
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog,
     QTabWidget, QListWidgetItem, QTextEdit, QGroupBox, QListWidget,
-    QDialogButtonBox, QGridLayout
+    QDialogButtonBox, QGridLayout, QRadioButton, QButtonGroup
 )
+from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from .utils import get_default_api_url
 
@@ -272,6 +274,96 @@ class LLMPropertiesDialog(QDialog):
         
         layout.addWidget(comorag_group)
         
+        # Input Source Configuration Group
+        input_source_group = QGroupBox("Input Source")
+        input_source_layout = QVBoxLayout(input_source_group)
+        input_source_layout.setContentsMargins(8, 12, 8, 8)
+        input_source_layout.setSpacing(6)
+        
+        # Input source radio buttons
+        self.input_source_group = QButtonGroup(self)
+        self.input_none_radio = QRadioButton("No input (direct prompt)")
+        self.input_none_radio.setChecked(True)
+        self.input_source_group.addButton(self.input_none_radio, 0)
+        
+        self.input_ocr_radio = QRadioButton("Extract text from screen (OCR)")
+        self.input_source_group.addButton(self.input_ocr_radio, 1)
+        
+        self.input_previous_radio = QRadioButton("Use output from previous node")
+        self.input_source_group.addButton(self.input_previous_radio, 2)
+        
+        self.input_clipboard_radio = QRadioButton("Use clipboard content")
+        self.input_source_group.addButton(self.input_clipboard_radio, 3)
+        
+        input_source_layout.addWidget(self.input_none_radio)
+        input_source_layout.addWidget(self.input_ocr_radio)
+        input_source_layout.addWidget(self.input_previous_radio)
+        input_source_layout.addWidget(self.input_clipboard_radio)
+        
+        # OCR Configuration (visible when OCR is selected)
+        self.ocr_config_widget = QWidget()
+        ocr_config_layout = QGridLayout(self.ocr_config_widget)
+        ocr_config_layout.setContentsMargins(0, 8, 0, 0)
+        ocr_config_layout.setSpacing(6)
+        
+        # OCR confidence threshold
+        ocr_config_layout.addWidget(QLabel("OCR Confidence:"), 0, 0)
+        self.ocr_confidence_spin = QDoubleSpinBox()
+        self.ocr_confidence_spin.setRange(0.1, 1.0)
+        self.ocr_confidence_spin.setSingleStep(0.1)
+        self.ocr_confidence_spin.setValue(0.7)
+        self.ocr_confidence_spin.setToolTip("Minimum confidence for OCR text extraction")
+        ocr_config_layout.addWidget(self.ocr_confidence_spin, 0, 1)
+        
+        # OCR text preprocessing
+        ocr_config_layout.addWidget(QLabel("Text Preprocessing:"), 1, 0)
+        self.ocr_preprocessing_combo = QComboBox()
+        self.ocr_preprocessing_combo.addItems(["None", "Remove extra spaces", "Clean formatting", "Extract structured data"])
+        ocr_config_layout.addWidget(self.ocr_preprocessing_combo, 1, 1)
+        
+        input_source_layout.addWidget(self.ocr_config_widget)
+        
+        layout.addWidget(input_source_group)
+        
+        # Template Selection Group
+        template_group = QGroupBox("Quick Templates")
+        template_layout = QVBoxLayout(template_group)
+        template_layout.setContentsMargins(8, 12, 8, 8)
+        template_layout.setSpacing(6)
+        
+        # Template selection combo
+        template_layout.addWidget(QLabel("Apply Template:"))
+        self.template_combo = QComboBox()
+        self.template_combo.addItems([
+            "Custom (no template)",
+            "Information Extraction (OCR + LLM)",
+            "Custom Instructions",
+            "Direct Prompt",
+            "ComoRAG Analysis",
+            "Data Processing Chain",
+            "Text Analysis",
+            "Content Summarization"
+        ])
+        self.template_combo.currentTextChanged.connect(self.apply_template)
+        template_layout.addWidget(self.template_combo)
+        
+        # Template description
+        self.template_description = QLabel()
+        self.template_description.setWordWrap(True)
+        self.template_description.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        template_layout.addWidget(self.template_description)
+        
+        layout.addWidget(template_group)
+        
+        # Connect signals for new UI elements
+        # Input source changes
+        self.input_source_group.buttonClicked.connect(self.update_input_source_visibility)
+        self.input_source_group.buttonClicked.connect(self.update_template_description)
+        
+        # Template selection
+        self.template_combo.currentTextChanged.connect(self.apply_template)
+        self.template_combo.currentTextChanged.connect(self.update_template_description)
+        
         # Dialog buttons in a more compact layout
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
@@ -309,10 +401,164 @@ class LLMPropertiesDialog(QDialog):
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
             self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
+            
+            # Load input source configuration
+            input_source = self.current_config.get('input_source', 0)
+            button = self.input_source_group.button(input_source)
+            if button:
+                button.setChecked(True)
+            self.ocr_confidence_spin.setValue(self.current_config.get('ocr_confidence', 0.7))
+            
+            ocr_preprocessing = self.current_config.get('ocr_preprocessing', 'None')
+            index = self.ocr_preprocessing_combo.findText(ocr_preprocessing)
+            if index >= 0:
+                self.ocr_preprocessing_combo.setCurrentIndex(index)
+            
+            # Load template
+            template_applied = self.current_config.get('template_applied', 'Custom (no template)')
+            index = self.template_combo.findText(template_applied)
+            if index >= 0:
+                self.template_combo.setCurrentIndex(index)
+            
+            # Update visibility based on input source
+        self.update_input_source_visibility()
     
+    def apply_template(self, template_name):
+        """Apply a predefined template configuration"""
+        templates = {
+            "Information Extraction (OCR + LLM)": {
+                "system_message": "You are an AI assistant that extracts specific information from text. Follow the user's instructions carefully and provide only the requested information.",
+                "prompt": "Extract the following information from the provided text: [SPECIFY WHAT TO EXTRACT]. Return only the extracted information, nothing else.",
+                "temperature": 0.1,
+                "max_tokens": 500,
+                "input_source": 1,  # OCR
+                "ocr_confidence": 0.8,
+                "ocr_preprocessing": "Enhance contrast",
+                "output_variable": "extracted_info"
+            },
+            "Custom Instructions": {
+                "system_message": "You are a helpful AI assistant. Follow the user's instructions carefully.",
+                "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
+                "temperature": 0.7,
+                "max_tokens": 1000,
+                "input_source": 0,  # No input
+                "output_variable": "llm_output"
+            },
+            "ComoRAG Analysis": {
+                "system_message": "You are an AI assistant with memory and context awareness. Use the provided context to give informed responses.",
+                "prompt": "Analyze the following information and provide insights based on the context: [DESCRIBE ANALYSIS GOAL]",
+                "temperature": 0.3,
+                "max_tokens": 800,
+                "input_source": 2,  # Previous node output
+                "use_comorag": True,
+                "max_cycles": 3,
+                "memory_size": 2000,
+                "output_variable": "analysis_result"
+            },
+            "Data Processing Chain": {
+                "system_message": "You are a data processing assistant. Process the input data according to the specified requirements.",
+                "prompt": "Process the input data as follows: [DESCRIBE PROCESSING STEPS]",
+                "temperature": 0.2,
+                "max_tokens": 1500,
+                "input_source": 2,  # Previous node output
+                "output_variable": "processed_data"
+            },
+            "Text Analysis": {
+                "system_message": "You are a text analysis expert. Analyze the provided text thoroughly.",
+                "prompt": "Analyze the following text and provide: 1) Main themes, 2) Key points, 3) Sentiment, 4) Actionable insights: [DESCRIBE ANALYSIS FOCUS]",
+                "temperature": 0.4,
+                "max_tokens": 1200,
+                "input_source": 3,  # Clipboard
+                "output_variable": "text_analysis"
+            },
+            "Content Summarization": {
+                "system_message": "You are a content summarization expert. Create concise, accurate summaries.",
+                "prompt": "Summarize the following content in [SPECIFY LENGTH] focusing on [SPECIFY FOCUS AREAS]: ",
+                "temperature": 0.3,
+                "max_tokens": 800,
+                "input_source": 1,  # OCR
+                "ocr_confidence": 0.7,
+                "output_variable": "summary"
+            }
+        }
+        
+        if template_name in templates:
+            self.apply_template_config(templates[template_name])
+    
+    def apply_template_config(self, config):
+        """Apply template configuration to dialog"""
+        if 'system_message' in config:
+            self.system_message_edit.setPlainText(config['system_message'])
+        if 'prompt' in config:
+            self.prompt_edit.setPlainText(config['prompt'])
+        if 'temperature' in config:
+            self.temperature_spin.setValue(config['temperature'])
+        if 'max_tokens' in config:
+            self.max_tokens_spin.setValue(config['max_tokens'])
+        if 'output_variable' in config:
+            self.output_variable_entry.setText(config['output_variable'])
+        if 'input_source' in config:
+            button = self.input_source_group.button(config['input_source'])
+            if button:
+                button.setChecked(True)
+        if 'ocr_confidence' in config:
+            self.ocr_confidence_spin.setValue(config['ocr_confidence'])
+        if 'ocr_preprocessing' in config:
+            index = self.ocr_preprocessing_combo.findText(config['ocr_preprocessing'])
+            if index >= 0:
+                self.ocr_preprocessing_combo.setCurrentIndex(index)
+        if 'use_comorag' in config:
+            self.use_comorag_checkbox.setChecked(config['use_comorag'])
+        if 'max_cycles' in config:
+            self.max_cycles_spin.setValue(config['max_cycles'])
+        if 'memory_size' in config:
+            self.memory_size_spin.setValue(config['memory_size'])
+        
+        self.update_input_source_visibility()
+    
+    def update_input_source_visibility(self):
+        """Update UI visibility based on selected input source"""
+        selected_button = self.input_source_group.checkedButton()
+        if not selected_button:
+            return
+        
+        input_source = self.input_source_group.id(selected_button)
+        
+        # Show/hide OCR configuration
+        ocr_visible = (input_source == 1)  # OCR
+        self.ocr_confidence_label.setVisible(ocr_visible)
+        self.ocr_confidence_spin.setVisible(ocr_visible)
+        self.ocr_preprocessing_label.setVisible(ocr_visible)
+        self.ocr_preprocessing_combo.setVisible(ocr_visible)
+        
+        # Update prompt placeholder based on input source
+        if input_source == 0:  # No input
+            self.prompt_edit.setPlaceholderText("Enter your prompt here...")
+        elif input_source == 1:  # OCR
+            self.prompt_edit.setPlaceholderText("Describe what to extract/analyze from the screen text...")
+        elif input_source == 2:  # Previous node output
+            self.prompt_edit.setPlaceholderText("Process the previous node's output...")
+        elif input_source == 3:  # Clipboard
+            self.prompt_edit.setPlaceholderText("Process the clipboard content...")
+    
+    def update_template_description(self):
+        """Update template description based on current selection"""
+        template_name = self.template_combo.currentText()
+        descriptions = {
+            "Custom (no template)": "Use custom configuration without predefined template.",
+            "Information Extraction (OCR + LLM)": "Extract specific information from screen text using OCR + LLM.",
+            "Custom Instructions": "Define your own system message and prompt for the LLM.",
+            "Direct Prompt": "Simple direct prompt without additional configuration.",
+            "ComoRAG Analysis": "Use ComoRAG for context-aware analysis with memory and reasoning.",
+            "Data Processing Chain": "Process data from previous nodes in a multi-step workflow.",
+            "Text Analysis": "Analyze text content from clipboard with detailed insights.",
+            "Content Summarization": "Summarize content extracted from screen using OCR."
+        }
+        self.template_description.setText(descriptions.get(template_name, ""))
+      
     def get_config(self):
         """Get the LLM configuration from the dialog"""
-        return {
+        config = {
             'model': self.model_combo.currentText(),
             'api_url': self.api_url_entry.text() or get_default_api_url(),
             'system_message': self.system_message_edit.toPlainText(),
@@ -333,3 +579,166 @@ class LLMPropertiesDialog(QDialog):
             'max_cycles': self.max_cycles_spin.value(),
             'memory_size': self.memory_size_spin.value()
         }
+        
+        # Add input source configuration
+        selected_button = self.input_source_group.checkedButton()
+        if selected_button:
+            config['input_source'] = self.input_source_group.id(selected_button)
+        else:
+            config['input_source'] = 0
+            
+        config['ocr_confidence'] = self.ocr_confidence_spin.value()
+        config['ocr_preprocessing'] = self.ocr_preprocessing_combo.currentText()
+        config['template_applied'] = self.template_combo.currentText()
+        
+        return config
+    
+    def apply_template(self, template_name):
+        """Apply a predefined template to configure the LLM node"""
+        templates = {
+            "Information Extraction (OCR + LLM)": {
+                "description": "Extract specific information from screen text using OCR and LLM",
+                "input_source": 1,  # OCR
+                "system_message": "You are an expert at extracting specific information from text. Extract the requested information accurately and concisely.",
+                "prompt": "Extract the following information from the text: [SPECIFY WHAT TO EXTRACT]",
+                "temperature": 0.3,
+                "max_tokens": 200,
+                "use_comorag": False,
+                "ocr_confidence": 0.7,
+                "ocr_preprocessing": "Clean formatting"
+            },
+            "Custom Instructions": {
+                "description": "Provide custom instructions for the LLM to follow",
+                "input_source": 0,  # No input
+                "system_message": "You are a helpful assistant that follows instructions precisely.",
+                "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
+                "temperature": 0.7,
+                "max_tokens": 500,
+                "use_comorag": False
+            },
+            "Direct Prompt": {
+                "description": "Simple direct prompt without any special configuration",
+                "input_source": 0,  # No input
+                "system_message": "",
+                "prompt": "[ENTER YOUR PROMPT HERE]",
+                "temperature": 0.7,
+                "max_tokens": 150,
+                "use_comorag": False
+            },
+            "ComoRAG Analysis": {
+                "description": "Use ComoRAG for context-aware analysis and reasoning",
+                "input_source": 0,  # No input
+                "system_message": "You are an intelligent assistant with access to context-aware reasoning. Analyze the request and provide comprehensive insights.",
+                "prompt": "[ENTER YOUR ANALYSIS REQUEST]",
+                "temperature": 0.5,
+                "max_tokens": 1000,
+                "use_comorag": True,
+                "max_cycles": 5,
+                "memory_size": 1000
+            },
+            "Data Processing Chain": {
+                "description": "Process data from previous node for multi-step automation",
+                "input_source": 2,  # Previous node
+                "system_message": "You are a data processing node in an automation chain. Process the input data according to the specified requirements.",
+                "prompt": "Process the input data to: [SPECIFY PROCESSING REQUIREMENTS]",
+                "temperature": 0.3,
+                "max_tokens": 300,
+                "use_comorag": False
+            },
+            "Text Analysis": {
+                "description": "Analyze text content with OCR input",
+                "input_source": 1,  # OCR
+                "system_message": "You are a text analysis expert. Analyze the provided text and extract insights, patterns, or requested information.",
+                "prompt": "Analyze the text and provide: [SPECIFY ANALYSIS REQUIREMENTS]",
+                "temperature": 0.4,
+                "max_tokens": 400,
+                "use_comorag": False,
+                "ocr_confidence": 0.6,
+                "ocr_preprocessing": "Remove extra spaces"
+            },
+            "Content Summarization": {
+                "description": "Summarize content from screen or previous node",
+                "input_source": 1,  # OCR (can be changed to 2 for previous node)
+                "system_message": "You are an expert at creating concise, accurate summaries. Summarize the content clearly and effectively.",
+                "prompt": "Summarize the key points from the content. Focus on the most important information.",
+                "temperature": 0.3,
+                "max_tokens": 250,
+                "use_comorag": False,
+                "ocr_confidence": 0.6,
+                "ocr_preprocessing": "Clean formatting"
+            }
+        }
+        
+        # Update description
+        if template_name in templates:
+            template = templates[template_name]
+            self.template_description.setText(template["description"])
+            
+            # Only apply template if it's not the "Custom" option
+            if template_name != "Custom (no template)":
+                self.apply_template_config(template)
+        else:
+            self.template_description.setText("")
+    
+    def apply_template_config(self, template):
+        """Apply the template configuration to the dialog"""
+        # Input source
+        if "input_source" in template:
+            input_source_id = template["input_source"]
+            button = self.input_source_group.button(input_source_id)
+            if button:
+                button.setChecked(True)
+                self.update_input_source_visibility()
+        
+        # System message
+        if "system_message" in template:
+            self.system_message_edit.setPlainText(template["system_message"])
+        
+        # Prompt
+        if "prompt" in template:
+            self.prompt_edit.setPlainText(template["prompt"])
+        
+        # Temperature
+        if "temperature" in template:
+            self.temperature_spin.setValue(template["temperature"])
+        
+        # Max tokens
+        if "max_tokens" in template:
+            self.max_tokens_spin.setValue(template["max_tokens"])
+        
+        # ComoRAG settings
+        if "use_comorag" in template:
+            self.use_comorag_checkbox.setChecked(template["use_comorag"])
+        
+        if "max_cycles" in template:
+            self.max_cycles_spin.setValue(template["max_cycles"])
+        
+        if "memory_size" in template:
+            self.memory_size_spin.setValue(template["memory_size"])
+        
+        # OCR settings
+        if "ocr_confidence" in template:
+            self.ocr_confidence_spin.setValue(template["ocr_confidence"])
+        
+        if "ocr_preprocessing" in template:
+            index = self.ocr_preprocessing_combo.findText(template["ocr_preprocessing"])
+            if index >= 0:
+                self.ocr_preprocessing_combo.setCurrentIndex(index)
+    
+    def update_input_source_visibility(self):
+        """Update visibility of input source configuration widgets"""
+        input_source_id = self.input_source_group.checkedId()
+        
+        # Show/hide OCR configuration
+        self.ocr_config_widget.setVisible(input_source_id == 1)  # OCR
+        
+        # Update prompt placeholder based on input source
+        if input_source_id == 1:  # OCR
+            if "Extract" not in self.prompt_edit.toPlainText():
+                self.prompt_edit.setPlaceholderText("Enter instructions for processing the extracted text...")
+        elif input_source_id == 2:  # Previous node
+            self.prompt_edit.setPlaceholderText("Enter instructions for processing the input from previous node...")
+        elif input_source_id == 3:  # Clipboard
+            self.prompt_edit.setPlaceholderText("Enter instructions for processing the clipboard content...")
+        else:  # No input
+            self.prompt_edit.setPlaceholderText("Enter your prompt here...")

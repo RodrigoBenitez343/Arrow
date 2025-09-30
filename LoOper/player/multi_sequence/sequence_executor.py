@@ -322,7 +322,7 @@ class SequenceExecutor:
                 while time.time() - start_time < timeout:
                     if stop_flag and stop_flag():
                         return
-                    if self.fallback_handler.check_ocr_trigger(condition):
+                    if self.fallback_handler.check_ocr_trigger(condition, stop_flag=stop_flag):
                         logger.info("OCR wait condition satisfied")
                         break
                     time.sleep(0.5)

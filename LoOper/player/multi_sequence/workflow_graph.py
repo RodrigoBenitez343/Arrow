@@ -853,6 +853,11 @@ class WorkflowExecutor:
         import time
         from ..multi_sequence_player import MultiSequencePlayer
         
+        # Check stop flag before starting chain import
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before chain import execution - aborting")
+            return None
+        
         chain_import_data = node.get('data', {})
         logger.debug(f"Chain import node data: {chain_import_data}")
         
@@ -905,6 +910,11 @@ class WorkflowExecutor:
             logger.info(f"Starting chain import loop {i + 1}/{loop_count}")
             
             try:
+                # Check stop flag before loading chain
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected before loading imported chain - aborting")
+                    return None
+                
                 # Load and execute the imported chain directly using MultiSequencePlayer
                 logger.info(f"Loading imported chain: {chain_file_path}")
                 
@@ -913,11 +923,21 @@ class WorkflowExecutor:
                 with open(chain_file_path, 'r', encoding='utf-8') as f:
                     chain_config = json.load(f)
                 
+                # Check stop flag after loading chain config
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected after loading chain config - aborting")
+                    return None
+                
                 imported_player = MultiSequencePlayer(chain_config)
                 
                 # Execute the imported chain using the same method as normal chains
                 logger.info(f"Executing imported chain: {chain_file_path}")
                 success = imported_player.play_chain(stop_flag)
+                
+                # Check stop flag after chain execution
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected after imported chain execution - aborting")
+                    return None
                 
                 if not success:
                     logger.error(f"Imported chain execution failed: {chain_file_path}")
@@ -1012,7 +1032,7 @@ class WorkflowExecutor:
             timeout = float(condition_config.get('timeout', 10))
             return self.fallback_handler.check_absence_trigger(condition_config, timeout)
         elif condition_type == 'ocr_trigger':
-            return self.fallback_handler.check_ocr_trigger(condition_config)
+            return self.fallback_handler.check_ocr_trigger(condition_config, stop_flag=stop_flag)
         else:
             logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
             return False

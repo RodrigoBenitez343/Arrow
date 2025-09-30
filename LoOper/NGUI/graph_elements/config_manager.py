@@ -404,6 +404,8 @@ class ConfigManager:
         logger.debug(f"Saving chain import node {node.id} to configuration")
         try:
             import_config = node.get_chain_import_config()
+            imported_chain_config = node.get_imported_chain_config()
+            
             chain_import_data = {
                 "type": "chain_import",
                 "chain_file_path": import_config.get('chain_file', ''),
@@ -416,6 +418,24 @@ class ConfigManager:
                 "position": node.pos(),
                 "connections": self._get_node_connections(node)
             }
+            
+            # CRITICAL: If we have an imported chain configuration (from ChainExpansionDialog editing),
+            # save the actual chain configuration instead of just the import configuration
+            if imported_chain_config and (
+                imported_chain_config.get('sequences') or 
+                imported_chain_config.get('conditional_nodes') or 
+                imported_chain_config.get('llm_nodes') or 
+                imported_chain_config.get('tts_nodes')
+            ):
+                # This is an edited chain from ChainExpansionDialog - save the full configuration
+                logger.debug(f"Saving full imported chain configuration for node {node.id}")
+                chain_import_data.update({
+                    "sequences": imported_chain_config.get("sequences", []),
+                    "conditional_nodes": imported_chain_config.get("conditional_nodes", []),
+                    "llm_nodes": imported_chain_config.get("llm_nodes", []),
+                    "tts_nodes": imported_chain_config.get("tts_nodes", []),
+                    "chain_import_nodes": imported_chain_config.get("chain_import_nodes", [])
+                })
             
             self.chain_config["chain_import_nodes"].append(chain_import_data)
             logger.debug(f"Successfully saved chain import node with file: {chain_import_data['chain_file_path']}")
@@ -711,6 +731,24 @@ class ConfigManager:
                         node.set_property('enabled', str(enabled).lower())
                         node.set_name("Import: No file")
                         logger.debug(f"Set properties for chain import node with no file path")
+                    
+                    # CRITICAL: If the imported chain configuration is already included in the saved data
+                    # (from ChainExpansionDialog editing), restore it to the node
+                    if (import_data.get('sequences') or import_data.get('conditional_nodes') or 
+                        import_data.get('llm_nodes') or import_data.get('tts_nodes')):
+                        
+                        logger.debug(f"Restoring imported chain configuration for node {node.id}")
+                        # Reconstruct the imported chain configuration
+                        imported_config = {
+                            "sequences": import_data.get('sequences', []),
+                            "conditional_nodes": import_data.get('conditional_nodes', []),
+                            "llm_nodes": import_data.get('llm_nodes', []),
+                            "tts_nodes": import_data.get('tts_nodes', []),
+                            "chain_import_nodes": import_data.get('chain_import_nodes', [])
+                        }
+                        # Set the reconstructed configuration on the node
+                        node.chain_config = imported_config
+                        logger.debug(f"Successfully restored imported chain configuration for node {node.id}")
                     
                     # Set position
                     position = import_data.get("position", [0, 0])

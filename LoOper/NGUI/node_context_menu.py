@@ -36,6 +36,17 @@ class NodeContextMenuManager:
 
     def add_sequence_node_actions(self, menu, node):
         """Add actions for a sequence node to the context menu"""
+        # Copy/Paste actions
+        copy_action = QAction("Copy Node (Ctrl+C)", menu)
+        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
+        menu.addAction(copy_action)
+        
+        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
+        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
+        menu.addAction(paste_action)
+        
+        menu.addSeparator()
+        
         '''add_action_action = QAction("Add Action", menu)
         add_action_action.triggered.connect(lambda: self.graph_view.record_single_action(node))
         menu.addAction(add_action_action)'''#add action is deprecated
@@ -62,6 +73,17 @@ class NodeContextMenuManager:
     
     def add_conditional_node_actions(self, menu, node):
         """Add actions for a conditional node to the context menu"""
+        # Copy/Paste actions
+        copy_action = QAction("Copy Node (Ctrl+C)", menu)
+        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
+        menu.addAction(copy_action)
+        
+        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
+        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
+        menu.addAction(paste_action)
+        
+        menu.addSeparator()
+        
         edit_conditional_action = QAction("Edit Conditionals", menu)
         edit_conditional_action.triggered.connect(lambda: self.graph_view.edit_conditional(node))
         menu.addAction(edit_conditional_action)
@@ -72,6 +94,17 @@ class NodeContextMenuManager:
     
     def add_llm_node_actions(self, menu, node):
         """Add actions for an LLM node to the context menu"""
+        # Copy/Paste actions
+        copy_action = QAction("Copy Node (Ctrl+C)", menu)
+        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
+        menu.addAction(copy_action)
+        
+        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
+        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
+        menu.addAction(paste_action)
+        
+        menu.addSeparator()
+        
         edit_llm_action = QAction("Edit LLM Configuration", menu)
         edit_llm_action.triggered.connect(lambda: self.graph_view.edit_llm(node))
         menu.addAction(edit_llm_action)
@@ -126,6 +159,17 @@ class NodeContextMenuManager:
 
     def add_graph_actions(self, menu, pos):
         """Add actions for the graph background to the context menu"""
+        # Copy/Paste actions
+        copy_action = QAction("Copy Selected Nodes (Ctrl+C)", menu)
+        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
+        menu.addAction(copy_action)
+        
+        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
+        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
+        menu.addAction(paste_action)
+        
+        menu.addSeparator()
+        
         record_sequence_action = QAction("Record New Sequence", menu)
         record_sequence_action.triggered.connect(lambda: self.graph_view.record_new_sequence())
         menu.addAction(record_sequence_action)
@@ -133,6 +177,10 @@ class NodeContextMenuManager:
         add_sequence_action = QAction("Add Previously Recorded Sequences", menu)
         add_sequence_action.triggered.connect(lambda: self.graph_view.add_sequence())
         menu.addAction(add_sequence_action)
+        
+        add_conditional_action = QAction("Add Conditional Node", menu)
+        add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_node())
+        menu.addAction(add_conditional_action)
         
         add_llm_action = QAction("Add LLM Node", menu)
         add_llm_action.triggered.connect(lambda: self.graph_view.add_llm_node())

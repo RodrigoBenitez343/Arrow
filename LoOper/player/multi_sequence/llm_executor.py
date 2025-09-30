@@ -48,6 +48,11 @@ class LLMExecutor:
         logger.info(f"Executing LLM node: {llm_data.get('name', llm_data.get('id', llm_data.get('node_id', 'Unknown')))}")
         logger.info(f"Full node data: {node}")
         
+        # Check stop flag at the beginning
+        if stop_flag and stop_flag():
+            logger.info("LLM node execution stopped by user request")
+            return None
+        
         try:
             # Add the project root to the path to import from AI module
             project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,6 +61,11 @@ class LLMExecutor:
             
             from AI.consult import OllamaClient
             from AI.context_collector import ContextCollector
+            
+            # Check stop flag before configuration
+            if stop_flag and stop_flag():
+                logger.info("LLM node execution stopped by user request during configuration")
+                return None
             
             # Get LLM configuration - handle both nested and direct formats
             llm_config = llm_data.get('llm_configuration', {})
@@ -77,6 +87,13 @@ class LLMExecutor:
             use_vision = llm_config.get('use_vision', False)
             screenshot_enabled = llm_config.get('screenshot_enabled', True)
             
+            # New input source configuration
+            input_source = llm_config.get('input_source', 'none')
+            ocr_confidence = llm_config.get('ocr_confidence', 60)
+            ocr_preprocessing = llm_config.get('ocr_preprocessing', False)
+            
+            logger.info(f"Input source: {input_source}, OCR confidence: {ocr_confidence}, OCR preprocessing: {ocr_preprocessing}")
+            
             # ComoRAG-specific configuration
             use_comorag = str(llm_config.get('use_comorag', 'true')).lower() in ('true', '1', 'yes', 'on')
             max_cycles = int(llm_config.get('max_cycles', 5))
@@ -94,6 +111,11 @@ class LLMExecutor:
             logger.info(f"  Use Vision: {use_vision}")
             logger.info(f"  Screenshot Enabled: {screenshot_enabled}")
             
+            # Check stop flag before variable substitution
+            if stop_flag and stop_flag():
+                logger.info("LLM node execution stopped by user request during variable substitution")
+                return None
+            
             # Replace context variables in prompt using previously stored variables
             original_prompt = prompt
             if self.variables:
@@ -103,6 +125,123 @@ class LLMExecutor:
                 logger.info(f"Prompt after variable substitution: {prompt}")
             else:
                 logger.info("No variables available for substitution")
+            
+            # Check stop flag before input processing
+            if stop_flag and stop_flag():
+                logger.info("LLM node execution stopped by user request before input processing")
+                return None
+            
+            # Handle input sources
+            input_text = None
+            if input_source == 'ocr':
+                logger.info("Processing OCR input source...")
+                try:
+                    from ..computer_vision import TemplateMatching
+                    
+                    # Check stop flag before screenshot
+                    if stop_flag and stop_flag():
+                        logger.info("LLM node execution stopped by user request during OCR screenshot")
+                        return None
+                    
+                    # Take screenshot for OCR
+                    import pyautogui
+                    pyautogui.FAILSAFE = False
+                    
+                    screenshot = pyautogui.screenshot()
+                    
+                    # Create screenshots directory if it doesn't exist
+                    screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'screenshots')
+                    os.makedirs(screenshots_dir, exist_ok=True)
+                    
+                    # Save with timestamp
+                    timestamp = int(time.time())
+                    screenshot_path = os.path.join(screenshots_dir, f'llm_ocr_{timestamp}.png')
+                    screenshot.save(screenshot_path)
+                    
+                    # Register for cleanup after use
+                    register_temporal_screenshot(screenshot_path)
+                    
+                    # Extract all text with specified confidence
+                    ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path, stop_flag=stop_flag)
+                    if ocr_results:
+                        # Filter by confidence and join text
+                        filtered_text = []
+                        for item in ocr_results:
+                            if item['confidence'] >= ocr_confidence:
+                                filtered_text.append(item['text'])
+                        
+                        if filtered_text:
+                            input_text = "\n".join(filtered_text)
+                            logger.info(f"OCR extracted {len(filtered_text)} text blocks with confidence >= {ocr_confidence}")
+                            logger.info(f"OCR text preview: {input_text[:200]}...")
+                        else:
+                            logger.warning(f"No OCR text found with confidence >= {ocr_confidence}")
+                            input_text = ""
+                    else:
+                        logger.warning("No OCR text extracted")
+                        input_text = ""
+                        
+                    # Clean up screenshot
+                    cleanup_screenshot(screenshot_path)
+                    
+                except Exception as ocr_error:
+                    logger.error(f"OCR processing failed: {ocr_error}")
+                    input_text = ""
+                    
+            elif input_source == 'previous_node':
+                logger.info("Processing previous node input source...")
+                # Look for input from connected nodes (first input connection)
+                if 'input' in node.get('connections', {}):
+                    input_connections = node['connections']['input']
+                    if input_connections:
+                        # Get the first input connection
+                        first_input = input_connections[0]
+                        connected_node_id = first_input.get('node_id')
+                        if connected_node_id:
+                            # Look for output variable from the connected node
+                            # This assumes the connected node stored its output in a variable
+                            connected_output_var = f"node_{connected_node_id}_output"
+                            if connected_output_var in self.variables:
+                                input_text = self.variables[connected_output_var]
+                                logger.info(f"Retrieved previous node output: {input_text[:200]}...")
+                            else:
+                                logger.warning(f"No output found from connected node {connected_node_id}")
+                                input_text = ""
+                        else:
+                            logger.warning("No connected node ID found")
+                            input_text = ""
+                    else:
+                        logger.warning("No input connections found")
+                        input_text = ""
+                else:
+                    logger.warning("No input connections in node")
+                    input_text = ""
+                    
+            elif input_source == 'clipboard':
+                logger.info("Processing clipboard input source...")
+                try:
+                    import pyperclip
+                    input_text = pyperclip.paste()
+                    if input_text:
+                        logger.info(f"Retrieved clipboard content: {input_text[:200]}...")
+                    else:
+                        logger.warning("Clipboard is empty")
+                        input_text = ""
+                except ImportError:
+                    logger.error("pyperclip not installed. Install with: pip install pyperclip")
+                    input_text = ""
+                except Exception as clipboard_error:
+                    logger.error(f"Failed to read clipboard: {clipboard_error}")
+                    input_text = ""
+            
+            # If we have input text, enhance the prompt
+            if input_text is not None:
+                if input_text.strip():
+                    prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
+                    logger.info(f"Enhanced prompt with {input_source} input ({len(input_text)} chars)")
+                else:
+                    prompt = f"[Input Source: {input_source.upper()} - No content found]\n\n[User Prompt:]\n{prompt}"
+                    logger.info(f"Enhanced prompt with {input_source} input (no content)")
             
             # Create OllamaClient and make request
             logger.info(f"Creating OllamaClient with base_url: {api_url}")
@@ -156,7 +295,7 @@ class LLMExecutor:
                         # Extract OCR text from screenshot for enhanced context
                         try:
                             from ..computer_vision import TemplateMatching
-                            ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path)
+                            ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path, stop_flag=stop_flag)
                             if ocr_results:
                                 ocr_text = "\n".join([item['text'] for item in ocr_results if item['confidence'] > 60])
                                 if ocr_text.strip():
@@ -335,6 +474,11 @@ class LLMExecutor:
             logger.info(f"Async processing enabled: {use_async}")
             
             try:
+                # Check stop flag before making API call
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected before API call - aborting LLM execution")
+                    return None
+                
                 if use_async:
                     # Define callback function to handle async response
                     def async_response_callback(request_id, result):
@@ -357,6 +501,11 @@ class LLMExecutor:
                         async_request=True,
                         callback=async_response_callback
                     )
+                    
+                    # Check stop flag after async request queuing
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected after async request queuing - aborting LLM execution")
+                        return None
                     
                     logger.info(f"Queued async request: {queue_result}")
                     
@@ -411,6 +560,12 @@ class LLMExecutor:
                         images=images if images else None,
                         context=context_data if context_data else None
                     )
+                    
+                    # Check stop flag after API call
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected after API call - aborting LLM execution")
+                        return None
+                    
                     logger.info(f"Raw API response: {response}")
                     logger.info(f"Response type: {type(response)}")
                 
@@ -425,6 +580,11 @@ class LLMExecutor:
             # Extract generated text from different possible response formats
             generated_text = None
             if response:
+                # Check stop flag before processing response
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected before processing response - aborting LLM execution")
+                    return None
+                
                 logger.info("Processing API response...")
                 if isinstance(response, dict):
                     logger.info(f"Response is dict with keys: {response.keys()}")
@@ -465,6 +625,11 @@ class LLMExecutor:
                 logger.error("No response received from API")
 
             if generated_text is not None:
+                # Check stop flag before processing generated text
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected before processing generated text - aborting LLM execution")
+                    return None
+                
                 logger.info(f"=== LLM GENERATED TEXT ===")
                 logger.info(f"Generated text (full): {generated_text}")
                 logger.info(f"Generated text length: {len(generated_text)}")
@@ -473,6 +638,12 @@ class LLMExecutor:
                 self.variables[output_variable] = generated_text
                 logger.info(f"Stored LLM output in variable '{output_variable}': {generated_text}")
                 logger.info(f"Current variables state: {self.variables}")
+                
+                # Also store output in a node-specific variable for chaining
+                node_id = node.get('id') or node.get('data', {}).get('id', 'unknown')
+                node_output_var = f"node_{node_id}_output"
+                self.variables[node_output_var] = generated_text
+                logger.info(f"Stored LLM output in node variable '{node_output_var}' for chaining")
                 
                 # Store LLM response in database for permanent storage
                 if self.context_db:
@@ -509,6 +680,11 @@ class LLMExecutor:
                 logger.info(f"Should write text: {should_write_text}")
                 
                 if should_write_text and generated_text and generated_text.strip():
+                    # Check stop flag before writing text
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected before writing text - aborting LLM execution")
+                        return None
+                    
                     logger.info(f"=== ATTEMPTING TO WRITE TEXT ===")
                     
                     # Ensure generated_text is a string
@@ -546,7 +722,7 @@ class LLMExecutor:
                             # Typing parameters are already configured from LLM node settings
                             
                             # Execute typing action and get completion status
-                            completed = action_handlers.handle_type_string_action(0, type_action)
+                            completed = action_handlers.handle_type_string_action(0, type_action, stop_flag)
                             
                             # Check completion flag
                             if completed:

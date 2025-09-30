@@ -251,18 +251,24 @@ class ActionHandlers:
                 logger.error(f"Visual match for action {idx} failed and no fallback is configured. Aborting playback.")
                 raise Exception("Visual match failed and no fallback configured.")
 
-    def handle_type_string_action(self, idx, action):
+    def handle_type_string_action(self, idx, action, stop_flag=None):
         """
         Handles typing text actions with optimized speed and completion tracking.
         
         Args:
             idx (int): Action index
             action (dict): Action configuration
+            stop_flag (callable): Function to check if execution should stop
             
         Returns:
             bool: True when typing is complete
         """
         if 'text' in action:
+            # Check stop flag before starting typing
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before typing - aborting type string action")
+                return False
+            
             # Check if a specific delay is required after a click before typing
             if 'delay_after_click' in action:
                 time_since_click = time.time() - self.bot.last_click_time
@@ -299,6 +305,11 @@ class ActionHandlers:
             
             # Type text in batches for significantly improved speed
             for i in range(0, len(text), batch_size):
+                # Check stop flag during typing
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected during typing - aborting type string action")
+                    return False
+                
                 # Get the next batch of characters
                 batch = text[i:i+batch_size]
                 
@@ -315,6 +326,11 @@ class ActionHandlers:
                         # Split by newlines and type each segment separately with proper Enter key presses
                         segments = filtered_batch.split('\n')
                         for j, segment in enumerate(segments):
+                            # Check stop flag before each segment
+                            if stop_flag and stop_flag():
+                                logger.info("Stop flag detected during line break typing - aborting type string action")
+                                return False
+                            
                             if segment:  # Only type non-empty segments
                                 pyautogui.write(segment)
                             # Press Enter after each segment except the last one

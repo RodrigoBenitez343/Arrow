@@ -146,7 +146,7 @@ class ConditionalFallbackHandler:
             timeout = float(condition_config.get('timeout', 10))
             return self.check_absence_trigger(condition_config, timeout)
         elif condition_type == 'ocr_trigger':
-            return self.check_ocr_trigger(condition_config)
+            return self.check_ocr_trigger(condition_config, stop_flag=stop_flag)
         else:
             logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
             return False
@@ -351,7 +351,7 @@ class ConditionalFallbackHandler:
         
         return found
     
-    def check_ocr_trigger(self, trigger_config, timeout=None):
+    def check_ocr_trigger(self, trigger_config, timeout=None, stop_flag=None):
         """
         Check if specified text is detected on screen via OCR
         OCR method will always take a fresh screenshot to ensure current state validation.
@@ -359,10 +359,16 @@ class ConditionalFallbackHandler:
         Args:
             trigger_config (dict): Configuration with 'target_text', 'confidence', etc.
             timeout (float): Optional timeout for waiting (not currently used)
+            stop_flag (callable): Function to check if operation should be stopped
             
         Returns:
             bool: True if text is detected with sufficient confidence
         """
+        # Check stop flag before starting OCR trigger
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before OCR trigger check - aborting")
+            return False
+        
         target_text = trigger_config.get('target_text')
         confidence = trigger_config.get('confidence', 0.8)
         case_sensitive = trigger_config.get('case_sensitive', True)
@@ -378,7 +384,8 @@ class ConditionalFallbackHandler:
             result = TemplateMatching.ocr_text_detection(
                 target_text,
                 confidence=confidence,
-                case_sensitive=case_sensitive
+                case_sensitive=case_sensitive,
+                stop_flag=stop_flag
             )
             
             if result and result.get('found'):
@@ -678,4 +685,4 @@ class ConditionalFallbackHandler:
             elif condition_type == 'absence':
                 self.check_absence_trigger(condition, timeout)
             elif condition_type == 'ocr':
-                self.check_ocr_trigger(condition)
+                self.check_ocr_trigger(condition, stop_flag=stop_flag)

@@ -229,7 +229,7 @@ class TemplateMatching:
             return None
 
     @staticmethod
-    def ocr_text_detection(target_text, confidence=0.8, case_sensitive=True, screen_cv=None):
+    def ocr_text_detection(target_text, confidence=0.8, case_sensitive=True, screen_cv=None, stop_flag=None):
         """
         Performs OCR text detection to find specific text on screen using full screen screenshot.
         ALWAYS takes a fresh screenshot to ensure current state validation.
@@ -239,6 +239,7 @@ class TemplateMatching:
             confidence (float): Matching confidence threshold (0.0 to 1.0)
             case_sensitive (bool): Whether text matching should be case sensitive
             screen_cv (numpy.ndarray): IGNORED - Always takes fresh screenshot
+            stop_flag (callable): Function to check if operation should be stopped
         
         Returns:
             dict: Dictionary with 'found' (bool), 'text' (str), 'confidence' (float), 'bbox' (tuple) if found, None otherwise
@@ -248,6 +249,11 @@ class TemplateMatching:
             return None
             
         try:
+            # Check stop flag before starting OCR
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before OCR text detection - aborting")
+                return None
+            
             # ALWAYS take a fresh screenshot - ignore any passed screen_cv to prevent stale data
             logger.debug("Taking fresh screenshot for OCR validation")
             screen = pyautogui.screenshot()  # Full screen capture
@@ -256,6 +262,11 @@ class TemplateMatching:
                 screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
             else:
                 screen_cv = screen_np
+            
+            # Check stop flag after screenshot
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected after OCR screenshot - aborting")
+                return None
             
             # Convert to PIL Image for pytesseract
             if CV2_AVAILABLE and len(screen_cv.shape) == 3:
@@ -270,13 +281,28 @@ class TemplateMatching:
             # Configure OCR settings for better accuracy (using default English)
             custom_config = '--oem 3 --psm 6 -l eng'
             
+            # Check stop flag before OCR processing
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before OCR processing - aborting")
+                return None
+            
             # Get detailed OCR data with confidence scores
             ocr_data = pytesseract.image_to_data(pil_image, config=custom_config, output_type=pytesseract.Output.DICT)
+            
+            # Check stop flag after OCR processing
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected after OCR processing - aborting")
+                return None
             
             # Process OCR results
             found_matches = []
             
             for i in range(len(ocr_data['text'])):
+                # Check stop flag during OCR result processing
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected during OCR result processing - aborting")
+                    return None
+                
                 text = ocr_data['text'][i].strip()
                 conf = float(ocr_data['conf'][i])
                 
@@ -331,13 +357,14 @@ class TemplateMatching:
             return None
     
     @staticmethod
-    def ocr_extract_all_text(min_confidence=0.6, screen_cv=None):
+    def ocr_extract_all_text(min_confidence=0.6, screen_cv=None, stop_flag=None):
         """
         Extracts all readable text from full screen using OCR.
         
         Args:
             min_confidence (float): Minimum confidence threshold for text extraction
             screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
+            stop_flag (callable): Function to check if operation should be stopped
         
         Returns:
             list: List of dictionaries with text, confidence, and bounding box information
@@ -347,6 +374,11 @@ class TemplateMatching:
             return []
             
         try:
+            # Check stop flag before starting OCR
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before OCR text extraction - aborting")
+                return []
+            
             # Always use full screen screenshot
             if screen_cv is None:
                 screen = pyautogui.screenshot()  # Full screen capture
@@ -355,6 +387,11 @@ class TemplateMatching:
                     screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
                 else:
                     screen_cv = screen_np
+            
+            # Check stop flag after screenshot
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected after OCR screenshot - aborting")
+                return []
             
             # Convert to PIL Image for pytesseract
             if CV2_AVAILABLE and len(screen_cv.shape) == 3:
@@ -369,13 +406,28 @@ class TemplateMatching:
             # Configure OCR settings (using default English)
             custom_config = '--oem 3 --psm 6 -l eng'
             
+            # Check stop flag before OCR processing
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before OCR processing - aborting")
+                return []
+            
             # Get detailed OCR data
             ocr_data = pytesseract.image_to_data(pil_image, config=custom_config, output_type=pytesseract.Output.DICT)
+            
+            # Check stop flag after OCR processing
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected after OCR processing - aborting")
+                return []
             
             # Process and filter results
             extracted_text = []
             
             for i in range(len(ocr_data['text'])):
+                # Check stop flag during OCR result processing
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected during OCR result processing - aborting")
+                    return extracted_text  # Return partial results
+                
                 text = ocr_data['text'][i].strip()
                 conf = float(ocr_data['conf'][i])
                 

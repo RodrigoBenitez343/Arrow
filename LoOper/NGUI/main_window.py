@@ -252,8 +252,21 @@ class MainWindow(QMainWindow):
                     def execute_chain():
                         try:
                             logger.info("Starting chain execution in background thread")
-                            result = player.play_chain()
-                            logger.info(f"Chain execution completed with result: {result}")
+                            
+                            # Import and start keyboard monitoring for ESC key abort
+                            from player.keyboard_monitor import start_global_monitoring, stop_global_monitoring, create_stop_flag
+                            
+                            # Start ESC key monitoring
+                            start_global_monitoring()
+                            stop_flag = create_stop_flag()
+                            
+                            try:
+                                # Execute the chain with stop flag for ESC key abort
+                                result = player.play_chain(stop_flag=stop_flag)
+                                logger.info(f"Chain execution completed with result: {result}")
+                            finally:
+                                # Always stop monitoring when done
+                                stop_global_monitoring()
                             
                             # Clean up temporary file
                             try:
@@ -269,6 +282,13 @@ class MainWindow(QMainWindow):
                             logger.error(f"Error during chain execution: {e}")
                             import traceback
                             logger.error(f"Chain execution traceback: {traceback.format_exc()}")
+                            
+                            # Stop monitoring on error
+                            try:
+                                from player.keyboard_monitor import stop_global_monitoring
+                                stop_global_monitoring()
+                            except:
+                                pass
                             
                             # Restore window and show error
                             error_msg = str(e)
