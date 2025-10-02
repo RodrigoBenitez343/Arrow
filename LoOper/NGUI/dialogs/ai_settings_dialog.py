@@ -6,7 +6,8 @@ import sys
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, 
     QPushButton, QLabel, QGroupBox, QCheckBox, QSpinBox,
-    QMessageBox, QTextEdit, QTabWidget, QWidget, QDialogButtonBox
+    QMessageBox, QTextEdit, QTabWidget, QWidget, QDialogButtonBox,
+    QScrollArea
 )
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
@@ -30,23 +31,52 @@ class APIServerThread(QThread):
             self.running = True
             self.status_update.emit("Starting local API server...")
             
-            # Change to the AI directory
-            ai_dir = os.path.dirname(self.api_path)
+            # Change to the OverWatch directory
+            overwatch_dir = os.path.dirname(self.api_path)
             
-            # Start the API server
+            # Start the API server using main.py
             self.process = subprocess.Popen(
-                [sys.executable, "api.py"],
-                cwd=ai_dir,
+                [sys.executable, "main.py"],
+                cwd=overwatch_dir,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                bufsize=1,
+                universal_newlines=True
             )
             
-            self.status_update.emit("Local API server started successfully")
+            # Wait a bit and check if the process started successfully
+            self.msleep(2000)  # Wait 2 seconds
+            
+            if self.process.poll() is not None:
+                # Process has already terminated, read error output
+                stdout, stderr = self.process.communicate()
+                error_msg = stderr.strip() if stderr.strip() else stdout.strip()
+                self.error_occurred.emit(f"API server failed to start: {error_msg}")
+                return
+            
+            # Try to verify the server is responding
+            import requests
+            try:
+                # Give the server a moment to fully initialize
+                self.msleep(3000)  # Wait another 3 seconds
+                response = requests.get("http://localhost:8000/health", timeout=5)
+                if response.status_code == 200:
+                    self.status_update.emit("✅ Local API server started successfully")
+                else:
+                    self.status_update.emit("⚠️ Local API server started but not responding properly")
+            except requests.exceptions.RequestException:
+                self.status_update.emit("⚠️ Local API server started but health check failed")
             
             # Monitor the process
             while self.running and self.process.poll() is None:
                 self.msleep(1000)
+                
+            # If we get here, the process has terminated
+            if self.running:  # Only emit error if we didn't stop it intentionally
+                stdout, stderr = self.process.communicate()
+                error_msg = stderr.strip() if stderr.strip() else "Process terminated unexpectedly"
+                self.error_occurred.emit(f"API server stopped: {error_msg}")
                 
         except Exception as e:
             self.error_occurred.emit(f"Failed to start API server: {str(e)}")
@@ -64,8 +94,8 @@ class AISettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("AI Settings")
         self.setModal(True)
-        self.resize(600, 500)
-        self.setMinimumSize(500, 400)
+        self.resize(700, 700)
+        self.setMinimumSize(650, 600)
         
         # Apply styling consistent with other dialogs
         self.setStyleSheet(f"""
@@ -192,6 +222,9 @@ class AISettingsDialog(QDialog):
         
         # API Configuration Tab
         api_tab = QWidget()
+        api_scroll = QScrollArea()
+        api_scroll.setWidgetResizable(True)
+        api_scroll_widget = QWidget()
         api_layout = QVBoxLayout()
         
         # Remote API Configuration
@@ -260,7 +293,7 @@ class AISettingsDialog(QDialog):
         status_layout.addWidget(self.status_label)
         
         self.models_text = QTextEdit()
-        self.models_text.setMaximumHeight(100)
+        self.models_text.setMaximumHeight(80)  # Reduced height
         self.models_text.setReadOnly(True)
         status_layout.addWidget(QLabel("Available Models:"))
         status_layout.addWidget(self.models_text)
@@ -268,7 +301,14 @@ class AISettingsDialog(QDialog):
         status_group.setLayout(status_layout)
         api_layout.addWidget(status_group)
         
-        api_tab.setLayout(api_layout)
+        # Set up scroll area
+        api_scroll_widget.setLayout(api_layout)
+        api_scroll.setWidget(api_scroll_widget)
+        
+        # Set up the main tab layout
+        api_tab_layout = QVBoxLayout()
+        api_tab_layout.addWidget(api_scroll)
+        api_tab.setLayout(api_tab_layout)
         tab_widget.addTab(api_tab, "API Configuration")
         
         # Advanced Tab
@@ -306,7 +346,7 @@ class AISettingsDialog(QDialog):
     
     def load_settings(self):
         """Load settings from environment variables"""
-        self.tailscale_ip_edit.setText(os.getenv("TAILSCALE_SERVER_IP", "localhost"))
+        self.tailscale_ip_edit.setText(os.getenv("TAILSCALE_SERVER_IP", ""))  # Default to empty for local use
         self.api_port_edit.setValue(int(os.getenv("API_PORT", "8000")))
         self.ollama_host_edit.setText(os.getenv("OLLAMA_HOST", "localhost"))
         self.ollama_port_edit.setValue(int(os.getenv("OLLAMA_PORT", "11434")))
@@ -348,7 +388,7 @@ class AISettingsDialog(QDialog):
     def test_connection(self):
         """Test connection to the API server"""
         try:
-            tailscale_ip = self.tailscale_ip_edit.text() or "localhost"
+            tailscale_ip = self.tailscale_ip_edit.text() or "localhost"  # Default to localhost if empty
             port = self.api_port_edit.value()
             url = f"http://{tailscale_ip}:{port}/health"
             
@@ -368,7 +408,7 @@ class AISettingsDialog(QDialog):
     def check_api_status(self):
         """Check API status and update display"""
         try:
-            tailscale_ip = self.tailscale_ip_edit.text() or "localhost"
+            tailscale_ip = self.tailscale_ip_edit.text() or "localhost"  # Default to localhost if empty
             port = self.api_port_edit.value()
             
             # Check health
@@ -382,10 +422,18 @@ class AISettingsDialog(QDialog):
                 # Get models
                 models_url = f"http://{tailscale_ip}:{port}/models"
                 models_response = requests.get(models_url, timeout=5)
-                models = models_response.json()
+                models_data = models_response.json()
+                
+                # Handle the API response format - it returns {"models": [...]}
+                if isinstance(models_data, dict) and 'models' in models_data:
+                    models = models_data['models']
+                elif isinstance(models_data, list):
+                    models = models_data
+                else:
+                    models = []
                 
                 if models:
-                    model_names = [model.get('name', 'Unknown') for model in models]
+                    model_names = [model.get('name', 'Unknown') for model in models if isinstance(model, dict)]
                     self.models_text.setText("\n".join(model_names))
                 else:
                     self.models_text.setText("No models available")
@@ -400,33 +448,48 @@ class AISettingsDialog(QDialog):
     def start_local_server(self):
         """Start the local API server"""
         try:
-            api_path = os.path.join(os.path.dirname(__file__), "..", "..", "AI", "api.py")
+            # Use the main.py from OverWatch directory instead of AI/api.py
+            overwatch_main_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "OverWatch", "main.py")
+            overwatch_main_path = os.path.normpath(overwatch_main_path)
             
-            if not os.path.exists(api_path):
-                QMessageBox.critical(self, "Error", f"API file not found at: {api_path}")
+            if not os.path.exists(overwatch_main_path):
+                QMessageBox.critical(self, "Error", f"OverWatch main.py not found at: {overwatch_main_path}")
                 return
             
-            self.server_thread = APIServerThread(api_path)
+            # Stop any existing server first
+            if self.server_thread and self.server_thread.isRunning():
+                self.stop_local_server()
+                # Wait a moment for the previous server to fully stop
+                import time
+                time.sleep(1)
+            
+            self.server_thread = APIServerThread(overwatch_main_path)
             self.server_thread.status_update.connect(self.on_server_status_update)
             self.server_thread.error_occurred.connect(self.on_server_error)
             self.server_thread.start()
             
             self.start_server_btn.setEnabled(False)
             self.stop_server_btn.setEnabled(True)
+            self.status_label.setText("🔄 Starting local API server...")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start server: {str(e)}")
+            self.start_server_btn.setEnabled(True)
+            self.stop_server_btn.setEnabled(False)
     
     def stop_local_server(self):
         """Stop the local API server"""
         if self.server_thread:
             self.server_thread.stop()
-            self.server_thread.wait()
+            self.server_thread.wait(5000)  # Wait up to 5 seconds for thread to finish
+            if self.server_thread.isRunning():
+                self.server_thread.terminate()  # Force terminate if still running
+                self.server_thread.wait()
             self.server_thread = None
         
         self.start_server_btn.setEnabled(True)
         self.stop_server_btn.setEnabled(False)
-        self.status_label.setText("Local server stopped")
+        self.status_label.setText("🛑 Local server stopped")
     
     def on_server_status_update(self, message):
         """Handle server status updates"""

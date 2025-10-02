@@ -364,18 +364,37 @@ class ConfigManager:
         """Save an LLM node to configuration."""
         logger.debug(f"Saving LLM node {node.id} to configuration")
         try:
+            # Get the complete LLM configuration from the node
+            llm_config = node.get_llm_config() if hasattr(node, 'get_llm_config') else {}
+            
+            # Build comprehensive LLM data with all properties from llm_config
             llm_data = {
-                "prompt": node.get_property('prompt') or '',
-                "model": node.get_property('model') or 'gpt-3.5-turbo',
-                "temperature": float(node.get_property('temperature') or 0.7),
-                "max_tokens": int(node.get_property('max_tokens') or 150),
+                "prompt": llm_config.get('prompt', ''),
+                "model": llm_config.get('model', 'llama3.2:latest'),
+                "system_message": llm_config.get('system_message', ''),
+                "temperature": llm_config.get('temperature', 0.7),
+                "max_tokens": llm_config.get('max_tokens', 500),
+                "output_variable": llm_config.get('output_variable', 'llm_output'),
+                "api_url": llm_config.get('api_url', ''),
+                "write_text": llm_config.get('write_text', True),
+                "use_vision": llm_config.get('use_vision', False),
+                "screenshot_enabled": llm_config.get('screenshot_enabled', True),
+                "use_comorag": llm_config.get('use_comorag', True),
+                "max_cycles": llm_config.get('max_cycles', 5),
+                "memory_size": llm_config.get('memory_size', 1000),
+                "typing_batch_size": llm_config.get('typing_batch_size', 20),
+                "typing_batch_delay": llm_config.get('typing_batch_delay', 0.05),
+                "input_source": llm_config.get('input_source', 'none'),
+                "ocr_confidence": llm_config.get('ocr_confidence', 0.5),
+                "ocr_preprocessing": llm_config.get('ocr_preprocessing', True),
+                "use_async": llm_config.get('use_async', True),
                 "node_id": node.id,
                 "position": node.pos(),  # pos() returns [x, y] list directly
                 "connections": self._get_node_connections(node)
             }
             
             self.chain_config["llm_nodes"].append(llm_data)
-            logger.debug(f"Successfully saved LLM node with model: {llm_data['model']}")
+            logger.debug(f"Successfully saved LLM node with model: {llm_data['model']} and all properties")
         except Exception as e:
             logger.error(f"Error saving LLM node {node.id}: {e}")
             raise
@@ -598,16 +617,16 @@ class ConfigManager:
                 if "llm_configuration" in llm_data:
                     # New format with nested configuration
                     config = llm_data["llm_configuration"]
-                    model = config.get('model', 'gpt-3.5-turbo')
+                    model = config.get('model', 'llama3.2:latest')
                     prompt = config.get('prompt', '')
                     temperature = config.get('temperature', 0.7)
-                    max_tokens = config.get('max_tokens', 150)
+                    max_tokens = config.get('max_tokens', 500)
                 else:
-                    # Old format with direct properties
-                    model = llm_data.get('model', 'gpt-3.5-turbo')
+                    # Old format with direct properties - use all available properties
+                    model = llm_data.get('model', 'llama3.2:latest')
                     prompt = llm_data.get('prompt', '')
                     temperature = llm_data.get('temperature', 0.7)
-                    max_tokens = llm_data.get('max_tokens', 150)
+                    max_tokens = llm_data.get('max_tokens', 500)
                 
                 logger.debug(f"Creating LLM node with model: {model}")
                 node = self.parent_widget.graph_manager.create_node(
@@ -616,13 +635,38 @@ class ConfigManager:
                 )
                 
                 if node:
-                    # Set properties
-                    node.set_property('prompt', prompt)
-                    node.set_property('model', model)
-                    node.set_property('temperature', str(temperature))
-                    node.set_property('max_tokens', str(max_tokens))
-                    logger.debug(f"Set properties for LLM node with model: {model}")
+                    # Set all available properties from the saved data
+                    node.set_property('prompt', llm_data.get('prompt', ''))
+                    node.set_property('model', llm_data.get('model', 'llama3.2:latest'))
+                    node.set_property('system_message', llm_data.get('system_message', ''))
+                    node.set_property('temperature', str(llm_data.get('temperature', 0.7)))
+                    node.set_property('max_tokens', str(llm_data.get('max_tokens', 500)))
+                    node.set_property('output_variable', llm_data.get('output_variable', 'llm_output'))
+                    node.set_property('api_url', llm_data.get('api_url', ''))
+                    node.set_property('write_text', str(llm_data.get('write_text', 'true')))
+                    node.set_property('use_vision', str(llm_data.get('use_vision', 'false')))
+                    node.set_property('screenshot_enabled', str(llm_data.get('screenshot_enabled', 'true')))
+                    node.set_property('use_comorag', str(llm_data.get('use_comorag', 'true')))
+                    node.set_property('max_cycles', str(llm_data.get('max_cycles', 5)))
+                    node.set_property('memory_size', str(llm_data.get('memory_size', 1000)))
+                    node.set_property('typing_batch_size', str(llm_data.get('typing_batch_size', 20)))
+                    node.set_property('typing_batch_delay', str(llm_data.get('typing_batch_delay', 0.05)))
+                    node.set_property('input_source', llm_data.get('input_source', 'none'))
+                    node.set_property('ocr_confidence', str(llm_data.get('ocr_confidence', 0.5)))
+                    node.set_property('ocr_preprocessing', str(llm_data.get('ocr_preprocessing', 'true')))
+                    node.set_property('use_async', str(llm_data.get('use_async', 'true')))
                     
+                    logger.debug(f"Set all properties for LLM node with model: {model}")
+                    
+                    # Set position
+                    position = llm_data.get("position", [0, 0])
+                    node.set_pos(*position)
+                    logger.debug(f"Set position for LLM node: {position}")
+                    
+                    # Add to parent widget's tracking list
+                    if hasattr(self.parent_widget, 'llm_nodes'):
+                        self.parent_widget.llm_nodes.append(node)
+                        logger.debug(f"Added LLM node to parent widget tracking list")
                     # Set position
                     position = llm_data.get("position", [0, 0])
                     node.set_pos(*position)

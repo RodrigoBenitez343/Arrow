@@ -33,8 +33,8 @@ class LLMPropertiesDialog(QDialog):
         
         self.setWindowTitle("LLM Node Configuration")
         self.setModal(True)
-        self.resize(600, 380)  # Wider but shorter dialog
-        self.setMinimumSize(600, 380)
+        self.resize(600, 500)  # Increased height for tabbed interface
+        self.setMinimumSize(600, 500)
         
         # Apply styling consistent with other dialogs
         self.setStyleSheet(f"""
@@ -61,9 +61,24 @@ class LLMPropertiesDialog(QDialog):
     
     def get_available_models(self, api_url=None):
         """Get available models from cache (non-blocking)"""
-        # Use cached models to avoid blocking the UI
-        models = get_cached_models(timeout=0.5)  # Short timeout since models should be preloaded
-        print(f"Retrieved {len(models)} models from cache: {models}")
+        # First check if models are already loaded
+        cache = get_model_cache()
+        if cache.is_loaded():
+            models = get_cached_models(timeout=0.1)
+            print(f"Retrieved {len(models)} models from loaded cache: {models}")
+            return models
+        
+        # If not loaded, try to load them with a reasonable timeout
+        if api_url:
+            cache.refresh_models(api_url)
+        else:
+            # Use default API URL if none provided
+            from .utils import get_default_api_url
+            cache.refresh_models(get_default_api_url())
+        
+        # Wait for models to load with a longer timeout
+        models = get_cached_models(timeout=3.0)  # Increased timeout for better reliability
+        print(f"Retrieved {len(models)} models from cache after refresh: {models}")
         return models
     
     def refresh_models(self):
@@ -95,16 +110,61 @@ class LLMPropertiesDialog(QDialog):
             self.model_combo.setCurrentText(current_model)
     
     def setup_ui(self):
-        """Setup the UI for the dialog"""
+        """Setup the UI for the dialog with tabbed interface"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)  # Reduced margins
-        layout.setSpacing(8)  # Reduced spacing between elements
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #555;
+                background-color: #2b2b2b;
+            }
+            QTabBar::tab {
+                background-color: #3c3c3c;
+                color: #ffffff;
+                padding: 8px 16px;
+                margin-right: 2px;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #4a4a4a;
+                border-bottom: 2px solid #0078d4;
+            }
+            QTabBar::tab:hover {
+                background-color: #404040;
+            }
+        """)
+        
+        # Create tabs
+        self.create_basic_tab()
+        self.create_prompt_tab()
+        self.create_advanced_tab()
+        self.create_features_tab()
+        
+        layout.addWidget(self.tab_widget)
+        
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def create_basic_tab(self):
+        """Create the Basic Configuration tab"""
+        basic_tab = QWidget()
+        layout = QVBoxLayout(basic_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
         
         # Model Configuration Group
         model_group = QGroupBox("Model Configuration")
         model_layout = QGridLayout(model_group)
-        model_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
-        model_layout.setSpacing(6)  # Reduced spacing
+        model_layout.setContentsMargins(8, 12, 8, 8)
+        model_layout.setSpacing(6)
         
         # Model selection
         model_layout.addWidget(QLabel("Model:"), 0, 0)
@@ -113,7 +173,19 @@ class LLMPropertiesDialog(QDialog):
         
         # Get API URL from current config or use default
         api_url = self.current_config.get('api_url', get_default_api_url())
+        
+        # Force model refresh to ensure we get real models, not placeholders
+        cache = get_model_cache()
+        if not cache.is_loaded():
+            print(f"Models not loaded, refreshing from {api_url}")
+            cache.refresh_models(api_url)
+            
         available_models = self.get_available_models(api_url)
+        
+        # If we still get fallback models, show a warning
+        if available_models == ["llama3.2", "llama3.1", "codellama", "mistral", "phi3"]:
+            print(f"Warning: Using fallback models. Check API connection to {api_url}")
+        
         self.model_combo.addItems(available_models)
         
         model_layout.addWidget(self.model_combo, 0, 1)
@@ -134,33 +206,11 @@ class LLMPropertiesDialog(QDialog):
         
         layout.addWidget(model_group)
         
-        # Prompt Configuration Group
-        prompt_group = QGroupBox("Prompt Configuration")
-        prompt_layout = QVBoxLayout(prompt_group)
-        prompt_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
-        prompt_layout.setSpacing(6)  # Reduced spacing
-        
-        # System message
-        prompt_layout.addWidget(QLabel("System Message (optional):"))
-        self.system_message_edit = QTextEdit()
-        self.system_message_edit.setMaximumHeight(60)  # Reduced height
-        self.system_message_edit.setPlaceholderText("Enter system instructions for the AI model...")
-        prompt_layout.addWidget(self.system_message_edit)
-        
-        # User prompt
-        prompt_layout.addWidget(QLabel("Prompt:"))
-        self.prompt_edit = QTextEdit()
-        self.prompt_edit.setMaximumHeight(80)  # Reduced height
-        self.prompt_edit.setPlaceholderText("Enter your prompt here...")
-        prompt_layout.addWidget(self.prompt_edit)
-        
-        layout.addWidget(prompt_group)
-        
-        # Parameters Group
+        # Generation Parameters Group
         params_group = QGroupBox("Generation Parameters")
         params_layout = QGridLayout(params_group)
-        params_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
-        params_layout.setSpacing(6)  # Reduced spacing
+        params_layout.setContentsMargins(8, 12, 8, 8)
+        params_layout.setSpacing(6)
         
         # Temperature
         params_layout.addWidget(QLabel("Temperature:"), 0, 0)
@@ -183,96 +233,69 @@ class LLMPropertiesDialog(QDialog):
         self.output_variable_entry.setPlaceholderText("llm_output")
         params_layout.addWidget(self.output_variable_entry, 2, 1)
         
-        # Write text option
-        params_layout.addWidget(QLabel("Write Text:"), 3, 0)
-        self.write_text_checkbox = QCheckBox("Automatically write generated text")
-        self.write_text_checkbox.setChecked(True)
-        params_layout.addWidget(self.write_text_checkbox, 3, 1)
-        
-        # Typing speed parameters (only visible when write_text is checked)
-        params_layout.addWidget(QLabel("Typing Batch Size:"), 4, 0)
-        self.typing_batch_size_spin = QSpinBox()
-        self.typing_batch_size_spin.setRange(1, 100)
-        self.typing_batch_size_spin.setValue(20)
-        self.typing_batch_size_spin.setToolTip("Number of characters to type at once (higher = faster typing)")
-        params_layout.addWidget(self.typing_batch_size_spin, 4, 1)
-        
-        params_layout.addWidget(QLabel("Typing Batch Delay:"), 5, 0)
-        self.typing_batch_delay_spin = QDoubleSpinBox()
-        self.typing_batch_delay_spin.setRange(0.01, 1.0)
-        self.typing_batch_delay_spin.setSingleStep(0.01)
-        self.typing_batch_delay_spin.setValue(0.05)
-        self.typing_batch_delay_spin.setToolTip("Delay between typing batches in seconds (lower = faster typing)")
-        params_layout.addWidget(self.typing_batch_delay_spin, 5, 1)
-        
-        # Connect write_text checkbox to enable/disable typing speed controls
-        self.write_text_checkbox.toggled.connect(self.typing_batch_size_spin.setEnabled)
-        self.write_text_checkbox.toggled.connect(self.typing_batch_delay_spin.setEnabled)
-        
         layout.addWidget(params_group)
         
-        # Vision Configuration Group
-        vision_group = QGroupBox("Vision Configuration")
-        vision_layout = QGridLayout(vision_group)
-        vision_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
-        vision_layout.setSpacing(6)  # Reduced spacing
+        # Template Selection Group
+        template_group = QGroupBox("Quick Templates")
+        template_layout = QVBoxLayout(template_group)
+        template_layout.setContentsMargins(8, 12, 8, 8)
+        template_layout.setSpacing(6)
         
-        # Use vision checkbox
-        vision_layout.addWidget(QLabel("Use Vision:"), 0, 0)
-        self.use_vision_checkbox = QCheckBox("Enable vision capabilities for this model")
-        self.use_vision_checkbox.setChecked(False)
-        vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
+        # Template selection combo
+        template_layout.addWidget(QLabel("Apply Template:"))
+        self.template_combo = QComboBox()
+        self.template_combo.addItems([
+            "Custom (no template)",
+            "Information Extraction (OCR + LLM)",
+            "Custom Instructions",
+            "Direct Prompt",
+            "ComoRAG Analysis",
+            "Data Processing Chain",
+            "Text Analysis",
+            "Content Summarization"
+        ])
+        self.template_combo.currentTextChanged.connect(self.apply_template)
+        template_layout.addWidget(self.template_combo)
         
-        # Screenshot enabled checkbox
-        vision_layout.addWidget(QLabel("Screenshot:"), 1, 0)
-        self.screenshot_enabled_checkbox = QCheckBox("Take screenshot automatically for vision models")
-        self.screenshot_enabled_checkbox.setChecked(True)
-        vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
+        # Template description
+        self.template_description = QLabel()
+        self.template_description.setWordWrap(True)
+        self.template_description.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        template_layout.addWidget(self.template_description)
         
-        # Add help text
-        help_label = QLabel("Note: Vision models can analyze screenshots along with text prompts.")
-        help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        vision_layout.addWidget(help_label, 2, 0, 1, 2)
+        layout.addWidget(template_group)
         
-        layout.addWidget(vision_group)
+        layout.addStretch()
+        self.tab_widget.addTab(basic_tab, "Basic")
+    
+    def create_prompt_tab(self):
+        """Create the Prompt Configuration tab"""
+        prompt_tab = QWidget()
+        layout = QVBoxLayout(prompt_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
         
-        # ComoRAG Configuration Group
-        comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
-        comorag_layout = QGridLayout(comorag_group)
-        comorag_layout.setContentsMargins(8, 12, 8, 8)  # Reduced margins
-        comorag_layout.setSpacing(6)  # Reduced spacing
+        # Prompt Configuration Group
+        prompt_group = QGroupBox("Prompt Configuration")
+        prompt_layout = QVBoxLayout(prompt_group)
+        prompt_layout.setContentsMargins(8, 12, 8, 8)
+        prompt_layout.setSpacing(6)
         
-        # Enable ComoRAG checkbox
-        comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
-        self.use_comorag_checkbox = QCheckBox("Use context-aware reasoning with OverWatch")
-        self.use_comorag_checkbox.setChecked(True)
-        comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
+        # System message
+        prompt_layout.addWidget(QLabel("System Message (optional):"))
+        self.system_message_edit = QTextEdit()
+        self.system_message_edit.setMaximumHeight(100)
+        self.system_message_edit.setPlaceholderText("Enter system instructions for the AI model...")
+        prompt_layout.addWidget(self.system_message_edit)
         
-        # Max reasoning cycles
-        comorag_layout.addWidget(QLabel("Max Cycles:"), 1, 0)
-        self.max_cycles_spin = QSpinBox()
-        self.max_cycles_spin.setRange(1, 10)
-        self.max_cycles_spin.setValue(5)
-        self.max_cycles_spin.setToolTip("Maximum number of reasoning cycles for ComoRAG")
-        comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
+        # User prompt
+        prompt_layout.addWidget(QLabel("Prompt:"))
+        self.prompt_edit = QTextEdit()
+        self.prompt_edit.setMaximumHeight(120)
+        self.prompt_edit.setPlaceholderText("Enter your prompt here...")
+        prompt_layout.addWidget(self.prompt_edit)
         
-        # Memory size
-        comorag_layout.addWidget(QLabel("Memory Size:"), 2, 0)
-        self.memory_size_spin = QSpinBox()
-        self.memory_size_spin.setRange(100, 5000)
-        self.memory_size_spin.setSingleStep(100)
-        self.memory_size_spin.setValue(1000)
-        self.memory_size_spin.setToolTip("Memory size for ComoRAG context retention")
-        comorag_layout.addWidget(self.memory_size_spin, 2, 1)
-        
-        # Add help text for ComoRAG
-        comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning.")
-        comorag_help_label.setWordWrap(True)
-        comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
-        
-        layout.addWidget(comorag_group)
+        layout.addWidget(prompt_group)
         
         # Input Source Configuration Group
         input_source_group = QGroupBox("Input Source")
@@ -325,6 +348,167 @@ class LLMPropertiesDialog(QDialog):
         
         layout.addWidget(input_source_group)
         
+        layout.addStretch()
+        self.tab_widget.addTab(prompt_tab, "Prompt")
+    
+    def create_advanced_tab(self):
+        """Create the Advanced Configuration tab"""
+        advanced_tab = QWidget()
+        layout = QVBoxLayout(advanced_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        
+        # Output Configuration Group
+        output_group = QGroupBox("Output Configuration")
+        output_layout = QGridLayout(output_group)
+        output_layout.setContentsMargins(8, 12, 8, 8)
+        output_layout.setSpacing(6)
+        
+        # Write text option
+        output_layout.addWidget(QLabel("Write Text:"), 0, 0)
+        self.write_text_checkbox = QCheckBox("Automatically write generated text")
+        self.write_text_checkbox.setChecked(True)
+        output_layout.addWidget(self.write_text_checkbox, 0, 1)
+        
+        # Typing speed parameters (only visible when write_text is checked)
+        output_layout.addWidget(QLabel("Typing Batch Size:"), 1, 0)
+        self.typing_batch_size_spin = QSpinBox()
+        self.typing_batch_size_spin.setRange(1, 100)
+        self.typing_batch_size_spin.setValue(20)
+        self.typing_batch_size_spin.setToolTip("Number of characters to type at once (higher = faster typing)")
+        output_layout.addWidget(self.typing_batch_size_spin, 1, 1)
+        
+        output_layout.addWidget(QLabel("Typing Batch Delay:"), 2, 0)
+        self.typing_batch_delay_spin = QDoubleSpinBox()
+        self.typing_batch_delay_spin.setRange(0.01, 1.0)
+        self.typing_batch_delay_spin.setSingleStep(0.01)
+        self.typing_batch_delay_spin.setValue(0.05)
+        self.typing_batch_delay_spin.setToolTip("Delay between typing batches in seconds (lower = faster typing)")
+        output_layout.addWidget(self.typing_batch_delay_spin, 2, 1)
+        
+        # Connect write_text checkbox to enable/disable typing speed controls
+        self.write_text_checkbox.toggled.connect(self.typing_batch_size_spin.setEnabled)
+        self.write_text_checkbox.toggled.connect(self.typing_batch_delay_spin.setEnabled)
+        
+        layout.addWidget(output_group)
+        
+        # Async Processing Group
+        async_group = QGroupBox("Async Processing")
+        async_layout = QGridLayout(async_group)
+        async_layout.setContentsMargins(8, 12, 8, 8)
+        async_layout.setSpacing(6)
+        
+        # Use async checkbox
+        async_layout.addWidget(QLabel("Enable Async:"), 0, 0)
+        self.use_async_checkbox = QCheckBox("Process requests asynchronously")
+        self.use_async_checkbox.setChecked(True)
+        self.use_async_checkbox.setToolTip("Enable asynchronous processing for better performance")
+        async_layout.addWidget(self.use_async_checkbox, 0, 1)
+        
+        # Add help text for async
+        async_help_label = QLabel("Async processing allows the workflow to continue while waiting for LLM responses.")
+        async_help_label.setWordWrap(True)
+        async_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        async_layout.addWidget(async_help_label, 1, 0, 1, 2)
+        
+        layout.addWidget(async_group)
+        
+        layout.addStretch()
+        self.tab_widget.addTab(advanced_tab, "Advanced")
+    
+    def create_features_tab(self):
+        """Create the Features Configuration tab"""
+        features_tab = QWidget()
+        layout = QVBoxLayout(features_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        
+        # Vision Configuration Group
+        vision_group = QGroupBox("Vision Configuration")
+        vision_layout = QGridLayout(vision_group)
+        vision_layout.setContentsMargins(8, 12, 8, 8)
+        vision_layout.setSpacing(6)
+        
+        # Use vision checkbox
+        vision_layout.addWidget(QLabel("Use Vision:"), 0, 0)
+        self.use_vision_checkbox = QCheckBox("Enable vision capabilities for this model")
+        self.use_vision_checkbox.setChecked(False)
+        vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
+        
+        # Screenshot enabled checkbox
+        vision_layout.addWidget(QLabel("Screenshot:"), 1, 0)
+        self.screenshot_enabled_checkbox = QCheckBox("Take screenshot automatically for vision models")
+        self.screenshot_enabled_checkbox.setChecked(True)
+        vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
+        
+        # Add help text
+        help_label = QLabel("Note: Vision models can analyze screenshots along with text prompts.")
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        vision_layout.addWidget(help_label, 2, 0, 1, 2)
+        
+        layout.addWidget(vision_group)
+        
+        # ComoRAG Configuration Group
+        comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
+        comorag_layout = QGridLayout(comorag_group)
+        comorag_layout.setContentsMargins(8, 12, 8, 8)
+        comorag_layout.setSpacing(6)
+        
+        # Enable ComoRAG checkbox
+        comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
+        self.use_comorag_checkbox = QCheckBox("Use context-aware reasoning with OverWatch")
+        self.use_comorag_checkbox.setChecked(True)
+        comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
+        
+        # Max reasoning cycles
+        comorag_layout.addWidget(QLabel("Max Cycles:"), 1, 0)
+        self.max_cycles_spin = QSpinBox()
+        self.max_cycles_spin.setRange(1, 10)
+        self.max_cycles_spin.setValue(5)
+        self.max_cycles_spin.setToolTip("Maximum number of reasoning cycles for ComoRAG")
+        comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
+        
+        # Memory size
+        comorag_layout.addWidget(QLabel("Memory Size:"), 2, 0)
+        self.memory_size_spin = QSpinBox()
+        self.memory_size_spin.setRange(100, 5000)
+        self.memory_size_spin.setSingleStep(100)
+        self.memory_size_spin.setValue(1000)
+        self.memory_size_spin.setToolTip("Memory size for ComoRAG context retention")
+        comorag_layout.addWidget(self.memory_size_spin, 2, 1)
+        
+        # Add help text for ComoRAG
+        comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API.")
+        comorag_help_label.setWordWrap(True)
+        comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
+        
+        layout.addWidget(comorag_group)
+        
+        layout.addStretch()
+        self.tab_widget.addTab(features_tab, "Features")
+        
+        # Connect signals for UI elements
+        self.setup_signal_connections()
+    
+    def setup_signal_connections(self):
+        """Setup signal connections for UI elements"""
+        # Input source changes
+        self.input_source_group.buttonClicked.connect(self.update_input_source_visibility)
+        self.input_source_group.buttonClicked.connect(self.update_template_description)
+        
+        # Template selection
+        self.template_combo.currentTextChanged.connect(self.apply_template)
+        self.template_combo.currentTextChanged.connect(self.update_template_description)
+    
+    def create_templates_tab(self):
+        """Create the Templates Configuration tab"""
+        templates_tab = QWidget()
+        layout = QVBoxLayout(templates_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        
         # Template Selection Group
         template_group = QGroupBox("Quick Templates")
         template_layout = QVBoxLayout(template_group)
@@ -355,54 +539,36 @@ class LLMPropertiesDialog(QDialog):
         
         layout.addWidget(template_group)
         
-        # Connect signals for new UI elements
-        # Input source changes
-        self.input_source_group.buttonClicked.connect(self.update_input_source_visibility)
-        self.input_source_group.buttonClicked.connect(self.update_template_description)
+        layout.addStretch()
+        self.tab_widget.addTab(templates_tab, "Templates")
         
-        # Template selection
-        self.template_combo.currentTextChanged.connect(self.apply_template)
-        self.template_combo.currentTextChanged.connect(self.update_template_description)
-        
-        # Dialog buttons in a more compact layout
+        # Add dialog buttons after all tabs are created
+        self.create_dialog_buttons()
+    
+    def create_dialog_buttons(self):
+        """Create dialog buttons at the bottom"""
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        button_layout.addWidget(button_box)
-        button_layout.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(button_layout)
+        
+        # Add buttons to main layout
+        self.main_layout.addWidget(button_box)
     
     def load_current_config(self):
         """Load current configuration into the dialog"""
         if self.current_config:
+            # Basic tab settings
             self.model_combo.setCurrentText(self.current_config.get('model', 'llama3.2'))
             self.api_url_entry.setText(self.current_config.get('api_url', get_default_api_url()))
-            self.system_message_edit.setPlainText(self.current_config.get('system_message', ''))
-            self.prompt_edit.setPlainText(self.current_config.get('prompt', 'Enter your prompt here...'))
             self.temperature_spin.setValue(self.current_config.get('temperature', 0.7))
             self.max_tokens_spin.setValue(self.current_config.get('max_tokens', 150))
             self.output_variable_entry.setText(self.current_config.get('output_variable', 'llm_output'))
-            self.write_text_checkbox.setChecked(self.current_config.get('write_text', True))
-            self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
-            self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
             
-            # Load typing speed parameters
-            self.typing_batch_size_spin.setValue(self.current_config.get('typing_batch_size', 20))
-            self.typing_batch_delay_spin.setValue(self.current_config.get('typing_batch_delay', 0.05))
+            # Prompt tab settings
+            self.system_message_edit.setPlainText(self.current_config.get('system_message', ''))
+            self.prompt_edit.setPlainText(self.current_config.get('prompt', 'Enter your prompt here...'))
             
-            # Enable/disable typing speed controls based on write_text setting
-            write_text_enabled = self.current_config.get('write_text', True)
-            self.typing_batch_size_spin.setEnabled(write_text_enabled)
-            self.typing_batch_delay_spin.setEnabled(write_text_enabled)
-            
-            # Load ComoRAG configuration
-            self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
-            self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
-            self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
-            
-            # Load input source configuration
+            # Input source configuration
             input_source = self.current_config.get('input_source', 0)
             button = self.input_source_group.button(input_source)
             if button:
@@ -413,6 +579,24 @@ class LLMPropertiesDialog(QDialog):
             index = self.ocr_preprocessing_combo.findText(ocr_preprocessing)
             if index >= 0:
                 self.ocr_preprocessing_combo.setCurrentIndex(index)
+            
+            # Advanced tab settings
+            self.write_text_checkbox.setChecked(self.current_config.get('write_text', True))
+            self.typing_batch_size_spin.setValue(self.current_config.get('typing_batch_size', 20))
+            self.typing_batch_delay_spin.setValue(self.current_config.get('typing_batch_delay', 0.05))
+            self.use_async_checkbox.setChecked(self.current_config.get('use_async', True))
+            
+            # Enable/disable typing speed controls based on write_text setting
+            write_text_enabled = self.current_config.get('write_text', True)
+            self.typing_batch_size_spin.setEnabled(write_text_enabled)
+            self.typing_batch_delay_spin.setEnabled(write_text_enabled)
+            
+            # Features tab settings
+            self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
+            self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
+            self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
+            self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
+            self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
             
             # Load template
             template_applied = self.current_config.get('template_applied', 'Custom (no template)')

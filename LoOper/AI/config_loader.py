@@ -7,14 +7,14 @@ from typing import Dict, Any
 def load_ai_config() -> Dict[str, Any]:
     """Load AI configuration from config file and environment variables"""
     config = {
-        "TAILSCALE_SERVER_IP": "100.125.184.115",
+        "TAILSCALE_SERVER_IP": "",  # Leave blank to allow user configuration
         "API_PORT": "8000",
         "OLLAMA_HOST": "localhost",
         "OLLAMA_PORT": "11434",
         "API_TIMEOUT": "30",
         "AUTO_START_API": "false",
         "USE_COMORAG": "true",
-        "OVERWATCH_API_URL": "http://100.125.184.115:8000"
+        "OVERWATCH_API_URL": ""  # Leave blank to allow user configuration
     }
     
     # Try to load from config file first
@@ -44,6 +44,11 @@ def get_api_url() -> str:
     config = load_ai_config()
     host = config.get("TAILSCALE_SERVER_IP", "localhost")
     port = config.get("API_PORT", "8000")
+    
+    # If host is empty or localhost, use localhost for local development
+    if not host or host.strip() == "":
+        host = "localhost"
+    
     return f"http://{host}:{port}"
 
 def should_auto_start_api() -> bool:

@@ -640,85 +640,106 @@ class NodeOperations:
             logger.debug("Creating LLM dialog")
             dialog = LLMPropertiesDialog(self.parent_widget)
             
-            # Set current values
+            # Set current values - Basic tab
             logger.debug("Loading current values into dialog")
-            dialog.prompt_edit.setPlainText(node.get_property('prompt') or '')
             dialog.model_combo.setCurrentText(node.get_property('model') or 'llama3.2:latest')
-            dialog.system_message_edit.setPlainText(node.get_property('system_message') or '')
             dialog.api_url_entry.setText(node.get_property('api_url') or '')
             dialog.temperature_spin.setValue(float(node.get_property('temperature') or 0.7))
             dialog.max_tokens_spin.setValue(int(node.get_property('max_tokens') or 500))
             dialog.output_variable_entry.setText(node.get_property('output_variable') or 'llm_output')
             
-            # Handle boolean properties
+            # Prompt tab
+            dialog.system_message_edit.setPlainText(node.get_property('system_message') or '')
+            dialog.prompt_edit.setPlainText(node.get_property('prompt') or '')
+            
+            # Input source configuration
+            input_source = node.get_property('input_source') or 'none'
+            if input_source == 'none':
+                dialog.input_none_radio.setChecked(True)
+            elif input_source == 'ocr':
+                dialog.input_ocr_radio.setChecked(True)
+            elif input_source == 'previous':
+                dialog.input_previous_radio.setChecked(True)
+            elif input_source == 'clipboard':
+                dialog.input_clipboard_radio.setChecked(True)
+            
+            # OCR configuration
+            dialog.ocr_confidence_spin.setValue(float(node.get_property('ocr_confidence') or 0.7))
+            dialog.ocr_preprocessing_combo.setCurrentText(node.get_property('ocr_preprocessing') or 'None')
+            
+            # Advanced tab - Output configuration
             write_text_str = node.get_property('write_text') or 'true'
             write_text = write_text_str.lower() in ('true', '1', 'yes', 'on')
             dialog.write_text_checkbox.setChecked(write_text)
             
-            use_vision_str = node.get_property('use_vision') or 'false'
-            use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.use_vision_checkbox.setChecked(use_vision)
+            dialog.typing_batch_size_spin.setValue(int(node.get_property('typing_batch_size') or 20))
+            dialog.typing_batch_delay_spin.setValue(float(node.get_property('typing_batch_delay') or 0.05))
             
-            screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
-            screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
-            
-            # Handle ComoRAG properties
-            use_comorag_str = node.get_property('use_comorag') or 'true'
-            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.use_comorag_checkbox.setChecked(use_comorag)
-            
-            max_cycles = int(node.get_property('max_cycles') or 5)
-            dialog.max_cycles_spin.setValue(max_cycles)
-            
-            memory_size = int(node.get_property('memory_size') or 1000)
-            dialog.memory_size_spin.setValue(memory_size)
-            
-            use_vision_str = node.get_property('use_vision') or 'false'
-            use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.use_vision_checkbox.setChecked(use_vision)
-            
-            screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
-            screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
-            
-            # Handle ComoRAG properties
-            use_comorag_str = node.get_property('use_comorag') or 'true'
-            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
-            dialog.use_comorag_checkbox.setChecked(use_comorag)
-            
-            max_cycles = int(node.get_property('max_cycles') or 5)
-            dialog.max_cycles_spin.setValue(max_cycles)
-            
-            memory_size = int(node.get_property('memory_size') or 1000)
-            dialog.memory_size_spin.setValue(memory_size)
-            
-            # Handle async processing
-            use_async_str = node.get_property('use_async') or 'false'
+            # Async processing
+            use_async_str = node.get_property('use_async') or 'true'
             use_async = use_async_str.lower() in ('true', '1', 'yes', 'on')
-            if hasattr(dialog, 'use_async_checkbox'):
-                dialog.use_async_checkbox.setChecked(use_async)
+            dialog.use_async_checkbox.setChecked(use_async)
+            
+            # Features tab - Vision configuration
+            use_vision_str = node.get_property('use_vision') or 'false'
+            use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_vision_checkbox.setChecked(use_vision)
+            
+            screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
+            screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
+            
+            # ComoRAG configuration
+            use_comorag_str = node.get_property('use_comorag') or 'true'
+            use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_comorag_checkbox.setChecked(use_comorag)
+            
+            max_cycles = int(node.get_property('max_cycles') or 5)
+            dialog.max_cycles_spin.setValue(max_cycles)
+            
+            memory_size = int(node.get_property('memory_size') or 1000)
+            dialog.memory_size_spin.setValue(memory_size)
             
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
-                # Update node properties
-                node.set_property('prompt', dialog.prompt_edit.toPlainText())
+                
+                # Basic tab properties
                 node.set_property('model', dialog.model_combo.currentText())
-                node.set_property('system_message', dialog.system_message_edit.toPlainText())
                 node.set_property('api_url', dialog.api_url_entry.text())
                 node.set_property('temperature', str(dialog.temperature_spin.value()))
                 node.set_property('max_tokens', str(dialog.max_tokens_spin.value()))
                 node.set_property('output_variable', dialog.output_variable_entry.text())
+                
+                # Prompt tab properties
+                node.set_property('system_message', dialog.system_message_edit.toPlainText())
+                node.set_property('prompt', dialog.prompt_edit.toPlainText())
+                
+                # Input source configuration
+                if dialog.input_none_radio.isChecked():
+                    node.set_property('input_source', 'none')
+                elif dialog.input_ocr_radio.isChecked():
+                    node.set_property('input_source', 'ocr')
+                elif dialog.input_previous_radio.isChecked():
+                    node.set_property('input_source', 'previous')
+                elif dialog.input_clipboard_radio.isChecked():
+                    node.set_property('input_source', 'clipboard')
+                
+                # OCR configuration
+                node.set_property('ocr_confidence', str(dialog.ocr_confidence_spin.value()))
+                node.set_property('ocr_preprocessing', dialog.ocr_preprocessing_combo.currentText())
+                
+                # Advanced tab properties
                 node.set_property('write_text', str(dialog.write_text_checkbox.isChecked()).lower())
+                node.set_property('typing_batch_size', str(dialog.typing_batch_size_spin.value()))
+                node.set_property('typing_batch_delay', str(dialog.typing_batch_delay_spin.value()))
+                node.set_property('use_async', str(dialog.use_async_checkbox.isChecked()).lower())
+                
+                # Features tab properties
                 node.set_property('use_vision', str(dialog.use_vision_checkbox.isChecked()).lower())
                 node.set_property('screenshot_enabled', str(dialog.screenshot_enabled_checkbox.isChecked()).lower())
                 node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
                 node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
                 node.set_property('memory_size', str(dialog.memory_size_spin.value()))
-                
-                # Save async setting if available
-                if hasattr(dialog, 'use_async_checkbox'):
-                    node.set_property('use_async', str(dialog.use_async_checkbox.isChecked()).lower())
                 
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:

@@ -162,7 +162,7 @@ class LLMExecutor:
                     register_temporal_screenshot(screenshot_path)
                     
                     # Extract all text with specified confidence
-                    ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path, stop_flag=stop_flag)
+                    ocr_results = TemplateMatching.ocr_extract_all_text(min_confidence=ocr_confidence, stop_flag=stop_flag)
                     if ocr_results:
                         # Filter by confidence and join text
                         filtered_text = []
@@ -295,7 +295,7 @@ class LLMExecutor:
                         # Extract OCR text from screenshot for enhanced context
                         try:
                             from ..computer_vision import TemplateMatching
-                            ocr_results = TemplateMatching.ocr_extract_all_text(screenshot_path, stop_flag=stop_flag)
+                            ocr_results = TemplateMatching.ocr_extract_all_text(min_confidence=0.6, stop_flag=stop_flag)
                             if ocr_results:
                                 ocr_text = "\n".join([item['text'] for item in ocr_results if item['confidence'] > 60])
                                 if ocr_text.strip():
@@ -631,8 +631,9 @@ class LLMExecutor:
                     return None
                 
                 logger.info(f"=== LLM GENERATED TEXT ===")
-                logger.info(f"Generated text (full): {generated_text}")
                 logger.info(f"Generated text length: {len(generated_text)}")
+                # Log only first 100 characters to avoid terminal spam
+                logger.info(f"Generated text (preview): {generated_text[:100]}{'...' if len(generated_text) > 100 else ''}")
                 
                 # Store the generated text in the variable system
                 self.variables[output_variable] = generated_text
@@ -701,15 +702,18 @@ class LLMExecutor:
                         'type': 'type_string',
                         'text': generated_text,
                         'timestamp': time.time(),
-                        # Use character-by-character typing for maximum reliability
-                        'char_by_char': True,  # Enable character-by-character typing
-                        'char_delay': float(llm_config.get('char_delay', 0.03)),  # Default to 0.03s between characters
-                        # Keep batch parameters for fallback to batch mode
-                        'batch_size': int(llm_config.get('typing_batch_size', 5)),
-                        'batch_delay': float(llm_config.get('typing_batch_delay', 0.15))
+                        # Use batch mode instead of character-by-character to prevent freezing
+                        'char_by_char': False,  # Disable char-by-char to prevent app freeze
+                        'char_delay': float(llm_config.get('char_delay', 0.01)),  # Minimal delay for faster typing
+                        # Optimized batch parameters for better performance
+                        'batch_size': int(llm_config.get('typing_batch_size', 50)),  # Larger batch size
+                        'batch_delay': float(llm_config.get('typing_batch_delay', 0.1)),  # Shorter delay
+                        # Add keystroke delay to prevent duplicate characters on slow machines
+                        'keystroke_delay': float(llm_config.get('keystroke_delay', 0.01))  # Default 10ms between keystrokes
                     }
-                    logger.info(f"Created type_action with char_by_char=True, char_delay={type_action['char_delay']}")
-                    logger.info(f"Fallback batch parameters: batch_size={type_action['batch_size']}, batch_delay={type_action['batch_delay']}")
+                    logger.info(f"Created type_action with char_by_char=False, char_delay={type_action['char_delay']}")
+                    logger.info(f"Batch parameters: batch_size={type_action['batch_size']}, batch_delay={type_action['batch_delay']}")
+                    logger.info(f"Keystroke delay: {type_action['keystroke_delay']}s to prevent duplicate characters")
                     logger.info(f"Text length: {len(generated_text)} characters")
                     
                     # Check if action_handlers exists

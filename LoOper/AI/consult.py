@@ -71,7 +71,16 @@ class OllamaClient:
         try:
             response = self.session.get(f"{self.base_url}/models", timeout=10)
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            # Extract the models array from the response
+            if isinstance(data, dict) and 'models' in data:
+                return data['models']
+            elif isinstance(data, list):
+                # Handle case where API returns models directly as a list
+                return data
+            else:
+                print(f"Unexpected response format: {data}")
+                return []
         except requests.exceptions.RequestException as e:
             print(f"Error fetching models: {e}")
             return []

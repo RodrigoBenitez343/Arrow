@@ -292,16 +292,19 @@ class ActionHandlers:
             # Check if we should use character-by-character typing for maximum reliability
             char_by_char = action.get('char_by_char', False)  # Default to batch mode
             
+            # Get keystroke delay for preventing duplicate characters on slow machines
+            keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay between keystrokes
+            
             if char_by_char:
                 # Character-by-character typing for maximum reliability
                 batch_size = 1  # One character at a time
                 batch_delay = action.get('char_delay', 0.05)  # Default to 0.05s between characters
-                logger.info(f"Typing text character-by-character with delay={batch_delay}s")
+                logger.info(f"Typing text character-by-character with delay={batch_delay}s, keystroke_delay={keystroke_delay}s")
             else:
                 # Batch typing mode
                 batch_size = action.get('batch_size', 5)  # Default to 5 chars per batch
                 batch_delay = action.get('batch_delay', 0.15)  # Default to 0.15s between batches
-                logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}")
+                logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}, keystroke_delay={keystroke_delay}s")
             
             # Type text in batches for significantly improved speed
             for i in range(0, len(text), batch_size):
@@ -332,15 +335,22 @@ class ActionHandlers:
                                 return False
                             
                             if segment:  # Only type non-empty segments
-                                pyautogui.write(segment)
+                                # Type character by character with delay to prevent duplicates
+                                for char in segment:
+                                    pyautogui.write(char)
+                                    if keystroke_delay > 0:
+                                        time.sleep(keystroke_delay)
                             # Press Enter after each segment except the last one
                             if j < len(segments) - 1:
                                 time.sleep(0.05)  # Small delay before Enter key
                                 pyautogui.press('enter')
                                 time.sleep(0.05)  # Small delay after Enter key
                     else:
-                        # Type the filtered batch as a single operation
-                        pyautogui.write(filtered_batch)
+                        # Type the filtered batch character by character with delay
+                        for char in filtered_batch:
+                            pyautogui.write(char)
+                            if keystroke_delay > 0:
+                                time.sleep(keystroke_delay)
                 except Exception as write_error:
                     logger.error(f"Error writing batch: {write_error}")
                     logger.error(f"Problematic batch content: {repr(batch)}")
@@ -384,8 +394,15 @@ class ActionHandlers:
             'shift': 'shift', 'ctrl': 'ctrl', 'alt': 'alt'
         }
         if key in key_mapping:
+            # Get keystroke delay to prevent issues on slow machines
+            keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay
+            
             pyautogui.press(key_mapping[key]) # Press the special key.
             logger.info(f"Pressed special key: {key}")
+            
+            # Add small delay after keystroke to prevent issues on slow machines
+            if keystroke_delay > 0:
+                time.sleep(keystroke_delay)
 
     def handle_scroll_action(self, idx, action):
         """

@@ -285,7 +285,11 @@ class LLMNode(BaseNode):
             'max_cycles': 5,
             'memory_size': 1000,
             'typing_batch_size': 20,  # Characters per batch for optimized typing
-            'typing_batch_delay': 0.05  # Delay between batches in seconds
+            'typing_batch_delay': 0.05,  # Delay between batches in seconds
+            'input_source': 'none',
+            'ocr_confidence': 0.5,
+            'ocr_preprocessing': True,
+            'use_async': True  # Enable asynchronous processing by default
         }
         
         # Set a distinct color for LLM nodes (orange)
@@ -310,7 +314,13 @@ class LLMNode(BaseNode):
         self.add_text_input('use_comorag', 'Use ComoRAG', 'true')
         self.add_text_input('max_cycles', 'Max Cycles', '5')
         self.add_text_input('memory_size', 'Memory Size', '1000')
-        
+        self.add_text_input('input_source', 'Input Source', 'none')
+        self.add_text_input('ocr_confidence', 'OCR Confidence', '0.5')
+        self.add_text_input('ocr_preprocessing', 'OCR Preprocessing', 'true')
+        self.add_text_input('typing_batch_size', 'Typing Batch Size', '20')
+        self.add_text_input('typing_batch_delay', 'Typing Batch Delay', '0.05')
+        self.add_text_input('use_async', 'Use Async', 'true')
+    
     def set_llm_config(self, config):
         """Set the LLM configuration for this node"""
         self.llm_config.update(config)
@@ -335,6 +345,11 @@ class LLMNode(BaseNode):
         self.set_property('memory_size', str(config.get('memory_size', 1000)))
         self.set_property('typing_batch_size', str(config.get('typing_batch_size', 20)))
         self.set_property('typing_batch_delay', str(config.get('typing_batch_delay', 0.05)))
+        self.set_property('input_source', config.get('input_source', 'none'))
+        self.set_property('ocr_confidence', str(config.get('ocr_confidence', 0.5)))
+        self.set_property('ocr_preprocessing', str(config.get('ocr_preprocessing', True)).lower())
+        self.set_property('use_async', str(config.get('use_async', True)).lower())
+        self.set_property('typing_batch_delay', str(config.get('typing_batch_delay', 0.05)))
     
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
@@ -346,6 +361,10 @@ class LLMNode(BaseNode):
         screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
         use_comorag_str = self.get_property('use_comorag') or 'true'
         use_comorag = use_comorag_str.lower() in ('true', '1', 'yes', 'on')
+        ocr_preprocessing_str = self.get_property('ocr_preprocessing') or 'true'
+        ocr_preprocessing = ocr_preprocessing_str.lower() in ('true', '1', 'yes', 'on')
+        use_async_str = self.get_property('use_async') or 'true'
+        use_async = use_async_str.lower() in ('true', '1', 'yes', 'on')
         return {
             'model': self.get_property('model'),
             'prompt': self.get_property('prompt'),
@@ -361,7 +380,11 @@ class LLMNode(BaseNode):
             'max_cycles': int(self.get_property('max_cycles') or 5),
             'memory_size': int(self.get_property('memory_size') or 1000),
             'typing_batch_size': int(self.get_property('typing_batch_size') or 20),
-            'typing_batch_delay': float(self.get_property('typing_batch_delay') or 0.05)
+            'typing_batch_delay': float(self.get_property('typing_batch_delay') or 0.05),
+            'input_source': self.get_property('input_source') or 'none',
+            'ocr_confidence': float(self.get_property('ocr_confidence') or 0.5),
+            'ocr_preprocessing': ocr_preprocessing,
+            'use_async': use_async
         }
     
     def is_vision_model(self, model_name):

@@ -93,12 +93,61 @@ class ModelCache:
     
     def refresh_models(self, api_url: Optional[str] = None) -> None:
         """Force refresh the model cache"""
+        print(f"Force refreshing models from API: {api_url}")
         with self._lock:
             self._loaded = False
-            self._loading = False
+            self._loading = True
             self._models = []
         
-        self.load_models_async(api_url)
+        # Run synchronously to ensure models are loaded before returning
+        try:
+            import asyncio
+            # Try to get existing loop, create new one if needed
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is running, we need to run in a thread
+                    import threading
+                    import concurrent.futures
+                    
+                    def sync_load():
+                        new_loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(new_loop)
+                        try:
+                            return new_loop.run_until_complete(self._fetch_models_async(api_url))
+                        finally:
+                            new_loop.close()
+                    
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(sync_load)
+                        models = future.result(timeout=5.0)
+                else:
+                    models = loop.run_until_complete(self._fetch_models_async(api_url))
+            except RuntimeError:
+                # No event loop, create one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    models = loop.run_until_complete(self._fetch_models_async(api_url))
+                finally:
+                    loop.close()
+            
+            with self._lock:
+                if models:
+                    self._models = models
+                    print(f"Successfully refreshed {len(models)} models: {models}")
+                else:
+                    self._models = self._fallback_models
+                    print("Failed to fetch models, using fallback")
+                self._loaded = True
+                self._loading = False
+                
+        except Exception as e:
+            print(f"Error during model refresh: {e}")
+            with self._lock:
+                self._models = self._fallback_models
+                self._loaded = True
+                self._loading = False
 
 # Global instance
 _model_cache = ModelCache()
