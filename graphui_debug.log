@@ -1,0 +1,351 @@
+2025-10-08 14:00:04,594 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:04,677 - graphui.main_window - INFO - Initializing MainWindow
+2025-10-08 14:00:04,747 - graphui.main_window - DEBUG - Window icon set from: C:\Users\david.benitez\OneDrive - Motivus\Desktop\loper\LoOperOverWatchV2\LoOper\LoOper.ico
+2025-10-08 14:00:04,747 - graphui.main_window - DEBUG - MainWindow basic setup complete, calling setup_ui
+2025-10-08 14:00:04,748 - graphui.main_window - DEBUG - Setting up UI components
+2025-10-08 14:00:04,753 - graphui.main_window - DEBUG - Creating GraphViewWidget
+2025-10-08 14:00:04,754 - NGUI.graph_view - INFO - Initializing GraphViewWidget
+2025-10-08 14:00:04,754 - NGUI.graph_view - INFO - Initializing GraphViewWidget
+2025-10-08 14:00:04,755 - NGUI.graph_view - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\loper\LoOperOverWatchV2\LoOper\sequences
+2025-10-08 14:00:04,755 - NGUI.graph_view - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\loper\LoOperOverWatchV2\LoOper\sequences
+2025-10-08 14:00:04,756 - NGUI.graph_view - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\loper\LoOperOverWatchV2\LoOper\chains
+2025-10-08 14:00:04,756 - NGUI.graph_view - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\loper\LoOperOverWatchV2\LoOper\chains
+2025-10-08 14:00:04,756 - NGUI.graph_view - DEBUG - Initializing modular components...
+2025-10-08 14:00:04,756 - NGUI.graph_view - DEBUG - Initializing modular components...
+2025-10-08 14:00:04,756 - NGUI.graph_elements.ui_components - INFO - Initializing UIComponents
+2025-10-08 14:00:04,756 - NGUI.graph_elements.ui_components - INFO - Initializing UIComponents
+2025-10-08 14:00:04,757 - NGUI.graph_elements.ui_components - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-10-08 14:00:04,757 - NGUI.graph_elements.ui_components - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-10-08 14:00:04,757 - NGUI.graph_view - DEBUG - UIComponents initialized
+2025-10-08 14:00:04,757 - NGUI.graph_view - DEBUG - UIComponents initialized
+2025-10-08 14:00:04,757 - NGUI.graph_elements.graph_manager - INFO - Initializing GraphManager
+2025-10-08 14:00:04,757 - NGUI.graph_elements.graph_manager - INFO - Initializing GraphManager
+2025-10-08 14:00:04,758 - NGUI.graph_elements.graph_manager - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-10-08 14:00:04,758 - NGUI.graph_elements.graph_manager - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-10-08 14:00:04,758 - NGUI.graph_view - DEBUG - GraphManager initialized
+2025-10-08 14:00:04,758 - NGUI.graph_view - DEBUG - GraphManager initialized
+2025-10-08 14:00:04,758 - NGUI.graph_elements.node_operations - INFO - Initializing NodeOperations
+2025-10-08 14:00:04,758 - NGUI.graph_elements.node_operations - INFO - Initializing NodeOperations
+2025-10-08 14:00:04,759 - NGUI.graph_elements.node_operations - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-10-08 14:00:04,759 - NGUI.graph_elements.node_operations - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-10-08 14:00:04,759 - NGUI.graph_view - DEBUG - NodeOperations initialized
+2025-10-08 14:00:04,759 - NGUI.graph_view - DEBUG - NodeOperations initialized
+2025-10-08 14:00:04,759 - NGUI.graph_elements.view_manager - INFO - Initializing ViewManager
+2025-10-08 14:00:04,759 - NGUI.graph_elements.view_manager - INFO - Initializing ViewManager
+2025-10-08 14:00:04,760 - NGUI.graph_elements.view_manager - DEBUG - ViewManager initialized with default view: sequence
+2025-10-08 14:00:04,760 - NGUI.graph_elements.view_manager - DEBUG - ViewManager initialized with default view: sequence
+2025-10-08 14:00:04,760 - NGUI.graph_view - DEBUG - ViewManager initialized
+2025-10-08 14:00:04,760 - NGUI.graph_view - DEBUG - ViewManager initialized
+2025-10-08 14:00:04,761 - NGUI.graph_elements.config_manager - INFO - Initializing ConfigManager
+2025-10-08 14:00:04,761 - NGUI.graph_elements.config_manager - INFO - Initializing ConfigManager
+2025-10-08 14:00:04,761 - NGUI.graph_elements.config_manager - DEBUG - ConfigManager initialized successfully
+2025-10-08 14:00:04,761 - NGUI.graph_elements.config_manager - DEBUG - ConfigManager initialized successfully
+2025-10-08 14:00:04,761 - NGUI.graph_view - DEBUG - ConfigManager initialized
+2025-10-08 14:00:04,761 - NGUI.graph_view - DEBUG - ConfigManager initialized
+2025-10-08 14:00:04,762 - NGUI.graph_elements.export_utils - INFO - Initializing ExportUtils
+2025-10-08 14:00:04,762 - NGUI.graph_elements.export_utils - INFO - Initializing ExportUtils
+2025-10-08 14:00:04,762 - NGUI.graph_elements.export_utils - DEBUG - ExportUtils initialized successfully
+2025-10-08 14:00:04,762 - NGUI.graph_elements.export_utils - DEBUG - ExportUtils initialized successfully
+2025-10-08 14:00:04,763 - NGUI.graph_view - DEBUG - ExportUtils initialized
+2025-10-08 14:00:04,763 - NGUI.graph_view - DEBUG - ExportUtils initialized
+2025-10-08 14:00:04,763 - NGUI.graph_elements.node_transforms - INFO - Initializing NodeTransforms
+2025-10-08 14:00:04,763 - NGUI.graph_elements.node_transforms - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-10-08 14:00:04,763 - NGUI.graph_view - DEBUG - NodeTransforms initialized
+2025-10-08 14:00:04,763 - NGUI.graph_view - DEBUG - NodeTransforms initialized
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - NodeContextMenuManager initialized
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - NodeContextMenuManager initialized
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - Setting up UI...
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - Setting up UI...
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - Setting up UI components
+2025-10-08 14:00:04,764 - NGUI.graph_view - DEBUG - Setting up UI components
+2025-10-08 14:00:04,765 - NGUI.graph_elements.ui_components - INFO - Setting up main UI layout and components
+2025-10-08 14:00:04,765 - NGUI.graph_elements.ui_components - INFO - Setting up main UI layout and components
+2025-10-08 14:00:04,765 - NGUI.graph_elements.ui_components - DEBUG - Applying main widget styling
+2025-10-08 14:00:04,765 - NGUI.graph_elements.ui_components - DEBUG - Applying main widget styling
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating main layout
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating main layout
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating control panel
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating control panel
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating empty control panel
+2025-10-08 14:00:04,766 - NGUI.graph_elements.ui_components - DEBUG - Creating empty control panel
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - INFO - Control panel creation skipped (buttons removed)
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - INFO - Control panel creation skipped (buttons removed)
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - DEBUG - Control panel skipped (None returned)
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - DEBUG - Control panel skipped (None returned)
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - DEBUG - Creating node graph widget placeholder
+2025-10-08 14:00:04,767 - NGUI.graph_elements.ui_components - DEBUG - Creating node graph widget placeholder
+2025-10-08 14:00:04,769 - NGUI.graph_elements.ui_components - DEBUG - Node graph widget added to main layout
+2025-10-08 14:00:04,769 - NGUI.graph_elements.ui_components - DEBUG - Node graph widget added to main layout
+2025-10-08 14:00:04,770 - NGUI.graph_elements.ui_components - INFO - UI setup completed successfully
+2025-10-08 14:00:04,770 - NGUI.graph_elements.ui_components - INFO - UI setup completed successfully
+2025-10-08 14:00:04,770 - NGUI.graph_view - DEBUG - UI setup completed successfully
+2025-10-08 14:00:04,770 - NGUI.graph_view - DEBUG - UI setup completed successfully
+2025-10-08 14:00:04,771 - NGUI.graph_view - DEBUG - Setting up node graph...
+2025-10-08 14:00:04,771 - NGUI.graph_view - DEBUG - Setting up node graph...
+2025-10-08 14:00:04,771 - NGUI.graph_view - DEBUG - Setting up node graph
+2025-10-08 14:00:04,771 - NGUI.graph_view - DEBUG - Setting up node graph
+2025-10-08 14:00:04,772 - NGUI.graph_elements.graph_manager - INFO - Setting up node graph
+2025-10-08 14:00:04,772 - NGUI.graph_elements.graph_manager - INFO - Setting up node graph
+2025-10-08 14:00:04,772 - NGUI.graph_elements.graph_manager - DEBUG - Creating NodeGraph instance
+2025-10-08 14:00:04,772 - NGUI.graph_elements.graph_manager - DEBUG - Creating NodeGraph instance
+2025-10-08 14:00:04,845 - NGUI.graph_elements.graph_manager - DEBUG - Registering custom nodes
+2025-10-08 14:00:04,845 - NGUI.graph_elements.graph_manager - DEBUG - Registering custom nodes
+2025-10-08 14:00:04,845 - NGUI.graph_elements.graph_manager - DEBUG - Registering custom node types
+2025-10-08 14:00:04,845 - NGUI.graph_elements.graph_manager - DEBUG - Registering custom node types
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering SequenceNode
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering SequenceNode
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering ActionNode
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering ActionNode
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering ConditionalNode
+2025-10-08 14:00:04,846 - NGUI.graph_elements.graph_manager - DEBUG - Registering ConditionalNode
+2025-10-08 14:00:04,847 - NGUI.graph_elements.graph_manager - DEBUG - Registering LLMNode
+2025-10-08 14:00:04,847 - NGUI.graph_elements.graph_manager - DEBUG - Registering LLMNode
+2025-10-08 14:00:04,848 - NGUI.graph_elements.graph_manager - DEBUG - Registering TTSNode
+2025-10-08 14:00:04,848 - NGUI.graph_elements.graph_manager - DEBUG - Registering TTSNode
+2025-10-08 14:00:04,848 - NGUI.graph_elements.graph_manager - DEBUG - Registering ContextBuilderNode
+2025-10-08 14:00:04,848 - NGUI.graph_elements.graph_manager - DEBUG - Registering ContextBuilderNode
+2025-10-08 14:00:04,849 - NGUI.graph_elements.graph_manager - DEBUG - Registering ChainImportNode
+2025-10-08 14:00:04,849 - NGUI.graph_elements.graph_manager - DEBUG - Registering ChainImportNode
+2025-10-08 14:00:04,850 - NGUI.graph_elements.graph_manager - INFO - All custom node types registered successfully
+2025-10-08 14:00:04,850 - NGUI.graph_elements.graph_manager - INFO - All custom node types registered successfully
+2025-10-08 14:00:04,850 - NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget
+2025-10-08 14:00:04,850 - NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget
+2025-10-08 14:00:04,851 - NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget in UI
+2025-10-08 14:00:04,851 - NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget in UI
+2025-10-08 14:00:04,852 - NGUI.graph_elements.graph_manager - DEBUG - Getting graph widget from node_graph
+2025-10-08 14:00:04,852 - NGUI.graph_elements.graph_manager - DEBUG - Getting graph widget from node_graph
+2025-10-08 14:00:06,456 - NGUI.graph_elements.graph_manager - DEBUG - Setting up context menu policy
+2025-10-08 14:00:06,456 - NGUI.graph_elements.graph_manager - DEBUG - Setting up context menu policy
+2025-10-08 14:00:06,456 - NGUI.graph_elements.graph_manager - DEBUG - Replacing placeholder widget with graph widget
+2025-10-08 14:00:06,456 - NGUI.graph_elements.graph_manager - DEBUG - Replacing placeholder widget with graph widget
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - DEBUG - Storing graph widget references
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - DEBUG - Storing graph widget references
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - INFO - Graph widget setup completed successfully
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - INFO - Graph widget setup completed successfully
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
+2025-10-08 14:00:06,459 - NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Storing node_graph reference in parent widget
+2025-10-08 14:00:06,460 - NGUI.graph_elements.graph_manager - DEBUG - Storing node_graph reference in parent widget
+2025-10-08 14:00:06,461 - NGUI.graph_elements.graph_manager - INFO - Node graph setup completed successfully
+2025-10-08 14:00:06,461 - NGUI.graph_elements.graph_manager - INFO - Node graph setup completed successfully
+2025-10-08 14:00:06,461 - NGUI.graph_view - DEBUG - Node graph setup completed successfully
+2025-10-08 14:00:06,461 - NGUI.graph_view - DEBUG - Node graph setup completed successfully
+2025-10-08 14:00:06,461 - NGUI.graph_view - INFO - GraphViewWidget initialization completed successfully
+2025-10-08 14:00:06,461 - NGUI.graph_view - INFO - GraphViewWidget initialization completed successfully
+2025-10-08 14:00:06,464 - graphui.main_window - DEBUG - Creating menu bar
+2025-10-08 14:00:06,465 - graphui.main_window - DEBUG - UI setup completed successfully
+2025-10-08 14:00:06,467 - graphui.main_window - INFO - SchedulerService started successfully
+2025-10-08 14:00:06,469 - graphui.main_window - INFO - MainWindow initialization completed successfully
+2025-10-08 14:00:26,307 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:31,318 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:36,323 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:40,444 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:41,321 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:46,315 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:51,328 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:00:56,352 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:01,722 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:06,445 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:11,352 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:16,365 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:21,360 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:26,360 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:31,374 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:36,362 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:41,381 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:46,387 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:51,405 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:01:56,396 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:01,408 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:06,429 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:11,429 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:16,426 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:17,011 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:17,031 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:17,036 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:21,424 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:21,430 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:21,433 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:21,438 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:26,441 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:26,457 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:26,460 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:26,465 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:31,454 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:31,460 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:31,463 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:31,470 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:36,473 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:36,505 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:36,509 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:36,534 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:41,484 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:41,489 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:41,491 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:41,496 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:46,500 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:46,519 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:46,522 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:46,528 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:51,513 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:51,521 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:51,524 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:51,532 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:02:56,514 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:56,531 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:02:56,534 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:02:56,539 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:01,511 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:01,517 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:01,521 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:01,526 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:06,530 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:06,561 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:06,563 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:06,580 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:11,527 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:11,547 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:11,550 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:11,558 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:16,522 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:16,528 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:16,531 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:16,536 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:21,522 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:21,527 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:21,530 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:21,535 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:26,519 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:26,524 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:26,529 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:26,537 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:31,518 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:31,535 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:31,542 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:31,556 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:36,553 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:36,566 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:36,569 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:36,572 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:41,547 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:41,553 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:41,556 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:41,568 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:46,561 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:46,567 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:46,571 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:46,576 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:51,577 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:51,584 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:51,588 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:51,599 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:03:56,579 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:56,586 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:03:56,590 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:03:56,596 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:01,594 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:01,606 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:01,613 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:01,619 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:06,590 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:06,595 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:06,597 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:06,601 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:11,588 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:11,605 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:11,609 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:11,614 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:16,586 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:16,594 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:16,597 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:16,604 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:21,584 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:21,591 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:21,594 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:21,599 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:26,586 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:26,592 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:26,594 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:26,599 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:31,582 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:31,595 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:31,597 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:31,604 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:36,598 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:36,603 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:36,606 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:36,612 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:41,594 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:41,611 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:41,613 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:41,618 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:46,608 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:46,624 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:46,626 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:46,631 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:51,623 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:51,628 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:51,630 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:51,634 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:04:56,623 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:56,672 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:04:56,675 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:04:56,682 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:01,620 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:01,625 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:01,630 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:01,639 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:06,619 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:06,624 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:06,627 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:06,633 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:11,632 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:11,637 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:11,639 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:11,645 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:16,631 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:16,643 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:16,646 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:16,659 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:21,631 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:21,656 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:21,660 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:21,669 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /models HTTP/1.1" 200 222
+2025-10-08 14:05:26,636 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:26,644 - urllib3.connectionpool - DEBUG - http://localhost:8000 "GET /health HTTP/1.1" 200 338
+2025-10-08 14:05:26,647 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:36,659 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:46,698 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:05:56,722 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:06,734 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:16,729 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:26,726 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:36,740 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:46,771 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:06:56,801 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:06,831 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:16,844 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:26,855 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:36,849 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:46,864 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:07:56,898 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:06,924 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:16,953 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:26,988 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:37,018 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:47,008 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:08:57,009 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:07,006 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:17,016 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:27,050 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:37,098 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:47,088 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:09:57,087 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:10:07,085 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:10:12,320 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:10:17,511 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-10-08 14:10:27,113 - urllib3.connectionpool - DEBUG - Starting new HTTP connection (1): localhost:8000
