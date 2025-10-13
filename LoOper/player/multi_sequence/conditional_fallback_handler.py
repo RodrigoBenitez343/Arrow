@@ -14,10 +14,55 @@ from ..sequence_player import SequencePlayer
 class ConditionalFallbackHandler:
     """Handles various types of conditional fallbacks for complex automation scenarios"""
     
-    def __init__(self, stop_flag=None):
+    def __init__(self, stop_flag=None, chain_file_dir=None):
         self.stop_flag = stop_flag
         self.template_matcher = TemplateMatching()
-    
+        # Base directory of the current chain file, used to resolve relative paths for nested imports
+        self.chain_file_dir = chain_file_dir
+
+    def _resolve_path(self, path, add_json=False):
+        """Resolve a possibly relative path against the chain file directory and cwd.
+        When add_json=True, also consider .json variants and common 'sequences' subdirectories."""
+        import os
+        if not path:
+            return path
+        # If the path already exists as given, return it
+        try:
+            if os.path.isabs(path) and os.path.exists(path):
+                return path
+        except Exception:
+            pass
+        base_dir = self.chain_file_dir or os.getcwd()
+        candidates = []
+        # Original path (relative)
+        candidates.append(path)
+        if add_json and not path.lower().endswith('.json'):
+            candidates.append(path + '.json')
+        # Relative to chain file directory
+        candidates.append(os.path.join(base_dir, path))
+        if add_json and not path.lower().endswith('.json'):
+            candidates.append(os.path.join(base_dir, path + '.json'))
+        # Common subdirectories for sequences
+        if add_json:
+            candidates.append(os.path.join(base_dir, 'sequences', path))
+            if not path.lower().endswith('.json'):
+                candidates.append(os.path.join(base_dir, 'sequences', path + '.json'))
+            candidates.append(os.path.join('sequences', path))
+            if not path.lower().endswith('.json'):
+                candidates.append(os.path.join('sequences', path + '.json'))
+        # Current working directory fallbacks
+        candidates.append(os.path.join(os.getcwd(), path))
+        if add_json and not path.lower().endswith('.json'):
+            candidates.append(os.path.join(os.getcwd(), path + '.json'))
+        # Return the first existing candidate
+        for candidate in candidates:
+            try:
+                if os.path.exists(candidate):
+                    return candidate
+            except Exception:
+                continue
+        return path
+
     def check_presence_trigger(self, trigger_config):
         """
         Check if a visual element is present on screen with enhanced validation and timeout support
@@ -30,13 +75,15 @@ class ConditionalFallbackHandler:
         """
         try:
             image_path = trigger_config.get('image_path')
+            # Resolve image path relative to the chain file directory for nested imports
+            image_path = self._resolve_path(image_path, add_json=False)
             confidence = trigger_config.get('confidence', 0.8)
             timeout = float(trigger_config.get('timeout', 10))  # Default 10 seconds timeout
             
             if not image_path or not os.path.exists(image_path):
                 logger.warning(f"Presence trigger image not found: {image_path}")
                 return False
-                
+            
             logger.info(f"Checking presence of image: {image_path} (confidence: {confidence}, timeout: {timeout}s)")
             
             # Use template matching with timeout support
@@ -265,18 +312,19 @@ class ConditionalFallbackHandler:
             'iteration_delay': float(condition_data.get('iteration_delay', 1.0)),
             'condition': {
                 'trigger_type': 'presence',
-                'image_path': condition_data.get('image_path', ''),
+                'image_path': self._resolve_path(condition_data.get('image_path', ''), add_json=False),
                 'confidence': float(condition_data.get('threshold', 0.8))
             }
         }
         
         # Create a temporary SequencePlayer for loop execution
         sequence_file = loop_config.get('sequence_file', '')
-        if not sequence_file:
+        resolved_seq_file = self._resolve_path(sequence_file, add_json=True)
+        if not resolved_seq_file:
             logger.error(f"No sequence file specified for until_present condition")
             return False
         
-        temp_sequence_player = SequencePlayer(sequence_file)
+        temp_sequence_player = SequencePlayer(resolved_seq_file)
         return self.execute_conditional_loop(loop_config, temp_sequence_player)
     
     def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config):
@@ -639,7 +687,8 @@ class ConditionalFallbackHandler:
             from ..sequence_player import SequencePlayer
             sequence_file = loop_config.get('sequence_file', '')
             if sequence_file:
-                temp_sequence_player = SequencePlayer(sequence_file)
+                resolved_seq_file = self._resolve_path(sequence_file, add_json=True)
+                temp_sequence_player = SequencePlayer(resolved_seq_file)
                 self.execute_conditional_loop(loop_config, temp_sequence_player)
         
         return False
@@ -666,7 +715,8 @@ class ConditionalFallbackHandler:
             from ..sequence_player import SequencePlayer
             sequence_file = loop_config.get('sequence_file', '')
             if sequence_file:
-                temp_sequence_player = SequencePlayer(sequence_file)
+                resolved_seq_file = self._resolve_path(sequence_file, add_json=True)
+                temp_sequence_player = SequencePlayer(resolved_seq_file)
                 self.execute_conditional_loop(loop_config, temp_sequence_player)
         
         # Handle wait conditions (wait for presence/absence of elements or OCR text)

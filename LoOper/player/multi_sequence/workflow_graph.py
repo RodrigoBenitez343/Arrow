@@ -881,9 +881,36 @@ class WorkflowExecutor:
             prefix = import_data.get('prefix', prefix)
             logger.debug(f"Updated chain file path from import_data: '{chain_file_path}'")
         
-        logger.info(f"Executing chain import node: {chain_file_path} (loops: {loop_count}, extra_delay: {extra_delay})")
+        # Robustly resolve the chain file path (support nested imports and relative paths)
+        resolved_chain_path = chain_file_path
+        try:
+            base_dir = getattr(self.sequence_executor, 'chain_file_dir', None)
+            candidates = []
+            if chain_file_path:
+                candidates.append(chain_file_path)
+                if not chain_file_path.lower().endswith('.json'):
+                    candidates.append(chain_file_path + '.json')
+            if base_dir:
+                if chain_file_path:
+                    candidates.append(os.path.join(base_dir, chain_file_path))
+                    if not chain_file_path.lower().endswith('.json'):
+                        candidates.append(os.path.join(base_dir, chain_file_path + '.json'))
+            # Also try current working directory as a fallback
+            if chain_file_path:
+                candidates.append(os.path.join(os.getcwd(), chain_file_path))
+                if not chain_file_path.lower().endswith('.json'):
+                    candidates.append(os.path.join(os.getcwd(), chain_file_path + '.json'))
+            for candidate in candidates:
+                if os.path.exists(candidate):
+                    resolved_chain_path = candidate
+                    break
+            logger.debug(f"Resolved chain import path: '{resolved_chain_path}' (base_dir={base_dir})")
+        except Exception as e:
+            logger.warning(f"Error resolving chain import path '{chain_file_path}': {e}")
         
-        if not chain_file_path:
+        logger.info(f"Executing chain import node: {resolved_chain_path} (loops: {loop_count}, extra_delay: {extra_delay})")
+        
+        if not resolved_chain_path:
             logger.error(f"No chain file path specified in chain import node data: {chain_import_data}")
             # Continue to next node even if chain file is missing
             connections = node.get('connections', {})
@@ -892,8 +919,8 @@ class WorkflowExecutor:
                 return next_connection['node_id']
             return None
             
-        if not os.path.exists(chain_file_path):
-            logger.error(f"Chain import file not found: {chain_file_path}")
+        if not os.path.exists(resolved_chain_path):
+            logger.error(f"Chain import file not found: {resolved_chain_path}")
             # Continue to next node even if chain file is missing
             connections = node.get('connections', {})
             if 'output' in connections and connections['output']:
@@ -916,11 +943,11 @@ class WorkflowExecutor:
                     return None
                 
                 # Load and execute the imported chain directly using MultiSequencePlayer
-                logger.info(f"Loading imported chain: {chain_file_path}")
+                logger.info(f"Loading imported chain: {resolved_chain_path}")
                 
                 # Load the JSON configuration from the file
                 import json
-                with open(chain_file_path, 'r', encoding='utf-8') as f:
+                with open(resolved_chain_path, 'r', encoding='utf-8') as f:
                     chain_config = json.load(f)
                 
                 # Check stop flag after loading chain config
@@ -928,10 +955,11 @@ class WorkflowExecutor:
                     logger.info("Stop flag detected after loading chain config - aborting")
                     return None
                 
-                imported_player = MultiSequencePlayer(chain_config)
+                # Pass the resolved path so nested imports and relative assets are correctly located
+                imported_player = MultiSequencePlayer(chain_config, chain_file_path=resolved_chain_path)
                 
                 # Execute the imported chain using the same method as normal chains
-                logger.info(f"Executing imported chain: {chain_file_path}")
+                logger.info(f"Executing imported chain: {resolved_chain_path}")
                 success = imported_player.play_chain(stop_flag)
                 
                 # Check stop flag after chain execution
@@ -940,11 +968,11 @@ class WorkflowExecutor:
                     return None
                 
                 if not success:
-                    logger.error(f"Imported chain execution failed: {chain_file_path}")
+                    logger.error(f"Imported chain execution failed: {resolved_chain_path}")
                     # Continue to next loop iteration
                     continue
                 else:
-                    logger.info(f"Imported chain executed successfully: {chain_file_path}")
+                    logger.info(f"Imported chain executed successfully: {resolved_chain_path}")
                 
             except Exception as e:
                 logger.error(f"Error during chain import execution: {e}")

@@ -77,7 +77,8 @@ class MultiSequencePlayer(SeleniumBot):
         self.skipped_nodes = set()
         
         # Initialize modularized components
-        self.fallback_handler = ConditionalFallbackHandler()
+        # Propagate chain_file_dir so conditional assets (images/sequences) resolve correctly in nested imports
+        self.fallback_handler = ConditionalFallbackHandler(chain_file_dir=self.chain_file_dir)
         self.workflow_navigator = WorkflowNavigator(self.workflow_graph) if self.workflow_graph else None
         self.llm_executor = LLMExecutor()
         self.sequence_executor = SequenceExecutor(self.fallback_handler, self.chain_file_dir)
