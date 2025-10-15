@@ -141,12 +141,66 @@ class ActionHandlers:
                     location = None
                     
                     if strategy['method'] == 'template':
-                        # Standard template matching
-                        location = pyautogui.locateCenterOnScreen(
-                            screenshot_path,
-                            confidence=strategy['confidence'],
-                            grayscale=strategy['grayscale']
-                        )
+                        # Template matching with multiple candidates to avoid random clicks
+                        try:
+                            boxes = list(pyautogui.locateAllOnScreen(
+                                screenshot_path,
+                                confidence=strategy['confidence'],
+                                grayscale=strategy['grayscale']
+                            ))
+                        except Exception:
+                            boxes = []
+
+                        if boxes:
+                            # Convert to centers and sort deterministically (row-major: top, then left)
+                            centers = []
+                            for b in boxes:
+                                try:
+                                    left = getattr(b, 'left', b[0])
+                                    top = getattr(b, 'top', b[1])
+                                    width = getattr(b, 'width', b[2])
+                                    height = getattr(b, 'height', b[3])
+                                except Exception:
+                                    continue
+                                cx = int(left + width / 2)
+                                cy = int(top + height / 2)
+                                centers.append((cx, cy, int(top), int(left)))
+
+                            if centers:
+                                centers.sort(key=lambda c: (c[2], c[3]))  # sort by top, then left
+
+                                # Determine selection using per-element memory
+                                element_key = os.path.abspath(screenshot_path)
+                                last_index = self.bot.selection_memory.get(element_key, -1)
+
+                                # If first time seeing this element, prefer nearest to original hint if available
+                                hint_x = action.get('x')
+                                hint_y = action.get('y')
+                                if last_index == -1 and isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
+                                    try:
+                                        hx = int(hint_x)
+                                        hy = int(hint_y)
+                                        dists = [((c[0] - hx) ** 2 + (c[1] - hy) ** 2) for c in centers]
+                                        chosen_index = int(dists.index(min(dists)))
+                                    except Exception:
+                                        chosen_index = 0
+                                elif last_index == -1:
+                                    chosen_index = 0
+                                else:
+                                    chosen_index = (int(last_index) + 1) % len(centers)
+
+                                self.bot.selection_memory[element_key] = chosen_index
+                                location = (centers[chosen_index][0], centers[chosen_index][1])
+                                logger.info(f"Selected candidate {chosen_index + 1}/{len(centers)} for element {os.path.basename(screenshot_path)}")
+                            else:
+                                location = None
+                        else:
+                            # Fallback to single best match if multiple candidates not found
+                            location = pyautogui.locateCenterOnScreen(
+                                screenshot_path,
+                                confidence=strategy['confidence'],
+                                grayscale=strategy['grayscale']
+                            )
                     
                     elif strategy['method'] == 'multiscale':
                         # Multi-scale template matching with shared screenshot

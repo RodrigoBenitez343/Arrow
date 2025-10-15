@@ -36,6 +36,9 @@ class SeleniumBot:
         self.last_action_time = time.time()  # Timestamp of the last action.
         self.last_click_time = time.time()   # Timestamp of the last click, for timing subsequent actions.
         self.mouse_movement_history = []     # Stores a history of mouse movements.
+        # Per-element selection memory to avoid random clicks when multiple matches exist.
+        # Maps a stable element key (e.g., screenshot path) to the last chosen index.
+        self.selection_memory = {}
         self.action_handlers = ActionHandlers(self)  # Initialize action handlers
 
     def random_delay(self, min_seconds=2.5, max_seconds=5.5):

@@ -1,0 +1,23 @@
+Greetings!
+
+Hope you're doing well! I wanted to share something exciting I've been working on that I think might interest you.
+
+You know how we all have those repetitive tasks that eat up hours of our day? Well, I've developed something called LoOper that's been a complete game-changer for me in terms of productivity.
+
+Here's what makes it special: Instead of just recording simple macros, LoOper uses AI and computer vision to create intelligent workflows that actually think . It can analyze what's on your screen, make decisions, and adapt when things change - kind of like having a smart assistant that never gets tired of doing the boring stuff.
+
+What really blew my mind: ✨ I can create complex automation workflows just by dragging and dropping - no coding needed
+🧠 It integrates with AI models to make smart decisions based on what it "sees"
+🎯 The visual template matching is so reliable, it works even when UI elements move around
+⚡ I'm literally saving 10+ hours a week on data entry and repetitive processes
+
+I've been using it for everything from automating reports to testing applications, and honestly, I can't imagine going back to doing this stuff manually.
+
+I'd love to show you a quick demo - it's one of those things that's way cooler to see in action than to read about. Are you free for a 15-minute call this week? I think you'd find some interesting applications in your current activities
+
+Let me know if you're curious - I'm always excited to share cool tech that actually makes our work lives better!
+
+Best,
+Rodrigo.
+
+P.S. - If you know anyone else who's drowning in repetitive tasks, feel free to pass this along. I'm happy to help!

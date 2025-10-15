@@ -220,96 +220,30 @@ if exist requirements.txt (
 echo.
 
 :: ——————————————————————————————————————————————
-:: 6. Environment Variables Setup for API Configuration
+:: 6. Set Default Environment Variables (API now auto-starts from main.py)
 :: ——————————————————————————————————————————————
-color 0D
-echo.
-echo     ⚙️ API CONFIGURATION SETUP ⚙️
-echo     ═══════════════════════════════
-echo.
-echo [🌐] Setting up environment variables for API communication...
-echo.
-echo     This setup configures the LocalOperator API for:
-echo     • Local server mode (localhost)
-echo     • Tailscale network mode (remote server)
-echo.
+echo [🔧] Setting default environment variables...
 
-:: Check if environment variables are already set
-if defined TAILSCALE_IP if defined API_PORT (
-    echo [✅] Environment variables already configured:
-    echo     • TAILSCALE_IP: %TAILSCALE_IP%
-    echo     • API_PORT: %API_PORT%
-    echo.
-    set /p "reconfigure=Do you want to reconfigure? (y/N): "
-    if /i "!reconfigure!" neq "y" goto :skip_env_setup
-)
-
-echo [📝] Choose your API configuration mode:
-echo     1. Local mode (localhost) - API server runs on this machine
-echo     2. Tailscale mode - API server runs on a remote Tailscale machine
-echo     3. Skip configuration (use existing or defaults)
-echo.
-set /p "api_mode=Enter your choice (1-3): "
-
-if "!api_mode!"=="1" (
-    echo [🏠] Configuring for local mode...
-    setx TAILSCALE_IP "localhost" >nul 2>&1
+:: Set default values if not already configured
+if not defined TAILSCALE_SERVER_IP (
     setx TAILSCALE_SERVER_IP "localhost" >nul 2>&1
-    set "TAILSCALE_IP=localhost"
     set "TAILSCALE_SERVER_IP=localhost"
-    echo [✅] Local mode configured!
-) else if "!api_mode!"=="2" (
-    echo [🌐] Configuring for Tailscale mode...
-    echo.
-    echo     Enter the Tailscale IP address of the machine running the API server.
-    echo     You can find this in your Tailscale admin panel or by running 'tailscale ip' on the server.
-    echo.
-    set /p "tailscale_server_ip=Tailscale Server IP: "
-    
-    if "!tailscale_server_ip!"=="" (
-        color 0E
-        echo [⚠️] No IP address provided. Using localhost as fallback.
-        set "tailscale_server_ip=localhost"
-    )
-    
-    setx TAILSCALE_SERVER_IP "!tailscale_server_ip!" >nul 2>&1
-    set "TAILSCALE_SERVER_IP=!tailscale_server_ip!"
-    
-    echo.
-    echo     If this machine will also run the API server, enter its Tailscale IP.
-    echo     Otherwise, press Enter to skip.
-    echo.
-    set /p "tailscale_local_ip=This machine's Tailscale IP (optional): "
-    
-    if not "!tailscale_local_ip!"=="" (
-        setx TAILSCALE_IP "!tailscale_local_ip!" >nul 2>&1
-        set "TAILSCALE_IP=!tailscale_local_ip!"
-    )
-    
-    echo [✅] Tailscale mode configured!
-    echo     • Server IP: !tailscale_server_ip!
-    if not "!tailscale_local_ip!"=="" echo     • Local IP: !tailscale_local_ip!
-) else (
-    echo [⏭️] Skipping API configuration...
 )
 
-:: Configure API port
-if not "!api_mode!"=="3" (
-    echo.
-    set /p "api_port=API Port (default 8000): "
-    if "!api_port!"=="" set "api_port=8000"
-    
-    setx API_PORT "!api_port!" >nul 2>&1
-    set "API_PORT=!api_port!"
-    echo [✅] API port set to: !api_port!
+if not defined API_PORT (
+    setx API_PORT "8000" >nul 2>&1
+    set "API_PORT=8000"
 )
 
-:skip_env_setup
-echo.
-echo [📋] Current API Configuration:
-if defined TAILSCALE_IP echo     • TAILSCALE_IP: %TAILSCALE_IP%
-if defined TAILSCALE_SERVER_IP echo     • TAILSCALE_SERVER_IP: %TAILSCALE_SERVER_IP%
-if defined API_PORT echo     • API_PORT: %API_PORT%
+:: Enable auto-start API by default
+setx AUTO_START_API "true" >nul 2>&1
+set "AUTO_START_API=true"
+
+echo [✅] Environment variables configured:
+echo     • TAILSCALE_SERVER_IP: %TAILSCALE_SERVER_IP%
+echo     • API_PORT: %API_PORT%
+echo     • AUTO_START_API: %AUTO_START_API%
+echo     • Note: LLM API will auto-start when LocalOperator launches
 echo.
 
 :: ——————————————————————————————————————————————
@@ -340,7 +274,7 @@ if exist "%SHORTCUT_PATH%" (
 echo.
 
 :: ——————————————————————————————————————————————
-:: 8. Launch LocalOperator
+:: 7. Launch LocalOperator
 :: ——————————————————————————————————————————————
 color 0B
 echo.
@@ -351,7 +285,7 @@ echo     📁 Working Directory: %CD%
 echo     👨‍💻 Created by: RODRIGO DAVID BENITEZ
 echo     🐍 Python Version: 3.13
 echo     👁️ OCR Engine: Tesseract
-echo     🌐 API Configuration: Ready
+echo     🤖 LLM API: Auto-start enabled
 echo.
 call :loading_animation "Starting LocalOperator application"
 

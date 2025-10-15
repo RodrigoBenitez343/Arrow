@@ -28,7 +28,7 @@ except ImportError:
 class OllamaClient:
     """Client for interacting with Ollama API Gateway with queue system for ComoRAG requests"""
     
-    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10):
+    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: int = 300):
         """Initialize the client with the API base URL"""
         # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
@@ -39,11 +39,14 @@ class OllamaClient:
         self.base_url = base_url.rstrip('/')
         self.debug = debug
         self.use_comorag = use_comorag
+        self.timeout = timeout  # Default timeout for requests (5 minutes for local models)
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         })
+        # Set default timeout for all requests in this session
+        self.session.timeout = timeout
         self.context_data = []  # Store context for ComoRAG
         self.comorag_config = {
             'max_cycles': 5,
@@ -119,7 +122,7 @@ class OllamaClient:
             response = self.session.post(
                 f"{self.base_url}/generate",
                 json=payload,
-                timeout=300  # 5 minutes timeout
+                timeout=self.timeout  # Use configured timeout
             )
             response.raise_for_status()
             result = response.json()

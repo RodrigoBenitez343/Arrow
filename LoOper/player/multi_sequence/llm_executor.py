@@ -246,12 +246,16 @@ class LLMExecutor:
             # Create OllamaClient and make request
             logger.info(f"Creating OllamaClient with base_url: {api_url}")
             try:
-                client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
+                # Disable ComoRAG by default to use regular chat endpoint
+                # Use longer timeout for local model processing (5 minutes)
+                client = OllamaClient(base_url=api_url, debug=True, use_comorag=False, timeout=300)
                 
-                # Set ComoRAG parameters if enabled
+                # Set ComoRAG parameters if enabled (but we're disabling it for now)
                 if use_comorag and hasattr(client, 'set_comorag_config'):
                     client.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
                     logger.info(f"ComoRAG enabled with max_cycles={max_cycles}, memory_size={memory_size}")
+                else:
+                    logger.info("Using regular chat endpoint (ComoRAG disabled)")
                 
                 logger.info("OllamaClient created successfully")
             except Exception as client_error:
@@ -479,6 +483,24 @@ class LLMExecutor:
                     logger.info("Stop flag detected before API call - aborting LLM execution")
                     return None
                 
+                # Test API connection first
+                logger.info(f"Testing API connection to {api_url}...")
+                try:
+                    import requests
+                    test_response = requests.get(f"{api_url}/health", timeout=5)
+                    if test_response.status_code != 200:
+                        logger.warning(f"API health check failed with status {test_response.status_code}")
+                except requests.exceptions.RequestException as conn_error:
+                    logger.error(f"API connection test failed: {conn_error}")
+                    logger.error("The LLM API server is not running or not accessible.")
+                    logger.error("Please ensure the main application is started properly to initialize the API server.")
+                    
+                    # Store error message in output variable
+                    error_message = f"API connection failed: {str(conn_error)}. Please ensure the LLM API server is running."
+                    self.variables[output_variable] = error_message
+                    logger.error(f"Stored error message in variable '{output_variable}': {error_message}")
+                    return None
+                
                 if use_async:
                     # Define callback function to handle async response
                     def async_response_callback(request_id, result):
@@ -551,15 +573,29 @@ class LLMExecutor:
                         response = queue_result
                 else:
                     # Use generate method with context for ComoRAG integration (synchronous)
-                    response = client.generate(
-                        model=model,
-                        prompt=enhanced_prompt,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        system=system_message if system_message else None,
-                        images=images if images else None,
-                        context=context_data if context_data else None
-                    )
+                    logger.info("Making synchronous API call with timeout handling...")
+                    try:
+                        response = client.generate(
+                            model=model,
+                            prompt=enhanced_prompt,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            system=system_message if system_message else None,
+                            images=images if images else None,
+                            context=context_data if context_data else None
+                        )
+                    except Exception as sync_error:
+                        logger.error(f"Synchronous API call failed: {sync_error}")
+                        
+                        # Check if it's a timeout error
+                        if "timeout" in str(sync_error).lower() or "408" in str(sync_error):
+                            error_message = f"API request timed out. The model may be taking too long to respond or the API server may be overloaded. Error: {str(sync_error)}"
+                        else:
+                            error_message = f"API request failed: {str(sync_error)}"
+                        
+                        self.variables[output_variable] = error_message
+                        logger.error(f"Stored error message in variable '{output_variable}': {error_message}")
+                        return None
                     
                     # Check stop flag after API call
                     if stop_flag and stop_flag():

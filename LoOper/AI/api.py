@@ -229,7 +229,7 @@ async def chat_with_model(request: ChatRequest):
             response = requests.post(
                 f"{get_ollama_base_url()}/api/chat",
                 json=ollama_payload,
-                timeout=120
+                timeout=300  # 5 minutes for local model processing
             )
         else:
             # Use generate API for text-only requests
@@ -252,7 +252,7 @@ async def chat_with_model(request: ChatRequest):
             response = requests.post(
                 f"{get_ollama_base_url()}/api/generate",
                 json=ollama_payload,
-                timeout=120
+                timeout=300  # 5 minutes for local model processing
             )
         
         response.raise_for_status()

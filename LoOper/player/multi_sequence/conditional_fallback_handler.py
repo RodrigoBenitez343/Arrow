@@ -253,6 +253,11 @@ class ConditionalFallbackHandler:
                 return False
             
             temp_sequence_player = SequencePlayer(sequence_file)
+            # Share selection memory with temporary player if available
+            try:
+                temp_sequence_player.selection_memory = getattr(self, 'selection_memory', {})
+            except Exception:
+                pass
             return self.execute_conditional_loop(loop_config, temp_sequence_player)
             
         except Exception as e:
@@ -325,6 +330,11 @@ class ConditionalFallbackHandler:
             return False
         
         temp_sequence_player = SequencePlayer(resolved_seq_file)
+        # Share selection memory with temporary player if available
+        try:
+            temp_sequence_player.selection_memory = getattr(self, 'selection_memory', {})
+        except Exception:
+            pass
         return self.execute_conditional_loop(loop_config, temp_sequence_player)
     
     def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config):
@@ -563,8 +573,13 @@ class ConditionalFallbackHandler:
                         logger.info(f"Conditional loop condition satisfied after {iteration} iterations")
                     break
                 
-                # Execute the sequence
-                loop_player = SequencePlayer(sequence_file)
+                # Execute the sequence using the provided player when available
+                loop_player = sequence_player if sequence_player else SequencePlayer(sequence_file)
+                try:
+                    # Share selection memory if available
+                    loop_player.selection_memory = getattr(self, 'selection_memory', {})
+                except Exception:
+                    pass
                 loop_player.play_sequence(stop_flag=self.stop_flag)
                 
                 # Check condition again after executing the sequence
@@ -689,6 +704,10 @@ class ConditionalFallbackHandler:
             if sequence_file:
                 resolved_seq_file = self._resolve_path(sequence_file, add_json=True)
                 temp_sequence_player = SequencePlayer(resolved_seq_file)
+                try:
+                    temp_sequence_player.selection_memory = getattr(self, 'selection_memory', {})
+                except Exception:
+                    pass
                 self.execute_conditional_loop(loop_config, temp_sequence_player)
         
         return False

@@ -15,6 +15,8 @@ class SequenceExecutor:
     def __init__(self, fallback_handler=None, chain_file_dir=None):
         self.fallback_handler = fallback_handler
         self.chain_file_dir = chain_file_dir  # Directory containing the chain file
+        # Shared selection memory to avoid random candidate selection across sequences in a chain run
+        self.selection_memory = {}
     
     def execute_sequence_node(self, node, stop_flag):
         """
@@ -155,6 +157,8 @@ class SequenceExecutor:
             # Load sequence data
             try:
                 player = SequencePlayer(seq_file)
+                # Share selection memory with the loader instance
+                player.selection_memory = self.selection_memory
                 sequence_data = player.sequence_data.copy()
             except Exception as e:
                 logger.error(f"Failed to load sequence {seq_file}: {e}")
@@ -195,6 +199,8 @@ class SequenceExecutor:
                 
                 try:
                     fallback_player = SequencePlayer(fallback_seq_name)
+                    # Share selection memory with fallback player
+                    fallback_player.selection_memory = self.selection_memory
                     fallback_player.play_sequence(stop_flag=stop_flag)
                     logger.info(f"Fallback sequence completed. Current sequence was aborted.")
                     
@@ -204,6 +210,8 @@ class SequenceExecutor:
             # Play the sequence with fallback support
             try:
                 player = SequencePlayer(seq_file)
+                # Share selection memory with the player instance
+                player.selection_memory = self.selection_memory
                 player.sequence_data = sequence_data  # Use the modified sequence data with fallback
                 player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
             except Exception as e:

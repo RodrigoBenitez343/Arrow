@@ -91,6 +91,22 @@ class MultiSequencePlayer(SeleniumBot):
                 self.llm_executor,
                 self.fallback_handler
             )
+
+        # Propagate shared selection memory to modular components for the duration of a chain run
+        # This ensures consistent candidate selection across sequences and conditional fallbacks.
+        try:
+            self.fallback_handler.selection_memory = self.selection_memory
+        except Exception:
+            pass
+        try:
+            self.sequence_executor.selection_memory = self.selection_memory
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'workflow_executor') and self.workflow_executor:
+                self.workflow_executor.selection_memory = self.selection_memory
+        except Exception:
+            pass
     
 
 
@@ -209,6 +225,8 @@ class MultiSequencePlayer(SeleniumBot):
                     
                     try:
                         fallback_player = SequencePlayer(fallback_seq_name)
+                        # Share selection memory to maintain deterministic behavior across fallbacks
+                        fallback_player.selection_memory = self.selection_memory
                         fallback_player.play_sequence(stop_flag=stop_flag)
                         logger.info(f"Fallback sequence completed. Current sequence was aborted.")
                         
@@ -218,6 +236,8 @@ class MultiSequencePlayer(SeleniumBot):
                 # Play the sequence with fallback support
                 try:
                     player = SequencePlayer(seq_file)
+                    # Share selection memory with the sequence player
+                    player.selection_memory = self.selection_memory
                     player.sequence_data = sequence_data  # Use the modified sequence data with fallback
                     player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
                 except Exception as e:

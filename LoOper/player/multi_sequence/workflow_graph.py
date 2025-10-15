@@ -456,6 +456,8 @@ class WorkflowExecutor:
         self.llm_executor = llm_executor
         self.fallback_handler = fallback_handler
         self.skipped_nodes = set()
+        # Shared selection memory reference (to be provided by MultiSequencePlayer)
+        self.selection_memory = None
     
     def execute_workflow(self, stop_flag=None, action_handlers=None):
         """
@@ -957,6 +959,28 @@ class WorkflowExecutor:
                 
                 # Pass the resolved path so nested imports and relative assets are correctly located
                 imported_player = MultiSequencePlayer(chain_config, chain_file_path=resolved_chain_path)
+                # Share selection memory with imported chain player
+                try:
+                    # Ensure the imported player uses the shared selection memory
+                    imported_player.selection_memory = self.selection_memory if self.selection_memory is not None else {}
+                    # Propagate the shared memory to all modular components created during imported_player init
+                    try:
+                        if hasattr(imported_player, 'fallback_handler') and imported_player.fallback_handler:
+                            imported_player.fallback_handler.selection_memory = imported_player.selection_memory
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(imported_player, 'sequence_executor') and imported_player.sequence_executor:
+                            imported_player.sequence_executor.selection_memory = imported_player.selection_memory
+                    except Exception:
+                        pass
+                    try:
+                        if hasattr(imported_player, 'workflow_executor') and imported_player.workflow_executor:
+                            imported_player.workflow_executor.selection_memory = imported_player.selection_memory
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
                 
                 # Execute the imported chain using the same method as normal chains
                 logger.info(f"Executing imported chain: {resolved_chain_path}")
@@ -1120,6 +1144,11 @@ class WorkflowExecutor:
                 return False
             
             temp_sequence_player = SequencePlayer(sequence_file)
+            # Share selection memory with temporary sequence player
+            try:
+                temp_sequence_player.selection_memory = self.selection_memory if self.selection_memory is not None else {}
+            except Exception:
+                pass
             return self.fallback_handler.execute_conditional_loop(loop_config, temp_sequence_player)
             
         except Exception as e:
