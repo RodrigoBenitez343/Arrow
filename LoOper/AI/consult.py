@@ -171,6 +171,54 @@ class OllamaClient:
         
         # For non-ComoRAG requests, we don't use the queue system
         return self.chat(model, prompt, temperature, max_tokens, system, images)
+
+    def embeddings(self, model: str, inputs: List[str],
+                   normalize: Optional[bool] = None,
+                   pooling: Optional[str] = None) -> List[List[float]]:
+        """Get embeddings for a list of input texts via the API gateway.
+
+        Args:
+            model: Embedding-capable model name
+            inputs: List of texts to embed
+            normalize: Optional normalization flag
+            pooling: Optional pooling strategy (e.g., 'mean')
+
+        Returns:
+            List of embedding vectors (each is a list of floats)
+        """
+        payload: Dict[str, Any] = {"model": model, "inputs": inputs}
+        if normalize is not None:
+            payload["normalize"] = normalize
+        if pooling is not None:
+            payload["pooling"] = pooling
+
+        try:
+            response = self.session.post(
+                f"{self.base_url}/embeddings",
+                json=payload,
+                timeout=self.timeout
+            )
+            response.raise_for_status()
+            data = response.json()
+            # Normalize gateway response
+            if isinstance(data, dict):
+                if "embeddings" in data and isinstance(data["embeddings"], list):
+                    return data["embeddings"]
+                elif "embedding" in data and isinstance(data["embedding"], list):
+                    return [data["embedding"]]
+            # Fallbacks
+            if isinstance(data, list) and data and isinstance(data[0], (list, float)):
+                if data and isinstance(data[0], float):
+                    return [data]
+                return data
+            # Unexpected format
+            if self.debug:
+                print(f"Unexpected embeddings response: {data}")
+            return []
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"Embeddings request failed: {e}")
+            return []
     
     def _queue_comorag_request(self, model: str, prompt: str,
                               temperature: Optional[float] = None,

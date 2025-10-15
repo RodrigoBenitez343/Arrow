@@ -6,6 +6,7 @@ Action execution handlers for different types of automation actions.
 import os
 import time
 import pyautogui
+import pyperclip
 from numpy import random
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
@@ -341,7 +342,32 @@ class ActionHandlers:
                 except Exception as str_error:
                     logger.error(f"Failed to convert text to string: {str_error}")
                     return False
-            
+
+            # Determine if we should use clipboard paste for Unicode/special characters
+            # Clipboard paste is significantly more reliable for non-ASCII text on Windows
+            try:
+                # Allow explicit override from action config
+                force_clipboard = bool(action.get('use_clipboard', False))
+            except Exception:
+                force_clipboard = False
+
+            # Auto-detect presence of non-ASCII characters (e.g., accented letters, smart quotes)
+            contains_non_ascii = any(ord(c) > 126 for c in text)
+            use_clipboard = force_clipboard or contains_non_ascii
+
+            if use_clipboard:
+                try:
+                    pyperclip.copy(text)
+                    time.sleep(0.05)  # Small delay to ensure clipboard is set
+                    pyautogui.hotkey('ctrl', 'v')
+                    logger.info(f"Pasted text via clipboard (Unicode-safe), length={len(text)}")
+
+                    # Set completion flag in action for workflow integration
+                    action['completed'] = True
+                    return True
+                except Exception as clip_error:
+                    logger.warning(f"Clipboard paste failed, falling back to keyboard typing: {clip_error}")
+
             # Get typing speed configuration
             # Check if we should use character-by-character typing for maximum reliability
             char_by_char = action.get('char_by_char', False)  # Default to batch mode

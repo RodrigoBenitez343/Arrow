@@ -88,11 +88,18 @@ class WorkflowGraphBuilder:
         # Add LLM nodes to graph
         for llm_node in self.llm_nodes:
             node_id = llm_node.get('id') or llm_node.get('node_id')
+            # Support both 'outputs' and legacy 'connections' formats
+            # Normalize to connections['output'] = [{ 'node_id': ... }]
+            output_connections = []
+            if isinstance(llm_node.get('outputs'), dict):
+                output_connections = llm_node.get('outputs', {}).get('output', []) or []
+            elif isinstance(llm_node.get('connections'), list):
+                output_connections = [{ 'node_id': conn.get('target_node_id') } for conn in llm_node.get('connections', []) if conn.get('target_node_id')]
             graph[node_id] = {
                 'type': 'llm',
                 'data': llm_node,
                 'connections': {
-                    'output': llm_node.get('outputs', {}).get('output', [])
+                    'output': output_connections
                 }
             }
         
@@ -149,21 +156,22 @@ class WorkflowGraphBuilder:
                                     'output_type': output_type
                                 })
         
-        # Build connections from LLM outputs to other nodes
+        # Build connections from LLM outputs to other nodes (use normalized graph connections)
         for llm_node in self.llm_nodes:
             llm_id = llm_node.get('id') or llm_node.get('node_id')
-            outputs = llm_node.get('outputs', {})
-            
-            for output_name, connections in outputs.items():
-                for connection in connections:
-                    target_node_id = connection['node_id']
-                    if target_node_id in graph:
-                        if 'inputs' not in graph[target_node_id]:
-                            graph[target_node_id]['inputs'] = []
-                        graph[target_node_id]['inputs'].append({
-                            'from_node': llm_id,
-                            'output_type': output_name
-                        })
+            if llm_id in graph:
+                llm_graph_node = graph[llm_id]
+                connections = llm_graph_node.get('connections', {})
+                for output_name, output_connections in connections.items():
+                    for connection in output_connections:
+                        target_node_id = connection.get('node_id')
+                        if target_node_id in graph:
+                            if 'inputs' not in graph[target_node_id]:
+                                graph[target_node_id]['inputs'] = []
+                            graph[target_node_id]['inputs'].append({
+                                'from_node': llm_id,
+                                'output_type': output_name
+                            })
         
         # Build connections from TTS node outputs to other nodes
         for tts_node in self.tts_nodes:
@@ -782,22 +790,9 @@ class WorkflowExecutor:
         Returns:
             str: Next node ID to execute, or None if workflow should end
         """
-        # Use the LLMExecutor to handle LLM execution
-        success = self.llm_executor.execute_llm_node(node, stop_flag, action_handlers)
-        
-        if success:
-            # Find next node in the workflow
-            connections = node['connections']
-            if 'output' in connections and connections['output']:
-                # Take the first connection
-                next_connection = connections['output'][0]
-                return next_connection['node_id']
-            else:
-                logger.info("No output connections found for LLM node, ending workflow")
-                return None
-        else:
-            # LLM execution failed, stop workflow
-            return None
+        # Use the LLMExecutor to handle LLM execution and return its decision on next node
+        next_node_id = self.llm_executor.execute_llm_node(node, stop_flag, action_handlers)
+        return next_node_id
     
     def _execute_tts_node(self, node, stop_flag):
         """

@@ -12,6 +12,7 @@ import time
 import sqlite3
 import base64
 import logging
+import threading
 from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 
@@ -34,14 +35,18 @@ class ContextDatabase:
             db_path = str(db_dir / 'context.db')
         
         self.db_path = db_path
-        self.conn = None
+        # Thread-local storage for per-thread SQLite connections
+        self._local = threading.local()
+        # Serialize writes across threads to avoid database locked errors
+        self._write_lock = threading.Lock()
         self.initialize_database()
     
     def initialize_database(self):
         """Initialize the database schema if it doesn't exist"""
         try:
-            self.conn = sqlite3.connect(self.db_path)
-            cursor = self.conn.cursor()
+            # Use a temporary connection for initialization
+            init_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            cursor = init_conn.cursor()
             
             # Create context_items table
             cursor.execute("""
@@ -77,18 +82,41 @@ class ContextDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_chain ON context_items(chain_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_sequence ON context_items(sequence_id)")
             
-            self.conn.commit()
+            init_conn.commit()
+            # Set WAL mode to improve concurrent reads/writes
+            try:
+                cursor.execute("PRAGMA journal_mode=WAL;")
+                init_conn.commit()
+            except Exception:
+                # PRAGMA may fail on some environments; ignore
+                pass
+            init_conn.close()
             logger.info(f"Initialized context database at {self.db_path}")
         except sqlite3.Error as e:
             logger.error(f"Database initialization error: {e}")
-            if self.conn:
-                self.conn.close()
-                self.conn = None
+            # Nothing else to clean up here; per-thread connections are created on demand
     
     def _ensure_connection(self):
-        """Ensure database connection is active"""
-        if self.conn is None:
-            self.conn = sqlite3.connect(self.db_path)
+        """Get or create a thread-local database connection.
+
+        Uses `check_same_thread=False` to avoid cross-thread usage errors
+        in cases where callbacks or worker threads interact with the same
+        ContextDatabase instance. Writes are serialized with `_write_lock`.
+        """
+        conn = getattr(self._local, 'conn', None)
+        if conn is None:
+            # Allow this connection to be used safely in callback threads
+            # while we guard writes using a lock.
+            conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            try:
+                # Improve concurrency characteristics for this connection
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+            except Exception:
+                # PRAGMA may fail on some environments; ignore
+                pass
+            self._local.conn = conn
+        return conn
     
     def add_context_item(self, content: str, content_type: str, source: str, 
                          chain_id: Optional[str] = None, sequence_id: Optional[str] = None,
@@ -110,21 +138,21 @@ class ContextDatabase:
             ID of the inserted context item
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             if timestamp is None:
                 timestamp = time.time()
             
             metadata_json = json.dumps(metadata) if metadata else None
             
-            cursor.execute("""
-            INSERT INTO context_items 
-            (content, content_type, source, timestamp, metadata, chain_id, sequence_id, node_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (content, content_type, source, timestamp, metadata_json, chain_id, sequence_id, node_id))
-            
-            self.conn.commit()
+            with self._write_lock:
+                cursor.execute("""
+                INSERT INTO context_items 
+                (content, content_type, source, timestamp, metadata, chain_id, sequence_id, node_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (content, content_type, source, timestamp, metadata_json, chain_id, sequence_id, node_id))
+                conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
             logger.error(f"Error adding context item: {e}")
@@ -146,8 +174,8 @@ class ContextDatabase:
             ID of the inserted image
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             if timestamp is None:
                 timestamp = time.time()
@@ -159,13 +187,13 @@ class ContextDatabase:
             
             metadata_json = json.dumps(metadata) if metadata else None
             
-            cursor.execute("""
-            INSERT INTO context_images 
-            (image_data, image_path, image_type, timestamp, metadata)
-            VALUES (?, ?, ?, ?, ?)
-            """, (image_data, image_path, image_type, timestamp, metadata_json))
-            
-            self.conn.commit()
+            with self._write_lock:
+                cursor.execute("""
+                INSERT INTO context_images 
+                (image_data, image_path, image_type, timestamp, metadata)
+                VALUES (?, ?, ?, ?, ?)
+                """, (image_data, image_path, image_type, timestamp, metadata_json))
+                conn.commit()
             return cursor.lastrowid
         except sqlite3.Error as e:
             logger.error(f"Error adding image: {e}")
@@ -194,7 +222,7 @@ class ContextDatabase:
             Tuple of (context_id, image_id)
         """
         try:
-            self._ensure_connection()
+            conn = self._ensure_connection()
             
             if timestamp is None:
                 timestamp = time.time()
@@ -206,17 +234,17 @@ class ContextDatabase:
                 return -1, -1
             
             # Then add the context item with reference to the image
-            cursor = self.conn.cursor()
+            cursor = conn.cursor()
             metadata_json = json.dumps(metadata) if metadata else None
             
-            cursor.execute("""
-            INSERT INTO context_items 
-            (content, content_type, source, timestamp, metadata, chain_id, sequence_id, node_id, image_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (content, content_type, source, timestamp, metadata_json, 
-                  chain_id, sequence_id, node_id, image_id))
-            
-            self.conn.commit()
+            with self._write_lock:
+                cursor.execute("""
+                INSERT INTO context_items 
+                (content, content_type, source, timestamp, metadata, chain_id, sequence_id, node_id, image_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (content, content_type, source, timestamp, metadata_json, 
+                      chain_id, sequence_id, node_id, image_id))
+                conn.commit()
             context_id = cursor.lastrowid
             
             return context_id, image_id
@@ -246,8 +274,8 @@ class ContextDatabase:
             List of context items as dictionaries
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             query = "SELECT * FROM context_items"
             params = []
@@ -321,8 +349,8 @@ class ContextDatabase:
             Image data as a dictionary or None if not found
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             cursor.execute("SELECT * FROM context_images WHERE id = ?", (image_id,))
             row = cursor.fetchone()
@@ -358,8 +386,8 @@ class ContextDatabase:
             List of context items with image data
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             query = """
             SELECT c.*, i.image_data, i.image_path, i.image_type, i.metadata as image_metadata
@@ -428,8 +456,8 @@ class ContextDatabase:
             older_than: Clear only context older than this timestamp
         """
         try:
-            self._ensure_connection()
-            cursor = self.conn.cursor()
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
             
             # First get image IDs to delete
             query = "SELECT image_id FROM context_items"
@@ -466,16 +494,18 @@ class ContextDatabase:
                 placeholders = ",".join(["?" for _ in image_ids])
                 cursor.execute(f"DELETE FROM context_images WHERE id IN ({placeholders})", image_ids)
             
-            self.conn.commit()
+            with self._write_lock:
+                conn.commit()
             logger.info(f"Cleared context data: {cursor.rowcount} items removed")
         except sqlite3.Error as e:
             logger.error(f"Error clearing context: {e}")
     
     def close(self):
         """Close the database connection"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+        conn = getattr(self._local, 'conn', None)
+        if conn:
+            conn.close()
+            self._local.conn = None
     
     def __del__(self):
         """Destructor to ensure database connection is closed"""

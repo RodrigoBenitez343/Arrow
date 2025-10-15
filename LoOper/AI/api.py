@@ -38,7 +38,9 @@ VISION_MODELS = [
     'bakllava', 'bakllava:latest', 'bakllava:7b',
     'moondream', 'moondream:latest', 'moondream:1.8b',
     'llava-llama3', 'llava-llama3:latest', 'llava-llama3:8b',
-    'llava-phi3', 'llava-phi3:latest', 'llava-phi3:3.8b'
+    'llava-phi3', 'llava-phi3:latest', 'llava-phi3:3.8b',
+    # MiniCPM vision variants
+    'minicpm-v', 'minicpm-v:latest', 'minicpm-v2', 'minicpm-v4', 'openbmb/minicpm-v4'
 ]
 
 def is_vision_model(model_name: str) -> bool:
@@ -97,6 +99,16 @@ class ChatResponse(BaseModel):
     model: str
     created_at: str
     done: bool
+
+class EmbeddingsRequest(BaseModel):
+    model: str
+    inputs: List[str]
+    # Optional request tuning, kept simple for now
+    normalize: Optional[bool] = None
+    pooling: Optional[str] = None  # e.g., "mean"
+
+class EmbeddingsResponse(BaseModel):
+    embeddings: List[List[float]]
 
 class ModelInfo(BaseModel):
     name: str
@@ -279,7 +291,9 @@ async def chat_with_model(request: ChatRequest):
             "prompt_eval_count": result.get("prompt_eval_count"),
             "eval_count": result.get("eval_count")
         }
-    
+    except HTTPException as e:
+        # Preserve explicit HTTP errors raised above (e.g., 400 for unsupported vision)
+        raise e
     except requests.exceptions.Timeout:
         raise HTTPException(
             status_code=408,
@@ -300,6 +314,59 @@ async def chat_with_model(request: ChatRequest):
 async def generate_text(request: ChatRequest):
     """Generate text with an Ollama model (alias for chat endpoint)"""
     return await chat_with_model(request)
+
+@app.post("/embeddings", response_model=EmbeddingsResponse)
+async def get_embeddings(request: EmbeddingsRequest):
+    """Return embeddings using Ollama's embeddings endpoint.
+
+    Accepts a list of input strings and returns a list of embedding vectors.
+    """
+    try:
+        # Prepare payload for Ollama embeddings API
+        # Ollama expects { model: <model>, input: <string or [strings]> }
+        ollama_payload: Dict[str, Any] = {
+            "model": request.model,
+            "input": request.inputs if len(request.inputs) > 1 else request.inputs[0],
+        }
+        # Optional fields if needed in future
+        if request.normalize is not None:
+            ollama_payload["normalize"] = request.normalize
+        if request.pooling is not None:
+            ollama_payload["pooling"] = request.pooling
+
+        response = requests.post(
+            f"{get_ollama_base_url()}/api/embeddings",
+            json=ollama_payload,
+            timeout=60
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        # Normalize Ollama response variants
+        embeddings: List[List[float]] = []
+        if isinstance(data, dict):
+            if "embeddings" in data and isinstance(data["embeddings"], list):
+                embeddings = data["embeddings"]
+            elif "embedding" in data and isinstance(data["embedding"], list):
+                embeddings = [data["embedding"]]
+            else:
+                # Some servers may return a list directly
+                if isinstance(data, list) and data and isinstance(data[0], (list, float)):
+                    # If it's a list of floats -> single embedding
+                    if data and isinstance(data[0], float):
+                        embeddings = [data]
+                    else:
+                        embeddings = data  # assume list of embeddings
+                else:
+                    raise HTTPException(status_code=500, detail="Unexpected embeddings response format")
+        else:
+            raise HTTPException(status_code=500, detail="Invalid embeddings response type")
+
+        return {"embeddings": embeddings}
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Failed to fetch embeddings from Ollama: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/vision-models")
 async def list_vision_models():

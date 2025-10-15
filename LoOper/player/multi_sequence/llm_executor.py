@@ -98,6 +98,15 @@ class LLMExecutor:
             use_comorag = str(llm_config.get('use_comorag', 'true')).lower() in ('true', '1', 'yes', 'on')
             max_cycles = int(llm_config.get('max_cycles', 5))
             memory_size = int(llm_config.get('memory_size', 1000))
+
+            # Direct RAG configuration (embedding-based, simple and local)
+            use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
+            rag_embedding_model = llm_config.get('rag_embedding_model', 'nomic-embed-text')
+            rag_chunk_size = int(llm_config.get('rag_chunk_size', 500))  # chars
+            rag_overlap = int(llm_config.get('rag_overlap', 100))        # chars
+            rag_top_k = int(llm_config.get('rag_top_k', 3))
+            rag_include_raw_input = str(llm_config.get('rag_include_raw_input', 'false')).lower() in ('true', '1', 'yes', 'on')
+            rag_max_chars = int(llm_config.get('rag_max_chars', 1500))
             
             logger.info(f"LLM Parameters:")
             logger.info(f"  Model: {model}")
@@ -133,6 +142,8 @@ class LLMExecutor:
             
             # Handle input sources
             input_text = None
+            # Flag to control whether raw input is injected into prompt
+            use_input_text_in_prompt = True
             if input_source == 'ocr':
                 logger.info("Processing OCR input source...")
                 try:
@@ -188,34 +199,35 @@ class LLMExecutor:
                     logger.error(f"OCR processing failed: {ocr_error}")
                     input_text = ""
                     
-            elif input_source == 'previous_node':
+            elif input_source in ('previous', 'previous_node'):
                 logger.info("Processing previous node input source...")
-                # Look for input from connected nodes (first input connection)
-                if 'input' in node.get('connections', {}):
-                    input_connections = node['connections']['input']
-                    if input_connections:
-                        # Get the first input connection
-                        first_input = input_connections[0]
-                        connected_node_id = first_input.get('node_id')
-                        if connected_node_id:
-                            # Look for output variable from the connected node
-                            # This assumes the connected node stored its output in a variable
-                            connected_output_var = f"node_{connected_node_id}_output"
-                            if connected_output_var in self.variables:
-                                input_text = self.variables[connected_output_var]
-                                logger.info(f"Retrieved previous node output: {input_text[:200]}...")
-                            else:
-                                logger.warning(f"No output found from connected node {connected_node_id}")
-                                input_text = ""
+                # Use workflow graph 'inputs' metadata rather than raw connections
+                inputs_list = node.get('inputs', [])
+                if inputs_list:
+                    first_input = inputs_list[0]
+                    connected_node_id = first_input.get('from_node')
+                    if connected_node_id:
+                        connected_output_var = f"node_{connected_node_id}_output"
+                        if connected_output_var in self.variables:
+                            input_text = self.variables[connected_output_var]
+                            logger.info(f"Retrieved previous node output from {connected_output_var}: {input_text[:200]}...")
                         else:
-                            logger.warning("No connected node ID found")
-                            input_text = ""
+                            # Fallback to common variable name if node-specific not found
+                            input_text = self.variables.get('llm_output', '')
+                            if input_text:
+                                logger.warning(f"Node-specific output not found; using fallback 'llm_output'")
+                            else:
+                                logger.warning(f"No previous output available from connected node {connected_node_id}")
+                                input_text = ""
                     else:
-                        logger.warning("No input connections found")
+                        logger.warning("No connected node ID found in inputs")
                         input_text = ""
                 else:
-                    logger.warning("No input connections in node")
+                    logger.warning("No workflow inputs found for node")
                     input_text = ""
+                # If direct RAG is enabled, avoid injecting raw previous text
+                if use_direct_rag:
+                    use_input_text_in_prompt = False
                     
             elif input_source == 'clipboard':
                 logger.info("Processing clipboard input source...")
@@ -234,14 +246,17 @@ class LLMExecutor:
                     logger.error(f"Failed to read clipboard: {clipboard_error}")
                     input_text = ""
             
-            # If we have input text, enhance the prompt
+            # If we have input text, enhance the prompt (unless direct RAG is enabled for previous input)
             if input_text is not None:
-                if input_text.strip():
-                    prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
-                    logger.info(f"Enhanced prompt with {input_source} input ({len(input_text)} chars)")
+                if use_input_text_in_prompt:
+                    if input_text.strip():
+                        prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
+                        logger.info(f"Enhanced prompt with {input_source} input ({len(input_text)} chars)")
+                    else:
+                        prompt = f"[Input Source: {input_source.upper()} - No content found]\n\n[User Prompt:]\n{prompt}"
+                        logger.info(f"Enhanced prompt with {input_source} input (no content)")
                 else:
-                    prompt = f"[Input Source: {input_source.upper()} - No content found]\n\n[User Prompt:]\n{prompt}"
-                    logger.info(f"Enhanced prompt with {input_source} input (no content)")
+                    logger.info("Direct RAG enabled; skipping raw previous text injection into prompt")
             
             # Create OllamaClient and make request
             logger.info(f"Creating OllamaClient with base_url: {api_url}")
@@ -261,6 +276,76 @@ class LLMExecutor:
             except Exception as client_error:
                 logger.error(f"Failed to create OllamaClient: {client_error}")
                 return None
+
+            # Prepare optional RAG context from previous node output via embeddings
+            rag_context_text = None
+            if use_direct_rag and input_source in ('previous', 'previous_node') and input_text and input_text.strip():
+                logger.info("Computing direct RAG context from previous node output using embeddings...")
+                try:
+                    # Helper: chunk text by characters with overlap
+                    def _chunk_text_chars(text: str, size: int, overlap: int) -> List[str]:
+                        chunks: List[str] = []
+                        if size <= 0:
+                            return [text]
+                        step = max(1, size - max(0, overlap))
+                        i = 0
+                        while i < len(text):
+                            chunk = text[i:i+size]
+                            if chunk:
+                                chunks.append(chunk)
+                            i += step
+                        return chunks
+
+                    # Helper: cosine similarity
+                    def _cosine_sim(a: List[float], b: List[float]) -> float:
+                        try:
+                            import math
+                            dot = sum(x*y for x, y in zip(a, b))
+                            na = math.sqrt(sum(x*x for x in a))
+                            nb = math.sqrt(sum(y*y for y in b))
+                            if na == 0.0 or nb == 0.0:
+                                return 0.0
+                            return dot / (na * nb)
+                        except Exception:
+                            return 0.0
+
+                    # Chunk previous text
+                    chunks = _chunk_text_chars(input_text, rag_chunk_size, rag_overlap)
+                    logger.info(f"RAG: chunked previous output into {len(chunks)} chunks (size={rag_chunk_size}, overlap={rag_overlap})")
+
+                    # Compute embeddings for chunks
+                    chunk_embs = client.embeddings(rag_embedding_model, chunks)
+                    if not chunk_embs or len(chunk_embs) != len(chunks):
+                        logger.warning("RAG: embedding computation failed or mismatched; falling back to injecting raw previous text")
+                        # If embeddings failed, revert to raw input injection behavior
+                        if not use_input_text_in_prompt:
+                            prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
+                        rag_context_text = None
+                    else:
+                        # Embed the current prompt as query
+                        query_embs = client.embeddings(rag_embedding_model, [prompt])
+                        if not query_embs or not query_embs[0]:
+                            logger.warning("RAG: query embedding failed; reverting to raw input injection")
+                            if not use_input_text_in_prompt:
+                                prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
+                            rag_context_text = None
+                        else:
+                            q = query_embs[0]
+                            sims = [(_cosine_sim(q, ce), idx) for idx, ce in enumerate(chunk_embs)]
+                            sims.sort(key=lambda x: x[0], reverse=True)
+                            top_indices = [idx for _, idx in sims[:max(1, rag_top_k)]]
+                            top_texts = [chunks[i] for i in top_indices]
+                            rag_context = "\n\n".join(top_texts)
+                            if len(rag_context) > rag_max_chars:
+                                rag_context = rag_context[:rag_max_chars]
+                            rag_context_text = f"[RAG Context from previous node]:\n{rag_context}"
+                            logger.info(f"RAG: selected top-{len(top_texts)} chunks for context (total chars={len(rag_context)})")
+                            # Optionally include raw input as well if configured
+                            if rag_include_raw_input:
+                                rag_context_text = f"{rag_context_text}\n\n[Previous node raw output (truncated)]:\n{input_text[:min(len(input_text), rag_max_chars)]}"
+                except Exception as rag_error:
+                    logger.warning(f"Direct RAG computation failed: {rag_error}")
+                    rag_context_text = None
             
             # Check if this is a vision model and handle screenshots
             images = None
@@ -464,8 +549,11 @@ class LLMExecutor:
             # No need to add additional screenshot context to avoid duplication
             logger.info("Current screenshot and OCR context handled via vision analysis and prompt enhancement")
             
-            # Enhance prompt with OCR text if available
+            # Enhance prompt with optional RAG context and OCR text if available
             enhanced_prompt = prompt
+            if rag_context_text:
+                enhanced_prompt = f"{enhanced_prompt}\n\n{rag_context_text}"
+                logger.info("Enhanced prompt with direct RAG context from previous node")
             if ocr_text and ocr_text.strip():
                 enhanced_prompt = f"{prompt}\n\n[Current Screen Text (OCR):]\n{ocr_text}"
                 logger.info(f"Enhanced prompt with OCR text ({len(ocr_text)} chars)")
@@ -677,8 +765,13 @@ class LLMExecutor:
                 logger.info(f"Current variables state: {self.variables}")
                 
                 # Also store output in a node-specific variable for chaining
-                node_id = node.get('id') or node.get('data', {}).get('id', 'unknown')
-                node_output_var = f"node_{node_id}_output"
+                node_identifier = (
+                    node.get('data', {}).get('node_id') or
+                    node.get('data', {}).get('id') or
+                    node.get('id') or
+                    'unknown'
+                )
+                node_output_var = f"node_{node_identifier}_output"
                 self.variables[node_output_var] = generated_text
                 logger.info(f"Stored LLM output in node variable '{node_output_var}' for chaining")
                 
@@ -745,7 +838,9 @@ class LLMExecutor:
                         'batch_size': int(llm_config.get('typing_batch_size', 50)),  # Larger batch size
                         'batch_delay': float(llm_config.get('typing_batch_delay', 0.1)),  # Shorter delay
                         # Add keystroke delay to prevent duplicate characters on slow machines
-                        'keystroke_delay': float(llm_config.get('keystroke_delay', 0.01))  # Default 10ms between keystrokes
+                        'keystroke_delay': float(llm_config.get('keystroke_delay', 0.01)),  # Default 10ms between keystrokes
+                        # Allow forcing clipboard-based paste when needed (Unicode-heavy text)
+                        'use_clipboard': bool(llm_config.get('use_clipboard', False))
                     }
                     logger.info(f"Created type_action with char_by_char=False, char_delay={type_action['char_delay']}")
                     logger.info(f"Batch parameters: batch_size={type_action['batch_size']}, batch_delay={type_action['batch_delay']}")
