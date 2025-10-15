@@ -263,7 +263,7 @@ class LLMExecutor:
             try:
                 # Disable ComoRAG by default to use regular chat endpoint
                 # Use longer timeout for local model processing (5 minutes)
-                client = OllamaClient(base_url=api_url, debug=True, use_comorag=False, timeout=300)
+                client = OllamaClient(base_url=api_url, debug=True, use_comorag=False)
                 
                 # Set ComoRAG parameters if enabled (but we're disabling it for now)
                 if use_comorag and hasattr(client, 'set_comorag_config'):
@@ -571,23 +571,15 @@ class LLMExecutor:
                     logger.info("Stop flag detected before API call - aborting LLM execution")
                     return None
                 
-                # Test API connection first
+                # Test API connection first (non-blocking and non-fatal)
                 logger.info(f"Testing API connection to {api_url}...")
                 try:
                     import requests
-                    test_response = requests.get(f"{api_url}/health", timeout=5)
+                    test_response = requests.get(f"{api_url}/health")
                     if test_response.status_code != 200:
-                        logger.warning(f"API health check failed with status {test_response.status_code}")
-                except requests.exceptions.RequestException as conn_error:
-                    logger.error(f"API connection test failed: {conn_error}")
-                    logger.error("The LLM API server is not running or not accessible.")
-                    logger.error("Please ensure the main application is started properly to initialize the API server.")
-                    
-                    # Store error message in output variable
-                    error_message = f"API connection failed: {str(conn_error)}. Please ensure the LLM API server is running."
-                    self.variables[output_variable] = error_message
-                    logger.error(f"Stored error message in variable '{output_variable}': {error_message}")
-                    return None
+                        logger.warning(f"API health check failed with status {test_response.status_code}; proceeding anyway.")
+                except Exception as conn_error:
+                    logger.warning(f"API health check error: {conn_error}; proceeding without health verification.")
                 
                 if use_async:
                     # Define callback function to handle async response

@@ -45,8 +45,6 @@ class OllamaClient:
             'Content-Type': 'application/json',
             'Accept': 'application/json'
         })
-        # Set default timeout for all requests in this session
-        self.session.timeout = timeout
         self.context_data = []  # Store context for ComoRAG
         self.comorag_config = {
             'max_cycles': 5,
@@ -63,7 +61,7 @@ class OllamaClient:
     def health_check(self) -> Dict[str, Any]:
         """Check if the API server and Ollama are healthy"""
         try:
-            response = self.session.get(f"{self.base_url}/health", timeout=10)
+            response = self.session.get(f"{self.base_url}/health")
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -121,8 +119,7 @@ class OllamaClient:
         try:
             response = self.session.post(
                 f"{self.base_url}/generate",
-                json=payload,
-                timeout=self.timeout  # Use configured timeout
+                json=payload
             )
             response.raise_for_status()
             result = response.json()
@@ -195,8 +192,7 @@ class OllamaClient:
         try:
             response = self.session.post(
                 f"{self.base_url}/embeddings",
-                json=payload,
-                timeout=self.timeout
+                json=payload
             )
             response.raise_for_status()
             data = response.json()
@@ -478,8 +474,7 @@ class OllamaClient:
         try:
             response = self.session.post(
                 f"{self.base_url}/comorag/reason",
-                json=payload,
-                timeout=360  # 6 minutes timeout for ComoRAG reasoning
+                json=payload
             )
             response.raise_for_status()
             result = response.json()

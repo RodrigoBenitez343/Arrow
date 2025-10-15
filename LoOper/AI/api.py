@@ -154,7 +154,7 @@ async def root():
 async def health_check():
     """Check if Ollama server is running"""
     try:
-        response = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=5)
+        response = requests.get(f"{get_ollama_base_url()}/api/tags")
         if response.status_code == 200:
             return {"status": "healthy", "ollama_server": "running"}
         else:
@@ -240,8 +240,7 @@ async def chat_with_model(request: ChatRequest):
             # Send request to Ollama chat API
             response = requests.post(
                 f"{get_ollama_base_url()}/api/chat",
-                json=ollama_payload,
-                timeout=300  # 5 minutes for local model processing
+                json=ollama_payload
             )
         else:
             # Use generate API for text-only requests
@@ -263,8 +262,7 @@ async def chat_with_model(request: ChatRequest):
             # Send request to Ollama generate API
             response = requests.post(
                 f"{get_ollama_base_url()}/api/generate",
-                json=ollama_payload,
-                timeout=300  # 5 minutes for local model processing
+                json=ollama_payload
             )
         
         response.raise_for_status()
@@ -336,8 +334,7 @@ async def get_embeddings(request: EmbeddingsRequest):
 
         response = requests.post(
             f"{get_ollama_base_url()}/api/embeddings",
-            json=ollama_payload,
-            timeout=60
+            json=ollama_payload
         )
         response.raise_for_status()
         data = response.json()
