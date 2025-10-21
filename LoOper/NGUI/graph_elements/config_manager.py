@@ -4,6 +4,16 @@ import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
 from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode
 
+# Import cache invalidation function
+try:
+    from ...player.json_cache import invalidate_file, clear_cache
+except ImportError:
+    # Fallback if import fails
+    def invalidate_file(file_path):
+        pass
+    def clear_cache():
+        pass
+
 # Configure logger
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -156,6 +166,10 @@ class ConfigManager:
                 logger.debug(f"Saving configuration to: {file_path}")
                 with open(file_path, 'w') as f:
                     json.dump(self.chain_config, f, indent=2)
+                
+                # Clear entire cache to ensure all chains are updated immediately
+                logger.debug("Clearing entire cache to ensure all chains are updated")
+                clear_cache()
                 
                 logger.info(f"Successfully saved chain to: {file_path}")
                 return True

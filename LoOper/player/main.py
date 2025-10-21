@@ -23,6 +23,17 @@ def main():
     parser.add_argument("file", help="Path to sequence file (.json) or chain config file (.json)")
     args = parser.parse_args()
 
+    # Clear the JSON cache to ensure we have the most updated version of all chains
+    logger.info("Clearing JSON cache before execution")
+    try:
+        from .json_cache import clear_cache
+        clear_cache()
+        logger.info("JSON cache cleared successfully")
+    except ImportError as e:
+        logger.warning(f"Failed to import cache clearing function: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to clear cache: {e}")
+
     # Global stop flag for ESC key cancellation
     stop_requested = threading.Event()
     

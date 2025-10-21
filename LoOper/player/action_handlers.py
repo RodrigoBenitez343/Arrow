@@ -67,7 +67,7 @@ class ActionHandlers:
         
         # Get retry configuration from action
         retry_attempts = action.get('fallback_retry_attempts', 3)
-        retry_delay = action.get('fallback_retry_delay', 1.0)
+        retry_delay = action.get('fallback_retry_delay', 0.3)
 
         # Capture single screenshot for all search attempts to improve efficiency
         current_screen_cv = None
@@ -383,7 +383,7 @@ class ActionHandlers:
             else:
                 # Batch typing mode
                 batch_size = action.get('batch_size', 5)  # Default to 5 chars per batch
-                batch_delay = action.get('batch_delay', 0.15)  # Default to 0.15s between batches
+                batch_delay = action.get('batch_delay', 0.05)  # Default to 0.05s between batches
                 logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}, keystroke_delay={keystroke_delay}s")
             
             # Type text in batches for significantly improved speed

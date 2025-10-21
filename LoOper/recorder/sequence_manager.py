@@ -1,6 +1,17 @@
 # sequence_manager.py
+
 import json
 import time
+
+# Import cache invalidation function
+try:
+    from ..player.json_cache import invalidate_file, clear_cache
+except ImportError:
+    # Fallback if import fails
+    def invalidate_file(file_path):
+        pass
+    def clear_cache():
+        pass
 
 
 class SequenceManager:
@@ -41,6 +52,10 @@ class SequenceManager:
         
         with open(filename, 'w') as f:
             json.dump(output, f, indent=4)
+        
+        # Clear entire cache to ensure all chains are updated immediately
+        print(f"DEBUG: Clearing entire cache after saving sequence: {filename}")
+        clear_cache()
         
         print(f"\n✅ Saved to {filename} | {len(self.recorded_actions)} actions")
     

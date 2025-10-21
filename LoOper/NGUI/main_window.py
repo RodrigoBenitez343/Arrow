@@ -197,6 +197,17 @@ class MainWindow(QMainWindow):
         """Runs the current automation chain by saving it to a temporary file and passing it to the player."""
         logger.info("Run chain requested")
         try:
+            # Clear the JSON cache to ensure we have the most updated version of all chains
+            logger.info("Clearing JSON cache before chain execution")
+            try:
+                from player.json_cache import clear_cache
+                clear_cache()
+                logger.info("JSON cache cleared successfully")
+            except ImportError as e:
+                logger.warning(f"Failed to import cache clearing function: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to clear cache: {e}")
+            
             logger.debug("Getting chain configuration from graph view")
             chain_config = self.graph_view.get_chain_config()
             if not chain_config:

@@ -196,7 +196,7 @@ class SequenceExecutor:
                             if action.get('type') in ['click', 'double_click'] and action.get('screenshot'):
                                 action['fallback_sequence'] = fallback_config['sequence_file']
                                 action['fallback_retry_attempts'] = fallback_config.get('retry_attempts', 3)
-                                action['fallback_retry_delay'] = fallback_config.get('retry_delay', 1.0)
+                                action['fallback_retry_delay'] = fallback_config.get('retry_delay', 0.3)
                                 logger.info(f"Injected action-specific fallback sequence {fallback_config['sequence_file']} into action {action_idx_int}")
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Invalid action index '{action_idx}' in action_fallbacks: {e}")

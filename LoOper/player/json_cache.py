@@ -284,6 +284,127 @@ class JSONCache:
         self._loaded_chains.clear()
         logger.info("JSON cache cleared")
     
+    def invalidate_file(self, file_path: str):
+        """
+        Invalidate cache for a specific file and all chains that depend on it.
+        
+        Args:
+            file_path (str): Path to the file that was modified
+        """
+        resolved_path = os.path.abspath(file_path) if file_path else None
+        if not resolved_path:
+            return
+            
+        logger.info(f"Invalidating cache for file: {resolved_path}")
+        
+        # Remove from sequence cache if it's a sequence
+        if resolved_path in self._sequence_cache:
+            del self._sequence_cache[resolved_path]
+            logger.debug(f"Removed sequence from cache: {resolved_path}")
+        
+        # Remove from chain cache if it's a chain
+        if resolved_path in self._chain_cache:
+            del self._chain_cache[resolved_path]
+            self._loaded_chains.discard(resolved_path)
+            logger.debug(f"Removed chain from cache: {resolved_path}")
+        
+        # Find and invalidate all chains that depend on this file
+        self._invalidate_dependent_chains(resolved_path)
+        
+        # Clear path cache entries that might reference this file
+        keys_to_remove = []
+        for key, cached_path in self._path_cache.items():
+            if cached_path == resolved_path:
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            del self._path_cache[key]
+            logger.debug(f"Removed path cache entry: {key}")
+    
+    def _invalidate_dependent_chains(self, modified_file_path: str):
+        """
+        Recursively invalidate all chains that depend on the modified file.
+        
+        Args:
+            modified_file_path (str): Path to the file that was modified
+        """
+        chains_to_invalidate = []
+        
+        # Check all cached chains for dependencies on the modified file
+        for chain_path, chain_config in self._chain_cache.items():
+            if self._chain_depends_on_file(chain_config, modified_file_path, os.path.dirname(chain_path)):
+                chains_to_invalidate.append(chain_path)
+        
+        # Invalidate dependent chains
+        for chain_path in chains_to_invalidate:
+            logger.info(f"Invalidating dependent chain: {chain_path}")
+            del self._chain_cache[chain_path]
+            self._loaded_chains.discard(chain_path)
+            
+            # Recursively invalidate chains that depend on this chain
+            self._invalidate_dependent_chains(chain_path)
+    
+    def _chain_depends_on_file(self, chain_config: Dict[str, Any], file_path: str, base_dir: str) -> bool:
+        """
+        Check if a chain configuration depends on a specific file.
+        
+        Args:
+            chain_config (dict): Chain configuration to check
+            file_path (str): File path to check for dependency
+            base_dir (str): Base directory for resolving relative paths
+            
+        Returns:
+            bool: True if the chain depends on the file
+        """
+        if not isinstance(chain_config, dict):
+            return False
+        
+        # Check sequence dependencies
+        for sequence_config in chain_config.get('sequences', []):
+            seq_file = self._extract_sequence_file(sequence_config)
+            if seq_file:
+                resolved_seq_path = self._resolve_sequence_path(seq_file, base_dir)
+                if resolved_seq_path and os.path.abspath(resolved_seq_path) == os.path.abspath(file_path):
+                    return True
+        
+        # Check chain import dependencies
+        for import_node in chain_config.get('chain_import_nodes', []):
+            import_file = import_node.get('chain_file')
+            if import_file:
+                resolved_import_path = self._resolve_path(import_file, base_dir)
+                if resolved_import_path and os.path.abspath(resolved_import_path) == os.path.abspath(file_path):
+                    return True
+        
+        return False
+    
+    def invalidate_directory(self, directory_path: str):
+        """
+        Invalidate cache for all files in a directory.
+        
+        Args:
+            directory_path (str): Path to the directory
+        """
+        if not os.path.isdir(directory_path):
+            return
+            
+        abs_dir_path = os.path.abspath(directory_path)
+        logger.info(f"Invalidating cache for directory: {abs_dir_path}")
+        
+        # Find all cached files in this directory
+        files_to_invalidate = []
+        
+        for cached_path in self._sequence_cache.keys():
+            if os.path.dirname(os.path.abspath(cached_path)) == abs_dir_path:
+                files_to_invalidate.append(cached_path)
+        
+        for cached_path in self._chain_cache.keys():
+            if os.path.dirname(os.path.abspath(cached_path)) == abs_dir_path:
+                files_to_invalidate.append(cached_path)
+        
+        # Invalidate each file
+        for file_path in files_to_invalidate:
+            self.invalidate_file(file_path)
+    
     def get_cache_stats(self) -> Dict[str, int]:
         """
         Get cache statistics.
@@ -320,3 +441,18 @@ def get_sequence(sequence_file: str, base_dir: Optional[str] = None) -> Optional
 def get_chain(chain_file_path: str) -> Optional[Dict[str, Any]]:
     """Convenience function to get a chain using the global cache."""
     return _global_cache.get_chain(chain_file_path)
+
+
+def invalidate_file(file_path: str):
+    """Convenience function to invalidate cache for a specific file."""
+    return _global_cache.invalidate_file(file_path)
+
+
+def invalidate_directory(directory_path: str):
+    """Convenience function to invalidate cache for all files in a directory."""
+    return _global_cache.invalidate_directory(directory_path)
+
+
+def clear_cache():
+    """Convenience function to clear the entire cache."""
+    return _global_cache.clear_cache()

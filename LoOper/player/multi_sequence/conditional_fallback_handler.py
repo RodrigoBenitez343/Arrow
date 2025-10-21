@@ -234,7 +234,7 @@ class ConditionalFallbackHandler:
             loop_type = conditional_data.get('loop_type', 'while_present')
             max_iterations = int(conditional_data.get('max_loops', 10))
             sequence_file = conditional_data.get('sequence_file', '')
-            iteration_delay = float(conditional_data.get('iteration_delay', 1.0))
+            iteration_delay = float(conditional_data.get('iteration_delay', 0.3))
             
             # Parse the stored loop condition
             loop_condition_json = conditional_data.get('loop_condition', '{}')
@@ -564,7 +564,7 @@ class ConditionalFallbackHandler:
             loop_type = loop_config.get('type', 'while_present')  # while_present, while_absent, until_present, until_absent
             condition = loop_config.get('condition', {})
             max_iterations = loop_config.get('max_iterations', 10)
-            iteration_delay = loop_config.get('iteration_delay', 1.0)
+            iteration_delay = loop_config.get('iteration_delay', 0.3)
             sequence_file = loop_config.get('sequence_file')
             
             if not sequence_file:

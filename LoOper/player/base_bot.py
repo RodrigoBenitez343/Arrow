@@ -165,7 +165,7 @@ class SeleniumBot:
             return True
             
         # Get the delay before the action, or use a default random delay.
-        delay = action.get('delay_before', random.uniform(0.5, 1.5))
+        delay = action.get('delay_before', random.uniform(0.1, 0.3))
         logger.debug(f"Action {idx}: Waiting {delay:.2f}s before action")
         # Ensure the delay is within a reasonable range (0.1 to 5.0 seconds).
         delay = max(0.1, min(delay, 5.0))

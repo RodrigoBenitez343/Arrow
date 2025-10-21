@@ -8,6 +8,16 @@ from PyQt5.QtCore import Qt
 from ..graph_elements.config_manager import ConfigManager
 from ..constants import TEXT_COLOR
 
+# Import cache invalidation function
+try:
+    from ...player.json_cache import invalidate_file, clear_cache
+except ImportError:
+    # Fallback if import fails
+    def invalidate_file(file_path):
+        pass
+    def clear_cache():
+        pass
+
 class ChainExpansionDialog(QDialog):
     """Dialog for expanding and editing imported chains in a separate graph view"""
     
@@ -247,6 +257,10 @@ Node Types:
             # Save the updated configuration
             with open(chain_file, 'w', encoding='utf-8') as f:
                 json.dump(updated_config, f, indent=2)
+            
+            # Clear entire cache to ensure all chains are updated immediately
+            print(f"DEBUG: Clearing entire cache after modifying chain: {chain_file}")
+            clear_cache()
             
             QMessageBox.information(self, "Success", "Chain changes saved successfully.")
             

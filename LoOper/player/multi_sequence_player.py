@@ -176,7 +176,7 @@ class MultiSequencePlayer(SeleniumBot):
             item = self.sequences[self.current_sequence_index]
             seq_file = item['sequence_file']
             loops = item['loop_count']
-            extra_delay = item.get('extra_delay', 1)
+            extra_delay = item.get('extra_delay', 0.2)
             
             # Handle pre-sequence conditional checks
             advanced_conditions = item.get('advanced_conditions', {})
