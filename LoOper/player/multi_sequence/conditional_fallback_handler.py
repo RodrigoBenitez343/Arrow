@@ -3,9 +3,12 @@
 Conditional fallback handler for multi-sequence automation.
 Handles various types of conditional fallbacks for complex automation scenarios.
 """
-
+import sys
+import json
 import time
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..config import logger
 from ..computer_vision import TemplateMatching
 from ..sequence_player import SequencePlayer
@@ -63,15 +66,16 @@ class ConditionalFallbackHandler:
                 continue
         return path
 
-    def check_presence_trigger(self, trigger_config):
+    def check_presence_trigger(self, trigger_config, screen_cv=None):
         """
-        Check if a visual element is present on screen with enhanced validation and timeout support
+        Check if a visual element is present on screen
         
         Args:
-            trigger_config (dict): Configuration with 'image_path', 'confidence', 'timeout', etc.
+            trigger_config (dict): Configuration with 'image_path', 'confidence', 'timeout'
+            screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
-            bool: True if element is found with high confidence within timeout
+            bool: True if element is found within timeout
         """
         try:
             image_path = trigger_config.get('image_path')
@@ -88,20 +92,30 @@ class ConditionalFallbackHandler:
             
             # Use template matching with timeout support
             start_time = time.time()
-            scales = [1.0, 0.9, 1.1, 0.8, 1.2]  # Multi-scale detection
+            scales = [1.0, 0.9, 1.1]  # Optimized scales for faster matching
             
             while time.time() - start_time < timeout:
                 if self.stop_flag and self.stop_flag():
                     logger.info("Presence trigger check stopped by user request")
                     return False
+                
+                # Capture shared screenshot if not provided
+                current_screen_cv = screen_cv
+                if current_screen_cv is None:
+                    current_screen_cv = self.template_matcher.capture_screen()
                     
                 # Perform single presence check using the existing method
-                found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config)
+                found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config, current_screen_cv)
                 if found:
                     logger.info(f"Presence trigger satisfied - element found: {image_path}")
                     return True
-                    
-                time.sleep(0.5)
+                
+                # Only sleep if we're in a polling loop (screen_cv not provided)
+                if screen_cv is None:
+                    time.sleep(0.1)  # Reduced from 0.5s to 0.1s for faster polling
+                else:
+                    # If screen_cv was provided, this is a single-shot check
+                    break
             
             logger.info(f"Presence trigger timeout - element not found: {image_path}")
             return False
@@ -337,77 +351,103 @@ class ConditionalFallbackHandler:
             pass
         return self.execute_conditional_loop(loop_config, temp_sequence_player)
     
-    def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config):
+    def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config, screen_cv=None):
         """
-        Perform a single presence check with enhanced validation
+        Perform a single presence check with optimized fast validation
         
         Args:
             image_path (str): Path to the image to find
             confidence (float): Confidence threshold
             scales (list): List of scales to try
             trigger_config (dict): Full trigger configuration
+            screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
             bool: True if element is found
         """
-        # Enhanced validation: perform multiple checks with different methods
-        validation_passed = 0
-        total_validations = 0
-        
-        # Method 1: Multi-scale template matching
-        result = self.template_matcher.multiscale_template_match(
-            image_path, confidence, scales
-        )
-        total_validations += 1
-        if result is not None:
-            validation_passed += 1
-            logger.debug(f"[VALIDATION 1/3] Multi-scale match found at {result}")
-        else:
-            logger.debug(f"[VALIDATION 1/3] Multi-scale match failed")
-        
-        # Method 2: Higher confidence check (confidence + 0.1)
-        high_confidence = min(0.95, confidence + 0.1)
-        result_high = self.template_matcher.multiscale_template_match(
-            image_path, high_confidence, scales
-        )
-        total_validations += 1
-        if result_high is not None:
-            validation_passed += 1
-            logger.debug(f"[VALIDATION 2/3] High confidence match found at {result_high}")
-        else:
-            logger.debug(f"[VALIDATION 2/3] High confidence match failed (threshold: {high_confidence})")
-        
-        # Method 3: Grayscale validation if we found something
-        if result is not None:
-            result_gray = self.template_matcher.multiscale_template_match(
-                image_path, confidence, scales, grayscale=True
+        try:
+            # Fast single-pass validation with early exit
+            # Use only the most effective scales for speed
+            fast_scales = [1.0, 0.9, 1.1]  # Reduced from 5 to 3 scales
+            
+            # Check if we have region hints from selection_memory or trigger config
+            region_hint = None
+            hint_x = hint_y = None
+            
+            # First, check if trigger config has explicit region or coordinates
+            if 'region' in trigger_config and trigger_config['region']:
+                region = trigger_config['region']
+                if isinstance(region, dict):
+                    hint_x = region.get('x')
+                    hint_y = region.get('y')
+                elif isinstance(region, (list, tuple)) and len(region) >= 2:
+                    hint_x, hint_y = region[0], region[1]
+            
+            # If no explicit region, check selection_memory for last known coordinates
+            if hint_x is None or hint_y is None:
+                if hasattr(self, 'selection_memory') and self.selection_memory:
+                    element_key = os.path.abspath(image_path)
+                    if element_key in self.selection_memory:
+                        # selection_memory stores the last selected index, not coordinates
+                        # We'll need to use the original coordinates from the action if available
+                        pass
+                elif hasattr(self, 'template_matcher') and hasattr(self.template_matcher, 'bot') and hasattr(self.template_matcher.bot, 'selection_memory'):
+                    element_key = os.path.abspath(image_path)
+                    if element_key in self.template_matcher.bot.selection_memory:
+                        # Similar case - selection_memory stores index, not coordinates
+                        pass
+            
+            # If we have hint coordinates, try region-based search first for better performance
+            if isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
+                logger.debug(f"[REGION HINT] Using region-based search with hint ({hint_x}, {hint_y})")
+                
+                # Try region-based search with moderate expansion factor
+                region_result = self.template_matcher.region_based_search(
+                    image_path,
+                    int(hint_x),
+                    int(hint_y),
+                    confidence,
+                    expand_factor=2.0,  # Reasonable expansion for conditional triggers
+                    grayscale=True,
+                    screen_cv=screen_cv
+                )
+                
+                if region_result is not None:
+                    logger.debug(f"[REGION HIT] Region-based search found match at {region_result}: {image_path}")
+                    return True
+                else:
+                    logger.debug(f"[REGION MISS] Region-based search failed, falling back to full-screen: {image_path}")
+            
+            # Primary validation: Multi-scale template matching with shared screen
+            result = self.template_matcher.multiscale_template_match(
+                image_path, confidence, fast_scales, screen_cv=screen_cv
             )
-            total_validations += 1
-            if result_gray is not None:
-                validation_passed += 1
-                logger.debug(f"[VALIDATION 3/3] Grayscale match found at {result_gray}")
+            
+            if result is not None:
+                logger.debug(f"[FAST CHECK PASSED] Primary validation found match at {result}: {image_path}")
+                
+                # For strict validation, perform one additional quick check with higher confidence
+                strict_validation = trigger_config.get('strict_validation', False)
+                if strict_validation:
+                    high_confidence = min(0.95, confidence + 0.15)
+                    high_conf_result = self.template_matcher.multiscale_template_match(
+                        image_path, high_confidence, [1.0], screen_cv=screen_cv  # Only check at 1.0 scale for speed
+                    )
+                    if high_conf_result is not None:
+                        logger.debug(f"[STRICT CHECK PASSED] High confidence validation passed: {image_path}")
+                        return True
+                    else:
+                        logger.debug(f"[STRICT CHECK FAILED] High confidence validation failed, but primary passed: {image_path}")
+                        return True  # Still return True since primary validation passed
+                else:
+                    return True
             else:
-                logger.debug(f"[VALIDATION 3/3] Grayscale match failed")
-        
-        # Determine validation requirements based on strict_validation flag
-        strict_validation = trigger_config.get('strict_validation', False)
-        if strict_validation:
-            # For strict validation (until_present loops), require at least 2 out of 3 validations to pass
-            # This is more reasonable than requiring ALL validations
-            min_validations_required = max(1, min(2, total_validations))
-            logger.debug(f"[STRICT MODE] Requiring at least {min_validations_required}/{total_validations} validations to pass")
-        else:
-            # Normal validation
-            min_validations_required = 1
-        
-        found = validation_passed >= min_validations_required
-        
-        if found:
-            logger.debug(f"[SINGLE CHECK PASSED] Image validation passed ({validation_passed}/{total_validations}): {image_path} at coordinates {result}")
-        else:
-            logger.debug(f"[SINGLE CHECK FAILED] Image validation failed ({validation_passed}/{total_validations}): {image_path}")
-        
-        return found
+                logger.debug(f"[FAST CHECK FAILED] Primary validation failed: {image_path}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"[FAST CHECK ERROR] Exception during validation: {e}")
+            return False
     
     def check_ocr_trigger(self, trigger_config, timeout=None, stop_flag=None):
         """
@@ -457,13 +497,14 @@ class ConditionalFallbackHandler:
             logger.error(f"Error checking OCR trigger: {e}")
             return False
     
-    def check_absence_trigger(self, trigger_config, timeout):
+    def check_absence_trigger(self, trigger_config, timeout, screen_cv=None):
         """
         Check if a visual element is absent from screen within timeout
         
         Args:
             trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
             timeout (float): Maximum time to wait for absence
+            screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
             bool: True if element becomes absent within timeout
@@ -477,16 +518,33 @@ class ConditionalFallbackHandler:
             if self.stop_flag and self.stop_flag():
                 logger.info("Absence trigger check stopped by user request")
                 return False
+            
+            # Capture shared screenshot if not provided
+            current_screen_cv = screen_cv
+            if current_screen_cv is None:
+                current_screen_cv = self.template_matcher.capture_screen()
                 
-            # Check if element is present (we want it to be absent)
-            is_present = self.check_presence_trigger(trigger_config)
+            # Check if element is present using shared screenshot (we want it to be absent)
+            is_present = self._perform_single_presence_check(
+                self._resolve_path(trigger_config.get('image_path'), add_json=False),
+                trigger_config.get('confidence', 0.8),
+                [1.0, 0.9, 1.1],
+                trigger_config,
+                current_screen_cv
+            )
+            
             if not is_present:
                 logger.info(f"Absence trigger satisfied - element not found: {image_path}")
                 return True
             else:
                 logger.debug(f"Element still present, continuing absence check: {image_path}")
-                
-            time.sleep(0.5)
+            
+            # Only sleep if we're in a polling loop (screen_cv not provided)
+            if screen_cv is None:
+                time.sleep(0.1)  # Reduced from 0.5s to 0.1s for faster polling
+            else:
+                # If screen_cv was provided, this is a single-shot check
+                break
         
         logger.info(f"Absence trigger timeout - element remained present: {image_path}")
         return False
@@ -658,7 +716,7 @@ class ConditionalFallbackHandler:
 
     def handle_pre_sequence_conditions(self, item, stop_flag, advanced_conditions):
         """
-        Handle conditional checks before executing a sequence
+        Handle conditional checks before executing a sequence with parallel processing
         
         Args:
             item (dict): Sequence configuration item
@@ -671,28 +729,65 @@ class ConditionalFallbackHandler:
         if stop_flag:
             self.stop_flag = stop_flag
             
-        # Check for presence triggers that must be met before execution
+        # Collect all trigger checks to run in parallel
+        trigger_tasks = []
+        
+        # Prepare presence trigger tasks
         presence_triggers = advanced_conditions.get('presence_triggers', [])
         for trigger in presence_triggers:
-            if stop_flag and stop_flag():
-                return True
-                
-            if not self.check_presence_trigger(trigger):
-                logger.info(f"Presence trigger not met, skipping sequence: {trigger.get('image_path')}")
-                return True
+            trigger_tasks.append(('presence', trigger))
         
-        # Check for absence triggers that must be met before execution
+        # Prepare absence trigger tasks
         absence_triggers = advanced_conditions.get('absence_triggers', [])
         for trigger in absence_triggers:
-            if stop_flag and stop_flag():
-                return True
+            trigger_tasks.append(('absence', trigger))
+        
+        # Execute all trigger checks in parallel if we have any
+        if trigger_tasks:
+            def check_trigger(trigger_type, trigger_config):
+                """Helper function to check a single trigger"""
+                try:
+                    if stop_flag and stop_flag():
+                        return False, f"Stop flag detected for {trigger_type} trigger"
+                    
+                    if trigger_type == 'presence':
+                        result = self.check_presence_trigger(trigger_config)
+                        if not result:
+                            return False, f"Presence trigger not met: {trigger_config.get('image_path')}"
+                        return True, None
+                    
+                    elif trigger_type == 'absence':
+                        timeout = trigger_config.get('timeout', 10)
+                        result = self.check_absence_trigger(trigger_config, timeout)
+                        if not result:
+                            return False, f"Absence trigger not met: {trigger_config.get('image_path')}"
+                        return True, None
+                    
+                    return True, None
+                except Exception as e:
+                    return False, f"Error checking {trigger_type} trigger: {e}"
+            
+            # Execute trigger checks in parallel
+            with ThreadPoolExecutor(max_workers=min(len(trigger_tasks), 4)) as executor:
+                future_to_trigger = {
+                    executor.submit(check_trigger, trigger_type, trigger_config): (trigger_type, trigger_config)
+                    for trigger_type, trigger_config in trigger_tasks
+                }
                 
-            timeout = trigger.get('timeout', 10)
-            if not self.check_absence_trigger(trigger, timeout):
-                logger.info(f"Absence trigger not met, skipping sequence: {trigger.get('image_path')}")
-                return True
+                # Check results as they complete
+                for future in as_completed(future_to_trigger):
+                    trigger_type, trigger_config = future_to_trigger[future]
+                    try:
+                        success, error_msg = future.result()
+                        if not success:
+                            logger.info(error_msg)
+                            return True  # Skip sequence if any trigger fails
+                    except Exception as e:
+                        logger.error(f"Exception in {trigger_type} trigger check: {e}")
+                        return True  # Skip sequence on exception
         
         # Handle conditional loops that should execute before the main sequence
+        # These are executed sequentially as they may depend on each other
         pre_conditional_loops = advanced_conditions.get('pre_conditional_loops', [])
         for loop_config in pre_conditional_loops:
             if stop_flag and stop_flag():
@@ -714,7 +809,7 @@ class ConditionalFallbackHandler:
 
     def handle_post_sequence_conditions(self, item, stop_flag, advanced_conditions):
         """
-        Handle conditional actions after executing a sequence
+        Handle conditional actions after executing a sequence with parallel processing
         
         Args:
             item (dict): Sequence configuration item
@@ -725,6 +820,7 @@ class ConditionalFallbackHandler:
             self.stop_flag = stop_flag
             
         # Handle conditional loops that should execute after the main sequence
+        # These are executed sequentially as they may depend on each other
         post_conditional_loops = advanced_conditions.get('post_conditional_loops', [])
         for loop_config in post_conditional_loops:
             if stop_flag and stop_flag():
@@ -738,20 +834,30 @@ class ConditionalFallbackHandler:
                 temp_sequence_player = SequencePlayer(resolved_seq_file)
                 self.execute_conditional_loop(loop_config, temp_sequence_player)
         
-        # Handle wait conditions (wait for presence/absence of elements or OCR text)
+        # Handle wait conditions (wait for presence/absence of elements or OCR text) in parallel
         wait_conditions = advanced_conditions.get('wait_conditions', [])
-        for condition in wait_conditions:
-            if stop_flag and stop_flag():
-                return
-                
-            condition_type = condition.get('type', 'presence')
-            timeout = float(condition.get('timeout', 30))
-            
-            logger.info(f"Waiting for {condition_type} condition: {condition.get('image_path') or condition.get('target_text')}")
-            
-            if condition_type == 'presence':
-                self.check_presence_trigger(condition)
-            elif condition_type == 'absence':
-                self.check_absence_trigger(condition, timeout)
-            elif condition_type == 'ocr':
-                self.check_ocr_trigger(condition, stop_flag=stop_flag)
+        if wait_conditions:
+            def check_wait_condition(condition):
+                """Helper function to check a single wait condition"""
+                try:
+                    if stop_flag and stop_flag():
+                        return False, "Stop flag detected"
+                    
+                    condition_type = condition.get('type', 'presence')
+                    timeout = float(condition.get('timeout', 30))
+                    
+                    logger.info(f"Waiting for {condition_type} condition: {condition.get('image_path') or condition.get('target_text')}")
+                    
+                    if condition_type == 'presence':
+                        result = self.check_presence_trigger(condition)
+                        return result, f"Presence condition {'met' if result else 'not met'}"
+                    elif condition_type == 'absence':
+                        result = self.check_absence_trigger(condition, timeout)
+                        return result, f"Absence condition {'met' if result else 'not met'}"
+                    elif condition_type == 'ocr':
+                        result = self.check_ocr_trigger(condition, stop_flag=stop_flag)
+                        return result, f"OCR condition {'met' if result else 'not met'}"
+                    else:
+                        return False, f"Unknown condition type: {condition_type}"
+                except Exception as e:
+                    return False, f"Error checking wait condition: {e}"

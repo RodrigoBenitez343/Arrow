@@ -10,6 +10,7 @@ import os
 from .config import logger
 from .base_bot import SeleniumBot
 from .sequence_player import SequencePlayer
+from .json_cache import preload_chain, get_cache
 from .multi_sequence import (
     ConditionalFallbackHandler,
     WorkflowGraphBuilder,
@@ -48,6 +49,20 @@ class MultiSequencePlayer(SeleniumBot):
         if chain_file_path:
             import os
             self.chain_file_dir = os.path.dirname(os.path.abspath(chain_file_path))
+        
+        # Preload entire chain and all referenced sequences for optimal performance
+        if chain_file_path:
+            try:
+                logger.info("Preloading entire chain and all sequences...")
+                start_time = time.time()
+                preload_chain(chain_file_path, self.chain_file_dir)
+                preload_time = time.time() - start_time
+                cache_stats = get_cache().get_cache_stats()
+                logger.info(f"Chain preloading completed in {preload_time:.3f}s - "
+                           f"Cached {cache_stats['sequences_cached']} sequences, "
+                           f"{cache_stats['chains_cached']} chains")
+            except Exception as e:
+                logger.warning(f"Failed to preload chain: {e}. Falling back to on-demand loading.")
         
         # Handle both legacy list format and new dict format
         if isinstance(chain_config, list):

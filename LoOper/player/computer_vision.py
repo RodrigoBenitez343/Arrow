@@ -6,10 +6,20 @@ Computer vision and template matching functionality for the LocalOperator automa
 import os
 import time
 import pyautogui
+from functools import lru_cache
 from .config import logger, CV2_AVAILABLE, OCR_AVAILABLE
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
+
+# Import mss for faster screenshot capture
+try:
+    import mss
+    MSS_AVAILABLE = True
+    logger.debug("mss library available for fast screenshot capture")
+except ImportError:
+    MSS_AVAILABLE = False
+    logger.debug("mss library not available, falling back to pyautogui")
 
 if CV2_AVAILABLE:
     import cv2
@@ -26,15 +36,96 @@ class TemplateMatching:
     Handles computer vision operations for template matching and image recognition.
     """
     
-    @staticmethod
-    def multiscale_template_match(template_path, confidence, scales, grayscale=True, screen_cv=None):
+    # Template cache to avoid repeated disk I/O
+    _template_cache = {}
+    _cache_max_size = 100  # Maximum number of templates to cache
+    
+    @classmethod
+    def _load_template(cls, template_path):
         """
-        Performs multi-scale template matching to handle size variations.
+        Load template with caching to avoid repeated disk I/O.
         
         Args:
             template_path (str): Path to the template image
-            confidence (float): Matching confidence threshold
-            scales (list): List of scale factors to try
+            
+        Returns:
+            numpy.ndarray: Template image or None if failed to load
+        """
+        if not CV2_AVAILABLE:
+            return None
+            
+        # Convert to absolute path for consistent caching
+        abs_path = os.path.abspath(template_path)
+        
+        # Check cache first
+        if abs_path in cls._template_cache:
+            logger.debug(f"Template cache hit: {abs_path}")
+            return cls._template_cache[abs_path]
+        
+        # Load from disk
+        template = cv2.imread(abs_path)
+        if template is None:
+            logger.debug(f"Failed to load template: {abs_path}")
+            return None
+        
+        # Add to cache with LRU eviction
+        if len(cls._template_cache) >= cls._cache_max_size:
+            # Remove oldest entry (simple FIFO for now)
+            oldest_key = next(iter(cls._template_cache))
+            del cls._template_cache[oldest_key]
+            logger.debug(f"Template cache evicted: {oldest_key}")
+        
+        cls._template_cache[abs_path] = template.copy()
+        logger.debug(f"Template cached: {abs_path}")
+        return template
+    
+    @classmethod
+    def clear_template_cache(cls):
+        """Clear the template cache."""
+        cls._template_cache.clear()
+        logger.debug("Template cache cleared")
+    
+    @staticmethod
+    def capture_screen():
+        """
+        Capture screen using the fastest available method.
+        
+        Returns:
+            numpy.ndarray: Screen image in BGR format for OpenCV
+        """
+        if MSS_AVAILABLE and CV2_AVAILABLE:
+            # Use mss for faster capture
+            with mss.mss() as sct:
+                # Capture the entire screen
+                monitor = sct.monitors[0]  # All monitors combined
+                screenshot = sct.grab(monitor)
+                
+                # Convert to numpy array and BGR format
+                screen_np = np.array(screenshot)
+                # mss returns BGRA, convert to BGR for OpenCV
+                screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_BGRA2BGR)
+                return screen_cv
+        else:
+            # Fallback to pyautogui
+            screen = pyautogui.screenshot()
+            screen_np = np.array(screen)
+            # pyautogui returns RGB, convert to BGR for OpenCV
+            screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
+            return screen_cv
+    
+    # Adaptive multi-scale tracking
+    _template_attempt_counts = {}  # Track attempts per template for adaptive scaling
+    _adaptive_reset_threshold = 10  # Reset attempt count after this many tries
+    
+    @staticmethod
+    def multiscale_template_match(template_path, confidence, scales=None, grayscale=True, screen_cv=None):
+        """
+        Performs multi-scale template matching with adaptive strategy for repeated checks.
+        
+        Args:
+            template_path (str): Path to the template image
+            confidence (float): Matching confidence threshold (0.0 to 1.0)
+            scales (list): List of scale factors to try (default: [1.0, 0.9, 1.1])
             grayscale (bool): Whether to use grayscale matching
             screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
@@ -42,71 +133,120 @@ class TemplateMatching:
             tuple: (x, y) coordinates if found, None otherwise
         """
         if not CV2_AVAILABLE:
-            logger.debug("OpenCV not available, skipping multi-scale template matching")
+            logger.debug("OpenCV not available, falling back to pyautogui")
             return None
-            
-        try:
-            # Load template
-            template = cv2.imread(template_path)
-            if template is None:
-                logger.debug(f"Failed to load template: {template_path}")
-                return None
-            
-            # Use provided screen or capture new one
-            if screen_cv is None:
-                screen = pyautogui.screenshot()
-                screen_np = np.array(screen)
-                screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-            
-            # Convert to grayscale if needed
-            template_work = template.copy()
-            screen_work = screen_cv.copy()
-            
-            if grayscale:
-                if len(template_work.shape) == 3:
-                    template_work = cv2.cvtColor(template_work, cv2.COLOR_BGR2GRAY)
-                if len(screen_work.shape) == 3:
-                    screen_work = cv2.cvtColor(screen_work, cv2.COLOR_BGR2GRAY)
-            
-            best_match = None
-            best_confidence = 0
-            
-            logger.debug(f"Multi-scale matching with {len(scales)} scales, confidence threshold: {confidence}")
-            
-            for scale in scales:
-                # Resize template
-                width = int(template_work.shape[1] * scale)
-                height = int(template_work.shape[0] * scale)
+        
+        # Load template using cache
+        template = TemplateMatching._load_template(template_path)
+        if template is None:
+            logger.debug(f"Failed to load template: {template_path}")
+            return None
+        
+        # Capture screen if not provided
+        if screen_cv is None:
+            screen_cv = TemplateMatching.capture_screen()
+        
+        # Convert to OpenCV format (BGR)
+        if hasattr(screen_cv, 'convert'):
+            # PIL Image
+            screen_cv = cv2.cvtColor(np.array(screen_cv), cv2.COLOR_RGB2BGR)
+        elif len(screen_cv.shape) == 3 and screen_cv.shape[2] == 4:
+            # RGBA to BGR
+            screen_cv = cv2.cvtColor(screen_cv, cv2.COLOR_RGBA2BGR)
+        
+        # Adaptive multi-scale strategy
+        abs_path = os.path.abspath(template_path)
+        attempt_count = TemplateMatching._template_attempt_counts.get(abs_path, 0)
+        
+        # Default scales with adaptive adjustment
+        if scales is None:
+            scales = [1.0, 0.9, 1.1]
+        
+        # Adaptive scale selection based on attempt history
+        if attempt_count > 0:
+            if attempt_count <= 3:
+                # First few attempts: try 1.0 scale only for speed
+                adaptive_scales = [1.0]
+                logger.debug(f"[ADAPTIVE] Using 1.0-only strategy for attempt {attempt_count}: {template_path}")
+            elif attempt_count <= 6:
+                # Medium attempts: use reduced scale set
+                adaptive_scales = [1.0, 0.9, 1.1]
+                logger.debug(f"[ADAPTIVE] Using reduced scales for attempt {attempt_count}: {template_path}")
+            else:
+                # Many attempts: use full scale set
+                adaptive_scales = scales
+                logger.debug(f"[ADAPTIVE] Using full scales for attempt {attempt_count}: {template_path}")
+        else:
+            # First attempt: use provided scales
+            adaptive_scales = scales
+        
+        # Update attempt count
+        TemplateMatching._template_attempt_counts[abs_path] = attempt_count + 1
+        
+        # Reset counter if it gets too high
+        if TemplateMatching._template_attempt_counts[abs_path] > TemplateMatching._adaptive_reset_threshold:
+            TemplateMatching._template_attempt_counts[abs_path] = 0
+            logger.debug(f"[ADAPTIVE] Reset attempt counter for: {template_path}")
+        
+        # Sort scales to prioritize 1.0 (original size) for speed
+        sorted_scales = sorted(adaptive_scales, key=lambda x: abs(x - 1.0))
+        
+        best_match = None
+        best_confidence = 0
+        early_exit_threshold = min(0.95, confidence + 0.1)  # Early exit if we get very high confidence
+        
+        for scale in sorted_scales:
+            try:
+                # Scale template
+                if scale != 1.0:
+                    h, w = template.shape[:2]
+                    new_h, new_w = int(h * scale), int(w * scale)
+                    if new_h < 10 or new_w < 10:  # Skip very small templates
+                        continue
+                    scaled_template = cv2.resize(template, (new_w, new_h))
+                else:
+                    scaled_template = template
                 
-                if width < 5 or height < 5 or width > screen_work.shape[1] or height > screen_work.shape[0]:
-                    logger.debug(f"Skipping scale {scale}: invalid dimensions {width}x{height}")
-                    continue
-                    
-                scaled_template = cv2.resize(template_work, (width, height))
+                # Convert to grayscale if needed
+                template_work = scaled_template.copy()
+                screen_work = screen_cv.copy()
+                
+                if grayscale:
+                    if len(template_work.shape) == 3:
+                        template_work = cv2.cvtColor(template_work, cv2.COLOR_BGR2GRAY)
+                    if len(screen_work.shape) == 3:
+                        screen_work = cv2.cvtColor(screen_work, cv2.COLOR_BGR2GRAY)
                 
                 # Perform template matching
-                result = cv2.matchTemplate(screen_work, scaled_template, cv2.TM_CCOEFF_NORMED)
+                result = cv2.matchTemplate(screen_work, template_work, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
                 
                 logger.debug(f"Scale {scale}: confidence {max_val:.3f} at ({max_loc[0]}, {max_loc[1]})")
                 
-                if max_val > best_confidence and max_val >= confidence:
+                # Check if this is our best match so far
+                if max_val > best_confidence:
                     best_confidence = max_val
-                    # Calculate center coordinates
-                    center_x = max_loc[0] + width // 2
-                    center_y = max_loc[1] + height // 2
-                    best_match = (center_x, center_y)
-                    logger.debug(f"New best match at scale {scale}: confidence {best_confidence:.3f}, coords ({center_x}, {center_y})")
-            
-            if best_match:
-                logger.info(f"Multi-scale match found: confidence {best_confidence:.3f}, coords {best_match}")
-            else:
-                logger.debug(f"Multi-scale matching failed: best confidence {best_confidence:.3f} < threshold {confidence}")
-                    
+                    if max_val >= confidence:
+                        # Calculate center coordinates
+                        h, w = template_work.shape[:2]
+                        center_x = max_loc[0] + w // 2
+                        center_y = max_loc[1] + h // 2
+                        best_match = (center_x, center_y)
+                        
+                        # Early exit for very high confidence matches
+                        if max_val >= early_exit_threshold:
+                            logger.debug(f"[EARLY EXIT] High confidence {max_val:.3f} >= {early_exit_threshold:.3f}")
+                            break
+                
+            except Exception as e:
+                logger.debug(f"Scale {scale} failed: {e}")
+                continue
+        
+        if best_match and best_confidence >= confidence:
+            logger.debug(f"Multi-scale match found: confidence {best_confidence:.3f}, coords {best_match}")
             return best_match
-            
-        except Exception as e:
-            logger.debug(f"Multi-scale template matching failed: {e}")
+        else:
+            logger.debug(f"Multi-scale match failed: best confidence {best_confidence:.3f} < threshold {confidence}")
             return None
 
     @staticmethod
@@ -127,8 +267,8 @@ class TemplateMatching:
             tuple: (x, y) coordinates if found, None otherwise
         """
         try:
-            # Load template to get its dimensions
-            template = cv2.imread(template_path) if CV2_AVAILABLE else None
+            # Load template using cache to get its dimensions
+            template = TemplateMatching._load_template(template_path) if CV2_AVAILABLE else None
             if template is None:
                 logger.debug(f"Failed to load template or OpenCV unavailable: {template_path}")
                 # Fallback to standard pyautogui region search
@@ -231,14 +371,13 @@ class TemplateMatching:
     @staticmethod
     def ocr_text_detection(target_text, confidence=0.8, case_sensitive=True, screen_cv=None, stop_flag=None):
         """
-        Performs OCR text detection to find specific text on screen using full screen screenshot.
-        ALWAYS takes a fresh screenshot to ensure current state validation.
+        Performs OCR text detection to find specific text on screen.
         
         Args:
             target_text (str): Text to search for
             confidence (float): Matching confidence threshold (0.0 to 1.0)
             case_sensitive (bool): Whether text matching should be case sensitive
-            screen_cv (numpy.ndarray): IGNORED - Always takes fresh screenshot
+            screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
             stop_flag (callable): Function to check if operation should be stopped
         
         Returns:
@@ -254,14 +393,10 @@ class TemplateMatching:
                 logger.info("Stop flag detected before OCR text detection - aborting")
                 return None
             
-            # ALWAYS take a fresh screenshot - ignore any passed screen_cv to prevent stale data
-            logger.debug("Taking fresh screenshot for OCR validation")
-            screen = pyautogui.screenshot()  # Full screen capture
-            screen_np = np.array(screen)
-            if CV2_AVAILABLE:
-                screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-            else:
-                screen_cv = screen_np
+            # Use provided screen or capture new one
+            if screen_cv is None:
+                logger.debug("Taking screenshot for OCR validation")
+                screen_cv = TemplateMatching.capture_screen()
             
             # Check stop flag after screenshot
             if stop_flag and stop_flag():
@@ -379,14 +514,10 @@ class TemplateMatching:
                 logger.info("Stop flag detected before OCR text extraction - aborting")
                 return []
             
-            # Always use full screen screenshot
+            # Use provided screen or capture new one
             if screen_cv is None:
-                screen = pyautogui.screenshot()  # Full screen capture
-                screen_np = np.array(screen)
-                if CV2_AVAILABLE:
-                    screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-                else:
-                    screen_cv = screen_np
+                logger.debug("Taking screenshot for OCR text extraction")
+                screen_cv = TemplateMatching.capture_screen()
             
             # Check stop flag after screenshot
             if stop_flag and stop_flag():

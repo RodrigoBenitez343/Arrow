@@ -3,10 +3,12 @@
 Sequence executor for multi-sequence automation.
 Handles execution of sequence nodes and condition handling.
 """
-
+import os
+import json
 import time
 from ..config import logger
 from ..sequence_player import SequencePlayer
+from ..json_cache import get_sequence
 
 
 class SequenceExecutor:
@@ -154,12 +156,23 @@ class SequenceExecutor:
             
             logger.info(f"Starting loop {i + 1}/{loops} for sequence: {seq_file}")
             
-            # Load sequence data
+            # Load sequence data - try cache first for optimal performance
             try:
-                player = SequencePlayer(seq_file)
-                # Share selection memory with the loader instance
-                player.selection_memory = self.selection_memory
-                sequence_data = player.sequence_data.copy()
+                # First try to get from cache
+                sequence_data = get_sequence(seq_file)
+                if sequence_data:
+                    logger.info(f"Using cached sequence data for: {seq_file}")
+                    # Create a minimal player instance for execution without reloading JSON
+                    player = SequencePlayer.__new__(SequencePlayer)
+                    player.sequence_data = sequence_data.copy()
+                    player.selection_memory = self.selection_memory
+                else:
+                    # Fallback to traditional loading if not in cache
+                    logger.info(f"Loading sequence from disk (not in cache): {seq_file}")
+                    player = SequencePlayer(seq_file)
+                    # Share selection memory with the loader instance
+                    player.selection_memory = self.selection_memory
+                    sequence_data = player.sequence_data.copy()
             except Exception as e:
                 logger.error(f"Failed to load sequence {seq_file}: {e}")
                 return False
@@ -250,24 +263,31 @@ class SequenceExecutor:
         if not self.fallback_handler:
             return False
             
-        # Check for presence triggers that must be met before execution
+        # Capture a single screenshot for all trigger checks to improve performance
+        screen_cv = None
         presence_triggers = advanced_conditions.get('presence_triggers', [])
+        absence_triggers = advanced_conditions.get('absence_triggers', [])
+        
+        # Only capture screenshot if we have triggers to check
+        if presence_triggers or absence_triggers:
+            screen_cv = self.fallback_handler.template_matcher.capture_screen()
+            
+        # Check for presence triggers that must be met before execution
         for trigger in presence_triggers:
             if stop_flag and stop_flag():
                 return True
                 
-            if not self.fallback_handler.check_presence_trigger(trigger):
+            if not self.fallback_handler.check_presence_trigger(trigger, screen_cv=screen_cv):
                 logger.info(f"Presence trigger not met, skipping sequence: {trigger.get('image_path')}")
                 return True
         
         # Check for absence triggers that must be met before execution
-        absence_triggers = advanced_conditions.get('absence_triggers', [])
         for trigger in absence_triggers:
             if stop_flag and stop_flag():
                 return True
                 
             timeout = trigger.get('timeout', 10)
-            if not self.fallback_handler.check_absence_trigger(trigger, timeout):
+            if not self.fallback_handler.check_absence_trigger(trigger, timeout, screen_cv=screen_cv):
                 logger.info(f"Absence trigger not met, skipping sequence: {trigger.get('image_path')}")
                 return True
         
@@ -319,11 +339,14 @@ class SequenceExecutor:
                 while time.time() - start_time < timeout:
                     if stop_flag and stop_flag():
                         return
-                    if self.fallback_handler.check_presence_trigger(condition):
+                    # Capture fresh screenshot for each polling iteration in wait conditions
+                    screen_cv = self.fallback_handler.template_matcher.capture_screen()
+                    if self.fallback_handler.check_presence_trigger(condition, screen_cv=screen_cv):
                         logger.info("Presence wait condition satisfied")
                         break
                     time.sleep(0.5)
             elif condition_type == 'absence':
+                # For absence checks, let the method handle its own polling with shared screenshots
                 self.fallback_handler.check_absence_trigger(condition, timeout)
             elif condition_type == 'ocr':
                 start_time = time.time()

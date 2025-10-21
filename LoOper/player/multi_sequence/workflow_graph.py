@@ -5,6 +5,7 @@ Handles building workflow graphs from sequences and conditional nodes for naviga
 """
 
 from ..config import logger
+from ..json_cache import get_chain
 
 
 class WorkflowGraphBuilder:
@@ -942,10 +943,16 @@ class WorkflowExecutor:
                 # Load and execute the imported chain directly using MultiSequencePlayer
                 logger.info(f"Loading imported chain: {resolved_chain_path}")
                 
-                # Load the JSON configuration from the file
-                import json
-                with open(resolved_chain_path, 'r', encoding='utf-8') as f:
-                    chain_config = json.load(f)
+                # Try to get chain config from cache first for optimal performance
+                chain_config = get_chain(resolved_chain_path)
+                if chain_config:
+                    logger.info(f"Using cached chain config for: {resolved_chain_path}")
+                else:
+                    # Fallback to loading from disk if not in cache
+                    logger.info(f"Loading chain config from disk (not in cache): {resolved_chain_path}")
+                    import json
+                    with open(resolved_chain_path, 'r', encoding='utf-8') as f:
+                        chain_config = json.load(f)
                 
                 # Check stop flag after loading chain config
                 if stop_flag and stop_flag():
@@ -1024,42 +1031,27 @@ class WorkflowExecutor:
     
     def _evaluate_conditional(self, conditional_node, stop_flag):
         """
-        Evaluate a conditional node using the fallback handler.
+        Evaluate a conditional node to determine which branch to take.
         
         Args:
             conditional_node (dict): The conditional node configuration
-            stop_flag (callable): Function to check if execution should stop
-        
+            stop_flag (callable): Stop flag function
+            
         Returns:
             bool: True if condition is met, False otherwise
         """
-        # Fix: The JSON stores 'trigger_type' with values like 'absence', 'presence', 'ocr'
-        # We need to map these to the expected condition types for evaluation
-        raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        # Extract condition configuration
+        raw_trigger_type = conditional_node.get('trigger_type', 'presence_trigger')
+        condition_type = raw_trigger_type.lower()
         
-        # Map the raw trigger type to the expected condition type format
-        condition_type_mapping = {
-            'presence': 'presence_trigger',
-            'absence': 'absence_trigger', 
-            'ocr': 'ocr_trigger',
-            'presence_trigger': 'presence_trigger',  # backward compatibility
-            'absence_trigger': 'absence_trigger',    # backward compatibility
-            'ocr_trigger': 'ocr_trigger'             # backward compatibility
-        }
-        
-        condition_type = condition_type_mapping.get(raw_trigger_type, 'presence_trigger')
-        
-        # Build condition_config from the conditional node properties
-        # The JSON stores properties directly, not nested under 'condition_data'
+        # Build condition configuration from node data
         condition_config = {
-            'image_path': conditional_node.get('image_path', ''),
-            'confidence': float(conditional_node.get('threshold', 0.8)),
-            'timeout': float(conditional_node.get('wait_time', 10)),
-            'max_loops': int(conditional_node.get('max_loops', 10)),
-            'target_text': conditional_node.get('ocr_text', '') or conditional_node.get('target_text', ''),
-            'case_sensitive': conditional_node.get('case_sensitive', True),
-            'language': conditional_node.get('language', 'eng'),
-            'region': conditional_node.get('region')
+            'image_path': conditional_node.get('image_path'),
+            'confidence': conditional_node.get('confidence', 0.8),
+            'timeout': conditional_node.get('timeout', 10),
+            'target_text': conditional_node.get('target_text'),
+            'region': conditional_node.get('region'),
+            'strict_validation': conditional_node.get('strict_validation', False)
         }
         
         # Also check if there's a nested condition_data (for backward compatibility)
@@ -1073,11 +1065,16 @@ class WorkflowExecutor:
         # Set stop flag for the fallback handler
         self.fallback_handler.stop_flag = stop_flag
         
+        # Capture a single screenshot for visual trigger evaluations to improve performance
+        screen_cv = None
+        if condition_type in ['presence_trigger', 'absence_trigger']:
+            screen_cv = self.fallback_handler.template_matcher.capture_screen()
+        
         if condition_type == 'presence_trigger':
-            return self.fallback_handler.check_presence_trigger(condition_config)
+            return self.fallback_handler.check_presence_trigger(condition_config, screen_cv=screen_cv)
         elif condition_type == 'absence_trigger':
             timeout = float(condition_config.get('timeout', 10))
-            return self.fallback_handler.check_absence_trigger(condition_config, timeout)
+            return self.fallback_handler.check_absence_trigger(condition_config, timeout, screen_cv=screen_cv)
         elif condition_type == 'ocr_trigger':
             return self.fallback_handler.check_ocr_trigger(condition_config, stop_flag=stop_flag)
         else:
