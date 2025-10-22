@@ -48,7 +48,7 @@ class ActionHandlers:
         Returns:
             bool: True if successful, False if fallback was triggered
         """
-        self.bot.random_delay(0.5, 1.0)  # Add a small random delay before clicking.
+        self.bot.random_delay(0.01, 0.1)  # Add a small random delay before clicking.
 
         if not action.get('screenshot'):
             logger.error(f"Action {idx} is a click without a screenshot. Aborting playback.")
@@ -137,7 +137,7 @@ class ActionHandlers:
                     logger.info(f"Attempting match with: {strategy['name']}")
                     
                     # Allow screen to stabilize
-                    time.sleep(0.15)
+                    time.sleep(0.05)
                     
                     location = None
                     
@@ -260,7 +260,7 @@ class ActionHandlers:
 
         if target_coords:
             self.bot.human_mouse_move(target_coords[0], target_coords[1])
-            time.sleep(0.2)
+            time.sleep(0.05)
             
             # Get button type from action, default to left
             button = action.get('button', 'left')
@@ -270,11 +270,11 @@ class ActionHandlers:
                 # Perform double-click
                 if button == 'right':
                     pyautogui.rightClick()
-                    time.sleep(0.1)
+                    time.sleep(0.02)
                     pyautogui.rightClick()
                 elif button == 'middle':
                     pyautogui.middleClick()
-                    time.sleep(0.1)
+                    time.sleep(0.02)
                     pyautogui.middleClick()
                 else:  # left or default
                     pyautogui.doubleClick()
@@ -546,19 +546,19 @@ class ActionHandlers:
         
         # Execute the corresponding hotkey.
         if operation == 'copy' or operation == 'c':
-            time.sleep(0.1) # Small delay to ensure text is selected before copying.
+            time.sleep(0.02) # Small delay to ensure text is selected before copying.
             pyautogui.hotkey('ctrl', 'c')
             logger.info("Performed Ctrl+C operation")
         elif operation == 'paste' or operation == 'v':
-            time.sleep(0.1) # Small delay to ensure the input field is focused.
+            time.sleep(0.02) # Small delay to ensure the input field is focused.
             pyautogui.hotkey('ctrl', 'v')
             logger.info("Performed Ctrl+V operation")
         elif operation == 'cut' or operation == 'x':
-            time.sleep(0.1)
+            time.sleep(0.02)
             pyautogui.hotkey('ctrl', 'x')
             logger.info("Performed Ctrl+X operation")
         elif operation == 'select_all' or operation == 'a':
-            time.sleep(0.1)
+            time.sleep(0.02)
             pyautogui.hotkey('ctrl', 'a')
             logger.info("Performed Ctrl+A operation")
 

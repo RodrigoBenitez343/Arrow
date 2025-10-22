@@ -138,11 +138,11 @@ class SeleniumBot:
 
         # Move the mouse through the generated points.
         for point in points:
-            pyautogui.moveTo(point[0], point[1], duration=0.01)
-            time.sleep(0.01) # Small sleep to make movement smoother.
+            pyautogui.moveTo(point[0], point[1], duration=0.001)
+            time.sleep(0.001) # Small sleep to make movement smoother.
 
         # Final move to the exact target coordinate.
-        pyautogui.moveTo(x, y, duration=0.1)
+        pyautogui.moveTo(x, y, duration=0.01)
         self.mouse_movement_history.append((start_x, start_y, x, y))
 
     def execute_with_timing(self, idx, action, fallback_callback=None, stop_flag=None):
@@ -165,10 +165,10 @@ class SeleniumBot:
             return True
             
         # Get the delay before the action, or use a default random delay.
-        delay = action.get('delay_before', random.uniform(0.1, 0.3))
+        delay = action.get('delay_before', random.uniform(0.01, 0.05))
         logger.debug(f"Action {idx}: Waiting {delay:.2f}s before action")
-        # Ensure the delay is within a reasonable range (0.1 to 5.0 seconds).
-        delay = max(0.1, min(delay, 5.0))
+        # Ensure the delay is within a reasonable range (0.01 to 1.0 seconds).
+        delay = max(0.01, min(delay, 1.0))
         
         # Sleep in small increments to allow for interruption
         elapsed = 0
@@ -204,7 +204,7 @@ class SeleniumBot:
             
             # After a click action, add a very short random delay.
             if action['type'] in ['click', 'double_click']:
-                self.random_delay(0.1, 0.3)
+                self.random_delay(0.01, 0.05)
 
             # After every successfully executed action, capture a screenshot of the entire screen
             try:

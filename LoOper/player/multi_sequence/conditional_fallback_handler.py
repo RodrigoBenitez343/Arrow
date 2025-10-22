@@ -112,7 +112,7 @@ class ConditionalFallbackHandler:
                 
                 # Only sleep if we're in a polling loop (screen_cv not provided)
                 if screen_cv is None:
-                    time.sleep(0.1)  # Reduced from 0.5s to 0.1s for faster polling
+                    time.sleep(0.02)  # Reduced from 0.1s to 0.02s for faster polling
                 else:
                     # If screen_cv was provided, this is a single-shot check
                     break
@@ -328,7 +328,7 @@ class ConditionalFallbackHandler:
             'type': 'until_present',
             'max_iterations': int(condition_data.get('max_loops', 10)),
             'sequence_file': condition_data.get('sequence_file') or conditional_node.get('sequence_to_execute'),
-            'iteration_delay': float(condition_data.get('iteration_delay', 1.0)),
+            'iteration_delay': float(condition_data.get('iteration_delay', 0.3)),
             'condition': {
                 'trigger_type': 'presence',
                 'image_path': self._resolve_path(condition_data.get('image_path', ''), add_json=False),
@@ -541,7 +541,7 @@ class ConditionalFallbackHandler:
             
             # Only sleep if we're in a polling loop (screen_cv not provided)
             if screen_cv is None:
-                time.sleep(0.1)  # Reduced from 0.5s to 0.1s for faster polling
+                time.sleep(0.02)  # Reduced from 0.1s to 0.02s for faster polling
             else:
                 # If screen_cv was provided, this is a single-shot check
                 break
