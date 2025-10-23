@@ -4,6 +4,7 @@ import os
 import logging
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtGui import QCursor
 from .constants import *
 from .node_context_menu import NodeContextMenuManager
 from .graph_elements import (
@@ -49,7 +50,9 @@ class GraphViewWidget(QWidget):
             self.copied_nodes = []
             # Initialize paste counter for positioning
             self._paste_counter = 0
-            self.chain_config = []
+            # Track last context menu scene position for paste anchoring
+            self._last_context_scene_pos = None
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
             self.sequence_nodes = []
             self.action_nodes = []
             self.conditional_nodes = []
@@ -133,185 +136,337 @@ class GraphViewWidget(QWidget):
             self.copy_selected_nodes()
             event.accept()
         elif event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
-            # Ctrl+V - Paste copied nodes
-            self.paste_copied_nodes()
+            # Ctrl+V - Paste copied nodes at mouse cursor if possible
+            paste_pos = None
+            try:
+                if hasattr(self, "view") and hasattr(self.view, "mapToScene") and hasattr(self.view, "mapFromGlobal"):
+                    local_pos = self.view.mapFromGlobal(QCursor.pos())
+                    scene_point = self.view.mapToScene(local_pos)
+                    paste_pos = [int(scene_point.x()), int(scene_point.y())]
+            except Exception:
+                paste_pos = None
+            self.paste_copied_nodes(paste_pos=paste_pos)
+            event.accept()
+        elif event.key() == Qt.Key_Delete:
+            # Supr/Delete - Remove selected nodes
+            self.delete_selected_nodes()
             event.accept()
         else:
             super().keyPressEvent(event)
     
-    def copy_selected_nodes(self):
-        """Copy the currently selected nodes to the clipboard"""
-        try:
-            selected_nodes = self.node_graph.selected_nodes()
-            if not selected_nodes:
-                logger.info("No nodes selected for copying")
-                return
-            
-            # Store node data for copying
-            self.copied_nodes = []
-            for node in selected_nodes:
-                try:
-                    node_data = {
-                        'type': node.__identifier__,
-                        'name': node.name(),
-                        'properties': {},
-                        'inputs': {},
-                        'outputs': {}
-                    }
-                    
-                    # Copy all properties with error handling
-                    try:
-                        for prop_name in node.properties().keys():
-                            try:
-                                prop_value = node.get_property(prop_name)
-                                # Only store serializable values
-                                if isinstance(prop_value, (str, int, float, bool, list, dict, type(None))):
-                                    node_data['properties'][prop_name] = prop_value
-                                else:
-                                    logger.warning(f"Skipping non-serializable property {prop_name} of type {type(prop_value)}")
-                            except Exception as prop_error:
-                                logger.warning(f"Failed to copy property {prop_name}: {prop_error}")
-                    except Exception as props_error:
-                        logger.warning(f"Failed to access properties for node {node.name()}: {props_error}")
-                    
-                    # Store input/output port information (but not connections) with error handling
-                    try:
-                        for input_port in node.inputs().values():
-                            try:
-                                node_data['inputs'][input_port.name()] = input_port.data_type if hasattr(input_port, 'data_type') else None
-                            except Exception as input_error:
-                                logger.warning(f"Failed to copy input port {input_port.name()}: {input_error}")
-                    except Exception as inputs_error:
-                        logger.warning(f"Failed to access inputs for node {node.name()}: {inputs_error}")
-                    
-                    try:
-                        for output_port in node.outputs().values():
-                            try:
-                                node_data['outputs'][output_port.name()] = output_port.data_type if hasattr(output_port, 'data_type') else None
-                            except Exception as output_error:
-                                logger.warning(f"Failed to copy output port {output_port.name()}: {output_error}")
-                    except Exception as outputs_error:
-                        logger.warning(f"Failed to access outputs for node {node.name()}: {outputs_error}")
-                    
-                    self.copied_nodes.append(node_data)
-                    
-                except Exception as node_error:
-                    logger.error(f"Failed to copy node {node.name() if hasattr(node, 'name') else 'unknown'}: {node_error}")
-                    continue
-            
-            logger.info(f"Copied {len(self.copied_nodes)} nodes to clipboard")
-            
-        except Exception as e:
-            logger.error(f"Error copying nodes: {str(e)}", exc_info=True)
-            # Initialize empty copied_nodes to prevent issues
-            self.copied_nodes = []
-    
-    def paste_copied_nodes(self):
-        """Paste the copied nodes from the clipboard"""
-        try:
-            if not self.copied_nodes:
-                logger.info("No nodes to paste")
-                return
-            
-            # Use a fixed offset strategy to prevent infinite positioning feedback loops
-            # Initialize paste counter if it doesn't exist
-            if not hasattr(self, '_paste_counter'):
-                self._paste_counter = 0
-            
-            self._paste_counter += 1
-            
-            # Calculate paste position using a fixed offset pattern
-            # This prevents the feedback loop where pasted nodes become the reference for next paste
-            base_offset = 50
-            paste_pos = [100 + (self._paste_counter * base_offset), 100 + (self._paste_counter * base_offset)]
-            
-            # Reset counter after reasonable number of pastes to prevent positions from growing too large
-            if self._paste_counter > 20:
-                self._paste_counter = 0
-            
-            pasted_nodes = []
-            for i, node_data in enumerate(self.copied_nodes):
-                # Create new position with offset for each node
-                node_pos = [paste_pos[0] + (i * 150), paste_pos[1]]
-                
-                # Create the appropriate node type
-                new_node = None
-                try:
-                    if node_data['type'] == 'sequence':
-                        # For sequence nodes, create directly using graph manager
-                        # to avoid file selection prompt
-                        sequence_file = node_data['properties'].get('sequence_file', '')
-                        if sequence_file:
-                            new_node = self.node_graph.create_node(
-                                'sequence.SequenceNode', 
-                                name=sequence_file, 
-                                pos=node_pos
-                            )
-                            if new_node:
-                                # Restore all sequence properties
-                                for prop_name, prop_value in node_data['properties'].items():
-                                    try:
-                                        new_node.set_property(prop_name, prop_value)
-                                    except Exception as prop_error:
-                                        logger.warning(f"Failed to set property {prop_name}: {prop_error}")
-                    elif node_data['type'] == 'conditional':
-                        new_node = self.node_operations.add_conditional_node(node_pos)
-                    elif node_data['type'] == 'llm':
-                        new_node = self.node_operations.add_llm_node(node_pos)
-                    elif node_data['type'] == 'tts':
-                        new_node = self.node_operations.add_tts_node(node_pos)
-                    elif node_data['type'] == 'context_builder':
-                        new_node = self.node_operations.add_context_builder_node(node_pos)
-                    elif node_data['type'] == 'chain_import':
-                        new_node = self.node_operations.add_chain_import_node(node_pos)
-                    elif node_data['type'] == 'action':
-                        # Actions need to be added to a sequence
-                        logger.warning("Cannot paste action nodes independently - they must be part of a sequence")
-                        continue
-                    
-                    if new_node:
-                        # Restore properties with error handling
-                        for prop_name, prop_value in node_data['properties'].items():
-                            if prop_name != 'sequence_name' or node_data['type'] != 'sequence':
-                                try:
-                                    new_node.set_property(prop_name, prop_value)
-                                except Exception as prop_error:
-                                    logger.warning(f"Failed to set property {prop_name} on {new_node.name()}: {prop_error}")
-                        
-                        # Set a modified name to indicate it's a copy with unique identifier
-                        original_name = node_data['name']
-                        new_name = f"{original_name}_copy_{self._paste_counter}_{i}"
-                        try:
-                            new_node.set_name(new_name)
-                        except Exception as name_error:
-                            logger.warning(f"Failed to set name {new_name}: {name_error}")
-                            # Use a fallback name
-                            new_node.set_name(f"copy_{self._paste_counter}_{i}")
-                        
-                        pasted_nodes.append(new_node)
-                        logger.info(f"Pasted node: {new_node.name()}")
-                        
-                except Exception as node_error:
-                    logger.error(f"Failed to create node of type {node_data['type']}: {node_error}")
-                    continue
-            
-            logger.info(f"Successfully pasted {len(pasted_nodes)} nodes")
-            
-            # Select the newly pasted nodes with error handling
-            if pasted_nodes:
-                try:
-                    self.node_graph.clear_selection()
-                    for node in pasted_nodes:
-                        if node and hasattr(node, 'set_selected'):
-                            node.set_selected(True)
-                except Exception as selection_error:
-                    logger.warning(f"Failed to select pasted nodes: {selection_error}")
-            
-        except Exception as e:
-            logger.error(f"Error pasting nodes: {str(e)}", exc_info=True)
-            # Don't re-raise the exception to prevent app crashes
-            # Just log the error and continue
+    def get_property_whitelist(self, node_type: str):
+        """Return a set of safe property names for a given node type."""
+        # Support both identifier strings and class names
+        if node_type in ("sequence", "sequence.SequenceNode") or node_type.endswith("SequenceNode"):
+            return {
+                "sequence_file",
+                "loop_count",
+                "extra_delay",
+            }
+        if node_type in ("conditional", "conditional.ConditionalNode") or node_type.endswith("ConditionalNode"):
+            return {
+                # Core conditional properties
+                "condition_type",
+                "image_path",
+                "confidence",
+                "threshold",
+                "timeout",
+                "wait_time",
+                "max_loops",
+                "max_attempts",
+                "delay_between_attempts",
+                # OCR and matching
+                "target_text",
+                "ocr_text",
+                "case_sensitive",
+                # Looping and iteration
+                "loop_type",
+                "loop_position",
+                "sequence_file",
+                "iteration_delay",
+                "loop_condition",
+            }
+        if node_type in ("llm", "llm.LLMNode") or node_type.endswith("LLMNode"):
+            return {
+                "model",
+                "prompt",
+                "system_message",
+                "temperature",
+                "max_tokens",
+                "output_variable",
+                "api_url",
+                "write_text",
+                "use_vision",
+                "screenshot_enabled",
+                "use_comorag",
+                "max_cycles",
+                "memory_size",
+                "typing_batch_size",
+                "typing_batch_delay",
+                "input_source",
+                "ocr_confidence",
+                "ocr_preprocessing",
+                "use_async",
+            }
+        if node_type in ("tts", "tts.TTSNode") or node_type.endswith("TTSNode"):
+            return {
+                "text",
+                "language",
+            }
+        if node_type in ("chain_import", "chain_import.ChainImportNode") or node_type.endswith("ChainImportNode"):
+            return {
+                "chain_file",
+                "import_mode",
+                "prefix",
+                "loop_count",
+                "extra_delay",
+                "enabled",
+            }
+        return set()
 
+    def copy_selected_nodes(self):
+        """Copy selected nodes including safe properties and internal connections."""
+        self.copied_nodes = []
+        selected_nodes = self.node_graph.selected_nodes()
+        if not selected_nodes:
+            return
+        selected_ids = {n.id for n in selected_nodes}
+
+        for node in selected_nodes:
+            node_type = getattr(node, "__identifier__", node.type_) if hasattr(node, "__identifier__") else node.type_
+            whitelist = self.get_property_whitelist(node_type)
+            # Collect properties with whitelist ONLY
+            props = {}
+            for key, value in node.properties().items():
+                if key in whitelist:
+                    props[key] = value
+            # Special case: ChainImportNode stores config via helper; use that for reliability
+            if node_type.endswith("ChainImportNode") or node_type == "chain_import" or node_type == "chain_import.ChainImportNode":
+                try:
+                    import_cfg = node.get_chain_import_config()
+                    if isinstance(import_cfg, dict):
+                        # Keep only whitelisted keys
+                        props = {k: import_cfg.get(k) for k in whitelist}
+                except Exception:
+                    pass
+            # Special case: SequenceNode - use get_sequence_config to ensure filename is captured
+            if node_type.endswith("SequenceNode") or node_type == "sequence" or node_type == "sequence.SequenceNode":
+                try:
+                    seq_cfg = node.get_sequence_config()
+                    if isinstance(seq_cfg, dict):
+                        props = {k: seq_cfg.get(k) for k in whitelist}
+                except Exception:
+                    pass
+            logger.debug(f"Copy props for {node.name()} ({node_type}): {list(props.keys())}")
+
+            # Save position
+            try:
+                nx, ny = node.pos()
+            except Exception:
+                nx, ny = 0, 0
+
+            node_data = {
+                "type": node_type,
+                "name": node.name(),
+                "node_id": node.id,
+                "position": [nx, ny],
+                "properties": props,
+                "connections": [],
+            }
+
+            # Save only internal connections (between selected nodes)
+            try:
+                for out_port in node.output_ports():
+                    for connected_port in out_port.connected_ports():
+                        target_node = connected_port.node()
+                        if target_node and target_node.id in selected_ids:
+                            node_data["connections"].append({
+                                "source_port": out_port.name(),
+                                "target_node_id": target_node.id,
+                                "target_port": connected_port.name(),
+                            })
+            except Exception:
+                pass
+
+            self.copied_nodes.append(node_data)
+
+    def paste_copied_nodes(self, paste_pos=None):
+        """Paste previously copied nodes, preserving relative positions and connections."""
+        if not self.copied_nodes:
+            return
+        # Determine paste anchor and relative offsets
+        try:
+            min_x = min(nd.get("position", [0, 0])[0] for nd in self.copied_nodes)
+            min_y = min(nd.get("position", [0, 0])[1] for nd in self.copied_nodes)
+        except Exception:
+            min_x, min_y = 0, 0
+
+        if paste_pos is None:
+            try:
+                # Prefer the last context menu scene position if available
+                if getattr(self, "_last_context_scene_pos", None) is not None:
+                    scene_point = self._last_context_scene_pos
+                elif hasattr(self, "view") and hasattr(self.view, "mapToScene"):
+                    # Fallback to view center
+                    scene_point = self.view.mapToScene(self.view.rect().center())
+                else:
+                    raise AttributeError("view.mapToScene not available")
+                paste_pos = [int(scene_point.x()), int(scene_point.y())]
+            except Exception:
+                # Final fallback: deterministic offset based on paste counter
+                self._paste_counter = getattr(self, "_paste_counter", 0) + 1
+                base_offset = 100
+                paste_pos = [100 + (self._paste_counter * base_offset), 100 + (self._paste_counter * base_offset)]
+        else:
+            paste_pos = [paste_pos[0], paste_pos[1]]
+
+        id_mapping = {}
+        new_nodes = []
+
+        # First pass: create nodes
+        for idx, node_data in enumerate(self.copied_nodes):
+            node_type = node_data["type"]
+            original_id = node_data["node_id"]
+            rel_x = node_data.get("position", [0, 0])[0] - min_x
+            rel_y = node_data.get("position", [0, 0])[1] - min_y
+            new_pos = [paste_pos[0] + rel_x + (idx * 10), paste_pos[1] + rel_y + (idx * 10)]
+
+            new_node = None
+            try:
+                # Map identifiers to registered class strings
+                if node_type.endswith("SequenceNode") or node_type == "sequence":
+                    new_node = self.graph_manager.create_node("sequence.SequenceNode", pos=new_pos)
+                elif node_type.endswith("ConditionalNode") or node_type == "conditional":
+                    new_node = self.graph_manager.create_node("conditional.ConditionalNode", pos=new_pos)
+                elif node_type.endswith("LLMNode") or node_type == "llm":
+                    new_node = self.graph_manager.create_node("llm.LLMNode", pos=new_pos)
+                elif node_type.endswith("TTSNode") or node_type == "tts":
+                    new_node = self.graph_manager.create_node("tts.TTSNode", pos=new_pos)
+                elif node_type.endswith("ChainImportNode") or node_type == "chain_import":
+                    new_node = self.graph_manager.create_node("chain_import.ChainImportNode", pos=new_pos)
+                else:
+                    # Fallback: attempt using the identifier directly
+                    new_node = self.graph_manager.create_node(node_type, pos=new_pos)
+            except Exception:
+                # If type registration fails, skip this node
+                continue
+
+            if new_node is None:
+                continue
+
+            # Restore safe properties ONLY
+            whitelist = self.get_property_whitelist(node_type)
+            applied_keys = []
+            # Special case: ChainImportNode should be set via set_chain_import_data
+            if node_type.endswith("ChainImportNode") or node_type == "chain_import" or node_type == "chain_import.ChainImportNode":
+                cfg = node_data.get("properties", {})
+                try:
+                    chain_file = cfg.get("chain_file", "") or ""
+                    import_mode = cfg.get("import_mode", "full") or "full"
+                    prefix = cfg.get("prefix", "") or ""
+                    # loop_count and extra_delay may be strings; cast safely
+                    loop_count_val = cfg.get("loop_count", 1)
+                    try:
+                        loop_count = int(loop_count_val)
+                    except Exception:
+                        loop_count = int(str(loop_count_val or "1").strip() or 1)
+                    extra_delay_val = cfg.get("extra_delay", 0)
+                    try:
+                        extra_delay = float(extra_delay_val)
+                    except Exception:
+                        extra_delay = float(str(extra_delay_val or "0").strip() or 0)
+                    enabled_val = cfg.get("enabled", True)
+                    if isinstance(enabled_val, bool):
+                        enabled = enabled_val
+                    else:
+                        enabled = str(enabled_val).lower() == "true"
+
+                    new_node.set_chain_import_data(
+                        chain_file,
+                        import_mode=import_mode,
+                        prefix=prefix,
+                        loop_count=loop_count,
+                        extra_delay=extra_delay,
+                        enabled=enabled,
+                    )
+                    applied_keys = list(whitelist)
+                except Exception:
+                    # Fallback to generic property set if something goes wrong
+                    for key, value in node_data.get("properties", {}).items():
+                        if key in whitelist:
+                            try:
+                                new_node.set_property(key, value)
+                                applied_keys.append(key)
+                            except Exception:
+                                pass
+            # Special case: SequenceNode should be set via set_sequence_data
+            elif node_type.endswith("SequenceNode") or node_type == "sequence" or node_type == "sequence.SequenceNode":
+                cfg = node_data.get("properties", {})
+                try:
+                    seq_config = {
+                        "sequence_file": cfg.get("sequence_file", "") or "",
+                        "loop_count": int(cfg.get("loop_count", 1) or 1),
+                        "extra_delay": float(cfg.get("extra_delay", 1.0) or 1.0),
+                    }
+                    new_node.set_sequence_data(0, seq_config)
+                    applied_keys = list(whitelist)
+                except Exception:
+                    # Fallback to generic property set
+                    for key, value in node_data.get("properties", {}).items():
+                        if key in whitelist:
+                            try:
+                                new_node.set_property(key, value)
+                                applied_keys.append(key)
+                            except Exception:
+                                pass
+            else:
+                for key, value in node_data.get("properties", {}).items():
+                    if key in whitelist:
+                        try:
+                            new_node.set_property(key, value)
+                            applied_keys.append(key)
+                        except Exception:
+                            pass
+            logger.debug(f"Pasted props for {new_node.name()} ({node_type}): {applied_keys}")
+
+            # Set name to avoid collisions
+            base_name = node_data.get("name") or getattr(new_node, "NODE_NAME", "Node")
+            try:
+                new_node.set_name(f"{base_name}_copy")
+            except Exception:
+                pass
+
+            id_mapping[original_id] = new_node
+            new_nodes.append(new_node)
+
+        # Second pass: restore connections
+        for node_data in self.copied_nodes:
+            source_new = id_mapping.get(node_data["node_id"])
+            if not source_new:
+                continue
+            for conn in node_data.get("connections", []):
+                target_new = id_mapping.get(conn.get("target_node_id"))
+                if not target_new:
+                    continue
+                try:
+                    self.graph_manager.connect_nodes(
+                        source_new,
+                        target_new,
+                        conn.get("source_port"),
+                        conn.get("target_port"),
+                    )
+                except Exception:
+                    # Skip failed connections, e.g. missing ports
+                    pass
+
+        # Select new nodes for convenience
+        try:
+            self.node_graph.clear_selection()
+            for n in new_nodes:
+                n.set_selected(True)
+        except Exception:
+            pass
+    
     def show_custom_context_menu(self, pos):
         """Show the context menu for the graph"""
         logger.debug(f"Showing custom context menu at position: {pos}")
@@ -325,6 +480,11 @@ class GraphViewWidget(QWidget):
                 logger.debug(f"Context menu for node: {node.name()}")
             # Convert position to global coordinates
             global_pos = self.view.mapToGlobal(pos)
+            # Capture scene position for paste anchoring
+            try:
+                self._last_context_scene_pos = self.view.mapToScene(pos)
+            except Exception:
+                self._last_context_scene_pos = None
             self.context_menu_manager.show_context_menu(global_pos, node)
             logger.debug("Context menu displayed successfully")
         except Exception as e:
@@ -365,16 +525,17 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error adding TTS node: {str(e)}", exc_info=True)
             return None
             
-    def add_context_builder_node(self, position=None):
-        """Add a new Context Builder node to the graph"""
-        logger.debug(f"Adding Context Builder node at position: {position}")
-        try:
-            result = self.node_operations.add_context_builder_node(position)
-            logger.info(f"Context Builder node added successfully: {result.name() if result else 'None'}")
-            return result
-        except Exception as e:
-            logger.error(f"Error adding Context Builder node: {str(e)}", exc_info=True)
-            return None
+    # DEPRECATED: Context Builder - remove add function
+    # def add_context_builder_node(self, position=None):
+    #     """Add a new Context Builder node to the graph"""
+    #     logger.debug(f"Adding Context Builder node at position: {position}")
+    #     try:
+    #         result = self.node_operations.add_context_builder_node(position)
+    #         logger.info(f"Context Builder node added successfully: {result.name() if result else 'None'}")
+    #         return result
+    #     except Exception as e:
+    #         logger.error(f"Error adding Context Builder node: {str(e)}", exc_info=True)
+    #         return None
     
     def add_chain_import_node(self, position=None):
         """Add a new Chain Import node to the graph"""
@@ -424,8 +585,8 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error showing action view: {str(e)}", exc_info=True)
 
     def auto_layout_nodes(self):
-        """Arrange the nodes in the graph automatically"""
-        logger.debug("Auto-layouting nodes")
+        """Automatically layout nodes in the graph for readability"""
+        logger.debug("Auto-layout nodes")
         try:
             self.graph_manager.auto_layout_nodes()
             logger.info("Auto-layout completed successfully")
@@ -433,142 +594,130 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error during auto-layout: {str(e)}", exc_info=True)
 
     def clear_graph(self):
-        """Clear all nodes from the graph"""
+        """Clear all nodes and connections from the graph"""
         logger.debug("Clearing graph")
         try:
             self.graph_manager.clear_graph()
-            self._validate_conditional_nodes()
             logger.info("Graph cleared successfully")
         except Exception as e:
             logger.error(f"Error clearing graph: {str(e)}", exc_info=True)
 
     def _validate_conditional_nodes(self):
-        """Remove any invalid entries from conditional_nodes list"""
+        """Validate conditional nodes in the graph"""
         logger.debug("Validating conditional nodes")
         try:
-            original_count = len(self.conditional_nodes)
-            self.conditional_nodes = [node for node in self.conditional_nodes 
-                                    if node is not None and hasattr(node, 'id') and node in self.node_graph.all_nodes()]
-            removed_count = original_count - len(self.conditional_nodes)
-            if removed_count > 0:
-                logger.info(f"Removed {removed_count} invalid conditional nodes")
-            logger.debug("Conditional nodes validation completed")
+            self.export_utils.validate_conditional_nodes()
+            logger.info("Conditional nodes validation completed successfully")
         except Exception as e:
             logger.error(f"Error validating conditional nodes: {str(e)}", exc_info=True)
 
     def get_chain_config(self):
-        """Constructs and returns the chain configuration from the graph"""
+        """Get the current chain configuration"""
         logger.debug("Getting chain configuration")
         try:
-            config = self.config_manager.get_chain_config()
-            logger.info(f"Chain configuration retrieved with {len(config.get('sequences', []))} sequences")
-            return config
+            config_copy = self.config_manager.get_chain_config()
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes")
+            return config_copy
         except Exception as e:
-            logger.error(f"Error getting chain config: {str(e)}", exc_info=True)
-            return {"sequences": [], "conditional_nodes": [], "llm_nodes": []}
+            logger.error(f"Error getting chain config: {e}")
+            raise
 
     def save_current_state(self):
-        """Save the current graph state for restoration later"""
+        """Save the current state of the node graph to the chain configuration"""
         logger.debug("Saving current state")
         try:
-            result = self.config_manager.save_current_state()
+            self.config_manager.save_current_state()
             logger.info("Current state saved successfully")
-            return result
         except Exception as e:
             logger.error(f"Error saving current state: {str(e)}", exc_info=True)
-            return None
+            raise
 
     def load_chain(self, file_path):
-        """Loads a chain configuration from a file and builds the graph"""
-        logger.debug(f"Loading chain from: {file_path}")
+        """Load a chain configuration from a file"""
+        logger.debug(f"Loading chain from file: {file_path}")
         try:
             self.config_manager.load_chain(file_path)
-            logger.info(f"Chain loaded successfully from {file_path}")
+            logger.info("Chain loaded successfully")
         except Exception as e:
-            logger.error(f"Error loading chain from {file_path}: {str(e)}", exc_info=True)
+            logger.error(f"Error loading chain: {str(e)}", exc_info=True)
+            raise
 
     def save_chain(self, file_path):
-        """Saves the current graph layout to a file"""
-        logger.debug(f"Saving chain to: {file_path}")
+        """Save the current chain configuration to a file"""
+        logger.debug(f"Saving chain to file: {file_path}")
         try:
             self.config_manager.save_chain(file_path)
-            logger.info(f"Chain saved successfully to {file_path}")
+            logger.info("Chain saved successfully")
         except Exception as e:
-            logger.error(f"Error saving chain to {file_path}: {str(e)}", exc_info=True)
+            logger.error(f"Error saving chain: {str(e)}", exc_info=True)
+            raise
 
     def build_graph_from_config(self, config=None):
-        """Builds the node graph from the loaded chain configuration"""
-        logger.debug("Building graph from configuration")
+        """Build the graph from a chain configuration"""
+        logger.debug("Building graph from config")
         try:
             self.config_manager.build_graph_from_config(config)
-            logger.info("Graph built successfully from configuration")
+            logger.info("Graph built successfully")
         except Exception as e:
             logger.error(f"Error building graph from config: {str(e)}", exc_info=True)
+            raise
 
     def export_as_executable(self):
-        """Export the chain as an executable batch file"""
+        """Export the current chain as an executable batch file"""
         logger.debug("Exporting chain as executable")
         try:
             self.export_utils.export_as_executable()
-            logger.info("Chain exported as executable successfully")
+            logger.info("Export completed successfully")
         except Exception as e:
-            logger.error(f"Error exporting chain as executable: {str(e)}", exc_info=True)
+            logger.error(f"Error exporting chain: {str(e)}", exc_info=True)
+            raise
 
     def export_chain(self, bat_path, config):
-        """Export the chain as a batch file"""
-        logger.debug(f"Exporting chain to: {bat_path}")
+        """Export the current chain configuration to a batch file"""
+        logger.debug(f"Exporting chain to batch file: {bat_path}")
         try:
             self.export_utils.export_chain(bat_path, config)
-            logger.info(f"Chain exported successfully to {bat_path}")
+            logger.info("Chain exported successfully")
         except Exception as e:
-            logger.error(f"Error exporting chain to {bat_path}: {str(e)}", exc_info=True)
-
+            logger.error(f"Error exporting chain: {str(e)}", exc_info=True)
+            raise
 
     def edit_conditional(self, node):
-        """Edit a conditional node with comprehensive condition types"""
+        """Open the dialog to edit a conditional node"""
         logger.debug(f"Editing conditional node: {node.name() if node else 'None'}")
         try:
             self.node_operations.edit_conditional(node)
             logger.info("Conditional node edited successfully")
         except Exception as e:
             logger.error(f"Error editing conditional node: {str(e)}", exc_info=True)
-    
+
     def edit_llm(self, node):
-        """Edit an LLM node configuration"""
+        """Open the dialog to edit an LLM node"""
         logger.debug(f"Editing LLM node: {node.name() if node else 'None'}")
         try:
             self.node_operations.edit_llm(node)
             logger.info("LLM node edited successfully")
         except Exception as e:
             logger.error(f"Error editing LLM node: {str(e)}", exc_info=True)
-    
+
     def edit_tts_node(self, node):
-        """Edit a TTS node configuration"""
+        """Open the dialog to edit a TTS node"""
         logger.debug(f"Editing TTS node: {node.name() if node else 'None'}")
         try:
             self.node_operations.edit_tts(node)
             logger.info("TTS node edited successfully")
         except Exception as e:
             logger.error(f"Error editing TTS node: {str(e)}", exc_info=True)
-    
-    def edit_context_builder_node(self, node):
-        """Edit a Context Builder node configuration"""
-        logger.debug(f"Editing Context Builder node: {node.name() if node else 'None'}")
-        try:
-            self.node_operations.edit_context_builder_node(node)
-            logger.info("Context Builder node edited successfully")
-        except Exception as e:
-            logger.error(f"Error editing Context Builder node: {str(e)}", exc_info=True)
-    
+
     def edit_chain_import_node(self, node):
-        """Edit a Chain Import node configuration"""
+        """Open the dialog to edit a Chain Import node"""
         logger.debug(f"Editing Chain Import node: {node.name() if node else 'None'}")
         try:
             self.node_operations.edit_chain_import_node(node)
             logger.info("Chain Import node edited successfully")
         except Exception as e:
             logger.error(f"Error editing Chain Import node: {str(e)}", exc_info=True)
-    
+
     def expand_chain_import(self, node):
         """Expand a Chain Import node by opening it in a separate dialog for editing"""
         logger.debug(f"Opening chain editor for: {node.name() if node else 'None'}")
@@ -579,7 +728,7 @@ class GraphViewWidget(QWidget):
             logger.info("Chain editor dialog closed")
         except Exception as e:
             logger.error(f"Error opening chain editor: {str(e)}", exc_info=True)
-    
+
     def delete_node(self, node):
         """Delete a node from the graph"""
         logger.debug(f"Deleting node: {node.name() if node else 'None'}")
@@ -588,119 +737,127 @@ class GraphViewWidget(QWidget):
             logger.info("Node deleted successfully")
         except Exception as e:
             logger.error(f"Error deleting node: {str(e)}", exc_info=True)
-    
+
     def delete_action_node(self, node):
-        """Delete an action node from the graph and update the JSON file"""
+        """Delete an action node from the graph"""
         logger.debug(f"Deleting action node: {node.name() if node else 'None'}")
         try:
             self.node_operations.delete_action_node(node)
             logger.info("Action node deleted successfully")
         except Exception as e:
             logger.error(f"Error deleting action node: {str(e)}", exc_info=True)
-    
+
     def record_new_sequence(self):
-        """Start recording a new sequence"""
-        logger.debug("Starting new sequence recording")
+        """Record a new sequence of actions"""
+        logger.debug("Recording new sequence")
         try:
             self.node_operations.record_new_sequence()
-            logger.info("New sequence recording started successfully")
+            logger.info("New sequence recorded successfully")
         except Exception as e:
-            logger.error(f"Error starting new sequence recording: {str(e)}", exc_info=True)
-    
+            logger.error(f"Error recording new sequence: {str(e)}", exc_info=True)
+
     def record_single_action(self, sequence_node):
-        """Record a single action and add it to the specified sequence"""
-        logger.debug(f"Recording single action for sequence: {sequence_node.name() if sequence_node else 'None'}")
+        """Record a single action within a sequence"""
+        logger.debug(f"Recording single action for sequence node: {sequence_node.name() if sequence_node else 'None'}")
         try:
             self.node_operations.record_single_action(sequence_node)
             logger.info("Single action recorded successfully")
         except Exception as e:
             logger.error(f"Error recording single action: {str(e)}", exc_info=True)
-    
+
     def remove_action_from_sequence(self, sequence_node):
-        """Remove an action from the specified sequence"""
-        logger.debug(f"Removing action from sequence: {sequence_node.name() if sequence_node else 'None'}")
+        """Remove an action from a sequence"""
+        logger.debug(f"Removing action from sequence node: {sequence_node.name() if sequence_node else 'None'}")
         try:
             self.node_operations.remove_action_from_sequence(sequence_node)
-            logger.info("Action removed from sequence successfully")
+            logger.info("Action removed successfully")
         except Exception as e:
             logger.error(f"Error removing action from sequence: {str(e)}", exc_info=True)
-    
+
     def remove_sequence_from_chain(self, sequence_node):
-        """Remove a sequence from the chain configuration"""
+        """Remove a sequence from the chain"""
         logger.debug(f"Removing sequence from chain: {sequence_node.name() if sequence_node else 'None'}")
         try:
             self.node_operations.remove_sequence_from_chain(sequence_node)
-            logger.info("Sequence removed from chain successfully")
+            logger.info("Sequence removed successfully")
         except Exception as e:
             logger.error(f"Error removing sequence from chain: {str(e)}", exc_info=True)
-    
+
     def add_conditional_branch_to_sequence(self, sequence_node):
-        """Add a conditional node that controls execution flow to the sequence node"""
-        logger.debug(f"Adding conditional branch to sequence: {sequence_node.name() if sequence_node else 'None'}")
+        """Add a conditional branch to a sequence"""
+        logger.debug(f"Adding conditional branch to sequence node: {sequence_node.name() if sequence_node else 'None'}")
         try:
-            # Get sequence node position
-            seq_pos = sequence_node.pos()
-            # Position conditional node to the left of the sequence
-            conditional_pos = [seq_pos[0] - 200, seq_pos[1]]
-            
-            # Create conditional node
-            conditional_node = self.add_conditional_node(conditional_pos)
-            
-            if conditional_node:
-                # Set conditional node name based on sequence
-                sequence_name = sequence_node.get_property('sequence_name') or sequence_node.name()
-                conditional_node.set_name(f"Branch: {sequence_name}")
-                
-                # Connect conditional 'true' output to sequence input
-                conditional_true_output = conditional_node.get_output('true')
-                sequence_input = sequence_node.get_input('input')
-                
-                if conditional_true_output and sequence_input:
-                    conditional_true_output.connect_to(sequence_input)
-                    logger.info(f"Connected conditional branch to sequence: {sequence_name}")
-                
-                return conditional_node
-            else:
-                logger.error("Failed to create conditional node")
-                return None
-                
+            self.node_operations.add_conditional_branch_to_sequence(sequence_node)
+            logger.info("Conditional branch added to sequence successfully")
         except Exception as e:
-            logger.error(f"Error adding conditional branch to sequence: {str(e)}", exc_info=True)
-            return None
+            logger.error(f"Error adding conditional branch: {str(e)}", exc_info=True)
 
     def add_conditional_branch_to_llm(self, llm_node):
-        """Add a conditional node that controls execution flow to the LLM node"""
-        logger.debug(f"Adding conditional branch to LLM: {llm_node.name() if llm_node else 'None'}")
+        """Add a conditional branch to an LLM node"""
+        logger.debug(f"Adding conditional branch to LLM node: {llm_node.name() if llm_node else 'None'}")
         try:
-            # Get LLM node position
-            llm_pos = llm_node.pos()
-            # Position conditional node to the left of the LLM
-            conditional_pos = [llm_pos[0] - 200, llm_pos[1]]
-            
-            # Create conditional node
-            conditional_node = self.add_conditional_node(conditional_pos)
-            
-            if conditional_node:
-                # Set conditional node name based on LLM
-                llm_prompt = llm_node.get_property('prompt') or llm_node.name()
-                prompt_preview = llm_prompt[:20] + "..." if len(llm_prompt) > 20 else llm_prompt
-                conditional_node.set_name(f"Branch: {prompt_preview}")
-                
-                # Connect conditional 'true' output to LLM input
-                conditional_true_output = conditional_node.get_output('true')
-                llm_input = llm_node.get_input('input_1')
-                
-                if conditional_true_output and llm_input:
-                    conditional_true_output.connect_to(llm_input)
-                    logger.info(f"Connected conditional branch to LLM: {prompt_preview}")
-                
-                return conditional_node
-            else:
-                logger.error("Failed to create conditional node")
-                return None
-                
+            self.node_operations.add_conditional_branch_to_llm(llm_node)
+            logger.info("Conditional branch added to LLM successfully")
         except Exception as e:
             logger.error(f"Error adding conditional branch to LLM: {str(e)}", exc_info=True)
-            return None
-    
-    # Auto-branching is now handled automatically during workflow execution
+
+    def add_conditional_branch_to_chain_import(self, chain_import_node):
+        """Add a conditional branch to a Chain Import node"""
+        logger.debug(f"Adding conditional branch to Chain Import node: {chain_import_node.name() if chain_import_node else 'None'}")
+        try:
+            self.node_operations.add_conditional_branch_to_chain_import(chain_import_node)
+            logger.info("Conditional branch added to Chain Import successfully")
+        except Exception as e:
+            logger.error(f"Error adding conditional branch to Chain Import: {str(e)}", exc_info=True)
+
+    def add_conditional_branch_to_sequence(self, sequence_node):
+        """Add a conditional branch to a sequence"""
+        logger.debug(f"Adding conditional branch to sequence node: {sequence_node.name() if sequence_node else 'None'}")
+        try:
+            self.node_operations.add_conditional_branch_to_sequence(sequence_node)
+            logger.info("Conditional branch added to sequence successfully")
+        except Exception as e:
+            logger.error(f"Error adding conditional branch to sequence: {str(e)}", exc_info=True)
+
+    def add_conditional_branch_to_llm(self, llm_node):
+        """Add a conditional branch to an LLM"""
+        logger.debug(f"Adding conditional branch to LLM node: {llm_node.name() if llm_node else 'None'}")
+        try:
+            self.node_operations.add_conditional_branch_to_llm(llm_node)
+            logger.info("Conditional branch added to LLM successfully")
+        except Exception as e:
+            logger.error(f"Error adding conditional branch to LLM: {str(e)}", exc_info=True)
+
+    def add_conditional_branch_to_chain_import(self, chain_import_node):
+        """Add a conditional branch to a Chain Import node"""
+        logger.debug(f"Adding conditional branch to Chain Import node: {chain_import_node.name() if chain_import_node else 'None'}")
+        try:
+            self.node_operations.add_conditional_branch_to_chain_import(chain_import_node)
+            logger.info("Conditional branch added to Chain Import successfully")
+        except Exception as e:
+            logger.error(f"Error adding conditional branch to Chain Import: {str(e)}", exc_info=True)
+
+    def delete_selected_nodes(self):
+        """Delete all currently selected nodes using node operations."""
+        logger.debug("Deleting selected nodes")
+        try:
+            selected_nodes = self.node_graph.selected_nodes()
+            if not selected_nodes:
+                logger.debug("No selected nodes to delete")
+                return
+            logger.info(f"Deleting {len(selected_nodes)} selected nodes")
+            # Iterate and delete via existing type-aware node operations
+            for node in list(selected_nodes):
+                try:
+                    logger.debug(f"Deleting node: {node.name()} ({type(node).__name__})")
+                    self.node_operations.delete_node(node)
+                except Exception as inner_e:
+                    logger.error(f"Failed to delete node {node.name()}: {inner_e}", exc_info=True)
+            # Clear selection after deletion
+            try:
+                self.node_graph.clear_selection()
+            except Exception:
+                pass
+            logger.info("Selected nodes deleted successfully")
+        except Exception as e:
+            logger.error(f"Error deleting selected nodes: {str(e)}", exc_info=True)
