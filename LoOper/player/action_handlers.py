@@ -561,6 +561,14 @@ class ActionHandlers:
             time.sleep(0.02)
             pyautogui.hotkey('ctrl', 'a')
             logger.info("Performed Ctrl+A operation")
+        elif operation == 'undo' or operation == 'z':
+            time.sleep(0.02)
+            pyautogui.hotkey('ctrl', 'z')
+            logger.info("Performed Ctrl+Z (Undo) operation")
+        elif operation == 'redo' or operation == 'y':
+            time.sleep(0.02)
+            pyautogui.hotkey('ctrl', 'y')
+            logger.info("Performed Ctrl+Y (Redo) operation")
 
     def handle_drag_actions(self, idx, action):
         """

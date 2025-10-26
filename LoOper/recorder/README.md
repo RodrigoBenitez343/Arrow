@@ -81,6 +81,6 @@ Each module can be configured independently:
 
 - **ScreenshotManager**: Screenshot directory, region size
 - **ScrollManager**: Scroll timeout, epsilon values
-- **KeyboardHandler**: Modifier key mappings
+- **KeyboardHandler**: Modifier key mappings, special combos (Ctrl+C/V/X/A, Ctrl+Z/Y)
 - **MouseHandler**: Drag distance threshold
 - **SequenceManager**: Output filename, metadata format

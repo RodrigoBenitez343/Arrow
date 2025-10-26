@@ -56,6 +56,10 @@ class KeyboardHandler:
                         detected_key = 'v'
                     elif ctrl_code == 1:  # Ctrl+A = ASCII 1 (SOH)
                         detected_key = 'a'
+                    elif ctrl_code == 26: # Ctrl+Z = ASCII 26 (SUB)
+                        detected_key = 'z'
+                    elif ctrl_code == 25: # Ctrl+Y = ASCII 25 (EM)
+                        detected_key = 'y'
 
                 # Fallback to virtual key codes
                 elif key_vk is not None:
@@ -67,6 +71,10 @@ class KeyboardHandler:
                         detected_key = 'v'
                     elif key_vk == 65: # VK_A
                         detected_key = 'a'
+                    elif key_vk == 90: # VK_Z
+                        detected_key = 'z'
+                    elif key_vk == 89: # VK_Y
+                        detected_key = 'y'
 
                 if detected_key:
                     # Flush current string first
@@ -86,6 +94,10 @@ class KeyboardHandler:
                         print("\n✂️ CUT (Ctrl+X)")
                     elif detected_key == 'a':
                         print("\n🅰 SELECT ALL (Ctrl+A)")
+                    elif detected_key == 'z':
+                        print("\n↩️ UNDO (Ctrl+Z)")
+                    elif detected_key == 'y':
+                        print("\n↪️ REDO (Ctrl+Y)")
 
                     return [string_action, action] if string_action else action
 
