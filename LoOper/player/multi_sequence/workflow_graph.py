@@ -1100,7 +1100,7 @@ class WorkflowExecutor:
             loop_type = conditional_data.get('loop_type', 'while_present')
             max_iterations = int(conditional_data.get('max_loops', 10))
             sequence_file = conditional_data.get('sequence_file', '')
-            iteration_delay = float(conditional_data.get('iteration_delay', 0.3))
+            iteration_delay = float(conditional_data.get('iteration_delay', 0.05))  # Reduced from 0.3
             
             # Parse the stored loop condition
             loop_condition_json = conditional_data.get('loop_condition', '{}')

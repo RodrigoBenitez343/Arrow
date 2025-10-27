@@ -214,7 +214,8 @@ class SequenceExecutor:
                     fallback_player = SequencePlayer(fallback_seq_name)
                     # Share selection memory with fallback player
                     fallback_player.selection_memory = self.selection_memory
-                    fallback_player.play_sequence(stop_flag=stop_flag)
+                    # Skip initial delay for faster fallback execution
+                    fallback_player.play_sequence(stop_flag=stop_flag, skip_initial_delay=True)
                     logger.info(f"Fallback sequence completed. Current sequence was aborted.")
                     
                 except Exception as e:
@@ -344,7 +345,7 @@ class SequenceExecutor:
                     if self.fallback_handler.check_presence_trigger(condition, screen_cv=screen_cv):
                         logger.info("Presence wait condition satisfied")
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.02)  # Reduced from 0.1
             elif condition_type == 'absence':
                 # For absence checks, let the method handle its own polling with shared screenshots
                 self.fallback_handler.check_absence_trigger(condition, timeout)
@@ -356,7 +357,7 @@ class SequenceExecutor:
                     if self.fallback_handler.check_ocr_trigger(condition, stop_flag=stop_flag):
                         logger.info("OCR wait condition satisfied")
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.02)  # Reduced from 0.1
             elif condition_type == 'wait_time':
                 wait_time = float(condition.get('wait_time', 5))
                 logger.info(f"Waiting for {wait_time} seconds")

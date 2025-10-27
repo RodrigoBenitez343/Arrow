@@ -1,0 +1,60 @@
+2025-10-27 11:43:49,225 - DEBUG - mss library available for fast screenshot capture
+2025-10-27 11:43:49,801 - ERROR - Failed to load sequence from LoOper\sequences\ALL_BRANCHES_CHAIN.json: Invalid sequence format: Missing actions
+2025-10-27 11:43:49,803 - INFO - Sequence loaded and cached: 19 actions from LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - INFO - Loaded sequence for playback: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - DEBUG - Using cached sequence data for: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - INFO - Loaded sequence for playback: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,851 - ERROR - Failed to load sequence from LoOper\sequences\AUXILIAR34.json: Invalid sequence format: Missing actions
+2025-10-27 11:43:49,891 - INFO - Sequence loaded and cached: 150 actions from large_test_sequence.json
+2025-10-27 11:43:49,892 - INFO - Loaded sequence for playback: large_test_sequence.json
+2025-10-27 11:43:49,892 - DEBUG - Sequence player initialized with lazy loading: large_test_sequence.json
+2025-10-27 11:43:49,959 - INFO - Sequence loaded and cached: 30 actions from cache_test_sequence_0.json
+2025-10-27 11:43:49,959 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:49,984 - INFO - Sequence loaded and cached: 45 actions from cache_test_sequence_1.json
+2025-10-27 11:43:49,984 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,016 - INFO - Sequence loaded and cached: 60 actions from cache_test_sequence_2.json
+2025-10-27 11:43:50,020 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,058 - INFO - Sequence loaded and cached: 75 actions from cache_test_sequence_3.json
+2025-10-27 11:43:50,059 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,090 - INFO - Sequence loaded and cached: 90 actions from cache_test_sequence_4.json
+2025-10-27 11:43:50,092 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,093 - INFO - Sequence loaded and cached: 30 actions from cache_test_sequence_0.json
+2025-10-27 11:43:50,094 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,097 - INFO - Sequence loaded and cached: 45 actions from cache_test_sequence_1.json
+2025-10-27 11:43:50,097 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,098 - INFO - Sequence loaded and cached: 60 actions from cache_test_sequence_2.json
+2025-10-27 11:43:50,099 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,102 - INFO - Sequence loaded and cached: 75 actions from cache_test_sequence_3.json
+2025-10-27 11:43:50,104 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,105 - INFO - Sequence loaded and cached: 90 actions from cache_test_sequence_4.json
+2025-10-27 11:43:50,106 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,107 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,108 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,108 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,109 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,110 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,110 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,110 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,111 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,111 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,111 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,124 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,124 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,124 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,125 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,126 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,126 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,127 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,127 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,129 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,130 - INFO - Loaded sequence for playback: cache_test_sequence_4.json

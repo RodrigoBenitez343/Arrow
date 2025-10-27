@@ -48,7 +48,7 @@ class ActionHandlers:
         Returns:
             bool: True if successful, False if fallback was triggered
         """
-        self.bot.random_delay(0.01, 0.1)  # Add a small random delay before clicking.
+        self.bot.random_delay(0.001, 0.01)  # Reduced from 0.01-0.1 - Add a small random delay before clicking.
 
         if not action.get('screenshot'):
             logger.error(f"Action {idx} is a click without a screenshot. Aborting playback.")
@@ -67,7 +67,7 @@ class ActionHandlers:
         
         # Get retry configuration from action
         retry_attempts = action.get('fallback_retry_attempts', 3)
-        retry_delay = action.get('fallback_retry_delay', 0.3)
+        retry_delay = action.get('fallback_retry_delay', 0.05)  # Reduced from 0.3
 
         # Capture single screenshot for all search attempts to improve efficiency
         current_screen_cv = None
@@ -250,7 +250,7 @@ class ActionHandlers:
                     if stop_flag and stop_flag():
                         logger.info(f"Click action {idx} stopped by user request during retry delay")
                         return True
-                    sleep_time = min(0.1, retry_delay - elapsed)
+                    sleep_time = min(0.05, retry_delay - elapsed)  # Reduced from 0.1
                     time.sleep(sleep_time)
                     elapsed += sleep_time
         
@@ -260,7 +260,7 @@ class ActionHandlers:
 
         if target_coords:
             self.bot.human_mouse_move(target_coords[0], target_coords[1])
-            time.sleep(0.05)
+            time.sleep(0.01)  # Reduced from 0.05
             
             # Get button type from action, default to left
             button = action.get('button', 'left')
@@ -270,11 +270,11 @@ class ActionHandlers:
                 # Perform double-click
                 if button == 'right':
                     pyautogui.rightClick()
-                    time.sleep(0.02)
+                    time.sleep(0.005)  # Reduced from 0.02
                     pyautogui.rightClick()
                 elif button == 'middle':
                     pyautogui.middleClick()
-                    time.sleep(0.02)
+                    time.sleep(0.005)  # Reduced from 0.02
                     pyautogui.middleClick()
                 else:  # left or default
                     pyautogui.doubleClick()
@@ -358,7 +358,7 @@ class ActionHandlers:
             if use_clipboard:
                 try:
                     pyperclip.copy(text)
-                    time.sleep(0.05)  # Small delay to ensure clipboard is set
+                    time.sleep(0.01)  # Reduced from 0.05 - Small delay to ensure clipboard is set
                     pyautogui.hotkey('ctrl', 'v')
                     logger.info(f"Pasted text via clipboard (Unicode-safe), length={len(text)}")
 
@@ -373,17 +373,17 @@ class ActionHandlers:
             char_by_char = action.get('char_by_char', False)  # Default to batch mode
             
             # Get keystroke delay for preventing duplicate characters on slow machines
-            keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay between keystrokes
+            keystroke_delay = action.get('keystroke_delay', 0.001)  # Reduced from 0.01 - Default 1ms delay between keystrokes
             
             if char_by_char:
                 # Character-by-character typing for maximum reliability
                 batch_size = 1  # One character at a time
-                batch_delay = action.get('char_delay', 0.05)  # Default to 0.05s between characters
+                batch_delay = action.get('char_delay', 0.01)  # Reduced from 0.05 - Default to 0.01s between characters
                 logger.info(f"Typing text character-by-character with delay={batch_delay}s, keystroke_delay={keystroke_delay}s")
             else:
                 # Batch typing mode
                 batch_size = action.get('batch_size', 5)  # Default to 5 chars per batch
-                batch_delay = action.get('batch_delay', 0.05)  # Default to 0.05s between batches
+                batch_delay = action.get('batch_delay', 0.01)  # Reduced from 0.05 - Default to 0.01s between batches
                 logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}, keystroke_delay={keystroke_delay}s")
             
             # Type text in batches for significantly improved speed
@@ -422,9 +422,9 @@ class ActionHandlers:
                                         time.sleep(keystroke_delay)
                             # Press Enter after each segment except the last one
                             if j < len(segments) - 1:
-                                time.sleep(0.05)  # Small delay before Enter key
+                                time.sleep(0.01)  # Small delay before Enter key
                                 pyautogui.press('enter')
-                                time.sleep(0.05)  # Small delay after Enter key
+                                time.sleep(0.01)  # Small delay after Enter key
                     else:
                         # Type the filtered batch character by character with delay
                         for char in filtered_batch:
@@ -546,29 +546,29 @@ class ActionHandlers:
         
         # Execute the corresponding hotkey.
         if operation == 'copy' or operation == 'c':
-            time.sleep(0.02) # Small delay to ensure text is selected before copying.
+            time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure text is selected before copying.
             pyautogui.hotkey('ctrl', 'c')
             logger.info("Performed Ctrl+C operation")
         elif operation == 'paste' or operation == 'v':
-            time.sleep(0.02) # Small delay to ensure the input field is focused.
+            time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure the input field is focused.
             pyautogui.hotkey('ctrl', 'v')
             logger.info("Performed Ctrl+V operation")
         elif operation == 'cut' or operation == 'x':
-            time.sleep(0.02)
+            time.sleep(0.01)  # Reduced from 0.02
             pyautogui.hotkey('ctrl', 'x')
             logger.info("Performed Ctrl+X operation")
         elif operation == 'select_all' or operation == 'a':
-            time.sleep(0.02)
+            time.sleep(0.01)  # Reduced from 0.02
             pyautogui.hotkey('ctrl', 'a')
             logger.info("Performed Ctrl+A operation")
         elif operation == 'undo' or operation == 'z':
-            time.sleep(0.02)
+            time.sleep(0.01)  # Reduced from 0.02
             pyautogui.hotkey('ctrl', 'z')
-            logger.info("Performed Ctrl+Z (Undo) operation")
+            logger.info("Performed Ctrl+Z operation")
         elif operation == 'redo' or operation == 'y':
-            time.sleep(0.02)
+            time.sleep(0.01)  # Reduced from 0.02
             pyautogui.hotkey('ctrl', 'y')
-            logger.info("Performed Ctrl+Y (Redo) operation")
+            logger.info("Performed Ctrl+Y operation")
 
     def handle_drag_actions(self, idx, action):
         """

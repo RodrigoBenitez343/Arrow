@@ -8,6 +8,7 @@ import json
 import time
 import os
 import threading
+import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..config import logger
 from ..computer_vision import TemplateMatching
@@ -22,6 +23,151 @@ class ConditionalFallbackHandler:
         self.template_matcher = TemplateMatching()
         # Base directory of the current chain file, used to resolve relative paths for nested imports
         self.chain_file_dir = chain_file_dir
+        
+        # Validation result cache for faster repeated checks
+        self._validation_cache = {}
+        self._last_screen_hash = None
+        self._cache_lock = threading.Lock()
+        
+    def _get_screen_hash(self, screen_cv=None):
+        """
+        Generate a hash of the current screen to detect changes.
+        
+        Args:
+            screen_cv (numpy.ndarray): Pre-captured screen image
+            
+        Returns:
+            str: Hash of the screen content
+        """
+        try:
+            if screen_cv is None:
+                screen_cv = self.template_matcher.capture_screen()
+            
+            # Create a hash from a downsampled version for performance
+            import cv2
+            import numpy as np
+            
+            # Downsample to 100x100 for fast hashing
+            small_screen = cv2.resize(screen_cv, (100, 100))
+            # Convert to grayscale for consistent hashing
+            if len(small_screen.shape) == 3:
+                small_screen = cv2.cvtColor(small_screen, cv2.COLOR_BGR2GRAY)
+            
+            # Create hash from the image data
+            screen_bytes = small_screen.tobytes()
+            return hashlib.md5(screen_bytes).hexdigest()
+            
+        except Exception as e:
+            logger.debug(f"Error generating screen hash: {e}")
+            return None
+    
+    def _get_validation_cache_key(self, trigger_config):
+        """
+        Generate a cache key for a validation trigger configuration.
+        
+        Args:
+            trigger_config (dict): The trigger configuration
+            
+        Returns:
+            str: Cache key for this validation
+        """
+        try:
+            # Create a key based on the validation parameters
+            image_path = trigger_config.get('image_path', '')
+            confidence = trigger_config.get('confidence', 0.8)
+            trigger_type = trigger_config.get('trigger_type', 'presence')
+            ocr_text = trigger_config.get('ocr_text', '')
+            
+            # Resolve the image path to get absolute path for consistent caching
+            resolved_path = self._resolve_path(image_path, add_json=False)
+            
+            # Create a deterministic key
+            key_data = f"{resolved_path}|{confidence}|{trigger_type}|{ocr_text}"
+            return hashlib.md5(key_data.encode()).hexdigest()
+            
+        except Exception as e:
+            logger.debug(f"Error generating cache key: {e}")
+            return None
+    
+    def _invalidate_cache_if_screen_changed(self, screen_cv=None):
+        """
+        Invalidate the validation cache if the screen has changed.
+        
+        Args:
+            screen_cv (numpy.ndarray): Pre-captured screen image
+        """
+        try:
+            with self._cache_lock:
+                current_hash = self._get_screen_hash(screen_cv)
+                if current_hash and current_hash != self._last_screen_hash:
+                    logger.debug(f"Screen changed, invalidating validation cache (old: {self._last_screen_hash}, new: {current_hash})")
+                    self._validation_cache.clear()
+                    self._last_screen_hash = current_hash
+                elif current_hash:
+                    self._last_screen_hash = current_hash
+                    
+        except Exception as e:
+            logger.debug(f"Error checking screen changes: {e}")
+    
+    def _get_cached_validation_result(self, trigger_config, screen_cv=None):
+        """
+        Get a cached validation result if available and screen hasn't changed.
+        
+        Args:
+            trigger_config (dict): The trigger configuration
+            screen_cv (numpy.ndarray): Pre-captured screen image
+            
+        Returns:
+            bool or None: Cached result if available, None if not cached
+        """
+        try:
+            # Check if screen has changed and invalidate cache if needed
+            self._invalidate_cache_if_screen_changed(screen_cv)
+            
+            cache_key = self._get_validation_cache_key(trigger_config)
+            if not cache_key:
+                return None
+                
+            with self._cache_lock:
+                if cache_key in self._validation_cache:
+                    result = self._validation_cache[cache_key]
+                    logger.debug(f"Using cached validation result: {result} for key: {cache_key[:8]}...")
+                    return result
+                    
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Error retrieving cached validation result: {e}")
+            return None
+    
+    def _cache_validation_result(self, trigger_config, result, screen_cv=None):
+        """
+        Cache a validation result for future use.
+        
+        Args:
+            trigger_config (dict): The trigger configuration
+            result (bool): The validation result
+            screen_cv (numpy.ndarray): Pre-captured screen image
+        """
+        try:
+            cache_key = self._get_validation_cache_key(trigger_config)
+            if not cache_key:
+                return
+                
+            with self._cache_lock:
+                self._validation_cache[cache_key] = result
+                logger.debug(f"Cached validation result: {result} for key: {cache_key[:8]}...")
+                
+                # Limit cache size to prevent memory issues
+                if len(self._validation_cache) > 100:
+                    # Remove oldest entries (simple FIFO)
+                    oldest_keys = list(self._validation_cache.keys())[:20]
+                    for old_key in oldest_keys:
+                        del self._validation_cache[old_key]
+                    logger.debug("Cleaned up validation cache (removed 20 oldest entries)")
+                    
+        except Exception as e:
+            logger.debug(f"Error caching validation result: {e}")
 
     def _resolve_path(self, path, add_json=False):
         """Resolve a possibly relative path against the chain file directory and cwd.
@@ -68,60 +214,60 @@ class ConditionalFallbackHandler:
 
     def check_presence_trigger(self, trigger_config, screen_cv=None):
         """
-        Check if a visual element is present on screen
+        Check if a visual element is present on screen - OPTIMIZED: Single check only with caching
         
         Args:
-            trigger_config (dict): Configuration with 'image_path', 'confidence', 'timeout'
+            trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
             screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
-            bool: True if element is found within timeout
+            bool: True if element is found
         """
         try:
+            # Check for cached result first
+            cached_result = self._get_cached_validation_result(trigger_config, screen_cv)
+            if cached_result is not None:
+                logger.debug(f"Using cached presence trigger result: {cached_result}")
+                return cached_result
+            
             image_path = trigger_config.get('image_path')
             # Resolve image path relative to the chain file directory for nested imports
             image_path = self._resolve_path(image_path, add_json=False)
             confidence = trigger_config.get('confidence', 0.8)
-            timeout = float(trigger_config.get('timeout', 10))  # Default 10 seconds timeout
+            scales = [1.0, 0.9, 1.1]  # Default scales for template matching
             
             if not image_path or not os.path.exists(image_path):
                 logger.warning(f"Presence trigger image not found: {image_path}")
+                # Cache the negative result for missing images
+                self._cache_validation_result(trigger_config, False, screen_cv)
                 return False
             
-            logger.info(f"Checking presence of image: {image_path} (confidence: {confidence}, timeout: {timeout}s)")
+            logger.info(f"Checking presence of image: {image_path} (confidence: {confidence})")
             
-            # Use template matching with timeout support
-            start_time = time.time()
-            scales = [1.0, 0.9, 1.1]  # Optimized scales for faster matching
-            
-            while time.time() - start_time < timeout:
-                if self.stop_flag and self.stop_flag():
-                    logger.info("Presence trigger check stopped by user request")
-                    return False
+            # Check stop flag before starting presence trigger
+            if self.stop_flag and self.stop_flag():
+                logger.info("Stop flag detected before presence trigger check - aborting")
+                return False
                 
-                # Capture shared screenshot if not provided
-                current_screen_cv = screen_cv
-                if current_screen_cv is None:
-                    current_screen_cv = self.template_matcher.capture_screen()
-                    
-                # Perform single presence check using the existing method
-                found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config, current_screen_cv)
-                if found:
-                    logger.info(f"Presence trigger satisfied - element found: {image_path}")
-                    return True
+            # Capture shared screenshot if not provided
+            current_screen_cv = screen_cv
+            if current_screen_cv is None:
+                current_screen_cv = self.template_matcher.capture_screen()
                 
-                # Only sleep if we're in a polling loop (screen_cv not provided)
-                if screen_cv is None:
-                    time.sleep(0.02)  # Reduced from 0.1s to 0.02s for faster polling
-                else:
-                    # If screen_cv was provided, this is a single-shot check
-                    break
-            
-            logger.info(f"Presence trigger timeout - element not found: {image_path}")
-            return False
+            # Perform single presence check using the existing method
+            found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config, current_screen_cv)
+            if found:
+                logger.info(f"Presence trigger satisfied - element found: {image_path}")
+                # Result is already cached in _perform_single_presence_check
+                return True
+            else:
+                logger.info(f"Presence trigger not satisfied - element not found: {image_path}")
+                # Result is already cached in _perform_single_presence_check
+                return False
             
         except Exception as e:
             logger.error(f"Error checking presence trigger: {e}")
+            # Don't cache error results
             return False
     
     def execute_conditional_node(self, node, stop_flag=None):
@@ -234,7 +380,7 @@ class ConditionalFallbackHandler:
             loop_type = conditional_data.get('loop_type', 'while_present')
             max_iterations = int(conditional_data.get('max_loops', 10))
             sequence_file = conditional_data.get('sequence_file', '')
-            iteration_delay = float(conditional_data.get('iteration_delay', 0.3))
+            iteration_delay = float(conditional_data.get('iteration_delay', 0.05))  # Reduced from 0.3
             
             # Parse the stored loop condition
             loop_condition_json = conditional_data.get('loop_condition', '{}')
@@ -328,7 +474,7 @@ class ConditionalFallbackHandler:
             'type': 'until_present',
             'max_iterations': int(condition_data.get('max_loops', 10)),
             'sequence_file': condition_data.get('sequence_file') or conditional_node.get('sequence_to_execute'),
-            'iteration_delay': float(condition_data.get('iteration_delay', 0.3)),
+            'iteration_delay': float(condition_data.get('iteration_delay', 0.05)),  # Reduced from 0.3
             'condition': {
                 'trigger_type': 'presence',
                 'image_path': self._resolve_path(condition_data.get('image_path', ''), add_json=False),
@@ -353,7 +499,7 @@ class ConditionalFallbackHandler:
     
     def _perform_single_presence_check(self, image_path, confidence, scales, trigger_config, screen_cv=None):
         """
-        Perform a single presence check with optimized fast validation
+        Perform a single presence check with optimized fast validation and caching
         
         Args:
             image_path (str): Path to the image to find
@@ -366,6 +512,11 @@ class ConditionalFallbackHandler:
             bool: True if element is found
         """
         try:
+            # Check for cached result first
+            cached_result = self._get_cached_validation_result(trigger_config, screen_cv)
+            if cached_result is not None:
+                return cached_result
+            
             # Fast single-pass validation with early exit
             # Use only the most effective scales for speed
             fast_scales = [1.0, 0.9, 1.1]  # Reduced from 5 to 3 scales
@@ -414,6 +565,8 @@ class ConditionalFallbackHandler:
                 
                 if region_result is not None:
                     logger.debug(f"[REGION HIT] Region-based search found match at {region_result}: {image_path}")
+                    # Cache the positive result
+                    self._cache_validation_result(trigger_config, True, screen_cv)
                     return True
                 else:
                     logger.debug(f"[REGION MISS] Region-based search failed, falling back to full-screen: {image_path}")
@@ -435,23 +588,32 @@ class ConditionalFallbackHandler:
                     )
                     if high_conf_result is not None:
                         logger.debug(f"[STRICT CHECK PASSED] High confidence validation passed: {image_path}")
+                        # Cache the positive result
+                        self._cache_validation_result(trigger_config, True, screen_cv)
                         return True
                     else:
                         logger.debug(f"[STRICT CHECK FAILED] High confidence validation failed, but primary passed: {image_path}")
+                        # Cache the positive result (primary validation passed)
+                        self._cache_validation_result(trigger_config, True, screen_cv)
                         return True  # Still return True since primary validation passed
                 else:
+                    # Cache the positive result
+                    self._cache_validation_result(trigger_config, True, screen_cv)
                     return True
             else:
                 logger.debug(f"[FAST CHECK FAILED] Primary validation failed: {image_path}")
+                # Cache the negative result
+                self._cache_validation_result(trigger_config, False, screen_cv)
                 return False
                 
         except Exception as e:
             logger.debug(f"[FAST CHECK ERROR] Exception during validation: {e}")
+            # Don't cache error results
             return False
     
     def check_ocr_trigger(self, trigger_config, timeout=None, stop_flag=None):
         """
-        Check if specified text is detected on screen via OCR
+        Check if specified text is detected on screen via OCR with caching
         OCR method will always take a fresh screenshot to ensure current state validation.
         
         Args:
@@ -467,12 +629,20 @@ class ConditionalFallbackHandler:
             logger.info("Stop flag detected before OCR trigger check - aborting")
             return False
         
+        # Check for cached result first
+        cached_result = self._get_cached_validation_result(trigger_config)
+        if cached_result is not None:
+            logger.debug(f"Using cached OCR trigger result: {cached_result}")
+            return cached_result
+        
         target_text = trigger_config.get('target_text')
         confidence = trigger_config.get('confidence', 0.8)
         case_sensitive = trigger_config.get('case_sensitive', True)
         
         if not target_text:
             logger.error("No target text specified for OCR trigger")
+            # Cache the negative result for missing target text
+            self._cache_validation_result(trigger_config, False)
             return False
             
         try:
@@ -488,66 +658,76 @@ class ConditionalFallbackHandler:
             
             if result and result.get('found'):
                 logger.info(f"[OCR FOUND] Text '{target_text}' detected with confidence {result['confidence']:.3f}")
+                # Cache the positive result
+                self._cache_validation_result(trigger_config, True)
                 return True
             else:
                 logger.info(f"[OCR NOT FOUND] Text '{target_text}' not detected with confidence >= {confidence}")
+                # Cache the negative result
+                self._cache_validation_result(trigger_config, False)
                 return False
                 
         except Exception as e:
             logger.error(f"Error checking OCR trigger: {e}")
+            # Don't cache error results
             return False
     
     def check_absence_trigger(self, trigger_config, timeout, screen_cv=None):
         """
-        Check if a visual element is absent from screen within timeout
+        Check if a visual element is absent from screen - OPTIMIZED: Single check only with caching
         
         Args:
             trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
-            timeout (float): Maximum time to wait for absence
+            timeout (float): Maximum time to wait for absence (ignored in optimized version)
             screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
-            bool: True if element becomes absent within timeout
+            bool: True if element is absent
         """
+        # Create a modified trigger config for absence checking (invert the result)
+        absence_trigger_config = trigger_config.copy()
+        absence_trigger_config['trigger_type'] = 'absence'  # Mark as absence for cache key
+        
+        # Check for cached result first
+        cached_result = self._get_cached_validation_result(absence_trigger_config, screen_cv)
+        if cached_result is not None:
+            logger.debug(f"Using cached absence trigger result: {cached_result}")
+            return cached_result
+        
         image_path = trigger_config.get('image_path')
-        logger.info(f"Checking absence of image: {image_path} (timeout: {timeout}s)")
+        logger.info(f"Checking absence of image: {image_path} (single check)")
         
-        start_time = time.time()
+        if self.stop_flag and self.stop_flag():
+            logger.info("Absence trigger check stopped by user request")
+            return False
         
-        while time.time() - start_time < timeout:
-            if self.stop_flag and self.stop_flag():
-                logger.info("Absence trigger check stopped by user request")
-                return False
+        # Capture shared screenshot if not provided
+        current_screen_cv = screen_cv
+        if current_screen_cv is None:
+            current_screen_cv = self.template_matcher.capture_screen()
             
-            # Capture shared screenshot if not provided
-            current_screen_cv = screen_cv
-            if current_screen_cv is None:
-                current_screen_cv = self.template_matcher.capture_screen()
-                
-            # Check if element is present using shared screenshot (we want it to be absent)
-            is_present = self._perform_single_presence_check(
-                self._resolve_path(trigger_config.get('image_path'), add_json=False),
-                trigger_config.get('confidence', 0.8),
-                [1.0, 0.9, 1.1],
-                trigger_config,
-                current_screen_cv
-            )
-            
-            if not is_present:
-                logger.info(f"Absence trigger satisfied - element not found: {image_path}")
-                return True
-            else:
-                logger.debug(f"Element still present, continuing absence check: {image_path}")
-            
-            # Only sleep if we're in a polling loop (screen_cv not provided)
-            if screen_cv is None:
-                time.sleep(0.02)  # Reduced from 0.1s to 0.02s for faster polling
-            else:
-                # If screen_cv was provided, this is a single-shot check
-                break
+        # Check if element is present using shared screenshot (we want it to be absent)
+        is_present = self._perform_single_presence_check(
+            self._resolve_path(trigger_config.get('image_path'), add_json=False),
+            trigger_config.get('confidence', 0.8),
+            [1.0, 0.9, 1.1],
+            trigger_config,
+            current_screen_cv
+        )
         
-        logger.info(f"Absence trigger timeout - element remained present: {image_path}")
-        return False
+        # For absence trigger, we want the opposite of presence
+        is_absent = not is_present
+        
+        if is_absent:
+            logger.info(f"Absence trigger satisfied - element not found: {image_path}")
+            # Cache the positive result (element is absent)
+            self._cache_validation_result(absence_trigger_config, True, current_screen_cv)
+            return True
+        else:
+            logger.info(f"Absence trigger not satisfied - element still present: {image_path}")
+            # Cache the negative result (element is present, so absence failed)
+            self._cache_validation_result(absence_trigger_config, False, current_screen_cv)
+            return False
     
     def execute_conditional_loop(self, loop_config, sequence_player):
         """
@@ -564,7 +744,7 @@ class ConditionalFallbackHandler:
             loop_type = loop_config.get('type', 'while_present')  # while_present, while_absent, until_present, until_absent
             condition = loop_config.get('condition', {})
             max_iterations = loop_config.get('max_iterations', 10)
-            iteration_delay = loop_config.get('iteration_delay', 0.3)
+            iteration_delay = loop_config.get('iteration_delay', 0.05)  # Reduced from 0.3
             sequence_file = loop_config.get('sequence_file')
             
             if not sequence_file:
@@ -638,7 +818,8 @@ class ConditionalFallbackHandler:
                     loop_player.selection_memory = getattr(self, 'selection_memory', {})
                 except Exception:
                     pass
-                loop_player.play_sequence(stop_flag=self.stop_flag)
+                # Skip initial delay for faster loop execution
+                loop_player.play_sequence(stop_flag=self.stop_flag, skip_initial_delay=True)
                 
                 # Check condition again after executing the sequence
                 # This is crucial for until_present and until_absent loops
@@ -859,5 +1040,7 @@ class ConditionalFallbackHandler:
                         return result, f"OCR condition {'met' if result else 'not met'}"
                     else:
                         return False, f"Unknown condition type: {condition_type}"
+
                 except Exception as e:
-                    return False, f"Error checking wait condition: {e}"
+                    logger.error(f"Exception in wait condition check: {e}")
+                    return False, f"Exception in wait condition check: {e}"
