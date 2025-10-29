@@ -97,6 +97,10 @@ class GraphManager:
             graph_widget.setContextMenuPolicy(Qt.CustomContextMenu)
             graph_widget.customContextMenuRequested.connect(self.parent_widget.show_custom_context_menu)
             
+            # Set focus policy to ensure proper focus handling
+            logger.debug("Setting focus policy for graph widget")
+            graph_widget.setFocusPolicy(Qt.StrongFocus)
+            
             # Replace the placeholder widget
             logger.debug("Replacing placeholder widget with graph widget")
             layout = self.parent_widget.node_graph_widget.parent().layout()

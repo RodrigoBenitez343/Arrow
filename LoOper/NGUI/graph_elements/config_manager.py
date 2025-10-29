@@ -190,6 +190,15 @@ class ConfigManager:
         """Build the node graph from the current configuration."""
         logger.info("Building node graph from configuration")
         try:
+            # Ensure the graph and view are properly initialized before building
+            if not hasattr(self.parent_widget, 'node_graph') or self.parent_widget.node_graph is None:
+                logger.error("Node graph not initialized, cannot build graph from config")
+                raise RuntimeError("Node graph not initialized")
+                
+            if not hasattr(self.parent_widget, 'view') or self.parent_widget.view is None:
+                logger.error("Graph view not initialized, cannot build graph from config")
+                raise RuntimeError("Graph view not initialized")
+            
             # Clear existing graph
             logger.debug("Clearing existing graph")
             self.parent_widget.graph_manager.clear_graph()

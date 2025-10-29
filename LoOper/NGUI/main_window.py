@@ -340,19 +340,26 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Chain Error", f"Failed to run chain: {str(e)}")
 
     def open_chain(self):
-        """Opens a chain configuration file"""
-        options = QFileDialog.Options()
-        fileName, _ = QFileDialog.getOpenFileName(self, "Open Chain File", "", "JSON Files (*.json)", options=options)
+        """Open a chain configuration file."""
+        fileName, _ = QFileDialog.getOpenFileName(
+            self, "Open Chain", "", "JSON Files (*.json);;All Files (*)"
+        )
         if fileName:
             try:
+                # Check if graph view is ready
+                if not self.graph_view.is_ready():
+                    QMessageBox.warning(
+                        self, 
+                        "Graph Not Ready", 
+                        "The graph view is not fully initialized yet. Please wait a moment and try again."
+                    )
+                    return
+                
                 self.graph_view.load_chain(fileName)
-                QMessageBox.information(self, "Success", "Chain loaded successfully!")
-            except FileNotFoundError:
-                QMessageBox.critical(self, "File Error", f"Chain file not found: {fileName}")
-            except ValueError as e:
-                QMessageBox.critical(self, "Format Error", f"Invalid chain file format: {str(e)}")
+            except RuntimeError as e:
+                QMessageBox.critical(self, "Error", f"Graph not ready: {str(e)}")
             except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load chain: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to load chain: {str(e)}")
 
     def save_chain(self):
         """Saves the current chain to a file"""

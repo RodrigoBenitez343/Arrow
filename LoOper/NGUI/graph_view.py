@@ -62,6 +62,9 @@ class GraphViewWidget(QWidget):
             self.current_sequence_idx = None  # Track currently selected sequence
             self.saved_sequence_state = None  # Store sequence view state when switching to action view
             
+            # Initialize ready flag
+            self._initialization_complete = False
+            
             # Set up folder paths
             project_root = os.path.dirname(os.path.dirname(__file__))
             self.sequences_folder = os.path.join(project_root, "sequences")
@@ -99,6 +102,9 @@ class GraphViewWidget(QWidget):
             self.setup_ui()
             logger.debug("Setting up node graph...")
             self.setup_node_graph()
+            
+            # Mark initialization as complete
+            self._initialization_complete = True
             logger.info("GraphViewWidget initialization completed successfully")
         except Exception as e:
             logger.error(f"Error during GraphViewWidget initialization: {str(e)}", exc_info=True)
@@ -153,6 +159,27 @@ class GraphViewWidget(QWidget):
             event.accept()
         else:
             super().keyPressEvent(event)
+
+    def focusInEvent(self, event):
+        """Handle focus in events and delegate to the graph view if available"""
+        try:
+            # Delegate focus to the graph view if it exists and is ready
+            if hasattr(self, 'view') and self.view is not None:
+                self.view.setFocus()
+            super().focusInEvent(event)
+        except Exception as e:
+            logger.debug(f"Focus event handling error (non-critical): {str(e)}")
+            # Continue with default behavior even if delegation fails
+            super().focusInEvent(event)
+
+    def focusOutEvent(self, event):
+        """Handle focus out events"""
+        try:
+            super().focusOutEvent(event)
+        except Exception as e:
+            logger.debug(f"Focus out event handling error (non-critical): {str(e)}")
+            # Continue with default behavior
+            super().focusOutEvent(event)
     
     def get_property_whitelist(self, node_type: str):
         """Return a set of safe property names for a given node type."""
@@ -471,6 +498,11 @@ class GraphViewWidget(QWidget):
         """Show the context menu for the graph"""
         logger.debug(f"Showing custom context menu at position: {pos}")
         try:
+            # Check if view is properly initialized
+            if not hasattr(self, 'view') or self.view is None:
+                logger.warning("View not initialized yet, cannot show context menu")
+                return
+                
             # Get selected nodes
             selected_nodes = self.node_graph.selected_nodes()
             logger.debug(f"Selected nodes: {len(selected_nodes)}")
@@ -632,10 +664,30 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error saving current state: {str(e)}", exc_info=True)
             raise
 
+    def is_ready(self):
+        """Check if the GraphViewWidget is fully initialized and ready for operations."""
+        return (getattr(self, '_initialization_complete', False) and
+                hasattr(self, 'node_graph') and self.node_graph is not None and
+                hasattr(self, 'view') and self.view is not None)
+
     def load_chain(self, file_path):
         """Load a chain configuration from a file"""
         logger.debug(f"Loading chain from file: {file_path}")
         try:
+            # Check if initialization is complete
+            if not getattr(self, '_initialization_complete', False):
+                logger.error("Cannot load chain: GraphViewWidget initialization not complete")
+                raise RuntimeError("Graph view is not ready for chain loading")
+            
+            # Ensure the graph is properly initialized before loading
+            if not hasattr(self, 'node_graph') or self.node_graph is None:
+                logger.error("Node graph not initialized, cannot load chain")
+                raise RuntimeError("Node graph not initialized")
+                
+            if not hasattr(self, 'view') or self.view is None:
+                logger.error("Graph view not initialized, cannot load chain")
+                raise RuntimeError("Graph view not initialized")
+                
             self.config_manager.load_chain(file_path)
             logger.info("Chain loaded successfully")
         except Exception as e:
