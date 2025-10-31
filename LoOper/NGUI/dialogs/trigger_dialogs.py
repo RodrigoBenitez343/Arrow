@@ -351,7 +351,7 @@ class ConditionalLoopDialog(QDialog):
         type_layout = QHBoxLayout()
         type_layout.addWidget(QLabel("Loop Type:"))
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["while_present", "while_absent", "until_present", "until_absent"])
+        self.type_combo.addItems(["while_present", "until_present"])
         self.type_combo.currentTextChanged.connect(self.on_loop_type_changed)
         type_layout.addWidget(self.type_combo)
         type_layout.addStretch()
@@ -457,12 +457,9 @@ class ConditionalLoopDialog(QDialog):
     def on_loop_type_changed(self, loop_type):
         """Handle loop type change"""
         # Update UI labels based on loop type
-        if loop_type in ["while_present", "until_present"]:
-            # For presence-based loops, we're looking for something to appear
-            pass
-        elif loop_type in ["while_absent", "until_absent"]:
-            # For absence-based loops, we're looking for something to disappear
-            pass
+        # All remaining loop types are presence-based (while_present, until_present)
+        # No special handling needed as we only support presence-based loops now
+        pass
     
     def on_condition_method_changed(self, condition_method):
         """Handle condition method change"""
@@ -496,7 +493,7 @@ class ConditionalLoopDialog(QDialog):
         
         # Create unified condition based on loop type and method
         if condition_method == "ocr":
-            # For OCR-based conditions, map loop type to OCR trigger type
+            # For OCR-based conditions
             condition = {
                 'trigger_type': 'ocr',
                 'target_text': self.target_text_entry.text(),
@@ -504,14 +501,9 @@ class ConditionalLoopDialog(QDialog):
                 'case_sensitive': self.case_sensitive_check.isChecked()
             }
         else:
-            # For image-based conditions, map loop type to presence/absence trigger type
-            if loop_type in ["while_present", "until_present"]:
-                trigger_type = 'presence'
-            else:  # while_absent, until_absent
-                trigger_type = 'absence'
-            
+            # For image-based conditions, all remaining loop types are presence-based
             condition = {
-                'trigger_type': trigger_type,
+                'trigger_type': 'presence',
                 'image_path': self.image_path_entry.text(),
                 'confidence': self.confidence_spin.value()
             }

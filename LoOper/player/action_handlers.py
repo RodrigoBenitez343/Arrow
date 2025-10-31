@@ -477,13 +477,14 @@ class ActionHandlers:
         
         return False
 
-    def handle_keystroke_action(self, idx, action):
+    def handle_keystroke_action(self, idx, action, stop_flag=None):
         """
         Handles special keystroke actions (Enter, Tab, etc.).
         
         Args:
             idx (int): Action index
             action (dict): Action configuration
+            stop_flag (callable): Function to check if execution should stop
         """
         # Similar to typing, check for a required delay after a click.
         if 'delay_after_click' in action:
@@ -492,7 +493,19 @@ class ActionHandlers:
             if time_since_click < required_delay:
                 wait_time = required_delay - time_since_click
                 logger.debug(f"Waiting {wait_time:.2f}s after click before keystroke")
-                time.sleep(wait_time)
+                # Sleep in small increments to allow interruption
+                elapsed = 0.0
+                while elapsed < wait_time:
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected before keystroke - aborting keystroke action")
+                        return
+                    sleep_time = min(0.05, wait_time - elapsed)
+                    time.sleep(sleep_time)
+                    elapsed += sleep_time
+        # Check stop flag before performing keystroke
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before keystroke - aborting keystroke action")
+            return
         # Clean the key name (e.g., 'Key.enter' -> 'enter').
         key = action['key'].replace('Key.', '')
         # Map pynput key names to pyautogui key names.
@@ -511,16 +524,28 @@ class ActionHandlers:
             
             # Add small delay after keystroke to prevent issues on slow machines
             if keystroke_delay > 0:
-                time.sleep(keystroke_delay)
+                elapsed = 0.0
+                while elapsed < keystroke_delay:
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected after keystroke - aborting keystroke action")
+                        return
+                    sleep_time = min(0.05, keystroke_delay - elapsed)
+                    time.sleep(sleep_time)
+                    elapsed += sleep_time
 
-    def handle_scroll_action(self, idx, action):
+    def handle_scroll_action(self, idx, action, stop_flag=None):
         """
         Handles scroll actions.
         
         Args:
             idx (int): Action index
             action (dict): Action configuration
+            stop_flag (callable): Function to check if execution should stop
         """
+        # Check stop flag before starting scroll
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before scroll - aborting scroll action")
+            return True
         # Extract vertical scroll amount from correct field
         dy = action.get('total_delta', 0)  # Use total_delta from recordings
         
@@ -545,6 +570,10 @@ class ActionHandlers:
         # Execute scroll in small steps (mimics real user behavior)
         accumulated = 0.0
         for i in range(num_steps):
+            # Allow immediate cancellation in long scrolls
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected during scroll - aborting scroll action")
+                return True
             # Calculate exact step amount (avoids precision loss)
             current_target = (i + 1) * step_dy
             rounded_target = round(current_target)
@@ -556,7 +585,14 @@ class ActionHandlers:
             
             # Pause between steps to match original timing
             if i < num_steps - 1 and step_duration > 0:
-                time.sleep(step_duration)
+                elapsed = 0.0
+                while elapsed < step_duration:
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected during scroll delay - aborting scroll action")
+                        return True
+                    sleep_time = min(0.05, step_duration - elapsed)
+                    time.sleep(sleep_time)
+                    elapsed += sleep_time
 
     def handle_clipboard_action(self, idx, action):
         """

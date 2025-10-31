@@ -8,10 +8,10 @@ conditional loops.
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog,
-    QTabWidget, QListWidgetItem, QTextEdit, QGroupBox, QListWidget
+    QListWidgetItem, QTextEdit, QGroupBox, QListWidget
 )
 from ..constants import TEXT_COLOR
-from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, WaitConditionDialog, ConditionalLoopDialog
+from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog
 
 
 class AdvancedConditionalDialog(QDialog):
@@ -92,19 +92,8 @@ class AdvancedConditionalDialog(QDialog):
         layout.setContentsMargins(15, 15, 15, 15)  # Add proper margins
         layout.setSpacing(10)  # Add spacing between elements
         
-        # Tab widget for different condition types
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabPosition(QTabWidget.North)
-        layout.addWidget(self.tab_widget)
-        
-        # Pre-sequence conditions tab
-        self.setup_pre_conditions_tab()
-        
-        # Post-sequence conditions tab
-        self.setup_post_conditions_tab()
-        
-        # Conditional loops tab
-        self.setup_conditional_loops_tab()
+        # Unified dialog without tabs: presence triggers, OCR triggers, and pre-sequence loops
+        self.setup_unified_conditions(layout)
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -122,6 +111,90 @@ class AdvancedConditionalDialog(QDialog):
         button_layout.addWidget(cancel_btn)
         
         layout.addLayout(button_layout)
+
+    def setup_unified_conditions(self, parent_layout: QVBoxLayout):
+        """Setup a unified layout with the supported options (no tabs)."""
+        # Presence triggers
+        presence_group = QGroupBox("Presence Triggers (must be present to execute)")
+        presence_layout = QVBoxLayout(presence_group)
+        presence_layout.setContentsMargins(10, 15, 10, 10)
+        presence_layout.setSpacing(8)
+
+        self.presence_triggers_list = QListWidget()
+        self.presence_triggers_list.setMinimumHeight(120)
+        presence_layout.addWidget(self.presence_triggers_list)
+
+        presence_buttons = QHBoxLayout()
+        presence_buttons.setSpacing(8)
+        add_presence_btn = QPushButton("Add Presence Trigger")
+        add_presence_btn.setMinimumHeight(30)
+        add_presence_btn.clicked.connect(self.add_presence_trigger)
+        presence_buttons.addWidget(add_presence_btn)
+
+        remove_presence_btn = QPushButton("Remove Selected")
+        remove_presence_btn.setMinimumHeight(30)
+        remove_presence_btn.clicked.connect(lambda: self.remove_selected_item(self.presence_triggers_list))
+        presence_buttons.addWidget(remove_presence_btn)
+        presence_buttons.addStretch()
+
+        presence_layout.addLayout(presence_buttons)
+        parent_layout.addWidget(presence_group)
+
+        # OCR triggers
+        ocr_group = QGroupBox("OCR Triggers (text must be present to execute)")
+        ocr_layout = QVBoxLayout(ocr_group)
+        ocr_layout.setContentsMargins(10, 15, 10, 10)
+        ocr_layout.setSpacing(8)
+
+        self.ocr_triggers_list = QListWidget()
+        self.ocr_triggers_list.setMinimumHeight(120)
+        ocr_layout.addWidget(self.ocr_triggers_list)
+
+        ocr_buttons = QHBoxLayout()
+        ocr_buttons.setSpacing(8)
+        add_ocr_btn = QPushButton("Add OCR Trigger")
+        add_ocr_btn.setMinimumHeight(30)
+        add_ocr_btn.clicked.connect(self.add_ocr_trigger)
+        ocr_buttons.addWidget(add_ocr_btn)
+
+        remove_ocr_btn = QPushButton("Remove Selected")
+        remove_ocr_btn.setMinimumHeight(30)
+        remove_ocr_btn.clicked.connect(lambda: self.remove_selected_item(self.ocr_triggers_list))
+        ocr_buttons.addWidget(remove_ocr_btn)
+        ocr_buttons.addStretch()
+
+        ocr_layout.addLayout(ocr_buttons)
+        parent_layout.addWidget(ocr_group)
+
+        # Pre-sequence conditional loops
+        pre_loops_group = QGroupBox("Pre-Sequence Conditional Loops")
+        pre_loops_layout = QVBoxLayout(pre_loops_group)
+        pre_loops_layout.setContentsMargins(10, 15, 10, 10)
+        pre_loops_layout.setSpacing(8)
+
+        self.pre_loops_list = QListWidget()
+        self.pre_loops_list.setMinimumHeight(120)
+        pre_loops_layout.addWidget(self.pre_loops_list)
+
+        pre_loops_buttons = QHBoxLayout()
+        pre_loops_buttons.setSpacing(8)
+        add_pre_loop_btn = QPushButton("Add Pre-Loop")
+        add_pre_loop_btn.setMinimumHeight(30)
+        add_pre_loop_btn.clicked.connect(self.add_pre_conditional_loop)
+        pre_loops_buttons.addWidget(add_pre_loop_btn)
+
+        remove_pre_loop_btn = QPushButton("Remove Selected")
+        remove_pre_loop_btn.setMinimumHeight(30)
+        remove_pre_loop_btn.clicked.connect(lambda: self.remove_selected_item(self.pre_loops_list))
+        pre_loops_buttons.addWidget(remove_pre_loop_btn)
+        pre_loops_buttons.addStretch()
+
+        pre_loops_layout.addLayout(pre_loops_buttons)
+        parent_layout.addWidget(pre_loops_group)
+
+        # Load existing data for the supported options
+        self.load_pre_conditions()
+        self.load_conditional_loops()
     
     def setup_pre_conditions_tab(self):
         """Setup the pre-sequence conditions tab"""
@@ -396,13 +469,7 @@ class AdvancedConditionalDialog(QDialog):
             item = QListWidgetItem(f"Image: {trigger['image_path']} (Confidence: {trigger['confidence']})")
             item.setData(32, trigger)
             self.presence_triggers_list.addItem(item)
-        
-        absence_triggers = self.current_config.get('absence_triggers', [])
-        for trigger in absence_triggers:
-            item = QListWidgetItem(f"Image: {trigger['image_path']} (Timeout: {trigger.get('timeout', 10)}s)")
-            item.setData(32, trigger)
-            self.absence_triggers_list.addItem(item)
-        
+
         ocr_triggers = self.current_config.get('ocr_triggers', [])
         for trigger in ocr_triggers:
             item = QListWidgetItem(f"Text: '{trigger['target_text']}' (Confidence: {trigger['confidence']})")
@@ -428,14 +495,6 @@ class AdvancedConditionalDialog(QDialog):
             item = QListWidgetItem(f"{loop_type} loop: {loop_config['sequence_file']} (Max: {max_iter})")
             item.setData(32, loop_config)
             self.pre_loops_list.addItem(item)
-        
-        post_loops = self.current_config.get('post_conditional_loops', [])
-        for loop_config in post_loops:
-            loop_type = loop_config['type']
-            max_iter = loop_config['max_iterations']
-            item = QListWidgetItem(f"{loop_type} loop: {loop_config['sequence_file']} (Max: {max_iter})")
-            item.setData(32, loop_config)
-            self.post_loops_list.addItem(item)
     
     def get_config(self):
         """Get the complete configuration from the dialog"""
@@ -449,14 +508,6 @@ class AdvancedConditionalDialog(QDialog):
         if presence_triggers:
             config['presence_triggers'] = presence_triggers
         
-        # Absence triggers
-        absence_triggers = []
-        for i in range(self.absence_triggers_list.count()):
-            item = self.absence_triggers_list.item(i)
-            absence_triggers.append(item.data(32))
-        if absence_triggers:
-            config['absence_triggers'] = absence_triggers
-        
         # OCR triggers
         ocr_triggers = []
         for i in range(self.ocr_triggers_list.count()):
@@ -465,14 +516,6 @@ class AdvancedConditionalDialog(QDialog):
         if ocr_triggers:
             config['ocr_triggers'] = ocr_triggers
         
-        # Wait conditions
-        wait_conditions = []
-        for i in range(self.wait_conditions_list.count()):
-            item = self.wait_conditions_list.item(i)
-            wait_conditions.append(item.data(32))
-        if wait_conditions:
-            config['wait_conditions'] = wait_conditions
-        
         # Pre-conditional loops
         pre_loops = []
         for i in range(self.pre_loops_list.count()):
@@ -480,13 +523,5 @@ class AdvancedConditionalDialog(QDialog):
             pre_loops.append(item.data(32))
         if pre_loops:
             config['pre_conditional_loops'] = pre_loops
-        
-        # Post-conditional loops
-        post_loops = []
-        for i in range(self.post_loops_list.count()):
-            item = self.post_loops_list.item(i)
-            post_loops.append(item.data(32))
-        if post_loops:
-            config['post_conditional_loops'] = post_loops
         
         return config

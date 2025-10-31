@@ -89,7 +89,7 @@ class ConditionalLoop:
                         temp_player.selection_memory = sequence_player.selection_memory
                     
                     # Execute the sequence
-                    success = temp_player.play_sequence()
+                    success = temp_player.play_sequence(stop_flag=self.stop_flag, skip_initial_delay=True)
                     
                     if not success:
                         logger.warning(f"Sequence execution failed in loop iteration {iteration_count + 1}")
@@ -103,7 +103,15 @@ class ConditionalLoop:
                 
                 # Add delay between iterations
                 if iteration_delay > 0:
-                    time.sleep(iteration_delay)
+                    # Sleep in small increments to allow for interruption
+                    elapsed = 0.0
+                    while elapsed < iteration_delay:
+                        if self.stop_flag and self.stop_flag():
+                            logger.info("Stop flag detected during loop iteration delay - aborting")
+                            return False
+                        sleep_time = min(0.05, iteration_delay - elapsed)
+                        time.sleep(sleep_time)
+                        elapsed += sleep_time
             
             if iteration_count >= max_iterations:
                 logger.info(f"Loop completed maximum iterations: {max_iterations}")

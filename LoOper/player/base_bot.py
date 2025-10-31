@@ -197,13 +197,13 @@ class SeleniumBot:
                     return False  # Fallback was triggered
                     
             elif action['type'] == 'type_string':
-                self.action_handlers.handle_type_string_action(idx, action)
+                self.action_handlers.handle_type_string_action(idx, action, stop_flag)
                 
             elif action['type'] == 'keystroke':
-                self.action_handlers.handle_keystroke_action(idx, action)
+                self.action_handlers.handle_keystroke_action(idx, action, stop_flag)
                 
             elif action['type'] == 'scroll':
-                self.action_handlers.handle_scroll_action(idx, action)
+                self.action_handlers.handle_scroll_action(idx, action, stop_flag)
                 
             elif action['type'] in ['clipboard', 'copy', 'paste', 'cut', 'select_all']:
                 self.action_handlers.handle_clipboard_action(idx, action)

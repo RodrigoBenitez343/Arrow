@@ -136,7 +136,16 @@ class MultiSequencePlayer(SeleniumBot):
         logger.debug(f"Chain playback - workflow_graph exists: {self.workflow_graph is not None}")
         logger.debug(f"Chain playback - sequences count: {len(self.sequences) if self.sequences else 0}")
         
-        time.sleep(2) # Initial delay.
+        # Interruption-friendly initial delay
+        initial_delay = 2.0
+        elapsed = 0.0
+        while elapsed < initial_delay:
+            if stop_flag and stop_flag():
+                logger.info("Chain playback stopped during initial delay")
+                return False
+            sleep_time = min(0.1, initial_delay - elapsed)
+            time.sleep(sleep_time)
+            elapsed += sleep_time
         
         # Set stop flag for all components
         self.fallback_handler.stop_flag = stop_flag

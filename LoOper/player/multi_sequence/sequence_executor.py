@@ -9,6 +9,7 @@ import time
 from ..config import logger
 from ..sequence_player import SequencePlayer
 from ..json_cache import get_sequence
+from ..base_bot import SeleniumBot
 
 
 class SequenceExecutor:
@@ -162,10 +163,19 @@ class SequenceExecutor:
                 sequence_data = get_sequence(seq_file)
                 if sequence_data:
                     logger.info(f"Using cached sequence data for: {seq_file}")
-                    # Create a minimal player instance for execution without reloading JSON
+                    # Create a player instance without reloading JSON but ensure base init occurs
                     player = SequencePlayer.__new__(SequencePlayer)
-                    player.sequence_data = sequence_data.copy()
+                    try:
+                        # Initialize without loading the file to set up base bot state and handlers
+                        SequencePlayer.__init__(player, seq_file, lazy_load=True)
+                    except Exception as init_err:
+                        # Fallback: directly initialize SeleniumBot base to provide action handlers
+                        logger.debug(f"SequencePlayer lazy init failed, falling back to base init: {init_err}")
+                        SeleniumBot.__init__(player)
+                        player.sequence_file = seq_file
+                    # Share selection memory and inject cached data
                     player.selection_memory = self.selection_memory
+                    player.sequence_data = sequence_data.copy()
                 else:
                     # Fallback to traditional loading if not in cache
                     logger.info(f"Loading sequence from disk (not in cache): {seq_file}")
