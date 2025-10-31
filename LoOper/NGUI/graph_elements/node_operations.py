@@ -490,26 +490,26 @@ class NodeOperations:
                 current_config['presence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
                     'confidence': float(node.get_property('threshold') or 0.8),
-                    'timeout': float(node.get_property('wait_time') or 5)
+                    'timeout': float(node.get_property('timeout') or 5.0)
                 }]
             elif condition_type == 'absence' and node.get_property('image_path'):
                 current_config['absence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
                     'confidence': float(node.get_property('threshold') or 0.8),
-                    'timeout': float(node.get_property('wait_time') or 5)
+                    'timeout': float(node.get_property('timeout') or 10.0)
                 }]
             elif condition_type == 'ocr' and node.get_property('ocr_text'):
                 current_config['ocr_triggers'] = [{
                     'target_text': node.get_property('ocr_text'),
                     'confidence': float(node.get_property('threshold') or 0.8),
-                    'timeout': float(node.get_property('wait_time') or 5),
+                    'timeout': float(node.get_property('timeout') or 5.0),
                     'case_sensitive': str(node.get_property('case_sensitive') or 'True').lower() == 'true'
                 }]
             elif condition_type == 'wait' and node.get_property('wait_time'):
                 current_config['wait_conditions'] = [{
                     'type': 'wait_time',
                     'wait_time': float(node.get_property('wait_time')),
-                    'timeout': 30
+                    'timeout': float(node.get_property('timeout') or 30.0)
                 }]
             elif condition_type == 'loop' and node.get_property('max_loops'):
                 # Reconstruct loop configuration from node properties
@@ -572,6 +572,9 @@ class NodeOperations:
                     node.set_property('condition_type', 'presence')
                     node.set_property('image_path', condition_data.get('image_path', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
+                    # Apply timeout from dialog configuration to node property
+                    timeout = condition_data.get('timeout', 5.0)
+                    node.set_property('timeout', str(timeout))
                     node.set_name('Wait for Image')
                 # Check for absence triggers
                 elif 'absence_triggers' in config and config['absence_triggers']:
@@ -580,6 +583,9 @@ class NodeOperations:
                     node.set_property('condition_type', 'absence')
                     node.set_property('image_path', condition_data.get('image_path', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
+                    # Apply timeout from dialog configuration to node property
+                    timeout = condition_data.get('timeout', 10.0)
+                    node.set_property('timeout', str(timeout))
                     node.set_name('Wait for Absence')
                 # Check for OCR triggers
                 elif 'ocr_triggers' in config and config['ocr_triggers']:
@@ -589,6 +595,9 @@ class NodeOperations:
                     node.set_property('ocr_text', condition_data.get('target_text', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
                     node.set_property('case_sensitive', str(condition_data.get('case_sensitive', True)))
+                    # Apply timeout from dialog configuration to node property
+                    timeout = condition_data.get('timeout', 5.0)
+                    node.set_property('timeout', str(timeout))
                     node.set_name('Wait for Text')
                 # Check for wait conditions
                 elif 'wait_conditions' in config and config['wait_conditions']:
@@ -596,6 +605,9 @@ class NodeOperations:
                     condition_data = config['wait_conditions'][0]
                     node.set_property('condition_type', 'wait')
                     node.set_property('wait_time', str(condition_data.get('wait_time', 5)))
+                    # Apply timeout from dialog configuration to node property
+                    timeout = condition_data.get('timeout', 30.0)
+                    node.set_property('timeout', str(timeout))
                     node.set_name('Wait Time')
                 # Check for conditional loops (pre or post)
                 elif ('pre_conditional_loops' in config and config['pre_conditional_loops']) or ('post_conditional_loops' in config and config['post_conditional_loops']):

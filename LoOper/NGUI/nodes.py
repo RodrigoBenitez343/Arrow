@@ -94,7 +94,7 @@ class ConditionalNode(BaseNode):
         }
         
         # Add timeout for relevant condition types
-        if self.condition_type in ['absence_trigger', 'wait_presence', 'wait_absence']:
+        if self.condition_type in ['presence_trigger', 'absence_trigger', 'wait_presence', 'wait_absence', 'ocr_trigger']:
             config['timeout'] = self.condition_data.get('timeout', 5.0)
         
         # Add OCR-specific parameters for OCR trigger

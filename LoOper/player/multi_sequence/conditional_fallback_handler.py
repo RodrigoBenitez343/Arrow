@@ -51,8 +51,15 @@ class ConditionalFallbackHandler:
         return self.path_resolver.resolve_path(path, add_json)
     
     def check_presence_trigger(self, trigger_config, screen_cv=None):
-        """Delegate to presence trigger"""
-        return self.presence_trigger.check_presence_trigger(trigger_config, screen_cv)
+        """Check for presence trigger with timeout support from trigger_config"""
+        # Check if timeout is specified in trigger_config
+        timeout = trigger_config.get('timeout')
+        if timeout is not None:
+            # Use timeout method if timeout is specified
+            return self.presence_trigger.check_presence_with_timeout(trigger_config, timeout)
+        else:
+            # Use regular presence check if no timeout specified
+            return self.presence_trigger.check_presence_trigger(trigger_config, screen_cv)
     
     def check_absence_trigger(self, trigger_config, timeout, screen_cv=None):
         """Delegate to absence trigger"""

@@ -111,7 +111,8 @@ class NodeExecutor:
         logger.debug(f"Condition config: {condition_config}")
         
         if condition_type == 'presence_trigger':
-            return self.presence_trigger.check_presence_trigger(condition_config)
+            timeout = float(condition_config.get('timeout', 10))
+            return self.presence_trigger.check_presence_with_timeout(condition_config, timeout=timeout)
         elif condition_type == 'absence_trigger':
             timeout = float(condition_config.get('timeout', 10))
             return self.absence_trigger.check_absence_trigger(condition_config, timeout)

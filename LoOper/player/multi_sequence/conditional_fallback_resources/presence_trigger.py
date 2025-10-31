@@ -133,31 +133,42 @@ class PresenceTrigger:
             logger.error(f"Error in single presence check: {e}")
             return False
     
-    def check_presence_with_timeout(self, trigger_config, timeout=10, check_interval=0.5):
+    def check_presence_with_timeout(self, trigger_config, timeout=10, check_interval=None):
         """
         Check for presence with timeout and periodic checking.
         
         Args:
             trigger_config (dict): Trigger configuration
             timeout (float): Maximum time to wait
-            check_interval (float): Time between checks
+            check_interval (float): Time between checks (optional, defaults to 0.5s)
             
         Returns:
             bool: True if element is found within timeout
         """
+        # Use check_interval from trigger_config if provided, otherwise default to 0.5s
+        if check_interval is None:
+            check_interval = float(trigger_config.get('check_interval', 0.5))
+        
         start_time = time.time()
+        attempt_count = 0
+        
+        logger.info(f"Starting presence check with timeout: {timeout}s, check_interval: {check_interval}s")
         
         while time.time() - start_time < timeout:
+            attempt_count += 1
+            
             if self.stop_flag and self.stop_flag():
                 logger.info("Stop flag detected during presence timeout check - aborting")
                 return False
                 
             if self.check_presence_trigger(trigger_config):
+                logger.info(f"Presence found after {attempt_count} attempts ({time.time() - start_time:.2f}s)")
                 return True
                 
+            logger.debug(f"Attempt {attempt_count} failed, waiting {check_interval}s before retry")
             time.sleep(check_interval)
         
-        logger.info(f"Presence trigger timeout after {timeout} seconds")
+        logger.info(f"Presence trigger timeout after {timeout} seconds ({attempt_count} attempts)")
         return False
     
     def check_multiple_presence_triggers(self, trigger_configs, operator='OR'):

@@ -364,6 +364,10 @@ class ConfigManager:
                 "wait_time": float(node.get_property('wait_time') or 5),
                 "max_loops": int(node.get_property('max_loops') or 10),
                 "ocr_text": node.get_property('ocr_text') or '',
+                # Timeout and retry properties
+                "timeout": float(node.get_property('timeout') or 5.0),
+                "max_attempts": int(node.get_property('max_attempts') or 3),
+                "delay_between_attempts": float(node.get_property('delay_between_attempts') or 1.0),
                 # Loop-specific properties
                 "loop_type": node.get_property('loop_type') or '',
                 "loop_position": node.get_property('loop_position') or '',
@@ -598,6 +602,10 @@ class ConfigManager:
                     node.set_property('wait_time', str(cond_data.get('wait_time', 5)))
                     node.set_property('max_loops', str(cond_data.get('max_loops', 10)))
                     node.set_property('ocr_text', cond_data.get('ocr_text', ''))
+                    # Timeout and retry properties
+                    node.set_property('timeout', str(cond_data.get('timeout', 5.0)))
+                    node.set_property('max_attempts', str(cond_data.get('max_attempts', 3)))
+                    node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 1.0)))
                     # Loop-specific properties
                     node.set_property('loop_type', cond_data.get('loop_type', ''))
                     node.set_property('loop_position', cond_data.get('loop_position', ''))

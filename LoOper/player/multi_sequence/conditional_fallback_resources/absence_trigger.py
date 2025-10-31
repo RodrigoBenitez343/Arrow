@@ -26,17 +26,22 @@ class AbsenceTrigger:
         self.path_resolver = path_resolver
         self.stop_flag = stop_flag
     
-    def check_absence_trigger(self, trigger_config, timeout=10):
+    def check_absence_trigger(self, trigger_config, timeout=10, check_interval=None):
         """
         Check if a visual element is absent from screen within timeout.
         
         Args:
             trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
             timeout (float): Maximum time to wait for absence
+            check_interval (float): Time between checks (optional, defaults to 0.5s)
         
         Returns:
             bool: True if element is absent within timeout
         """
+        # Use check_interval from trigger_config if provided, otherwise default to 0.5s
+        if check_interval is None:
+            check_interval = float(trigger_config.get('check_interval', 0.5))
+        
         try:
             image_path = trigger_config.get('image_path')
             image_path = self.path_resolver.resolve_path(image_path, add_json=False)
@@ -46,12 +51,14 @@ class AbsenceTrigger:
                 logger.warning(f"Absence trigger image not found: {image_path}")
                 return True  # If image doesn't exist, consider it "absent"
             
-            logger.info(f"Checking absence of image: {image_path} (timeout: {timeout}s)")
+            logger.info(f"Checking absence of image: {image_path} (timeout: {timeout}s, check_interval: {check_interval}s)")
             
             start_time = time.time()
-            check_interval = 0.5  # Check every 500ms
+            attempt_count = 0
             
             while time.time() - start_time < timeout:
+                attempt_count += 1
+                
                 # Check stop flag
                 if self.stop_flag and self.stop_flag():
                     logger.info("Stop flag detected during absence trigger check - aborting")
@@ -88,14 +95,15 @@ class AbsenceTrigger:
                 
                 # If element is not present, absence condition is satisfied
                 if not is_present:
-                    logger.info(f"Absence trigger satisfied - element not found: {image_path}")
+                    logger.info(f"Absence trigger satisfied - element not found: {image_path} (attempt {attempt_count})")
                     return True
                 
+                logger.debug(f"Attempt {attempt_count} failed, waiting {check_interval}s before retry")
                 # Wait before next check
                 time.sleep(check_interval)
             
             # Timeout reached and element is still present
-            logger.info(f"Absence trigger timeout - element still present: {image_path}")
+            logger.info(f"Absence trigger timeout - element still present: {image_path} ({attempt_count} attempts)")
             return False
             
         except Exception as e:

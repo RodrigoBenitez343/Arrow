@@ -37,7 +37,7 @@ class SeleniumBot:
         self.last_click_time = time.time()   # Timestamp of the last click, for timing subsequent actions.
         self.mouse_movement_history = []     # Stores a history of mouse movements.
         # Per-element selection memory to avoid random clicks when multiple matches exist.
-        # Maps a stable element key (e.g., screenshot path) to the last chosen index.
+        # Maps a stable element key (e.g., screenshot path) to selection state dict.
         self.selection_memory = {}
         self.action_handlers = ActionHandlers(self)  # Initialize action handlers
 
@@ -145,6 +145,14 @@ class SeleniumBot:
         # Final move to the exact target coordinate with minimal duration
         pyautogui.moveTo(x, y, duration=0.001)  # Reduced from 0.01
         self.mouse_movement_history.append((start_x, start_y, x, y))
+
+    def clear_selection_memory(self):
+        """
+        Clear the selection memory to reset element clicking order.
+        This is useful when starting a new chain or sequence.
+        """
+        self.selection_memory.clear()
+        logger.info("Selection memory cleared")
 
     def execute_with_timing(self, idx, action, fallback_callback=None, stop_flag=None):
         """

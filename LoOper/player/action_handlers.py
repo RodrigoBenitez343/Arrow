@@ -170,29 +170,58 @@ class ActionHandlers:
                             if centers:
                                 centers.sort(key=lambda c: (c[2], c[3]))  # sort by top, then left
 
-                                # Determine selection using per-element memory
+                                # Enhanced selection memory that tracks element instances properly
                                 element_key = os.path.abspath(screenshot_path)
-                                last_index = self.bot.selection_memory.get(element_key, -1)
+                                
+                                # Get current state for this element type
+                                element_state = self.bot.selection_memory.get(element_key, {})
+                                last_instance_count = element_state.get('instance_count', 0)
+                                last_clicked_index = element_state.get('last_index', -1)
+                                
+                                current_instance_count = len(centers)
+                                
+                                logger.info(f"Element selection for {os.path.basename(screenshot_path)}: "
+                                           f"found {current_instance_count} instances, "
+                                           f"last clicked index was {last_clicked_index}, "
+                                           f"last instance count was {last_instance_count}")
+                                
+                                # Check if this is a fresh set of instances (count changed)
+                                if last_instance_count != current_instance_count:
+                                    # Reset to start from beginning for new instance set
+                                    chosen_index = 0
+                                    logger.info(f"New instance set detected for {os.path.basename(screenshot_path)}: "
+                                               f"{current_instance_count} instances (was {last_instance_count})")
+                                else:
+                                    # Continue cycling through existing instances
+                                    chosen_index = (last_clicked_index + 1) % current_instance_count
+                                    logger.info(f"Continuing cycle for {os.path.basename(screenshot_path)}: "
+                                               f"instance {chosen_index + 1}/{current_instance_count}")
 
                                 # If first time seeing this element, prefer nearest to original hint if available
                                 hint_x = action.get('x')
                                 hint_y = action.get('y')
-                                if last_index == -1 and isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
+                                if last_clicked_index == -1 and isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
                                     try:
                                         hx = int(hint_x)
                                         hy = int(hint_y)
                                         dists = [((c[0] - hx) ** 2 + (c[1] - hy) ** 2) for c in centers]
                                         chosen_index = int(dists.index(min(dists)))
+                                        logger.info(f"First time - selected nearest to hint: "
+                                                   f"instance {chosen_index + 1}/{current_instance_count}")
                                     except Exception:
                                         chosen_index = 0
-                                elif last_index == -1:
-                                    chosen_index = 0
-                                else:
-                                    chosen_index = (int(last_index) + 1) % len(centers)
 
-                                self.bot.selection_memory[element_key] = chosen_index
+                                # Update memory with current state
+                                self.bot.selection_memory[element_key] = {
+                                    'instance_count': current_instance_count,
+                                    'last_index': chosen_index
+                                }
+                                
+                                logger.info(f"Selected element {chosen_index} at position {centers[chosen_index]} "
+                                           f"for {os.path.basename(screenshot_path)}")
+                                
                                 location = (centers[chosen_index][0], centers[chosen_index][1])
-                                logger.info(f"Selected candidate {chosen_index + 1}/{len(centers)} for element {os.path.basename(screenshot_path)}")
+                                logger.info(f"Selected instance {chosen_index + 1}/{current_instance_count} for element {os.path.basename(screenshot_path)}")
                             else:
                                 location = None
                         else:
