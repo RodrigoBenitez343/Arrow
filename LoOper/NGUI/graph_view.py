@@ -120,6 +120,32 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error setting up UI: {str(e)}", exc_info=True)
             raise
 
+    def set_toolbar_visible(self, visible: bool):
+        """Show or hide the right-side toolbar pane completely.
+        When hidden, the splitter assigns zero width to the toolbar.
+        When shown, it restores a reasonable width.
+        """
+        try:
+            splitter = getattr(self, '_splitter', None)
+            toolbar = getattr(self, '_toolbar_widget', None)
+            if splitter is None or toolbar is None:
+                return
+            # Ensure the toolbar is part of the splitter
+            idx = splitter.indexOf(toolbar)
+            if idx == -1:
+                return
+            current_sizes = splitter.sizes()
+            if not current_sizes or len(current_sizes) < 2:
+                current_sizes = [900, 240]
+            if visible:
+                # restore right pane width to 240 keeping left size proportional
+                splitter.setSizes([max(1, current_sizes[0]), 240])
+            else:
+                # collapse right pane to zero width
+                splitter.setSizes([max(1, sum(current_sizes)), 0])
+        except Exception as e:
+            logger.error(f"Error toggling toolbar visibility: {e}")
+
     def setup_node_graph(self):
         """Setup the NodeGraphQt graph"""
         logger.debug("Setting up node graph")
@@ -128,6 +154,11 @@ class GraphViewWidget(QWidget):
             # Store reference to the node graph for easy access
             self.node_graph = self.graph_manager.node_graph
             self.graph = self.node_graph  # For backward compatibility
+            # Enable drag-and-drop of node types from the toolbar
+            try:
+                self._setup_drag_drop_dnd()
+            except Exception as e:
+                logger.warning(f"Drag-and-drop setup failed (non-critical): {e}")
             logger.debug("Node graph setup completed successfully")
         except Exception as e:
             logger.error(f"Error setting up node graph: {str(e)}", exc_info=True)
@@ -180,6 +211,72 @@ class GraphViewWidget(QWidget):
             logger.debug(f"Focus out event handling error (non-critical): {str(e)}")
             # Continue with default behavior
             super().focusOutEvent(event)
+
+    def _setup_drag_drop_dnd(self):
+        """Install event filter on the graph widget to accept drags from the toolbar."""
+        try:
+            if hasattr(self, 'node_graph_widget') and self.node_graph_widget is not None:
+                w = self.node_graph_widget
+            elif hasattr(self, 'view') and self.view is not None:
+                w = self.view
+            else:
+                return
+
+            try:
+                w.setAcceptDrops(True)
+            except Exception:
+                pass
+            w.installEventFilter(self)
+            logger.debug("Drag-and-drop event filter installed on graph widget")
+        except Exception as e:
+            logger.error(f"Error installing drag-and-drop filter: {e}")
+
+    def eventFilter(self, obj, event):
+        """Handle drag enter and drop events on the graph widget."""
+        try:
+            from PyQt5.QtCore import QEvent
+            from PyQt5.QtGui import QCursor
+
+            if event.type() == QEvent.DragEnter:
+                mime = event.mimeData()
+                if mime and mime.hasFormat('application/x-looper-node-type'):
+                    event.acceptProposedAction()
+                    return True
+            elif event.type() == QEvent.Drop:
+                mime = event.mimeData()
+                if mime and mime.hasFormat('application/x-looper-node-type'):
+                    node_type = bytes(mime.data('application/x-looper-node-type')).decode('utf-8')
+                    # Map drop position to scene coordinates
+                    drop_pos = None
+                    try:
+                        target_view = getattr(self, 'view', None) or getattr(self, 'node_graph_widget', None)
+                        if hasattr(target_view, 'mapToScene'):
+                            scene_pt = target_view.mapToScene(event.pos())
+                            drop_pos = [int(scene_pt.x()), int(scene_pt.y())]
+                    except Exception:
+                        drop_pos = None
+
+                    try:
+                        if node_type == 'llm':
+                            self.add_llm_node(position=drop_pos)
+                        elif node_type == 'tts':
+                            self.add_tts_node(position=drop_pos)
+                        elif node_type == 'conditional':
+                            self.add_conditional_node(position=drop_pos)
+                        elif node_type == 'chain_import':
+                            self.add_chain_import_node(position=drop_pos)
+                        elif node_type == 'sequence':
+                            # Consistent with context menu: start recording flow
+                            self.record_new_sequence()
+                        else:
+                            logger.info(f"Unknown dropped node type: {node_type}")
+                    except Exception as e:
+                        logger.error(f"Error handling drop for {node_type}: {e}")
+                    event.acceptProposedAction()
+                    return True
+        except Exception as e:
+            logger.debug(f"Event filter non-critical error: {e}")
+        return super().eventFilter(obj, event)
     
     def get_property_whitelist(self, node_type: str):
         """Return a set of safe property names for a given node type."""

@@ -138,13 +138,18 @@ class MainWindow(QMainWindow):
         ai_settings_action.triggered.connect(self.open_ai_settings)
         settings_menu.addAction(ai_settings_action)
         
-        '''# Edit menu
-        edit_menu = menu_bar.addMenu("&Edit")
-        # Add edit actions here
-        
-        # View menu
+        # View menu: allow showing/hiding the right toolbar
         view_menu = menu_bar.addMenu("&View")
-        # Add view actions here''' #deprecated items no need for this buttons
+        toggle_toolbar_action = QAction("Show Toolbar", self)
+        toggle_toolbar_action.setCheckable(True)
+        toggle_toolbar_action.setChecked(True)
+        def _toggle_toolbar(checked):
+            try:
+                self.graph_view.set_toolbar_visible(checked)
+            except Exception as e:
+                logger.error(f"Failed to toggle toolbar visibility: {e}")
+        toggle_toolbar_action.toggled.connect(_toggle_toolbar)
+        view_menu.addAction(toggle_toolbar_action)
         
         # Run menu
         run_menu = menu_bar.addMenu("&Run")

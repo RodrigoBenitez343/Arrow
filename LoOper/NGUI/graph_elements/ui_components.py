@@ -1,8 +1,9 @@
 import logging
-from PyQt5.QtWidgets import QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QSplitter
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
 from ..constants import (DARK_GREY, LIGHT_GREY, TEXT_COLOR)
+from ..widgets.collapsible_toolbar import CollapsibleToolbar
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -52,20 +53,14 @@ class UIComponents:
                 }}
             """)
             
-            # Main layout
-            logger.debug("Creating main layout")
-            main_layout = QVBoxLayout(self.parent_widget)
+            # Main layout contains a horizontal splitter so the toolbar can be resized by dragging
+            logger.debug("Creating main horizontal layout with splitter")
+            main_layout = QHBoxLayout(self.parent_widget)
             main_layout.setContentsMargins(5, 5, 5, 5)
             main_layout.setSpacing(5)
-            
-            # Control panel (skip if None)
-            logger.debug("Creating control panel")
-            control_panel = self.create_control_panel()
-            if control_panel is not None:
-                main_layout.addWidget(control_panel)
-                logger.debug("Control panel added to main layout")
-            else:
-                logger.debug("Control panel skipped (None returned)")
+            splitter = QSplitter(Qt.Horizontal)
+            splitter.setChildrenCollapsible(True)
+            splitter.setHandleWidth(6)
             
             # Node graph widget (placeholder - will be set by graph manager)
             logger.debug("Creating node graph widget placeholder")
@@ -77,8 +72,36 @@ class UIComponents:
                     border-radius: 5px;
                 }}
             """)
-            main_layout.addWidget(self.parent_widget.node_graph_widget)
-            logger.debug("Node graph widget added to main layout")
+            splitter.addWidget(self.parent_widget.node_graph_widget)
+            splitter.setStretchFactor(0, 1)
+            logger.debug("Node graph widget added to splitter (stretchFactor=1)")
+
+            # Right-side collapsible toolbar
+            logger.debug("Creating right-side collapsible toolbar")
+            control_panel = self.create_control_panel()
+            if control_panel is not None:
+                splitter.addWidget(control_panel)
+                splitter.setStretchFactor(1, 0)
+                # Allow collapsing the right pane completely now that it exists
+                try:
+                    splitter.setCollapsible(1, True)
+                except Exception:
+                    pass
+                logger.debug("Toolbar added to splitter")
+            else:
+                logger.debug("Toolbar skipped (None returned)")
+
+            # Add splitter to the main layout
+            main_layout.addWidget(splitter)
+            # Provide sensible initial sizes; left expands, right starts around its preferred width
+            try:
+                splitter.setSizes([900, 240])
+            except Exception:
+                pass
+
+            # Store references for programmatic show/hide control
+            self.parent_widget._splitter = splitter
+            self.parent_widget._toolbar_widget = control_panel
             
             logger.info("UI setup completed successfully")
         except Exception as e:
@@ -86,12 +109,12 @@ class UIComponents:
             raise
         
     def create_control_panel(self):
-        """Create an empty control panel (view switching buttons removed)."""
-        logger.debug("Creating empty control panel")
+        """Create the top collapsible toolbar for quick actions."""
+        logger.debug("Creating collapsible toolbar control panel")
         try:
-            # Return None since we no longer need the control panel
-            logger.info("Control panel creation skipped (buttons removed)")
-            return None
+            toolbar = CollapsibleToolbar(self.parent_widget)
+            logger.info("Collapsible toolbar created successfully")
+            return toolbar
         except Exception as e:
             logger.error(f"Error creating control panel: {e}")
             raise

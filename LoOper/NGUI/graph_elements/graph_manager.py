@@ -1,6 +1,6 @@
 import logging
 from NodeGraphQt import NodeGraph
-from PyQt5.QtWidgets import QVBoxLayout
+from PyQt5.QtWidgets import QVBoxLayout, QSplitter
 from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode  # ContextBuilderNode deprecated
 
 # Configure logging
@@ -101,12 +101,37 @@ class GraphManager:
             logger.debug("Setting focus policy for graph widget")
             graph_widget.setFocusPolicy(Qt.StrongFocus)
             
-            # Replace the placeholder widget
+            # Replace the placeholder widget (supports both layouts and QSplitter containers)
             logger.debug("Replacing placeholder widget with graph widget")
-            layout = self.parent_widget.node_graph_widget.parent().layout()
+            container = self.parent_widget.node_graph_widget.parent()
             old_widget = self.parent_widget.node_graph_widget
-            layout.replaceWidget(old_widget, graph_widget)
-            old_widget.deleteLater()
+            layout = getattr(container, 'layout', lambda: None)()
+            if isinstance(container, QSplitter):
+                try:
+                    idx = container.indexOf(old_widget)
+                    if idx != -1:
+                        container.insertWidget(idx, graph_widget)
+                        old_widget.deleteLater()
+                        logger.debug(f"Inserted graph widget into splitter at index {idx}")
+                    else:
+                        # Fallback: append if index not found
+                        container.addWidget(graph_widget)
+                        old_widget.deleteLater()
+                        logger.warning("Old widget not found in splitter; appended graph widget")
+                except Exception as e:
+                    logger.error(f"Error inserting graph widget into splitter: {e}")
+                    raise
+            elif layout is not None:
+                layout.replaceWidget(old_widget, graph_widget)
+                old_widget.deleteLater()
+                logger.debug("Replaced graph widget via layout.replaceWidget")
+            else:
+                # As a last resort, set parent and show
+                graph_widget.setParent(container)
+                graph_widget.show()
+                old_widget.hide()
+                old_widget.deleteLater()
+                logger.warning("Container has no layout; set parent directly and removed placeholder")
             
             # Store reference
             logger.debug("Storing graph widget references")
