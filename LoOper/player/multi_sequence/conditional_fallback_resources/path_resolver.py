@@ -62,6 +62,15 @@ class PathResolver:
             candidates.append(os.path.join('sequences', path))
             if not path.lower().endswith('.json'):
                 candidates.append(os.path.join('sequences', path + '.json'))
+            
+            # Add LoOper/sequences folder paths
+            looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
+            candidates.append(os.path.join(looper_sequences, path))
+            if not path.lower().endswith('.json'):
+                candidates.append(os.path.join(looper_sequences, path + '.json'))
+            candidates.append(os.path.join(os.getcwd(), 'LoOper', 'sequences', path))
+            if not path.lower().endswith('.json'):
+                candidates.append(os.path.join(os.getcwd(), 'LoOper', 'sequences', path + '.json'))
                 
         # Current working directory fallbacks
         candidates.append(os.path.join(os.getcwd(), path))

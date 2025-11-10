@@ -104,6 +104,13 @@ class SequenceExecutor:
                 os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
             ]
             
+            # Add LoOper/sequences folder paths
+            looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
+            possible_paths.extend([
+                os.path.join(looper_sequences, seq_file),  # LoOper/sequences folder
+                os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file),  # absolute LoOper/sequences
+            ])
+            
             # Add .json extension if missing
             if not seq_file.endswith('.json'):
                 possible_paths.extend([
@@ -113,6 +120,9 @@ class SequenceExecutor:
                     os.path.join('sequences', seq_file + '.json'),
                     os.path.join(os.getcwd(), seq_file + '.json'),
                     os.path.join(os.getcwd(), 'sequences', seq_file + '.json'),
+                    # Add LoOper/sequences paths with .json extension
+                    os.path.join(looper_sequences, seq_file + '.json'),
+                    os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file + '.json'),
                 ])
             
             # Find the first existing file

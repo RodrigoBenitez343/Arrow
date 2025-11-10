@@ -3,6 +3,7 @@ import logging
 import os
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QFileDialog
 from ..dialogs import AdvancedConditionalDialog, LLMPropertiesDialog, TTSPropertiesDialog
+from ..dialogs.sequence_dialogs import SequencePropertiesDialog
 from ..dialogs.chain_import_dialogs import ChainImportDialog
 from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode  # ContextBuilderNode deprecated
 
@@ -757,7 +758,43 @@ class NodeOperations:
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:
                 logger.debug("Dialog cancelled")
+
+
+        except Exception as e:
+            print(f"unmapped exception {e}")
                 
+    def edit_sequence(self, node):
+        """Edit a Sequence node's properties via dialog."""
+        try:
+            logger.info(f"Editing Sequence node: {node.id}")
+            # Load current configuration
+            current_config = {}
+            if hasattr(node, 'get_sequence_config'):
+                current_config = node.get_sequence_config() or {}
+            else:
+                current_config = {
+                    'sequence_file': node.get_property('sequence_file') or '',
+                    'loop_count': int(node.get_property('loop_count') or 1),
+                    'extra_delay': float(node.get_property('extra_delay') or 1.0),
+                }
+
+            dialog = SequencePropertiesDialog(current_config, self.parent_widget)
+            if dialog.exec_() == dialog.Accepted:
+                props = dialog.get_properties()
+                logger.debug(f"Sequence dialog accepted with properties: {props}")
+                node.set_property('loop_count', str(props.get('loop_count', 1)))
+                node.set_property('extra_delay', str(props.get('extra_delay', 1.0)))
+                logger.info(f"Successfully edited Sequence node: {node.id}")
+            else:
+                logger.debug("Sequence dialog cancelled")
+        except Exception as e:
+            logger.error(f"Error editing Sequence node: {e}")
+            QMessageBox.critical(
+                self.parent_widget,
+                "Error",
+                f"Failed to edit sequence node: {str(e)}"
+            )
+
         except Exception as e:
             logger.error(f"Error editing LLM node: {e}")
             QMessageBox.critical(

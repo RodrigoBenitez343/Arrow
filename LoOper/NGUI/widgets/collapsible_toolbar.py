@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QLabel, QApplication, QStyle
 )
 from PyQt5.QtCore import Qt, QPoint, QSize
-from PyQt5.QtGui import QDrag
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor
 from PyQt5.QtCore import QMimeData
 
 from ..constants import (
@@ -69,8 +69,22 @@ class DraggableButton(QPushButton):
         if (event.pos() - self._drag_start_pos).manhattanLength() >= 8:
             mime = QMimeData()
             mime.setData('application/x-looper-node-type', self.node_type.encode('utf-8'))
+
+            # Create a pixmap for the drag icon
+            pixmap = QPixmap(self.size())
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(QColor(self.palette().button().color()))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(self.rect(), 10, 10)
+            painter.end()
+
             drag = QDrag(self)
             drag.setMimeData(mime)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(event.pos() - self.rect().topLeft())
+
             drag.exec_(Qt.CopyAction)
             return
         return super().mouseMoveEvent(event)
@@ -101,7 +115,7 @@ class CollapsibleToolbar(QWidget):
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
         # Allow manual resizing with reasonable limits (allow full collapse to 0)
         self.setMinimumWidth(0)
-        self.setMaximumWidth(360)
+        self.setMaximumWidth(120)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(2)

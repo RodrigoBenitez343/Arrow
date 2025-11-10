@@ -41,12 +41,17 @@ class NodeContextMenuManager:
         copy_action = QAction("Copy Node (Ctrl+C)", menu)
         copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
         menu.addAction(copy_action)
-        
+
         paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
         paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
         menu.addAction(paste_action)
-        
+
         menu.addSeparator()
+
+        # Edit properties via dialog (no inline inputs on node)
+        edit_sequence_action = QAction("Edit Sequence Properties", menu)
+        edit_sequence_action.triggered.connect(lambda: self.graph_view.edit_sequence(node))
+        menu.addAction(edit_sequence_action)
         
         '''add_action_action = QAction("Add Action", menu)
         add_action_action.triggered.connect(lambda: self.graph_view.record_single_action(node))

@@ -556,6 +556,19 @@ Visual workflows are saved as graph structures:
 - **Testing**: Test workflows in different conditions
 - **Documentation**: Use descriptive node names
 
+### Node Inputs via Context Menu
+- Inputs no longer appear directly on nodes; this improves visual clarity.
+- Right-click a node to open its context menu and choose the relevant “Edit …” action.
+- Sequence nodes: use “Edit Sequence Properties” to review and modify `loop_count` and `extra_delay`.
+- Conditional, LLM, TTS, and Chain Import nodes: use their respective “Edit …” dialogs to modify configuration.
+- All dialog changes synchronize with node properties and saved configurations automatically.
+- Nodes with editable inputs show a subtle border accent to indicate configurability.
+
+### Visual Simplification
+- Port labels are hidden; colored dots indicate connection points. Names remain internally for logic and serialization.
+- Node titles are centered. Title font is larger and black across nodes, except Sequence nodes which keep white text for contrast on dark grey.
+- Input ports are blue; output ports are green. Conditional outputs: true is green, false is red.
+
 #### Performance Optimization
 - **Image Quality**: Use high-contrast screenshots for better matching
 - **Region Constraints**: Limit search areas to improve speed

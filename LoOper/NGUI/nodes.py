@@ -2,7 +2,20 @@
 
 import os
 from NodeGraphQt import BaseNode
-from .constants import FALLBACK_COLOR, SCREENSHOT_COLOR, ACTION_COLOR, DARK_GREY, CONDITIONAL_COLOR, LLM_COLOR, TTS_COLOR, CHAIN_IMPORT_COLOR
+from .constants import (
+    FALLBACK_COLOR,
+    SCREENSHOT_COLOR,
+    ACTION_COLOR,
+    DARK_GREY,
+    CONDITIONAL_COLOR,
+    LLM_COLOR,
+    TTS_COLOR,
+    CHAIN_IMPORT_COLOR,
+    INPUT_PORT_COLOR,
+    OUTPUT_PORT_COLOR,
+    PORT_TRUE_COLOR,
+    PORT_FALSE_COLOR,
+)
 
 # Get default API URL from environment variables (same as consult.py)
 def get_default_api_url():
@@ -10,6 +23,17 @@ def get_default_api_url():
     tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
     port = os.getenv("API_PORT", "8000")
     return f"http://{tailscale_ip}:{port}"
+
+# Fallback: ensure a property registration method exists even if inline widget API differs
+if not hasattr(BaseNode, 'create_property'):
+    def _create_property_fallback(self, name, value):
+        try:
+            # Many NodeGraphQt versions allow creating properties via set_property
+            self.set_property(name, value)
+        except Exception:
+            # Silently ignore to avoid breaking node creation
+            pass
+    BaseNode.create_property = _create_property_fallback
 
 class ConditionalNode(BaseNode):
     """Node representing a conditional check that can control sequence execution flow with comprehensive condition types"""
@@ -29,35 +53,58 @@ class ConditionalNode(BaseNode):
         
         # Set a distinct color for conditional nodes (purple)
         self.set_color(*[int(CONDITIONAL_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add single input for conditional evaluation
-        self.add_input('input')
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_true_rgb = tuple(int(PORT_TRUE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_false_rgb = tuple(int(PORT_FALSE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add single input for conditional evaluation (blue)
+        self.add_input('input', color=in_rgb, display_name=False)
+
+        # Add true/false outputs with distinct colors for clarity
+        self.add_output('true', color=out_true_rgb, display_name=False)   # green
+        self.add_output('false', color=out_false_rgb, display_name=False) # red
         
-        # Add only true/false outputs for conditional branching
-        self.add_output('true')  # Output for when condition is true
-        self.add_output('false')  # Output for when condition is false
-        
-        self.add_text_input('condition_type', 'Condition Type', 'presence')
-        self.add_text_input('image_path', 'Image Path', '')
-        self.add_text_input('confidence', 'Confidence', '0.8')
-        self.add_text_input('threshold', 'Threshold', '0.8')
-        self.add_text_input('timeout', 'Timeout (s)', '5.0')
-        self.add_text_input('wait_time', 'Wait Time', '5')
-        self.add_text_input('max_loops', 'Max Loops', '10')
-        self.add_text_input('max_attempts', 'Max Attempts', '3')
-        self.add_text_input('delay_between_attempts', 'Delay Between Attempts', '1.0')
+        # Register properties without rendering inline input widgets
+        self.create_property('condition_type', 'presence')
+        self.create_property('image_path', '')
+        self.create_property('confidence', '0.8')
+        self.create_property('threshold', '0.8')
+        self.create_property('timeout', '5.0')
+        self.create_property('wait_time', '5')
+        self.create_property('max_loops', '10')
+        self.create_property('max_attempts', '3')
+        self.create_property('delay_between_attempts', '1.0')
         
         # OCR-specific fields (language and region removed - uses full screen with default English)
-        self.add_text_input('target_text', 'Target Text', '')
-        self.add_text_input('ocr_text', 'OCR Text', '')
-        self.add_text_input('case_sensitive', 'Case Sensitive', 'true')
+        self.create_property('target_text', '')
+        self.create_property('ocr_text', '')
+        self.create_property('case_sensitive', 'true')
         
         # Loop-specific fields
-        self.add_text_input('loop_type', 'Loop Type', 'while_present')
-        self.add_text_input('loop_position', 'Loop Position', 'pre')
-        self.add_text_input('sequence_file', 'Sequence File', '')
-        self.add_text_input('iteration_delay', 'Iteration Delay', '1.0')
-        self.add_text_input('loop_condition', 'Loop Condition', '')
+        self.create_property('loop_type', 'while_present')
+        self.create_property('loop_position', 'pre')
+        self.create_property('sequence_file', '')
+        self.create_property('iteration_delay', '1.0')
+        self.create_property('loop_condition', '')
+
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
         
     def set_condition_data(self, condition_type, condition_data):
         """Set the condition data for this node"""
@@ -127,15 +174,37 @@ class SequenceNode(BaseNode):
         self.action_fallbacks = {}
         
         self.set_color(*[int(DARK_GREY.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, white text for dark background
+        try:
+            self.set_text_color(255, 255, 255)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add 5 inputs and 5 outputs for flexible connections
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add 5 inputs and 5 outputs with visual color coding
         for i in range(5):
-            self.add_input(f'input_{i+1}')
-            self.add_output(f'output_{i+1}')
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
         
-        self.add_text_input('sequence_file', 'Sequence File', '')
-        self.add_text_input('loop_count', 'Loop Count', '1')
-        self.add_text_input('extra_delay', 'Extra Delay', '1.0')
+        # Register properties without rendering inline input widgets
+        self.create_property('sequence_file', '')
+        self.create_property('loop_count', '1')
+        self.create_property('extra_delay', '1.0')
+
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
         
     def set_sequence_data(self, sequence_idx, sequence_config, action_fallbacks=None):
         """Set the sequence data for this node"""
@@ -199,14 +268,28 @@ class ActionNode(BaseNode):
         self.has_fallback = False
         
         self.set_color(*[int(ACTION_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add 5 inputs and 5 outputs for flexible connections
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add 5 inputs and 5 outputs with visual color coding
         for i in range(5):
-            self.add_input(f'input_{i+1}')
-            self.add_output(f'output_{i+1}')
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
         
-        self.add_text_input('action_type', 'Type', '')
-        self.add_text_input('details', 'Details', '')
+        # Register properties without rendering inline input widgets
+        self.create_property('action_type', '')
+        self.create_property('details', '')
         
     def set_action_data(self, sequence_idx, action_idx, action_data, has_fallback=False):
         """Set the action data for this node"""
@@ -294,32 +377,54 @@ class LLMNode(BaseNode):
         
         # Set a distinct color for LLM nodes (orange)
         self.set_color(*[int(LLM_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add 5 inputs and 5 outputs for flexible connections
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add 5 inputs and 5 outputs with visual color coding
         for i in range(5):
-            self.add_input(f'input_{i+1}')
-            self.add_output(f'output_{i+1}')
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
         
         # Add text inputs for LLM configuration
-        self.add_text_input('model', 'Model', 'llama3.2:latest')
-        self.add_text_input('prompt', 'Prompt', '')
-        self.add_text_input('system_message', 'System Message', '')
-        self.add_text_input('temperature', 'Temperature', '0.7')
-        self.add_text_input('max_tokens', 'Max Tokens', '500')
-        self.add_text_input('output_variable', 'Output Variable', 'llm_output')
-        self.add_text_input('api_url', 'API URL', get_default_api_url())
-        self.add_text_input('write_text', 'Write Text', 'true')
-        self.add_text_input('use_vision', 'Use Vision', 'false')
-        self.add_text_input('screenshot_enabled', 'Screenshot Enabled', 'true')
-        self.add_text_input('use_comorag', 'Use ComoRAG', 'true')
-        self.add_text_input('max_cycles', 'Max Cycles', '5')
-        self.add_text_input('memory_size', 'Memory Size', '1000')
-        self.add_text_input('input_source', 'Input Source', 'none')
-        self.add_text_input('ocr_confidence', 'OCR Confidence', '0.5')
-        self.add_text_input('ocr_preprocessing', 'OCR Preprocessing', 'true')
-        self.add_text_input('typing_batch_size', 'Typing Batch Size', '20')
-        self.add_text_input('typing_batch_delay', 'Typing Batch Delay', '0.05')
-        self.add_text_input('use_async', 'Use Async', 'true')
+        # Register properties without rendering inline input widgets
+        self.create_property('model', 'llama3.2:latest')
+        self.create_property('prompt', '')
+        self.create_property('system_message', '')
+        self.create_property('temperature', '0.7')
+        self.create_property('max_tokens', '500')
+        self.create_property('output_variable', 'llm_output')
+        self.create_property('api_url', get_default_api_url())
+        self.create_property('write_text', 'true')
+        self.create_property('use_vision', 'false')
+        self.create_property('screenshot_enabled', 'true')
+        self.create_property('use_comorag', 'true')
+        self.create_property('max_cycles', '5')
+        self.create_property('memory_size', '1000')
+        self.create_property('input_source', 'none')
+        self.create_property('ocr_confidence', '0.5')
+        self.create_property('ocr_preprocessing', 'true')
+        self.create_property('typing_batch_size', '20')
+        self.create_property('typing_batch_delay', '0.05')
+        self.create_property('use_async', 'true')
+
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
     
     def set_llm_config(self, config):
         """Set the LLM configuration for this node"""
@@ -542,15 +647,37 @@ class TTSNode(BaseNode):
         
         # Set a distinct color for TTS nodes (dark turquoise)
         self.set_color(*[int(TTS_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add 5 inputs and 5 outputs for flexible connections
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add 5 inputs and 5 outputs with visual color coding
         for i in range(5):
-            self.add_input(f'input_{i+1}')
-            self.add_output(f'output_{i+1}')
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
         
         # Add text inputs for TTS configuration
-        self.add_text_input('text', 'Text to Speak', 'Hello, this is a text to speech message.')
-        self.add_text_input('language', 'Language', 'en')
+        # Register properties without rendering inline input widgets
+        self.create_property('text', 'Hello, this is a text to speech message.')
+        self.create_property('language', 'en')
+
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
     
     def set_tts_config(self, config):
         """Set the TTS configuration for this node"""
@@ -696,19 +823,42 @@ class ChainImportNode(BaseNode):
         
         # Set a distinct color for chain import nodes (lime green)
         self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
         
-        # Add multiple inputs and outputs for flexible connections
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add multiple inputs and outputs with visual color coding
         for i in range(5):
-            self.add_input(f'input_{i+1}')
-            self.add_output(f'output_{i+1}')
+            # Hide display names like other nodes; keep names for backend logic
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
         
         # Add configuration inputs
-        self.add_text_input('chain_file', 'Chain File', '')
-        self.add_text_input('import_mode', 'Import Mode', 'full')
-        self.add_text_input('prefix', 'Node Prefix', '')
-        self.add_text_input('loop_count', 'Loop Count', '1')
-        self.add_text_input('extra_delay', 'Extra Delay (s)', '0')
-        self.add_text_input('enabled', 'Enabled', 'true')
+        # Register properties without rendering inline input widgets
+        self.create_property('chain_file', '')
+        self.create_property('import_mode', 'full')
+        self.create_property('prefix', '')
+        self.create_property('loop_count', '1')
+        self.create_property('extra_delay', '0')
+        self.create_property('enabled', 'true')
+
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
         
     def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', loop_count=1, extra_delay=0, enabled=True):
         """Set the chain import data for this node"""

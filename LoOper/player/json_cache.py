@@ -211,6 +211,13 @@ class JSONCache:
             os.path.join(os.getcwd(), 'sequences', sequence_file),  # cwd/sequences
         ]
         
+        # Add LoOper/sequences folder paths
+        looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
+        possible_paths.extend([
+            os.path.join(looper_sequences, sequence_file),  # LoOper/sequences folder
+            os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file),  # absolute LoOper/sequences
+        ])
+        
         # Add .json extension if missing
         if not sequence_file.endswith('.json'):
             possible_paths.extend([
@@ -220,6 +227,9 @@ class JSONCache:
                 os.path.join('sequences', sequence_file + '.json'),
                 os.path.join(os.getcwd(), sequence_file + '.json'),
                 os.path.join(os.getcwd(), 'sequences', sequence_file + '.json'),
+                # Add LoOper/sequences paths with .json extension
+                os.path.join(looper_sequences, sequence_file + '.json'),
+                os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file + '.json'),
             ])
         
         # Find the first existing file

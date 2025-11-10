@@ -136,10 +136,10 @@ class GraphViewWidget(QWidget):
                 return
             current_sizes = splitter.sizes()
             if not current_sizes or len(current_sizes) < 2:
-                current_sizes = [900, 240]
+                current_sizes = [900, 120]
             if visible:
-                # restore right pane width to 240 keeping left size proportional
-                splitter.setSizes([max(1, current_sizes[0]), 240])
+                # restore right pane width to 120 keeping left size proportional
+                splitter.setSizes([max(1, current_sizes[0]), 120])
             else:
                 # collapse right pane to zero width
                 splitter.setSizes([max(1, sum(current_sizes)), 0])
@@ -247,24 +247,29 @@ class GraphViewWidget(QWidget):
                 if mime and mime.hasFormat('application/x-looper-node-type'):
                     node_type = bytes(mime.data('application/x-looper-node-type')).decode('utf-8')
                     # Map drop position to scene coordinates
-                    drop_pos = None
                     try:
                         target_view = getattr(self, 'view', None) or getattr(self, 'node_graph_widget', None)
                         if hasattr(target_view, 'mapToScene'):
                             scene_pt = target_view.mapToScene(event.pos())
                             drop_pos = [int(scene_pt.x()), int(scene_pt.y())]
+                        else:
+                            drop_pos = [0, 0]  # Fallback position
                     except Exception:
-                        drop_pos = None
+                        drop_pos = [0, 0] # Fallback position
 
                     try:
                         if node_type == 'llm':
-                            self.add_llm_node(position=drop_pos)
+                            logger.debug(f"Creating LLM node at position: {drop_pos}")
+                            self.node_operations.add_llm_node(pos=drop_pos)
                         elif node_type == 'tts':
-                            self.add_tts_node(position=drop_pos)
+                            logger.debug(f"Creating TTS node at position: {drop_pos}")
+                            self.node_operations.add_tts_node(pos=drop_pos)
                         elif node_type == 'conditional':
-                            self.add_conditional_node(position=drop_pos)
+                            logger.debug(f"Creating Conditional node at position: {drop_pos}")
+                            self.node_operations.add_conditional_node(pos=drop_pos)
                         elif node_type == 'chain_import':
-                            self.add_chain_import_node(position=drop_pos)
+                            logger.debug(f"Creating Chain Import node at position: {drop_pos}")
+                            self.node_operations.add_chain_import_node(pos=drop_pos)
                         elif node_type == 'sequence':
                             # Consistent with context menu: start recording flow
                             self.record_new_sequence()
@@ -625,7 +630,8 @@ class GraphViewWidget(QWidget):
         """Add a new conditional node to the graph with comprehensive condition types"""
         logger.debug(f"Adding conditional node at position: {position}")
         try:
-            result = self.node_operations.add_conditional_node(position)
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_conditional_node(resolved_pos)
             logger.info(f"Conditional node added successfully: {result.name() if result else 'None'}")
             return result
         except Exception as e:
@@ -636,7 +642,8 @@ class GraphViewWidget(QWidget):
         """Add a new LLM node to the graph"""
         logger.debug(f"Adding LLM node at position: {position}")
         try:
-            result = self.node_operations.add_llm_node(position)
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_llm_node(resolved_pos)
             logger.info(f"LLM node added successfully: {result.name() if result else 'None'}")
             return result
         except Exception as e:
@@ -647,7 +654,8 @@ class GraphViewWidget(QWidget):
         """Add a new TTS node to the graph"""
         logger.debug(f"Adding TTS node at position: {position}")
         try:
-            result = self.node_operations.add_tts_node(position)
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_tts_node(resolved_pos)
             logger.info(f"TTS node added successfully: {result.name() if result else 'None'}")
             return result
         except Exception as e:
@@ -670,12 +678,52 @@ class GraphViewWidget(QWidget):
         """Add a new Chain Import node to the graph"""
         logger.debug(f"Adding Chain Import node at position: {position}")
         try:
-            result = self.node_operations.add_chain_import_node(position)
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_chain_import_node(resolved_pos)
             logger.info(f"Chain Import node added successfully: {result.name() if result else 'None'}")
             return result
         except Exception as e:
             logger.error(f"Error adding Chain Import node: {str(e)}", exc_info=True)
             return None
+
+    def _resolve_creation_pos(self, position):
+        """Resolve a node creation position to scene coordinates list [x, y].
+
+        Preference order:
+        1) Provided position argument
+        2) Last context menu scene position (right-click)
+        3) View center mapped to scene
+        4) Deterministic offset fallback
+        """
+        try:
+            # 1) If a position is provided, normalize it
+            if position is not None:
+                try:
+                    # QPointF-like object
+                    return [int(position.x()), int(position.y())]
+                except Exception:
+                    pass
+                if isinstance(position, (list, tuple)) and len(position) >= 2:
+                    return [int(position[0]), int(position[1])]
+                # Unknown type; fall through to other options
+
+            # 2) Use last context menu scene position captured on right-click
+            if getattr(self, "_last_context_scene_pos", None) is not None:
+                sp = self._last_context_scene_pos
+                return [int(sp.x()), int(sp.y())]
+
+            # 3) Fallback to view center mapped to scene
+            if hasattr(self, "view") and hasattr(self.view, "mapToScene"):
+                sp = self.view.mapToScene(self.view.rect().center())
+                return [int(sp.x()), int(sp.y())]
+
+            # 4) Final fallback: deterministic offset so nodes don't overlap
+            self._creation_counter = getattr(self, "_creation_counter", 0) + 1
+            base_offset = 100
+            return [100 + (self._creation_counter * base_offset), 100 + (self._creation_counter * base_offset)]
+        except Exception:
+            # Safe default
+            return [100, 100]
     
     def add_sequence(self):
         """Add a new sequence node to the graph"""
@@ -866,6 +914,15 @@ class GraphViewWidget(QWidget):
             logger.info("Chain Import node edited successfully")
         except Exception as e:
             logger.error(f"Error editing Chain Import node: {str(e)}", exc_info=True)
+
+    def edit_sequence(self, node):
+        """Open the dialog to edit a Sequence node"""
+        logger.debug(f"Editing Sequence node: {node.name() if node else 'None'}")
+        try:
+            self.node_operations.edit_sequence(node)
+            logger.info("Sequence node edited successfully")
+        except Exception as e:
+            logger.error(f"Error editing Sequence node: {str(e)}", exc_info=True)
 
     def expand_chain_import(self, node):
         """Expand a Chain Import node by opening it in a separate dialog for editing"""
