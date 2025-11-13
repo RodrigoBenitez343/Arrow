@@ -3,7 +3,7 @@
 import os
 import json
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QDialogButtonBox, QPushButton, QMessageBox, QSplitter)
+                             QDialogButtonBox, QPushButton, QMessageBox)
 from PyQt5.QtCore import Qt
 from ..graph_elements.config_manager import ConfigManager
 from ..constants import TEXT_COLOR
@@ -99,23 +99,12 @@ class ChainExpansionDialog(QDialog):
         
         layout.addLayout(header_layout)
         
-        # Create splitter for graph view and info panel
-        splitter = QSplitter(Qt.Horizontal)
-        
         # Import GraphViewWidget dynamically to avoid circular import
         from ..graph_view import GraphViewWidget
         
-        # Graph view widget
+        # Graph view widget (add directly without extra splitter pane)
         self.graph_view = GraphViewWidget(self)
-        splitter.addWidget(self.graph_view)
-        
-        # Chain info panel
-        self.info_panel = self.create_info_panel()
-        splitter.addWidget(self.info_panel)
-        
-        # Set splitter proportions (give more space to graph view)
-        splitter.setSizes([800, 200])
-        layout.addWidget(splitter)
+        layout.addWidget(self.graph_view)
         
         # Button box
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)

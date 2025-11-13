@@ -283,6 +283,18 @@ class MultiSequencePlayer(SeleniumBot):
             # Handle post-sequence conditional actions
             self._handle_post_sequence_conditions(item, stop_flag, advanced_conditions)
             
+            # Extra delay after completing the sequence before moving to next
+            if extra_delay and extra_delay > 0:
+                logger.info(f"Extra delay after sequence: {extra_delay} seconds")
+                delay_remaining = extra_delay
+                while delay_remaining > 0:
+                    if stop_flag and stop_flag():
+                        logger.info("Chain playback stopped during post-sequence delay")
+                        return
+                    sleep_time = min(0.1, delay_remaining)
+                    time.sleep(sleep_time)
+                    delay_remaining -= sleep_time
+
             # Move to the next sequence in the chain
             self.current_sequence_index += 1
     

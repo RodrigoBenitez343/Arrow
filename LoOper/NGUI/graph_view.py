@@ -271,8 +271,14 @@ class GraphViewWidget(QWidget):
                             logger.debug(f"Creating Chain Import node at position: {drop_pos}")
                             self.node_operations.add_chain_import_node(pos=drop_pos)
                         elif node_type == 'sequence':
-                            # Consistent with context menu: start recording flow
-                            self.record_new_sequence()
+                            try:
+                                if mime.hasFormat('application/x-looper-sequence-file'):
+                                    file_path = bytes(mime.data('application/x-looper-sequence-file')).decode('utf-8')
+                                    self.node_operations.add_sequence_from_file(file_path, pos=drop_pos)
+                                else:
+                                    self.record_new_sequence()
+                            except Exception as inner_e:
+                                logger.error(f"Sequence drop error: {inner_e}")
                         else:
                             logger.info(f"Unknown dropped node type: {node_type}")
                     except Exception as e:

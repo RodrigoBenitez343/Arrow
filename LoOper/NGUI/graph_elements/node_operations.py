@@ -201,7 +201,35 @@ class NodeOperations:
                 "Error", 
                 f"Failed to add new sequence: {str(e)}"
             )
-            
+        
+    def add_sequence_from_file(self, file_path: str, pos=None):
+        try:
+            if not file_path:
+                return None
+            sequence_filename = os.path.basename(file_path)
+            node = self.parent_widget.graph_manager.create_node(
+                'sequence.SequenceNode',
+                name=sequence_filename,
+                pos=pos
+            )
+            if node:
+                sequence_filename_only = os.path.basename(file_path)
+                node.set_property('sequence_file', sequence_filename_only)
+                sequence_config = {
+                    'sequence_file': sequence_filename_only,
+                    'loop_count': 1,
+                    'extra_delay': 1.0
+                }
+                node.set_sequence_data(0, sequence_config)
+                return node
+            return None
+        except Exception as e:
+            QMessageBox.critical(
+                self.parent_widget,
+                "Error",
+                f"Failed to add sequence: {str(e)}"
+            )
+            return None
         return None
         
     def add_action(self, pos=None):

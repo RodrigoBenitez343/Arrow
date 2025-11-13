@@ -111,13 +111,29 @@ class GraphManager:
                     idx = container.indexOf(old_widget)
                     if idx != -1:
                         container.insertWidget(idx, graph_widget)
+                        # Immediately detach and hide the placeholder to avoid a stray pane
+                        try:
+                            old_widget.hide()
+                            old_widget.setParent(None)
+                        except Exception:
+                            pass
                         old_widget.deleteLater()
                         logger.debug(f"Inserted graph widget into splitter at index {idx}")
                     else:
                         # Fallback: append if index not found
                         container.addWidget(graph_widget)
+                        try:
+                            old_widget.hide()
+                            old_widget.setParent(None)
+                        except Exception:
+                            pass
                         old_widget.deleteLater()
                         logger.warning("Old widget not found in splitter; appended graph widget")
+                    # Ensure reasonable sizes after insertion
+                    try:
+                        container.setSizes([900, 240])
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.error(f"Error inserting graph widget into splitter: {e}")
                     raise

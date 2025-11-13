@@ -5,6 +5,7 @@ Handles building workflow graphs from sequences and conditional nodes for naviga
 """
 
 from ..config import logger
+import time
 from ..json_cache import get_chain
 
 
@@ -550,6 +551,7 @@ class WorkflowExecutor:
                 # Mark node as completed
                 completed_nodes.add(current_node_id)
                 logger.info(f"Node {current_node_id} completed successfully")
+                self._apply_extra_delay(node, stop_flag)
                 
                 # Handle conditional branching
                 if node['type'] == 'conditional':
@@ -763,6 +765,23 @@ class WorkflowExecutor:
                 
         logger.debug(f"No dependencies satisfied for node {node_id}")
         return False
+
+    def _apply_extra_delay(self, node, stop_flag):
+        try:
+            data = node.get('data', {})
+            delay = float(data.get('extra_delay', 0) or 0)
+        except Exception:
+            delay = 0
+        if delay > 0:
+            logger.info(f"Extra delay after node: {delay} seconds")
+            elapsed = 0.0
+            while elapsed < delay:
+                if stop_flag and stop_flag():
+                    logger.info("Workflow execution stopped during extra delay")
+                    return
+                sleep_time = min(0.1, delay - elapsed)
+                time.sleep(sleep_time)
+                elapsed += sleep_time
     
     def _execute_sequence_node(self, node, stop_flag):
         """

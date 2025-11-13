@@ -1,10 +1,11 @@
 import logging
+import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QFrame, QSizePolicy, QLabel, QApplication, QStyle
+    QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea
 )
 from PyQt5.QtCore import Qt, QPoint, QSize
-from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
 from PyQt5.QtCore import QMimeData
 
 from ..constants import (
@@ -34,7 +35,7 @@ class DraggableButton(QPushButton):
         self._drag_start_pos = None
         self._click_handler = click_handler
         self.setCursor(Qt.OpenHandCursor)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         # Colored background to reflect node type
         self.setStyleSheet(
             f"""
@@ -101,6 +102,71 @@ class DraggableButton(QPushButton):
         return super().mouseReleaseEvent(event)
 
 
+class DraggableSequenceButton(QPushButton):
+    def __init__(self, label: str, file_path: str, graph_view, parent=None):
+        super().__init__(label, parent)
+        self.file_path = file_path
+        self.graph_view = graph_view
+        self._drag_start_pos = None
+        self.setCursor(Qt.OpenHandCursor)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                padding: 4px 8px;
+                border-radius: 10px;
+                min-width: 90px;
+                min-height: 40px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
+            """
+        )
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        return super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start_pos is None:
+            return super().mouseMoveEvent(event)
+        if (event.pos() - self._drag_start_pos).manhattanLength() >= 8:
+            mime = QMimeData()
+            mime.setData('application/x-looper-node-type', b'sequence')
+            mime.setText(self.file_path)
+            mime.setData('application/x-looper-sequence-file', self.file_path.encode('utf-8'))
+            pixmap = QPixmap(self.size())
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(QColor(self.palette().button().color()))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(self.rect(), 10, 10)
+            painter.end()
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(event.pos() - self.rect().topLeft())
+            drag.exec_(Qt.CopyAction)
+            return
+        return super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_start_pos is not None and (event.pos() - self._drag_start_pos).manhattanLength() < 8:
+            try:
+                if hasattr(self.graph_view, 'node_operations'):
+                    self.graph_view.node_operations.add_sequence_from_file(self.file_path)
+            except Exception as e:
+                logger.error(f"Toolbar sequence click handler error: {e}")
+        self._drag_start_pos = None
+        return super().mouseReleaseEvent(event)
+
+
 class CollapsibleToolbar(QWidget):
     """Collapsible top toolbar that mirrors context menu actions."""
 
@@ -115,7 +181,7 @@ class CollapsibleToolbar(QWidget):
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
         # Allow manual resizing with reasonable limits (allow full collapse to 0)
         self.setMinimumWidth(0)
-        self.setMaximumWidth(120)
+        self.setMaximumWidth(160)
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(4, 4, 4, 4)
         main_layout.setSpacing(2)
@@ -130,13 +196,14 @@ class CollapsibleToolbar(QWidget):
         content_layout.setContentsMargins(2, 2, 2, 2)
         content_layout.setSpacing(1)
 
-        # Section 1: Actions (vertical)
-        actions_col = QVBoxLayout()
-        actions_col.setSpacing(1)
-        actions_col.setContentsMargins(0, 0, 0, 0)
-        actions_col.addWidget(self._make_plain_button("Record", lambda: self.graph_view.record_new_sequence(), tooltip="Record Sequence"))
-        actions_col.addWidget(self._make_plain_button("Add Seq", lambda: self.graph_view.add_sequence(), tooltip="Add Previously Recorded Sequence"))
-        content_layout.addLayout(actions_col)
+        # Top cluster: sequences list and node types
+        top_cluster = QFrame(self)
+        top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        top_layout = QVBoxLayout(top_cluster)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(1)
+        sequences_box = self._make_sequences_scroll_box()
+        top_layout.addWidget(sequences_box)
 
         # Section 2: Node types (vertical, draggable)
         nodes_col = QVBoxLayout()
@@ -146,27 +213,79 @@ class CollapsibleToolbar(QWidget):
         nodes_col.addWidget(self._make_node_button("Chain", "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip="Add Chain Import Node"))
         nodes_col.addWidget(self._make_node_button("TTS", "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip="Add TTS Node"))
         nodes_col.addWidget(self._make_node_button("Cond", "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip="Add Conditional Node"))
-        content_layout.addLayout(nodes_col)
+        top_layout.addLayout(nodes_col)
+        content_layout.addWidget(top_cluster)
 
-        # Section 3: Edit ops (vertical)
-        edit_col = QVBoxLayout()
-        edit_col.setSpacing(1)
-        edit_col.setContentsMargins(0, 0, 0, 0)
-        edit_col.addWidget(self._make_plain_button("Copy", lambda: self.graph_view.copy_selected_nodes(), tooltip="Copy Selected"))
-        edit_col.addWidget(self._make_plain_button("Delete", lambda: self.graph_view.delete_selected_nodes(), tooltip="Delete Selected"))
-        content_layout.addLayout(edit_col)
+        
 
-        # Section 4: Chain ops (vertical skeuomorphic)
-        chain_col = QVBoxLayout()
+        # Spacing between clusters
+        content_layout.addSpacing(8)
+        # Navigation/System cluster: Record, Load, Save, Playback
+        nav_cluster = QFrame(self)
+        nav_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        chain_col = QVBoxLayout(nav_cluster)
         chain_col.setSpacing(1)
         chain_col.setContentsMargins(0, 0, 0, 0)
-        # Icon-only buttons for Run/Load/Save using standard Qt icons
-        chain_col.addWidget(self._make_icon_button(QStyle.SP_MediaPlay, self._run_chain, tooltip="Run Chain"))
+        chain_col.addWidget(self._make_record_icon_button())
         chain_col.addWidget(self._make_icon_button(QStyle.SP_DialogOpenButton, self._open_chain, tooltip="Load Chain"))
         chain_col.addWidget(self._make_icon_button(QStyle.SP_DialogSaveButton, self._save_chain, tooltip="Save Chain"))
-        content_layout.addLayout(chain_col)
+        chain_col.addWidget(self._make_icon_button(QStyle.SP_MediaPlay, self._run_chain, tooltip="Run Chain"))
+        content_layout.addWidget(nav_cluster)
+        try:
+            content_layout.setStretch(0, 1)
+            content_layout.setStretch(2, 0)
+        except Exception:
+            pass
 
         main_layout.addWidget(self._content_frame)
+
+    def _make_sequences_scroll_box(self):
+        scroll = QScrollArea(self)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        try:
+            scroll.setWidgetResizable(True)
+        except Exception:
+            pass
+        try:
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        except Exception:
+            pass
+        
+
+        container = QFrame(scroll)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 4, 0, 4)
+        layout.setSpacing(6)
+        folder = getattr(self.graph_view, 'sequences_folder', None)
+        files = []
+        try:
+            if folder and os.path.isdir(folder):
+                files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.json')])
+        except Exception:
+            files = []
+        if not files:
+            placeholder = QLabel("No sequences")
+            placeholder.setAlignment(Qt.AlignCenter)
+            placeholder.setStyleSheet(
+                f"""
+                QLabel {{
+                    background-color: {MEDIUM_GREY};
+                    color: {TEXT_COLOR};
+                    border: 1px solid {LIGHT_GREY};
+                    border-radius: 10px;
+                    min-height: 40px;
+                }}
+                """
+            )
+            layout.addWidget(placeholder)
+            scroll.setWidget(container)
+            return scroll
+        for name in files:
+            full_path = os.path.join(folder, name)
+            btn = DraggableSequenceButton(name, full_path, self.graph_view, self)
+            layout.addWidget(btn)
+        scroll.setWidget(container)
+        return scroll
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
         btn = DraggableButton(label, node_type, color, click_handler, self)
@@ -179,7 +298,7 @@ class CollapsibleToolbar(QWidget):
         btn.clicked.connect(handler)
         if tooltip:
             btn.setToolTip(tooltip)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         btn.setStyleSheet(
             f"""
             QPushButton {{
@@ -203,12 +322,44 @@ class CollapsibleToolbar(QWidget):
         btn.clicked.connect(handler)
         if tooltip:
             btn.setToolTip(tooltip)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         # Use standard Qt icons to avoid external assets
         style = QApplication.style()
         btn.setIcon(style.standardIcon(std_icon))
         btn.setIconSize(QSize(28, 28))
         # Simple flat style, taller height
+        btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 10px;
+                padding: 6px;
+                min-width: 90px;
+                min-height: 52px;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
+            """
+        )
+        return btn
+
+    def _make_record_icon_button(self):
+        btn = QPushButton("", self)
+        btn.clicked.connect(lambda: self.graph_view.record_new_sequence())
+        btn.setToolTip("Record Sequence")
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        pix = QPixmap(28, 28)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor(220, 0, 0))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(4, 4, 20, 20)
+        p.end()
+        btn.setIcon(QIcon(pix))
+        btn.setIconSize(QSize(28, 28))
         btn.setStyleSheet(
             f"""
             QPushButton {{
