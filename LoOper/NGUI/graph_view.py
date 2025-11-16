@@ -968,6 +968,14 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error recording new sequence: {str(e)}", exc_info=True)
 
+    def refresh_sequences_toolbar(self):
+        try:
+            toolbar = getattr(self, '_toolbar_widget', None)
+            if toolbar and hasattr(toolbar, 'refresh_sequences_list'):
+                toolbar.refresh_sequences_list()
+        except Exception as e:
+            logger.error(f"Failed to refresh sequences toolbar: {e}")
+
     def record_single_action(self, sequence_node):
         """Record a single action within a sequence"""
         logger.debug(f"Recording single action for sequence node: {sequence_node.name() if sequence_node else 'None'}")

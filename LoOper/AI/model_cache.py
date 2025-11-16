@@ -149,6 +149,27 @@ class ModelCache:
                 self._loaded = True
                 self._loading = False
 
+    def _fetch_models_return_list(self, api_url: Optional[str] = None) -> List[str]:
+        if api_url is None:
+            api_url = self.get_default_api_url()
+        try:
+            client = OllamaClient(api_url)
+            raw = client.list_models()
+            if isinstance(raw, list):
+                names = []
+                for m in raw:
+                    if isinstance(m, dict) and 'name' in m:
+                        names.append(m['name'])
+                    elif isinstance(m, str):
+                        names.append(m)
+                return names
+            return []
+        except Exception:
+            return []
+
+    async def _fetch_models_async(self, api_url: Optional[str] = None) -> List[str]:
+        import asyncio
+        return await asyncio.to_thread(self._fetch_models_return_list, api_url)
 # Global instance
 _model_cache = ModelCache()
 

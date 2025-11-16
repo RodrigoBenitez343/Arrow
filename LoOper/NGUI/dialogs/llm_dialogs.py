@@ -60,48 +60,22 @@ class LLMPropertiesDialog(QDialog):
         self.load_current_config()
     
     def get_available_models(self, api_url=None):
-        """Get available models from cache (non-blocking)"""
-        # First check if models are already loaded
         cache = get_model_cache()
-        if cache.is_loaded():
-            models = get_cached_models(timeout=0.1)
-            print(f"Retrieved {len(models)} models from loaded cache: {models}")
-            return models
-        
-        # If not loaded, try to load them with a reasonable timeout
         if api_url:
             cache.refresh_models(api_url)
         else:
-            # Use default API URL if none provided
             from .utils import get_default_api_url
             cache.refresh_models(get_default_api_url())
-        
-        # Wait for models to load with a longer timeout
-        models = get_cached_models(timeout=3.0)  # Increased timeout for better reliability
-        print(f"Retrieved {len(models)} models from cache after refresh: {models}")
+        models = get_cached_models(timeout=5.0)
         return models
     
     def refresh_models(self):
-        """Refresh the model list by forcing a cache refresh"""
         api_url = self.api_url_entry.text() or get_default_api_url()
-        
-        # Store current selection
         current_model = self.model_combo.currentText()
-        
-        # Check if we need to refresh or if we can use existing cache
         cache = get_model_cache()
-        if cache.is_loaded():
-            # Use existing cached models if already loaded
-            available_models = get_cached_models(timeout=0.1)
-            print(f"Using cached models: {available_models}")
-        else:
-            # Force refresh the model cache asynchronously
-            cache.refresh_models(api_url)
-            # Wait longer for the refresh to complete
-            available_models = get_cached_models(timeout=5.0)
-            print(f"Refreshed models from {api_url}: {available_models}")
+        cache.refresh_models(api_url)
+        available_models = get_cached_models(timeout=5.0)
         
-        # Clear and repopulate the combo box
         self.model_combo.clear()
         self.model_combo.addItems(available_models)
         

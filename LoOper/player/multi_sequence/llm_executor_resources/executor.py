@@ -68,7 +68,7 @@ class LLMExecutor:
         system_message = llm_config.get('system_message', '')
         prompt = llm_config.get('prompt', '')
         temperature = llm_config.get('temperature', 0.7)
-        max_tokens = llm_config.get('max_tokens', 1000)
+        max_tokens = None
         output_variable = llm_config.get('output_variable', 'llm_output')
         write_text = llm_config.get('write_text', True)
         use_vision = llm_config.get('use_vision', False)
@@ -128,10 +128,12 @@ class LLMExecutor:
                 logger.info(f"Enhanced prompt with {input_source} input")
             else:
                 logger.info("Direct RAG enabled; skipping raw previous text injection into prompt")
+        if use_comorag and input_text and not use_input_text_in_prompt:
+            prompt = f"{input_text}\n\n{prompt}"
 
         logger.info(f"Creating OllamaClient with base_url: {api_url}")
         try:
-            client = OllamaClient(base_url=api_url, debug=True, use_comorag=False)
+            client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
             if use_comorag and hasattr(client, 'set_comorag_config'):
                 client.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
                 logger.info(f"ComoRAG enabled with max_cycles={max_cycles}, memory_size={memory_size}")
@@ -174,14 +176,26 @@ class LLMExecutor:
         # Perform generation
         logger.info("Sending request to LLM API")
         try:
-            result = client.chat(
-                model=model,
-                prompt=prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system=system_message or None,
-                images=images,
-            )
+            if use_comorag:
+                result = client.generate(
+                    model=model,
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system=system_message or None,
+                    images=images,
+                    context=None,
+                    async_request=False,
+                )
+            else:
+                result = client.chat(
+                    model=model,
+                    prompt=prompt,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    system=system_message or None,
+                    images=images,
+                )
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
             return None
@@ -189,10 +203,14 @@ class LLMExecutor:
         # Normalize response
         response_text = None
         if isinstance(result, dict):
-            response_text = result.get('response') or result.get('text')
+            response_text = (
+                result.get('response')
+                or result.get('text')
+                or (result.get('message') or {}).get('content')
+            )
         if not response_text:
             logger.warning(f"LLM returned unexpected format: {result}")
-            response_text = str(result)
+            response_text = ""
 
         # Store outputs
         try:
@@ -205,12 +223,12 @@ class LLMExecutor:
 
         # Optional: write text via handlers
         try:
-            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action'):
+            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text:
                 # Minimal integration: type the response where focus is
                 logger.info("Writing LLM output via action handlers")
                 action_handlers.handle_type_string_action(
                     idx=0,
-                    action={"text": response_text},
+                    action={"text": response_text, "use_clipboard": True},
                     stop_flag=stop_flag,
                 )
         except Exception as e:
@@ -332,3 +350,4 @@ class LLMExecutor:
             return {
                 'error': f'TTS execution failed: {str(e)}'
             }
+        

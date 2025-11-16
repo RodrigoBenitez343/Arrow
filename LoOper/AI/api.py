@@ -5,8 +5,11 @@ import requests
 import json
 import base64
 import os
+import sys
 from typing import List, Optional, Dict, Any, Union
 import uvicorn
+sys.path.append(os.path.dirname(__file__))
+from comorag_engine import ComoRAGEngine
 
 app = FastAPI(
     title="Ollama API Gateway",
@@ -34,19 +37,47 @@ OLLAMA_BASE_URL = get_ollama_base_url()
 
 # Vision model detection
 VISION_MODELS = [
-    'llava', 'llava:latest', 'llava:7b', 'llava:13b', 'llava:34b',
-    'bakllava', 'bakllava:latest', 'bakllava:7b',
-    'moondream', 'moondream:latest', 'moondream:1.8b',
-    'llava-llama3', 'llava-llama3:latest', 'llava-llama3:8b',
-    'llava-phi3', 'llava-phi3:latest', 'llava-phi3:3.8b',
-    # MiniCPM vision variants
-    'minicpm-v', 'minicpm-v:latest', 'minicpm-v2', 'minicpm-v4', 'openbmb/minicpm-v4'
+    'llava', 'bakllava', 'moondream', 'llava-llama3', 'llava-phi3', 'minicpm-v'
 ]
 
+VISION_CAPABLE_CACHE: Dict[str, bool] = {}
+
+def _is_vision_model_static(model_name: str) -> bool:
+    ml = model_name.lower()
+    return any(v in ml for v in VISION_MODELS)
+
 def is_vision_model(model_name: str) -> bool:
-    """Check if the model supports vision capabilities"""
-    model_lower = model_name.lower()
-    return any(vision_model in model_lower for vision_model in VISION_MODELS)
+    if model_name in VISION_CAPABLE_CACHE:
+        return VISION_CAPABLE_CACHE[model_name]
+    base = get_ollama_base_url()
+    try:
+        url = f"{base}/api/show"
+        resp = requests.get(url, params={"name": model_name}, timeout=5)
+        if resp.status_code != 200:
+            resp = requests.post(url, json={"name": model_name}, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json() if isinstance(resp.json(), dict) else {}
+            template = str(data.get("template", "")).lower()
+            modalities = str(data.get("modality", "")).lower()
+            model_info = data.get("model") or {}
+            if isinstance(model_info, dict):
+                m_mod = str(model_info.get("modality", "")).lower()
+                if any(x in m_mod for x in ("image", "vision", "multimodal")):
+                    VISION_CAPABLE_CACHE[model_name] = True
+                    return True
+            if any(x in modalities for x in ("image", "vision", "multimodal")):
+                VISION_CAPABLE_CACHE[model_name] = True
+                return True
+            if any(x in template for x in ("image", "images")):
+                VISION_CAPABLE_CACHE[model_name] = True
+                return True
+        result = _is_vision_model_static(model_name)
+        VISION_CAPABLE_CACHE[model_name] = result
+        return result
+    except Exception:
+        result = _is_vision_model_static(model_name)
+        VISION_CAPABLE_CACHE[model_name] = result
+        return result
 
 def process_images(images: List[str]) -> List[str]:
     """Process images from file paths or base64 strings to base64 format"""
@@ -169,20 +200,36 @@ async def health_check():
 async def list_models():
     """List all available Ollama models"""
     try:
-        response = requests.get(f"{get_ollama_base_url()}/api/tags")
+        response = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=8)
         response.raise_for_status()
         
         data = response.json()
-        models = []
-        
-        for model in data.get("models", []):
-            models.append(ModelInfo(
-                name=model["name"],
-                size=model["size"],
-                digest=model["digest"],
-                modified_at=model["modified_at"]
-            ))
-        
+        models: List[ModelInfo] = []
+
+        def to_model_info(m: Any) -> ModelInfo:
+            if isinstance(m, dict):
+                return ModelInfo(
+                    name=str(m.get("name", "Unknown")),
+                    size=int(m.get("size", 0) or 0),
+                    digest=str(m.get("digest", "")),
+                    modified_at=str(m.get("modified_at", ""))
+                )
+            return ModelInfo(name=str(m), size=0, digest="", modified_at="")
+
+        raw_models = data.get("models") if isinstance(data, dict) else data
+        if isinstance(raw_models, list):
+            for m in raw_models:
+                try:
+                    models.append(to_model_info(m))
+                except Exception:
+                    try:
+                        name = m.get("name") if isinstance(m, dict) else str(m)
+                    except Exception:
+                        name = "Unknown"
+                    models.append(ModelInfo(name=name, size=0, digest="", modified_at=""))
+        else:
+            models = []
+
         return models
     
     except requests.exceptions.RequestException as e:
@@ -200,84 +247,68 @@ async def list_models():
 async def chat_with_model(request: ChatRequest):
     """Chat with an Ollama model"""
     try:
-        # Check if this is a vision model with images
+        used_chat = False
         if request.images and len(request.images) > 0:
-            if not is_vision_model(request.model):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Model {request.model} does not support vision capabilities"
-                )
-            
-            # Use chat API format for vision models
-            processed_images = process_images(request.images)
-            
-            # Prepare message for chat API
-            message = {
-                "role": "user",
-                "content": request.prompt,
-                "images": processed_images
-            }
-            
-            # Add system message if provided
-            messages = []
-            if request.system:
-                messages.append({"role": "system", "content": request.system})
-            messages.append(message)
-            
-            ollama_payload = {
-                "model": request.model,
-                "messages": messages,
-                "stream": request.stream,
-                "options": {}
-            }
-            
-            # Add optional parameters
-            if request.temperature is not None:
-                ollama_payload["options"]["temperature"] = request.temperature
-            if request.max_tokens is not None:
-                ollama_payload["options"]["num_predict"] = request.max_tokens
-            
-            # Send request to Ollama chat API
-            response = requests.post(
-                f"{get_ollama_base_url()}/api/chat",
-                json=ollama_payload
-            )
+            if is_vision_model(request.model):
+                processed_images = process_images(request.images)
+                message = {"role": "user", "content": request.prompt, "images": processed_images}
+                messages = []
+                if request.system:
+                    messages.append({"role": "system", "content": request.system})
+                messages.append(message)
+                payload = {"model": request.model, "messages": messages, "stream": request.stream, "options": {"num_predict": -1}}
+                if request.temperature is not None:
+                    payload["options"]["temperature"] = request.temperature
+                response = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload)
+                used_chat = True
+            else:
+                payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "options": {"num_predict": -1}}
+                if request.temperature is not None:
+                    payload["options"]["temperature"] = request.temperature
+                if request.system is not None:
+                    payload["system"] = request.system
+                response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
         else:
-            # Use generate API for text-only requests
-            ollama_payload = {
-                "model": request.model,
-                "prompt": request.prompt,
-                "stream": request.stream,
-                "options": {}
-            }
-            
-            # Add optional parameters
+            payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "options": {"num_predict": -1}}
             if request.temperature is not None:
-                ollama_payload["options"]["temperature"] = request.temperature
-            if request.max_tokens is not None:
-                ollama_payload["options"]["num_predict"] = request.max_tokens
+                payload["options"]["temperature"] = request.temperature
             if request.system is not None:
-                ollama_payload["system"] = request.system
-            
-            # Send request to Ollama generate API
-            response = requests.post(
-                f"{get_ollama_base_url()}/api/generate",
-                json=ollama_payload
-            )
+                payload["system"] = request.system
+            response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
         
         response.raise_for_status()
         
-        # Parse response
         result = response.json()
-        
-        # Handle different response formats
-        if request.images and len(request.images) > 0:
-            # Chat API response format
+        if used_chat:
             message = result.get("message", {})
-            response_text = message.get("content", "")
+            response_text = (message.get("content") or result.get("response") or result.get("text") or "")
         else:
-            # Generate API response format
-            response_text = result.get("response", "")
+            response_text = (result.get("response") or result.get("text") or "")
+        if not response_text:
+            try:
+                if used_chat:
+                    gp = {"model": request.model, "prompt": request.prompt, "stream": False, "options": {"num_predict": -1}}
+                    if request.temperature is not None:
+                        gp["options"]["temperature"] = request.temperature
+                    if request.system is not None:
+                        gp["system"] = request.system
+                    fr = requests.post(f"{get_ollama_base_url()}/api/generate", json=gp)
+                    fr.raise_for_status()
+                    fres = fr.json()
+                    response_text = fres.get("response") or fres.get("text") or ""
+                else:
+                    msg = [{"role": "user", "content": request.prompt}]
+                    if request.system:
+                        msg.insert(0, {"role": "system", "content": request.system})
+                    cp = {"model": request.model, "messages": msg, "stream": False, "options": {"num_predict": -1}}
+                    if request.temperature is not None:
+                        cp["options"]["temperature"] = request.temperature
+                    fr = requests.post(f"{get_ollama_base_url()}/api/chat", json=cp)
+                    fr.raise_for_status()
+                    fres = fr.json()
+                    response_text = (fres.get("message", {}) or {}).get("content") or fres.get("response") or fres.get("text") or ""
+            except Exception:
+                response_text = response_text
         
         return {
             "response": response_text,
@@ -407,11 +438,77 @@ if __name__ == "__main__":
     print(f"Starting Ollama API Gateway on {tailscale_ip}:{port}")
     print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
     
-    # Run the server
-    uvicorn.run(
-        "api:app",
-        host=tailscale_ip,  # Listen on Tailscale IP or all interfaces
-        port=port,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info")
+class ComoRAGReasonRequest(BaseModel):
+    query: str
+    model: str
+    max_cycles: Optional[int] = 5
+    memory_size: Optional[int] = 1000
+    context: Optional[str] = None
+    images: Optional[List[str]] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+
+COMORAG_ENGINE: Optional[ComoRAGEngine] = None
+
+@app.post("/comorag/reason")
+async def comorag_reason(request: ComoRAGReasonRequest):
+    try:
+        global COMORAG_ENGINE
+        if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
+            COMORAG_ENGINE = ComoRAGEngine()
+            await COMORAG_ENGINE.initialize(memory_size=request.memory_size or 1000)
+        ctx = request.context or ""
+        imgs = process_images(request.images) if request.images else None
+        result = await COMORAG_ENGINE.reason(
+            query=request.query,
+            context=ctx,
+            model=request.model,
+            max_cycles=int(request.max_cycles or 5),
+            memory_size=request.memory_size,
+            images=imgs
+        )
+        return result
+    except HTTPException as e:
+        raise e
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=408, detail="Request timeout - ComoRAG took too long to respond")
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(status_code=503, detail=f"Failed to communicate with Ollama: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.get("/comorag/status")
+async def comorag_status():
+    try:
+        global COMORAG_ENGINE
+        ready = COMORAG_ENGINE is not None and COMORAG_ENGINE.is_ready()
+        return {"ready": ready}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/comorag/memory")
+async def comorag_memory():
+    try:
+        global COMORAG_ENGINE
+        if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
+            return {"memory_items": 0, "max_memory_size": 0}
+        ws = COMORAG_ENGINE.memory_workspace
+        return {
+            "memory_items": len(ws.memory_pool),
+            "max_memory_size": ws.max_size,
+            "recent_access": list(ws.access_history)[-10:]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/comorag/memory")
+async def clear_comorag_memory():
+    try:
+        global COMORAG_ENGINE
+        if COMORAG_ENGINE is None:
+            COMORAG_ENGINE = ComoRAGEngine()
+        await COMORAG_ENGINE.clear_memory()
+        return {"status": "memory_cleared"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

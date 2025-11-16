@@ -30,54 +30,42 @@ class APIServerThread(QThread):
         try:
             self.running = True
             self.status_update.emit("Starting local API server...")
-            
-            # Change to the OverWatch directory
-            overwatch_dir = os.path.dirname(self.api_path)
-            
-            # Start the API server using main.py
+            run_dir = os.path.dirname(self.api_path)
+            script_name = os.path.basename(self.api_path)
             self.process = subprocess.Popen(
-                [sys.executable, "main.py"],
-                cwd=overwatch_dir,
+                [sys.executable, script_name],
+                cwd=run_dir,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
                 universal_newlines=True
             )
-            
-            # Wait a bit and check if the process started successfully
-            self.msleep(2000)  # Wait 2 seconds
-            
-            if self.process.poll() is not None:
-                # Process has already terminated, read error output
-                stdout, stderr = self.process.communicate()
-                error_msg = stderr.strip() if stderr.strip() else stdout.strip()
-                self.error_occurred.emit(f"API server failed to start: {error_msg}")
-                return
-            
-            # Try to verify the server is responding
-            import requests
-            try:
-                # Give the server a moment to fully initialize
-                self.msleep(3000)  # Wait another 3 seconds
-                response = requests.get("http://localhost:8000/health", timeout=5)
-                if response.status_code == 200:
-                    self.status_update.emit("✅ Local API server started successfully")
-                else:
-                    self.status_update.emit("⚠️ Local API server started but not responding properly")
-            except requests.exceptions.RequestException:
-                self.status_update.emit("⚠️ Local API server started but health check failed")
-            
-            # Monitor the process
-            while self.running and self.process.poll() is None:
-                self.msleep(1000)
-                
-            # If we get here, the process has terminated
-            if self.running:  # Only emit error if we didn't stop it intentionally
-                stdout, stderr = self.process.communicate()
-                error_msg = stderr.strip() if stderr.strip() else "Process terminated unexpectedly"
+            ready_emitted = False
+            while self.running:
+                if self.process.poll() is not None:
+                    break
+                line = self.process.stdout.readline()
+                if not line:
+                    self.msleep(200)
+                    continue
+                msg = line.strip()
+                if msg:
+                    self.status_update.emit(msg)
+                    if (not ready_emitted) and (
+                        ("Application startup complete" in msg) or
+                        ("Uvicorn running" in msg) or
+                        ("Starting server with standard configuration" in msg)
+                    ):
+                        ready_emitted = True
+                        self.status_update.emit("✅ Local API server started successfully")
+            if self.running:
+                try:
+                    remaining = self.process.stdout.read() or ""
+                except Exception:
+                    remaining = ""
+                error_msg = remaining.strip() or "Process terminated unexpectedly"
                 self.error_occurred.emit(f"API server stopped: {error_msg}")
-                
         except Exception as e:
             self.error_occurred.emit(f"Failed to start API server: {str(e)}")
     
@@ -203,15 +191,13 @@ class AISettingsDialog(QDialog):
         # Server thread
         self.server_thread = None
         
-        # Status check timer
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.check_api_status)
+        
         
         self.setup_ui()
         self.load_settings()
         
-        # Start status checking
-        self.status_timer.start(5000)  # Check every 5 seconds
         self.check_api_status()
     
     def setup_ui(self):
@@ -345,13 +331,29 @@ class AISettingsDialog(QDialog):
         self.setLayout(layout)
     
     def load_settings(self):
-        """Load settings from environment variables"""
-        self.tailscale_ip_edit.setText(os.getenv("TAILSCALE_SERVER_IP", ""))  # Default to empty for local use
-        self.api_port_edit.setValue(int(os.getenv("API_PORT", "8000")))
-        self.ollama_host_edit.setText(os.getenv("OLLAMA_HOST", "localhost"))
-        self.ollama_port_edit.setValue(int(os.getenv("OLLAMA_PORT", "11434")))
-        self.timeout_edit.setValue(int(os.getenv("API_TIMEOUT", "30")))
-        self.auto_start_checkbox.setChecked(os.getenv("AUTO_START_API", "false").lower() == "true")
+        """Load settings from config file via config_loader"""
+        try:
+            # Defer to shared config loader to ensure consistent precedence
+            ai_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AI"))
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            from config_loader import load_ai_config
+            cfg = load_ai_config()
+
+            self.tailscale_ip_edit.setText(cfg.get("TAILSCALE_SERVER_IP", ""))
+            self.api_port_edit.setValue(int(cfg.get("API_PORT", "8000")))
+            self.ollama_host_edit.setText(cfg.get("OLLAMA_HOST", "localhost"))
+            self.ollama_port_edit.setValue(int(cfg.get("OLLAMA_PORT", "11434")))
+            self.timeout_edit.setValue(int(cfg.get("API_TIMEOUT", "30")))
+            self.auto_start_checkbox.setChecked(cfg.get("AUTO_START_API", "false").lower() == "true")
+        except Exception:
+            # Fallback to environment variables
+            self.tailscale_ip_edit.setText(os.getenv("TAILSCALE_SERVER_IP", ""))
+            self.api_port_edit.setValue(int(os.getenv("API_PORT", "8000")))
+            self.ollama_host_edit.setText(os.getenv("OLLAMA_HOST", "localhost"))
+            self.ollama_port_edit.setValue(int(os.getenv("OLLAMA_PORT", "11434")))
+            self.timeout_edit.setValue(int(os.getenv("API_TIMEOUT", "30")))
+            self.auto_start_checkbox.setChecked(os.getenv("AUTO_START_API", "false").lower() == "true")
     
     def save_settings(self):
         """Save settings to environment variables and config file"""
@@ -487,6 +489,7 @@ class AISettingsDialog(QDialog):
                 self.server_thread.wait()
             self.server_thread = None
         
+        
         self.start_server_btn.setEnabled(True)
         self.stop_server_btn.setEnabled(False)
         self.status_label.setText("🛑 Local server stopped")
@@ -494,6 +497,12 @@ class AISettingsDialog(QDialog):
     def on_server_status_update(self, message):
         """Handle server status updates"""
         self.status_label.setText(message)
+        if (
+            ("✅ Local API server started successfully" in message) or
+            ("Uvicorn running" in message) or
+            ("Application startup complete" in message)
+        ):
+            QTimer.singleShot(500, self.check_api_status)
     
     def on_server_error(self, error_message):
         """Handle server errors"""
@@ -507,3 +516,4 @@ class AISettingsDialog(QDialog):
         if self.server_thread:
             self.stop_local_server()
         super().closeEvent(event)
+    

@@ -109,8 +109,6 @@ class OllamaClient:
         
         if temperature is not None:
             payload["temperature"] = temperature
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
         if system is not None:
             payload["system"] = system
         if images is not None:
@@ -455,6 +453,9 @@ class OllamaClient:
             "max_cycles": self.comorag_config.get('max_cycles', 5),
             "memory_size": self.comorag_config.get('memory_size', 1000)
         }
+
+        if temperature is not None:
+            payload["temperature"] = temperature
         
         # Add context if available
         if full_context:

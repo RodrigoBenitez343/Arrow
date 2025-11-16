@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea
 )
-from PyQt5.QtCore import Qt, QPoint, QSize
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
 from PyQt5.QtCore import QMimeData
 
@@ -174,6 +174,25 @@ class CollapsibleToolbar(QWidget):
         super().__init__(parent)
         self.graph_view = graph_view
         self._collapsed = False
+        try:
+            self._watcher = QFileSystemWatcher(self)
+            folder = getattr(self.graph_view, 'sequences_folder', None)
+            if folder:
+                try:
+                    os.makedirs(folder, exist_ok=True)
+                except Exception:
+                    pass
+                try:
+                    self._watcher.addPath(folder)
+                except Exception:
+                    pass
+            try:
+                self._watcher.directoryChanged.connect(self.refresh_sequences_list)
+                self._watcher.fileChanged.connect(self.refresh_sequences_list)
+            except Exception:
+                pass
+        except Exception:
+            self._watcher = None
         self._build_ui()
 
     def _build_ui(self):
@@ -199,11 +218,11 @@ class CollapsibleToolbar(QWidget):
         # Top cluster: sequences list and node types
         top_cluster = QFrame(self)
         top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        top_layout = QVBoxLayout(top_cluster)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(1)
-        sequences_box = self._make_sequences_scroll_box()
-        top_layout.addWidget(sequences_box)
+        self._top_layout = QVBoxLayout(top_cluster)
+        self._top_layout.setContentsMargins(0, 0, 0, 0)
+        self._top_layout.setSpacing(1)
+        self._sequences_scroll = self._make_sequences_scroll_box()
+        self._top_layout.addWidget(self._sequences_scroll)
 
         # Section 2: Node types (vertical, draggable)
         nodes_col = QVBoxLayout()
@@ -213,7 +232,7 @@ class CollapsibleToolbar(QWidget):
         nodes_col.addWidget(self._make_node_button("Chain", "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip="Add Chain Import Node"))
         nodes_col.addWidget(self._make_node_button("TTS", "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip="Add TTS Node"))
         nodes_col.addWidget(self._make_node_button("Cond", "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip="Add Conditional Node"))
-        top_layout.addLayout(nodes_col)
+        self._top_layout.addLayout(nodes_col)
         content_layout.addWidget(top_cluster)
 
         
@@ -238,6 +257,44 @@ class CollapsibleToolbar(QWidget):
             pass
 
         main_layout.addWidget(self._content_frame)
+
+    def refresh_sequences_list(self):
+        try:
+            new_scroll = self._make_sequences_scroll_box()
+            if hasattr(self, '_sequences_scroll') and self._sequences_scroll is not None:
+                try:
+                    idx = self._top_layout.indexOf(self._sequences_scroll)
+                except Exception:
+                    idx = 0
+                try:
+                    self._sequences_scroll.setParent(None)
+                except Exception:
+                    pass
+                try:
+                    self._sequences_scroll.deleteLater()
+                except Exception:
+                    pass
+                self._sequences_scroll = new_scroll
+                if idx < 0:
+                    self._top_layout.insertWidget(0, self._sequences_scroll)
+                else:
+                    self._top_layout.insertWidget(idx, self._sequences_scroll)
+            else:
+                self._sequences_scroll = new_scroll
+                self._top_layout.insertWidget(0, self._sequences_scroll)
+            try:
+                self._sequences_scroll.update()
+                self._top_layout.update()
+                self._content_frame.update()
+                self.update()
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Failed to refresh sequences list: {e}")
 
     def _make_sequences_scroll_box(self):
         scroll = QScrollArea(self)

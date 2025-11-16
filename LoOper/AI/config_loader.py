@@ -27,10 +27,13 @@ def load_ai_config() -> Dict[str, Any]:
         except Exception as e:
             print(f"Warning: Failed to load AI config file: {e}")
     
-    # Override with environment variables if they exist
+    # Override with environment variables where appropriate
+    # Prefer config file value for AUTO_START_API to honor GUI toggle
     for key in config.keys():
         env_value = os.getenv(key)
         if env_value is not None:
+            if key == "AUTO_START_API":
+                continue
             config[key] = env_value
     
     # Set environment variables for current session

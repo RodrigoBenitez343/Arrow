@@ -382,7 +382,7 @@ class ActionHandlers:
 
             # Auto-detect presence of non-ASCII characters (e.g., accented letters, smart quotes)
             contains_non_ascii = any(ord(c) > 126 for c in text)
-            use_clipboard = force_clipboard or contains_non_ascii
+            use_clipboard = force_clipboard or contains_non_ascii or len(text) > 1000
 
             if use_clipboard:
                 try:

@@ -20,7 +20,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from NGUI.app import main
 from AI.model_cache import load_models_at_startup
-from AI.config_loader import load_ai_config, should_auto_start_api
+from AI.config_loader import load_ai_config, should_auto_start_api, get_api_url
+import requests
 
 def start_api_server():
     """Start the LLM API server in a separate process"""
@@ -89,6 +90,15 @@ if __name__ == "__main__":
         api_thread = start_api_server_async()
         # Give the API server time to initialize
         time.sleep(3)
+        try:
+            url = f"{get_api_url()}/health"
+            r = requests.get(url, timeout=5)
+            if r.status_code == 200:
+                print("✅ API health verified")
+            else:
+                print(f"⚠️ API health check returned status {r.status_code}")
+        except Exception as e:
+            print(f"❌ API health check failed: {e}")
     else:
         print("ℹ️  Auto-start API disabled - LLM API server will not be started automatically")
         print("   You can enable this in the AI settings or set AUTO_START_API=true in environment")

@@ -392,10 +392,11 @@ class MainWindow(QMainWindow):
                 thread_logger.info(f"Recording thread started for sequence: {sequence_name}")
                 
                 try:
-                    # Ensure sequences directory exists
-                    sequences_dir = os.path.join(os.getcwd(), "sequences")
-                    thread_logger.debug(f"Creating sequences directory: {sequences_dir}")
-                    os.makedirs(sequences_dir, exist_ok=True)
+                    target_dir = getattr(self.graph_view, 'sequences_folder', os.path.join(os.getcwd(), 'sequences'))
+                    thread_logger.debug(f"Creating sequences directory: {target_dir}")
+                    os.makedirs(target_dir, exist_ok=True)
+                    original_cwd = os.getcwd()
+                    os.chdir(target_dir)
                     
                     # Test pynput import first
                     thread_logger.info("Testing pynput import before ElementRecorder initialization")
@@ -470,6 +471,12 @@ class MainWindow(QMainWindow):
                         keyboard_listener.join()  # Will block until ESC
                         mouse_listener.stop()
                         thread_logger.info("Listeners stopped successfully")
+                        # Refresh sequences list in toolbar on the main thread
+                        try:
+                            QTimer.singleShot(0, lambda: self.graph_view.refresh_sequences_toolbar())
+                            QTimer.singleShot(300, lambda: self.graph_view.refresh_sequences_toolbar())
+                        except Exception as e:
+                            thread_logger.error(f"Failed to request sequences refresh: {e}")
                     except Exception as e:
                         thread_logger.error(f"Error during listener operation: {str(e)}")
                         thread_logger.error(f"Listener operation traceback: {traceback.format_exc()}")
@@ -487,6 +494,11 @@ class MainWindow(QMainWindow):
                     # Show error dialog and restore window using Qt's thread-safe mechanism
                     QTimer.singleShot(0, lambda: self._handle_recording_error(str(e)))
                     raise
+                finally:
+                    try:
+                        os.chdir(original_cwd)
+                    except Exception:
+                        pass
             
             # Start recording in a separate thread
             logger.debug("Creating recording thread")
