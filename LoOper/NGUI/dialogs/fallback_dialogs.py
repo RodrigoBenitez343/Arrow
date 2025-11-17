@@ -4,6 +4,7 @@ import json
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
                              QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog)
 from ..constants import TEXT_COLOR
+from ..i18n import _
 
 
 class ActionFallbackConfigDialog(QDialog):
@@ -16,7 +17,7 @@ class ActionFallbackConfigDialog(QDialog):
         self.chain_config = chain_config
         self.current_fallback = current_fallback
         
-        self.setWindowTitle(f"Configure Fallback - Sequence {sequence_idx + 1}, Action {action_idx + 1}")
+        self.setWindowTitle(_("Configure Fallback - Sequence {seq}, Action {action}").format(seq=sequence_idx + 1, action=action_idx + 1))
         self.setModal(True)
         self.resize(400, 300)
         
@@ -27,7 +28,7 @@ class ActionFallbackConfigDialog(QDialog):
         layout = QVBoxLayout(self)
         
         # Action info
-        info_group = QGroupBox("Action Information")
+        info_group = QGroupBox(_("Action Information"))
         info_layout = QVBoxLayout(info_group)
         
         sequence_file = self.chain_config[self.sequence_idx]['sequence_file']
@@ -36,40 +37,43 @@ class ActionFallbackConfigDialog(QDialog):
                 sequence_data = json.load(f)
             
             action = sequence_data['actions'][self.action_idx]
-            action_info = f"Type: {action.get('type', 'unknown')}\n"
-            action_info += f"Position: ({action.get('x', 0)}, {action.get('y', 0)})\n"
-            action_info += f"Has Screenshot: {'Yes' if action.get('screenshot') else 'No'}"
+            action_info = _("Type: {type}\nPosition: ({x}, {y})\nHas Screenshot: {has}").format(
+                type=action.get('type', 'unknown'),
+                x=action.get('x', 0),
+                y=action.get('y', 0),
+                has=_('Yes') if action.get('screenshot') else _('No')
+            )
             
             info_label = QLabel(action_info)
             info_label.setStyleSheet(f"color: {TEXT_COLOR};")
             info_layout.addWidget(info_label)
             
         except Exception as e:
-            error_label = QLabel(f"Error loading action info: {str(e)}")
+            error_label = QLabel(_("Error loading action info: {error}").format(error=str(e)))
             error_label.setStyleSheet("color: #FF6B6B;")
             info_layout.addWidget(error_label)
         
         layout.addWidget(info_group)
         
         # Fallback configuration
-        config_group = QGroupBox("Fallback Configuration")
+        config_group = QGroupBox(_("Fallback Configuration"))
         config_layout = QVBoxLayout(config_group)
         
-        self.enable_fallback = QCheckBox("Enable fallback for this action")
+        self.enable_fallback = QCheckBox(_("Enable fallback for this action"))
         self.enable_fallback.setChecked(self.current_fallback is not None)
         self.enable_fallback.toggled.connect(self.on_fallback_enabled)
         config_layout.addWidget(self.enable_fallback)
         
         # Fallback sequence selection
         fallback_layout = QHBoxLayout()
-        fallback_layout.addWidget(QLabel("Fallback Sequence:"))
+        fallback_layout.addWidget(QLabel(_("Fallback Sequence:")))
         
         self.fallback_file_entry = QLineEdit()
         if self.current_fallback:
             self.fallback_file_entry.setText(self.current_fallback.get('sequence_file', ''))
         fallback_layout.addWidget(self.fallback_file_entry)
         
-        browse_btn = QPushButton("Browse...")
+        browse_btn = QPushButton(_("Browse..."))
         browse_btn.clicked.connect(self.browse_fallback_file)
         fallback_layout.addWidget(browse_btn)
         
@@ -80,13 +84,13 @@ class ActionFallbackConfigDialog(QDialog):
         # Fallback parameters
         params_layout = QGridLayout()
         
-        params_layout.addWidget(QLabel("Retry Attempts:"), 0, 0)
+        params_layout.addWidget(QLabel(_("Retry Attempts:")), 0, 0)
         self.retry_attempts = QSpinBox()
         self.retry_attempts.setRange(1, 10)
         self.retry_attempts.setValue(self.current_fallback.get('retry_attempts', 3) if self.current_fallback else 3)
         params_layout.addWidget(self.retry_attempts, 0, 1)
         
-        params_layout.addWidget(QLabel("Retry Delay (s):"), 1, 0)
+        params_layout.addWidget(QLabel(_("Retry Delay (s):")), 1, 0)
         self.retry_delay = QDoubleSpinBox()
         self.retry_delay.setRange(0.1, 10.0)
         self.retry_delay.setSingleStep(0.1)
@@ -102,15 +106,15 @@ class ActionFallbackConfigDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(_("OK"))
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
-        remove_btn = QPushButton("Remove Fallback")
+        remove_btn = QPushButton(_("Remove Fallback"))
         remove_btn.clicked.connect(self.remove_fallback)
         button_layout.addWidget(remove_btn)
         
@@ -126,7 +130,7 @@ class ActionFallbackConfigDialog(QDialog):
     def browse_fallback_file(self):
         """Browse for fallback sequence file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Fallback Sequence", "", "JSON Files (*.json)"
+            self, _("Select Fallback Sequence"), "", _("JSON Files (*.json)")
         )
         if file_path:
             self.fallback_file_entry.setText(file_path)

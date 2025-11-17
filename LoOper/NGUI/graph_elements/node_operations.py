@@ -2,6 +2,12 @@ import json
 import logging
 import os
 from PyQt5.QtWidgets import QMessageBox, QInputDialog, QFileDialog
+try:
+    # Prefer real cached models; if unavailable, fall back to empty list
+    from ...AI.model_cache import get_real_cached_models
+except Exception:
+    def get_real_cached_models(timeout: float = 5.0):
+        return []
 from ..dialogs import AdvancedConditionalDialog, LLMPropertiesDialog, TTSPropertiesDialog
 from ..dialogs.sequence_dialogs import SequencePropertiesDialog
 from ..dialogs.chain_import_dialogs import ChainImportDialog
@@ -325,7 +331,13 @@ class NodeOperations:
                 logger.debug(f"Setting default properties for LLM node {node.id}")
                 # Set default properties
                 node.set_property('prompt', '')
-                node.set_property('model', 'gpt-3.5-turbo')
+                # Use the first real cached model if available; otherwise leave empty
+                try:
+                    cached = get_real_cached_models(timeout=2.0)
+                    default_model = cached[0] if cached else ''
+                except Exception:
+                    default_model = ''
+                node.set_property('model', default_model)
                 node.set_property('temperature', '0.7')
                 node.set_property('max_tokens', '150')
                 

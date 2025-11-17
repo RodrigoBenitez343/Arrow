@@ -7,12 +7,13 @@ from PyQt5.QtCore import QTime, QDateTime, Qt
 from ..constants import (
     DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, RED_PRIMARY
 )
+from ..i18n import _
 
 
 class SchedulerManagerDialog(QDialog):
     def __init__(self, parent, scheduler_service):
         super().__init__(parent)
-        self.setWindowTitle("Manage Schedules")
+        self.setWindowTitle(_("Manage Schedules"))
         self.scheduler = scheduler_service
         self.resize(720, 420)
         self.setMinimumSize(600, 400)
@@ -85,7 +86,7 @@ class SchedulerManagerDialog(QDialog):
         # Table
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            "Enabled", "Name", "Type", "When", "Next Run", "Chain", "Actions"
+            _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Actions")
         ])
         # Set column widths for better visibility
         self.table.setColumnWidth(0, 80)   # Enabled
@@ -115,17 +116,17 @@ class SchedulerManagerDialog(QDialog):
         btn_row.setContentsMargins(10, 8, 10, 8)
         btn_row.setSpacing(10)
         
-        add_btn = QPushButton("➕ Add Schedule")
+        add_btn = QPushButton(f"➕ {_("Add Schedule")}")
         add_btn.clicked.connect(self.add_schedule)
         btn_row.addWidget(add_btn)
 
-        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn = QPushButton(f"🔄 {_("Refresh")}")
         refresh_btn.clicked.connect(self.reload)
         btn_row.addWidget(refresh_btn)
 
         btn_row.addStretch(1)
         
-        close_btn = QPushButton("✖ Close")
+        close_btn = QPushButton(f"✖ {_("Close")}")
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -194,18 +195,18 @@ class SchedulerManagerDialog(QDialog):
         actions_layout.setContentsMargins(2, 2, 2, 2)
         actions_layout.setSpacing(3)
 
-        run_btn = QPushButton("▶ Run")
-        run_btn.setToolTip("Run this schedule now")
+        run_btn = QPushButton(f"▶ {_("Run")}")
+        run_btn.setToolTip(_("Run this schedule now"))
         run_btn.clicked.connect(lambda _, sid=s['id']: self._run_now(sid))
         actions_layout.addWidget(run_btn)
 
-        edit_btn = QPushButton("✏ Edit")
-        edit_btn.setToolTip("Edit this schedule")
+        edit_btn = QPushButton(f"✏ {_("Edit")}")
+        edit_btn.setToolTip(_("Edit this schedule"))
         edit_btn.clicked.connect(lambda _, sched=s: self._edit_schedule(sched))
         actions_layout.addWidget(edit_btn)
 
-        del_btn = QPushButton("🗑 Del")
-        del_btn.setToolTip("Delete this schedule")
+        del_btn = QPushButton(f"🗑 {_("Del")}")
+        del_btn.setToolTip(_("Delete this schedule"))
         del_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {RED_PRIMARY};
@@ -228,13 +229,13 @@ class SchedulerManagerDialog(QDialog):
             self.scheduler.set_enabled(sid, enabled)
             self.reload()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, _("Error"), str(e))
 
     def _run_now(self, sid):
         try:
             self.scheduler.run_now(sid)
         except Exception as e:
-            QMessageBox.critical(self, "Run Now Failed", str(e))
+            QMessageBox.critical(self, _("Run Now Failed"), str(e))
 
     def _delete_schedule(self, sid):
         self.scheduler.remove_schedule(sid)
@@ -249,7 +250,7 @@ class SchedulerManagerDialog(QDialog):
                 self.scheduler.update_schedule(data)
                 self.reload()
             except Exception as e:
-                QMessageBox.critical(self, "Update Failed", str(e))
+                QMessageBox.critical(self, _("Update Failed"), str(e))
 
     def add_schedule(self):
         dlg = EditScheduleDialog(self)
@@ -259,7 +260,7 @@ class SchedulerManagerDialog(QDialog):
                 self.scheduler.add_schedule(data)
                 self.reload()
             except Exception as e:
-                QMessageBox.critical(self, "Add Failed", str(e))
+                QMessageBox.critical(self, _("Add Failed"), str(e))
 
     @staticmethod
     def _when_text(s):
@@ -272,14 +273,14 @@ class SchedulerManagerDialog(QDialog):
             days = s.get('days_of_week', [])
             return f"{s.get('weekly_time','—')} | {days}"
         if st == 'interval':
-            return f"every {s.get('interval_minutes', 0)} min"
+            return f"{_("every")} {s.get('interval_minutes', 0)} {_("min")}"
         return '—'
 
 
 class EditScheduleDialog(QDialog):
     def __init__(self, parent, schedule=None):
         super().__init__(parent)
-        self.setWindowTitle("Schedule Configuration")
+        self.setWindowTitle(_("Schedule Configuration"))
         self.resize(580, 450)
         self.setMinimumSize(500, 400)
         self._schedule = schedule or {}
@@ -360,21 +361,21 @@ class EditScheduleDialog(QDialog):
         layout.setSpacing(15)
 
         # Basic Configuration Group
-        basic_group = QGroupBox("📋 Basic Configuration")
+        basic_group = QGroupBox(_("📋 Basic Configuration"))
         basic_layout = QVBoxLayout(basic_group)
         basic_layout.setSpacing(10)
         
         # Name
         name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Schedule Name:"))
+        name_row.addWidget(QLabel(_("Schedule Name:")))
         self.name_edit = QLineEdit(self._schedule.get('name', ''))
-        self.name_edit.setPlaceholderText("Enter a descriptive name for this schedule")
+        self.name_edit.setPlaceholderText(_("Enter a descriptive name for this schedule"))
         name_row.addWidget(self.name_edit)
         basic_layout.addLayout(name_row)
 
         # Type
         type_row = QHBoxLayout()
-        type_row.addWidget(QLabel("Schedule Type:"))
+        type_row.addWidget(QLabel(_("Schedule Type:")))
         self.type_cb = QComboBox()
         self.type_cb.addItems(["once", "daily", "weekly", "interval"])
         if schedule:
@@ -390,13 +391,13 @@ class EditScheduleDialog(QDialog):
 
         # Chain file
         chain_row = QHBoxLayout()
-        chain_row.addWidget(QLabel("Chain File:"))
-        self.chain_btn = QPushButton("📁 Select Chain JSON...")
+        chain_row.addWidget(QLabel(_("Chain File:")))
+        self.chain_btn = QPushButton(f"📁 {_("Select Chain JSON...")}")
         self.chain_btn.clicked.connect(self._select_chain)
         chain_row.addWidget(self.chain_btn)
         basic_layout.addLayout(chain_row)
         
-        self.chain_lbl = QLabel(self._schedule.get('chain_path', 'No file selected'))
+        self.chain_lbl = QLabel(self._schedule.get('chain_path', _("No file selected")))
         self.chain_lbl.setStyleSheet(f"""
             QLabel {{
                 background-color: {BLOCK_COLOR};
@@ -411,7 +412,7 @@ class EditScheduleDialog(QDialog):
         layout.addWidget(basic_group)
 
         # Timing Configuration Group
-        timing_group = QGroupBox("⏰ Timing Configuration")
+        timing_group = QGroupBox(_("⏰ Timing Configuration"))
         timing_layout = QVBoxLayout(timing_group)
         timing_layout.setSpacing(10)
         
@@ -419,7 +420,7 @@ class EditScheduleDialog(QDialog):
         self.once_row_w = QWidget()
         once_layout = QVBoxLayout(self.once_row_w)
         once_layout.setContentsMargins(0, 0, 0, 0)
-        once_layout.addWidget(QLabel("📅 Run at specific date and time:"))
+        once_layout.addWidget(QLabel(_("📅 Run at specific date and time:")))
         self.once_dt = QDateTimeEdit(QDateTime.currentDateTime())
         self.once_dt.setCalendarPopup(True)
         self.once_dt.setDisplayFormat("yyyy-MM-dd hh:mm:ss")
@@ -430,7 +431,7 @@ class EditScheduleDialog(QDialog):
         self.daily_row_w = QWidget()
         daily_layout = QVBoxLayout(self.daily_row_w)
         daily_layout.setContentsMargins(0, 0, 0, 0)
-        daily_layout.addWidget(QLabel("🌅 Daily at time:"))
+        daily_layout.addWidget(QLabel(_("🌅 Daily at time:")))
         self.daily_time = QTimeEdit(QTime.currentTime())
         self.daily_time.setDisplayFormat("hh:mm")
         daily_layout.addWidget(self.daily_time)
@@ -440,20 +441,20 @@ class EditScheduleDialog(QDialog):
         self.weekly_row_w = QWidget()
         weekly_layout = QVBoxLayout(self.weekly_row_w)
         weekly_layout.setContentsMargins(0, 0, 0, 0)
-        weekly_layout.addWidget(QLabel("📅 Weekly schedule:"))
+        weekly_layout.addWidget(QLabel(_("📅 Weekly schedule:")))
         
         time_row = QHBoxLayout()
-        time_row.addWidget(QLabel("Time:"))
+        time_row.addWidget(QLabel(_("Time:")))
         self.weekly_time = QTimeEdit(QTime.currentTime())
         self.weekly_time.setDisplayFormat("hh:mm")
         time_row.addWidget(self.weekly_time)
         time_row.addStretch()
         weekly_layout.addLayout(time_row)
         
-        days_label = QLabel("Days of week:")
+        days_label = QLabel(_("Days of week:"))
         weekly_layout.addWidget(days_label)
         days_row = QHBoxLayout()
-        self.weekly_days = [QCheckBox(d) for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]]
+        self.weekly_days = [QCheckBox(_(d)) for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]]
         for cb in self.weekly_days:
             days_row.addWidget(cb)
         days_row.addStretch()
@@ -464,11 +465,11 @@ class EditScheduleDialog(QDialog):
         self.interval_row_w = QWidget()
         interval_layout = QVBoxLayout(self.interval_row_w)
         interval_layout.setContentsMargins(0, 0, 0, 0)
-        interval_layout.addWidget(QLabel("🔄 Repeat every (minutes):"))
+        interval_layout.addWidget(QLabel(_("🔄 Repeat every (minutes):")))
         interval_row = QHBoxLayout()
         self.interval_spin = QSpinBox()
         self.interval_spin.setRange(1, 100000)
-        self.interval_spin.setSuffix(" minutes")
+        self.interval_spin.setSuffix(_(" minutes"))
         interval_row.addWidget(self.interval_spin)
         interval_row.addStretch()
         interval_layout.addLayout(interval_row)
@@ -493,11 +494,11 @@ class EditScheduleDialog(QDialog):
         
         btn_row.addStretch(1)
         
-        cancel_btn = QPushButton("✖ Cancel")
+        cancel_btn = QPushButton(f"✖ {_("Cancel")}")
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
         
-        save_btn = QPushButton("💾 Save Schedule")
+        save_btn = QPushButton(f"💾 {_("Save Schedule")}")
         save_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {RED_PRIMARY};
@@ -531,7 +532,7 @@ class EditScheduleDialog(QDialog):
             chain_path = s['chain_path']
             filename = os.path.basename(chain_path)
             self.chain_lbl.setText(f"📄 {filename}")
-            self.chain_lbl.setToolTip(f"Full path: {chain_path}")
+            self.chain_lbl.setToolTip(_("Full path: {path}").format(path=chain_path))
             self._selected_chain_path = chain_path
         t = s.get('type')
         if t == 'once' and s.get('once_datetime'):
@@ -572,20 +573,20 @@ class EditScheduleDialog(QDialog):
     def _select_chain(self):
         path, _ = QFileDialog.getOpenFileName(
             self, 
-            "Select Chain JSON File", 
+            _("Select Chain JSON File"), 
             "", 
-            "JSON Files (*.json);;All Files (*.*)"
+            _("JSON Files (*.json);;All Files (*.*)")
         )
         if path:
             # Show just the filename for better readability, but store full path
             import os
             filename = os.path.basename(path)
             self.chain_lbl.setText(f"📄 {filename}")
-            self.chain_lbl.setToolTip(f"Full path: {path}")
+            self.chain_lbl.setToolTip(_("Full path: {path}").format(path=path))
             # Store the full path for later use
             self._selected_chain_path = path
         else:
-            self.chain_lbl.setText("No file selected")
+            self.chain_lbl.setText(_("No file selected"))
             self.chain_lbl.setToolTip("")
             self._selected_chain_path = None
 
@@ -595,7 +596,7 @@ class EditScheduleDialog(QDialog):
         chain_path = getattr(self, '_selected_chain_path', None) or self._schedule.get('chain_path', '')
         
         data = {
-            'name': self.name_edit.text().strip() or f"Schedule {t}",
+            'name': self.name_edit.text().strip() or f"{_("Schedule")} {t}",
             'type': t,
             'chain_path': chain_path,
             'enabled': True,

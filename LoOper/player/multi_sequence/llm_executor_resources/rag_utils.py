@@ -51,8 +51,18 @@ def build_rag_context(
         chunks = _chunk_text_chars(input_text, chunk_size, overlap)
         logger.info(f"RAG: chunked previous output into {len(chunks)} chunks (size={chunk_size}, overlap={overlap})")
 
-        chunk_embs = client.embeddings(embedding_model, chunks)
-        if not chunk_embs or len(chunk_embs) != len(chunks):
+        # Filter out whitespace-only chunks to avoid pointless embeddings calls
+        valid_chunks = [c for c in chunks if isinstance(c, str) and c.strip()]
+        if not valid_chunks:
+            logger.info("RAG: no valid chunks (empty/whitespace); skipping embeddings")
+            if not use_input_text_in_prompt:
+                updated_prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
+            else:
+                updated_prompt = None
+            return None, updated_prompt
+
+        chunk_embs = client.embeddings(embedding_model, valid_chunks)
+        if not chunk_embs or len(chunk_embs) != len(valid_chunks):
             logger.warning("RAG: embedding computation failed or mismatched; falling back to injecting raw previous text")
             if not use_input_text_in_prompt:
                 updated_prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
@@ -73,7 +83,7 @@ def build_rag_context(
         sims = [( _cosine_sim(q, ce), idx) for idx, ce in enumerate(chunk_embs)]
         sims.sort(key=lambda x: x[0], reverse=True)
         top_indices = [idx for _, idx in sims[:max(1, top_k)]]
-        top_texts = [chunks[i] for i in top_indices]
+        top_texts = [valid_chunks[i] for i in top_indices]
         rag_context = "\n\n".join(top_texts)
         if len(rag_context) > max_chars:
             rag_context = rag_context[:max_chars]

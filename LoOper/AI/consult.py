@@ -16,6 +16,7 @@ import queue
 import threading
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from urllib.parse import urljoin
+from typing import cast
 
 try:
     from PIL import Image, ImageGrab
@@ -187,32 +188,52 @@ class OllamaClient:
         if pooling is not None:
             payload["pooling"] = pooling
 
-        try:
-            response = self.session.post(
-                f"{self.base_url}/embeddings",
-                json=payload
-            )
-            response.raise_for_status()
-            data = response.json()
-            # Normalize gateway response
-            if isinstance(data, dict):
-                if "embeddings" in data and isinstance(data["embeddings"], list):
-                    return data["embeddings"]
-                elif "embedding" in data and isinstance(data["embedding"], list):
-                    return [data["embedding"]]
-            # Fallbacks
-            if isinstance(data, list) and data and isinstance(data[0], (list, float)):
-                if data and isinstance(data[0], float):
-                    return [data]
-                return data
-            # Unexpected format
+        # Short-circuit if inputs are empty or whitespace-only
+        if not inputs or all((not s) or (isinstance(s, str) and s.strip() == "") for s in inputs):
             if self.debug:
-                print(f"Unexpected embeddings response: {data}")
+                print("Embeddings skipped: no valid input texts provided.")
             return []
-        except requests.exceptions.RequestException as e:
-            if self.debug:
-                print(f"Embeddings request failed: {e}")
-            return []
+
+        # Try API call with a short retry; then fall back to local embeddings
+        attempt_count = 0
+        last_error: Optional[Exception] = None
+        while attempt_count < 2:
+            try:
+                response = self.session.post(
+                    f"{self.base_url}/embeddings",
+                    json=payload
+                )
+                response.raise_for_status()
+                data = response.json()
+                # Normalize gateway response
+                if isinstance(data, dict):
+                    if "embeddings" in data and isinstance(data["embeddings"], list):
+                        return cast(List[List[float]], data["embeddings"])
+                    elif "embedding" in data and isinstance(data["embedding"], list):
+                        return [cast(List[float], data["embedding"])]
+                # Fallbacks
+                if isinstance(data, list) and data and isinstance(data[0], (list, float)):
+                    if data and isinstance(data[0], float):
+                        return [cast(List[float], data)]
+                    return cast(List[List[float]], data)
+                # Unexpected format
+                if self.debug:
+                    print(f"Unexpected embeddings response: {data}")
+                break
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                attempt_count += 1
+                if self.debug:
+                    print(f"Embeddings request failed (attempt {attempt_count}): {e}")
+                # Small delay before retry
+                try:
+                    time.sleep(0.2)
+                except Exception:
+                    pass
+        # Do not use local fallback; return empty to indicate failure
+        if self.debug:
+            print("Embeddings API did not return a usable result; no local fallback will be used.")
+        return []
     
     def _queue_comorag_request(self, model: str, prompt: str,
                               temperature: Optional[float] = None,

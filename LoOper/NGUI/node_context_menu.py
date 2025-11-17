@@ -3,6 +3,7 @@
 from PyQt5.QtWidgets import QMenu, QAction, QFileDialog
 from .nodes import SequenceNode, ActionNode
 from .dialogs import SequencePropertiesDialog
+from .i18n import _
 
 class NodeContextMenuManager:
     """Manages the context menu for nodes in the graph view"""
@@ -37,19 +38,10 @@ class NodeContextMenuManager:
 
     def add_sequence_node_actions(self, menu, node):
         """Add actions for a sequence node to the context menu"""
-        # Copy/Paste actions
-        copy_action = QAction("Copy Node (Ctrl+C)", menu)
-        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
-        menu.addAction(copy_action)
-
-        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
-        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
-        menu.addAction(paste_action)
-
-        menu.addSeparator()
+        # Trimmed actions: no copy/paste or conditional branch from sequence node menu
 
         # Edit properties via dialog (no inline inputs on node)
-        edit_sequence_action = QAction("Edit Sequence Properties", menu)
+        edit_sequence_action = QAction(_("Edit Sequence Properties"), menu)
         edit_sequence_action.triggered.connect(lambda: self.graph_view.edit_sequence(node))
         menu.addAction(edit_sequence_action)
         
@@ -57,71 +49,25 @@ class NodeContextMenuManager:
         add_action_action.triggered.connect(lambda: self.graph_view.record_single_action(node))
         menu.addAction(add_action_action)'''#add action is deprecated
         
-        # Check if we're in sequence view or action view to show appropriate remove option
-        if self.graph_view.current_view == 'sequence':
-            remove_sequence_action = QAction("Remove Sequence", menu)
-            remove_sequence_action.triggered.connect(lambda: self.graph_view.remove_sequence_from_chain(node))
-            menu.addAction(remove_sequence_action)
-        else:
-            remove_action_action = QAction("Remove Action", menu)
-            remove_action_action.triggered.connect(lambda: self.graph_view.remove_action_from_sequence(node))
-            menu.addAction(remove_action_action)
-        
-        add_conditional_action = QAction("Add Conditional Branch", menu)
-        add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_branch_to_sequence(node))
-        menu.addAction(add_conditional_action)
+        # Removed: Remove Sequence and Add Conditional Branch
 
     def add_action_node_actions(self, menu, node):
         """Add actions for an action node to the context menu"""
-        remove_action = QAction("Remove Action", menu)
+        remove_action = QAction(_("Remove Action"), menu)
         remove_action.triggered.connect(lambda: self.graph_view.delete_node(node))
         menu.addAction(remove_action)
     
     def add_conditional_node_actions(self, menu, node):
         """Add actions for a conditional node to the context menu"""
-        # Copy/Paste actions
-        copy_action = QAction("Copy Node (Ctrl+C)", menu)
-        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
-        menu.addAction(copy_action)
-        
-        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
-        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
-        menu.addAction(paste_action)
-        
-        menu.addSeparator()
-        
-        edit_conditional_action = QAction("Edit Conditionals", menu)
+        edit_conditional_action = QAction(_("Edit Conditionals"), menu)
         edit_conditional_action.triggered.connect(lambda: self.graph_view.edit_conditional(node))
         menu.addAction(edit_conditional_action)
-        
-        remove_conditional_action = QAction("Remove Conditional", menu)
-        remove_conditional_action.triggered.connect(lambda: self.graph_view.delete_node(node))
-        menu.addAction(remove_conditional_action)
     
     def add_llm_node_actions(self, menu, node):
         """Add actions for an LLM node to the context menu"""
-        # Copy/Paste actions
-        copy_action = QAction("Copy Node (Ctrl+C)", menu)
-        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
-        menu.addAction(copy_action)
-        
-        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
-        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
-        menu.addAction(paste_action)
-        
-        menu.addSeparator()
-        
-        edit_llm_action = QAction("Edit LLM Configuration", menu)
+        edit_llm_action = QAction(_("Edit LLM Configuration"), menu)
         edit_llm_action.triggered.connect(lambda: self.graph_view.edit_llm(node))
         menu.addAction(edit_llm_action)
-        
-        add_conditional_action = QAction("Add Conditional Branch", menu)
-        add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_branch_to_llm(node))
-        menu.addAction(add_conditional_action)
-        
-        remove_llm_action = QAction("Remove LLM Node", menu)
-        remove_llm_action.triggered.connect(lambda: self.graph_view.delete_node(node))
-        menu.addAction(remove_llm_action)
     
     # DEPRECATED: Context Builder - actions removed
     # def add_context_builder_node_actions(self, menu, node):
@@ -139,56 +85,31 @@ class NodeContextMenuManager:
     #     menu.addAction(delete_action)
     def add_tts_node_actions(self, menu, node):
         """Add actions for a TTS node to the context menu"""
-        edit_action = QAction("Edit TTS Properties", menu)
+        edit_action = QAction(_("Edit TTS Properties"), menu)
         edit_action.triggered.connect(lambda: self.graph_view.edit_tts_node(node))
         menu.addAction(edit_action)
-        
-        delete_action = QAction("Delete TTS Node", menu)
-        delete_action.triggered.connect(lambda: self.graph_view.delete_node(node))
-        menu.addAction(delete_action)
     
     def add_chain_import_node_actions(self, menu, node):
         """Add actions for a Chain Import node to the context menu"""
-        edit_action = QAction("Edit Chain Import Configuration", menu)
+        edit_action = QAction(_("Edit Chain Import Configuration"), menu)
         edit_action.triggered.connect(lambda: self.graph_view.edit_chain_import_node(node))
         menu.addAction(edit_action)
         
-        expand_action = QAction("Expand Chain (Edit in Separate View)", menu)
+        expand_action = QAction(_("Expand Chain (Edit in Separate View)"), menu)
         expand_action.triggered.connect(lambda: self.graph_view.expand_chain_import(node))
         menu.addAction(expand_action)
-        
-        delete_action = QAction("Delete Chain Import Node", menu)
-        delete_action.triggered.connect(lambda: self.graph_view.delete_node(node))
-        menu.addAction(delete_action)
     
 
 
     def add_graph_actions(self, menu, pos):
         """Add actions for the graph background to the context menu"""
-        # Copy/Paste actions
-        copy_action = QAction("Copy Selected Nodes (Ctrl+C)", menu)
-        copy_action.triggered.connect(lambda: self.graph_view.copy_selected_nodes())
-        menu.addAction(copy_action)
+        # Global actions trimmed per toolbar changes
         
-        paste_action = QAction("Paste Nodes (Ctrl+V)", menu)
-        paste_action.triggered.connect(lambda: self.graph_view.paste_copied_nodes())
-        menu.addAction(paste_action)
-        
-        menu.addSeparator()
-        
-        record_sequence_action = QAction("Record New Sequence", menu)
-        record_sequence_action.triggered.connect(lambda: self.graph_view.record_new_sequence())
-        menu.addAction(record_sequence_action)
-        
-        add_sequence_action = QAction("Add Previously Recorded Sequences", menu)
-        add_sequence_action.triggered.connect(lambda: self.graph_view.add_sequence())
-        menu.addAction(add_sequence_action)
-        
-        add_conditional_action = QAction("Add Conditional Node", menu)
+        add_conditional_action = QAction(_("Add Conditional Node"), menu)
         add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_node())
         menu.addAction(add_conditional_action)
         
-        add_llm_action = QAction("Add LLM Node", menu)
+        add_llm_action = QAction(_("Add LLM Node"), menu)
         add_llm_action.triggered.connect(lambda: self.graph_view.add_llm_node())
         menu.addAction(add_llm_action)
         
@@ -196,10 +117,10 @@ class NodeContextMenuManager:
         # add_context_builder_action = QAction("Add Context Builder Node", menu)
         # add_context_builder_action.triggered.connect(lambda: self.graph_view.add_context_builder_node())
         # menu.addAction(add_context_builder_action)
-        add_tts_action = QAction("Add TTS Node", menu)
+        add_tts_action = QAction(_("Add TTS Node"), menu)
         add_tts_action.triggered.connect(lambda: self.graph_view.add_tts_node())
         menu.addAction(add_tts_action)
         
-        add_chain_import_action = QAction("Add Chain Import Node", menu)
+        add_chain_import_action = QAction(_("Add Chain Import Node"), menu)
         add_chain_import_action.triggered.connect(lambda: self.graph_view.add_chain_import_node())
         menu.addAction(add_chain_import_action)

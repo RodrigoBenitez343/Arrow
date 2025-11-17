@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdi
                              QCheckBox, QTextEdit, QGroupBox, QMessageBox)
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
+from ..i18n import _
 
 
 class ChainImportDialog(QDialog):
@@ -13,7 +14,7 @@ class ChainImportDialog(QDialog):
     
     def __init__(self, chain_import_config=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Chain Import Configuration")
+        self.setWindowTitle(_("Chain Import Configuration"))
         self.setModal(True)
         self.resize(600, 450)
         self.setMinimumSize(600, 450)
@@ -92,17 +93,17 @@ class ChainImportDialog(QDialog):
         layout.setSpacing(10)
         
         # Chain File Selection Group
-        file_group = QGroupBox("Chain File Selection")
+        file_group = QGroupBox(_("Chain File Selection"))
         file_layout = QVBoxLayout(file_group)
         file_layout.setContentsMargins(10, 15, 10, 10)
         file_layout.setSpacing(8)
         
         # Chain file path
         file_row = QHBoxLayout()
-        self.chain_file_label = QLabel("Chain File:")
+        self.chain_file_label = QLabel(_("Chain File:"))
         self.chain_file_input = QLineEdit()
         self.chain_file_input.setReadOnly(True)
-        self.browse_button = QPushButton("Browse...")
+        self.browse_button = QPushButton(_("Browse..."))
         self.browse_button.clicked.connect(self.browse_chain_file)
         
         file_row.addWidget(self.chain_file_label)
@@ -114,26 +115,26 @@ class ChainImportDialog(QDialog):
         self.chain_info = QTextEdit()
         self.chain_info.setMaximumHeight(100)
         self.chain_info.setReadOnly(True)
-        file_layout.addWidget(QLabel("Chain Information:"))
+        file_layout.addWidget(QLabel(_("Chain Information:")))
         file_layout.addWidget(self.chain_info)
         
         layout.addWidget(file_group)
         
         # Import Configuration Group
-        config_group = QGroupBox("Import Configuration")
+        config_group = QGroupBox(_("Import Configuration"))
         config_layout = QVBoxLayout(config_group)
         config_layout.setContentsMargins(10, 15, 10, 10)
         config_layout.setSpacing(8)
         
         # Import mode
         mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Import Mode:"))
+        mode_row.addWidget(QLabel(_("Import Mode:")))
         self.import_mode_combo = QComboBox()
         self.import_mode_combo.addItems(['full', 'sequences_only', 'nodes_only'])
         self.import_mode_combo.setToolTip(
-            "full: Import all sequences and nodes\n"
-            "sequences_only: Import only sequence nodes\n"
-            "nodes_only: Import only conditional, LLM, and TTS nodes"
+            _("full: Import all sequences and nodes") + "\n" +
+            _("sequences_only: Import only sequence nodes") + "\n" +
+            _("nodes_only: Import only conditional, LLM, and TTS nodes")
         )
         mode_row.addWidget(self.import_mode_combo)
         mode_row.addStretch()
@@ -141,34 +142,34 @@ class ChainImportDialog(QDialog):
         
         # Node prefix
         prefix_row = QHBoxLayout()
-        prefix_row.addWidget(QLabel("Node Prefix:"))
+        prefix_row.addWidget(QLabel(_("Node Prefix:")))
         self.prefix_input = QLineEdit()
-        self.prefix_input.setPlaceholderText("Optional prefix for imported node names")
+        self.prefix_input.setPlaceholderText(_("Optional prefix for imported node names"))
         prefix_row.addWidget(self.prefix_input)
         config_layout.addLayout(prefix_row)
         
         # Loop count
         loop_row = QHBoxLayout()
-        loop_row.addWidget(QLabel("Loop Count:"))
+        loop_row.addWidget(QLabel(_("Loop Count:")))
         self.loop_count_input = QLineEdit()
         self.loop_count_input.setPlaceholderText("1")
-        self.loop_count_input.setToolTip("Number of times to execute the imported chain")
+        self.loop_count_input.setToolTip(_("Number of times to execute the imported chain"))
         loop_row.addWidget(self.loop_count_input)
         loop_row.addStretch()
         config_layout.addLayout(loop_row)
         
         # Extra delay
         delay_row = QHBoxLayout()
-        delay_row.addWidget(QLabel("Extra Delay (s):"))
+        delay_row.addWidget(QLabel(_("Extra Delay (s):")))
         self.extra_delay_input = QLineEdit()
         self.extra_delay_input.setPlaceholderText("0")
-        self.extra_delay_input.setToolTip("Extra delay between loop iterations in seconds")
+        self.extra_delay_input.setToolTip(_("Extra delay between loop iterations in seconds"))
         delay_row.addWidget(self.extra_delay_input)
         delay_row.addStretch()
         config_layout.addLayout(delay_row)
         
         # Enabled checkbox
-        self.enabled_checkbox = QCheckBox("Enable this chain import")
+        self.enabled_checkbox = QCheckBox(_("Enable this chain import"))
         self.enabled_checkbox.setChecked(True)
         config_layout.addWidget(self.enabled_checkbox)
         
@@ -176,6 +177,12 @@ class ChainImportDialog(QDialog):
         
         # Button box
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        ok_btn = self.button_box.button(QDialogButtonBox.Ok)
+        cancel_btn = self.button_box.button(QDialogButtonBox.Cancel)
+        if ok_btn:
+            ok_btn.setText(_("OK"))
+        if cancel_btn:
+            cancel_btn.setText(_("Cancel"))
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
@@ -187,9 +194,9 @@ class ChainImportDialog(QDialog):
         """Open file dialog to select chain file"""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Select Chain File",
+            _("Select Chain File"),
             "",
-            "JSON files (*.json);;All files (*.*)"
+            _("JSON Files (*.json);;All Files (*.*)")
         )
         
         if file_path:
@@ -201,12 +208,12 @@ class ChainImportDialog(QDialog):
         file_path = self.chain_file_input.text()
         
         if not file_path:
-            self.chain_info.setText("No file selected")
+            self.chain_info.setText(_("No file selected"))
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
             return
         
         if not os.path.exists(file_path):
-            self.chain_info.setText("File does not exist")
+            self.chain_info.setText(_("File does not exist"))
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
             return
         
@@ -222,18 +229,22 @@ class ChainImportDialog(QDialog):
             tts_nodes = len(chain_config.get('tts_nodes', []))
             total_nodes = sequences + conditionals + llm_nodes + tts_nodes
             
-            info_text = f"Chain: {os.path.basename(file_path)}\n"
-            info_text += f"Total Nodes: {total_nodes}\n"
-            info_text += f"  - Sequences: {sequences}\n"
-            info_text += f"  - Conditionals: {conditionals}\n"
-            info_text += f"  - LLM Nodes: {llm_nodes}\n"
-            info_text += f"  - TTS Nodes: {tts_nodes}"
+            info_text = _(
+                "Chain: {filename}\nTotal Nodes: {total}\n  - Sequences: {seq}\n  - Conditionals: {cond}\n  - LLM Nodes: {llm}\n  - TTS Nodes: {tts}"
+            ).format(
+                filename=os.path.basename(file_path),
+                total=total_nodes,
+                seq=sequences,
+                cond=conditionals,
+                llm=llm_nodes,
+                tts=tts_nodes
+            )
             
             self.chain_info.setText(info_text)
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(total_nodes > 0)
             
         except Exception as e:
-            self.chain_info.setText(f"Error reading chain file: {str(e)}")
+            self.chain_info.setText(_("Error reading chain file: {error}").format(error=str(e)))
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
     
     def load_config(self):
@@ -283,11 +294,11 @@ class ChainImportDialog(QDialog):
         config = self.get_config()
         
         if not config['chain_file']:
-            QMessageBox.warning(self, "Warning", "Please select a chain file.")
+            QMessageBox.warning(self, _("Warning"), _("Please select a chain file."))
             return
         
         if not os.path.exists(config['chain_file']):
-            QMessageBox.warning(self, "Warning", "Selected chain file does not exist.")
+            QMessageBox.warning(self, _("Warning"), _("Selected chain file does not exist."))
             return
         
         super().accept()

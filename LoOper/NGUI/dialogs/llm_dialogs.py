@@ -17,11 +17,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from .utils import get_default_api_url
+from ..i18n import _
 
 # Add the parent directory to sys.path to import AI modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from AI.consult import OllamaClient
-from AI.model_cache import get_cached_models, get_model_cache
+from AI.model_cache import get_cached_models, get_model_cache, get_real_cached_models
 
 
 class LLMPropertiesDialog(QDialog):
@@ -31,7 +32,7 @@ class LLMPropertiesDialog(QDialog):
         super().__init__(parent)
         self.current_config = current_config or {}
         
-        self.setWindowTitle("LLM Node Configuration")
+        self.setWindowTitle(_("LLM Node Configuration"))
         self.setModal(True)
         self.resize(600, 500)  # Increased height for tabbed interface
         self.setMinimumSize(600, 500)
@@ -59,26 +60,20 @@ class LLMPropertiesDialog(QDialog):
         self.setup_ui()
         self.load_current_config()
     
-    def get_available_models(self, api_url=None):
-        cache = get_model_cache()
-        if api_url:
-            cache.refresh_models(api_url)
-        else:
-            from .utils import get_default_api_url
-            cache.refresh_models(get_default_api_url())
-        models = get_cached_models(timeout=5.0)
-        return models
+    def get_available_models(self):
+        # Return models from cache only; do not trigger API calls here
+        return get_real_cached_models(timeout=5.0)
     
     def refresh_models(self):
         api_url = self.api_url_entry.text() or get_default_api_url()
         current_model = self.model_combo.currentText()
         cache = get_model_cache()
         cache.refresh_models(api_url)
-        available_models = get_cached_models(timeout=5.0)
-        
+        available_models = get_real_cached_models(timeout=5.0)
+
         self.model_combo.clear()
         self.model_combo.addItems(available_models)
-        
+
         # Restore selection if it still exists in the new list
         if current_model in available_models:
             self.model_combo.setCurrentText(current_model)
@@ -123,6 +118,13 @@ class LLMPropertiesDialog(QDialog):
         
         # Dialog buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        # Localize button texts
+        ok_btn = button_box.button(QDialogButtonBox.Ok)
+        cancel_btn = button_box.button(QDialogButtonBox.Cancel)
+        if ok_btn:
+            ok_btn.setText(_("OK"))
+        if cancel_btn:
+            cancel_btn.setText(_("Cancel"))
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -135,44 +137,31 @@ class LLMPropertiesDialog(QDialog):
         layout.setSpacing(8)
         
         # Model Configuration Group
-        model_group = QGroupBox("Model Configuration")
+        model_group = QGroupBox(_("Model Configuration"))
         model_layout = QGridLayout(model_group)
         model_layout.setContentsMargins(8, 12, 8, 8)
         model_layout.setSpacing(6)
         
         # Model selection
-        model_layout.addWidget(QLabel("Model:"), 0, 0)
+        model_layout.addWidget(QLabel(_("Model:")), 0, 0)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         
-        # Get API URL from current config or use default
-        api_url = self.current_config.get('api_url', get_default_api_url())
-        
-        # Force model refresh to ensure we get real models, not placeholders
-        cache = get_model_cache()
-        if not cache.is_loaded():
-            print(f"Models not loaded, refreshing from {api_url}")
-            cache.refresh_models(api_url)
-            
-        available_models = self.get_available_models(api_url)
-        
-        # If we still get fallback models, show a warning
-        if available_models == ["llama3.2", "llama3.1", "codellama", "mistral", "phi3"]:
-            print(f"Warning: Using fallback models. Check API connection to {api_url}")
-        
+        # Populate model list from cache only (no API calls on dialog open)
+        available_models = self.get_available_models()
         self.model_combo.addItems(available_models)
         
         model_layout.addWidget(self.model_combo, 0, 1)
         
         # API URL
-        model_layout.addWidget(QLabel("API URL:"), 1, 0)
+        model_layout.addWidget(QLabel(_("API URL:")), 1, 0)
         api_url_layout = QHBoxLayout()
         self.api_url_entry = QLineEdit()
         self.api_url_entry.setPlaceholderText(get_default_api_url())
         api_url_layout.addWidget(self.api_url_entry)
         
         # Refresh models button
-        refresh_btn = QPushButton("Refresh Models")
+        refresh_btn = QPushButton(_("Refresh Models"))
         refresh_btn.clicked.connect(self.refresh_models)
         api_url_layout.addWidget(refresh_btn)
         
@@ -181,13 +170,13 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(model_group)
         
         # Generation Parameters Group
-        params_group = QGroupBox("Generation Parameters")
+        params_group = QGroupBox(_("Generation Parameters"))
         params_layout = QGridLayout(params_group)
         params_layout.setContentsMargins(8, 12, 8, 8)
         params_layout.setSpacing(6)
         
         # Temperature
-        params_layout.addWidget(QLabel("Temperature:"), 0, 0)
+        params_layout.addWidget(QLabel(_("Temperature:")), 0, 0)
         self.temperature_spin = QDoubleSpinBox()
         self.temperature_spin.setRange(0.0, 2.0)
         self.temperature_spin.setSingleStep(0.1)
@@ -195,14 +184,14 @@ class LLMPropertiesDialog(QDialog):
         params_layout.addWidget(self.temperature_spin, 0, 1)
         
         # Max tokens
-        params_layout.addWidget(QLabel("Max Tokens:"), 1, 0)
+        params_layout.addWidget(QLabel(_("Max Tokens:")), 1, 0)
         self.max_tokens_spin = QSpinBox()
         self.max_tokens_spin.setRange(1, 4096)
         self.max_tokens_spin.setValue(150)
         params_layout.addWidget(self.max_tokens_spin, 1, 1)
         
         # Output variable
-        params_layout.addWidget(QLabel("Output Variable:"), 2, 0)
+        params_layout.addWidget(QLabel(_("Output Variable:")), 2, 0)
         self.output_variable_entry = QLineEdit()
         self.output_variable_entry.setPlaceholderText("llm_output")
         params_layout.addWidget(self.output_variable_entry, 2, 1)
@@ -210,13 +199,13 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(params_group)
         
         # Template Selection Group
-        template_group = QGroupBox("Quick Templates")
+        template_group = QGroupBox(_("Quick Templates"))
         template_layout = QVBoxLayout(template_group)
         template_layout.setContentsMargins(8, 12, 8, 8)
         template_layout.setSpacing(6)
         
         # Template selection combo
-        template_layout.addWidget(QLabel("Apply Template:"))
+        template_layout.addWidget(QLabel(_("Apply Template:")))
         self.template_combo = QComboBox()
         self.template_combo.addItems([
             "Custom (no template)",
@@ -240,7 +229,7 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(template_group)
         
         layout.addStretch()
-        self.tab_widget.addTab(basic_tab, "Basic")
+        self.tab_widget.addTab(basic_tab, _("Basic"))
     
     def create_prompt_tab(self):
         """Create the Prompt Configuration tab"""
@@ -250,46 +239,46 @@ class LLMPropertiesDialog(QDialog):
         layout.setSpacing(8)
         
         # Prompt Configuration Group
-        prompt_group = QGroupBox("Prompt Configuration")
+        prompt_group = QGroupBox(_("Prompt Configuration"))
         prompt_layout = QVBoxLayout(prompt_group)
         prompt_layout.setContentsMargins(8, 12, 8, 8)
         prompt_layout.setSpacing(6)
         
         # System message
-        prompt_layout.addWidget(QLabel("System Message (optional):"))
+        prompt_layout.addWidget(QLabel(_("System Message (optional):")))
         self.system_message_edit = QTextEdit()
         self.system_message_edit.setMaximumHeight(100)
-        self.system_message_edit.setPlaceholderText("Enter system instructions for the AI model...")
+        self.system_message_edit.setPlaceholderText(_("Enter system instructions for the AI model..."))
         prompt_layout.addWidget(self.system_message_edit)
         
         # User prompt
-        prompt_layout.addWidget(QLabel("Prompt:"))
+        prompt_layout.addWidget(QLabel(_("Prompt:")))
         self.prompt_edit = QTextEdit()
         self.prompt_edit.setMaximumHeight(120)
-        self.prompt_edit.setPlaceholderText("Enter your prompt here...")
+        self.prompt_edit.setPlaceholderText(_("Enter your prompt here..."))
         prompt_layout.addWidget(self.prompt_edit)
         
         layout.addWidget(prompt_group)
         
         # Input Source Configuration Group
-        input_source_group = QGroupBox("Input Source")
+        input_source_group = QGroupBox(_("Input Source"))
         input_source_layout = QVBoxLayout(input_source_group)
         input_source_layout.setContentsMargins(8, 12, 8, 8)
         input_source_layout.setSpacing(6)
         
         # Input source radio buttons
         self.input_source_group = QButtonGroup(self)
-        self.input_none_radio = QRadioButton("No input (direct prompt)")
+        self.input_none_radio = QRadioButton(_("No input (direct prompt)"))
         self.input_none_radio.setChecked(True)
         self.input_source_group.addButton(self.input_none_radio, 0)
         
-        self.input_ocr_radio = QRadioButton("Extract text from screen (OCR)")
+        self.input_ocr_radio = QRadioButton(_("Extract text from screen (OCR)"))
         self.input_source_group.addButton(self.input_ocr_radio, 1)
         
-        self.input_previous_radio = QRadioButton("Use output from previous node")
+        self.input_previous_radio = QRadioButton(_("Use output from previous node"))
         self.input_source_group.addButton(self.input_previous_radio, 2)
         
-        self.input_clipboard_radio = QRadioButton("Use clipboard content")
+        self.input_clipboard_radio = QRadioButton(_("Use clipboard content"))
         self.input_source_group.addButton(self.input_clipboard_radio, 3)
         
         input_source_layout.addWidget(self.input_none_radio)
@@ -304,18 +293,18 @@ class LLMPropertiesDialog(QDialog):
         ocr_config_layout.setSpacing(6)
         
         # OCR confidence threshold
-        ocr_config_layout.addWidget(QLabel("OCR Confidence:"), 0, 0)
+        ocr_config_layout.addWidget(QLabel(_("OCR Confidence:")), 0, 0)
         self.ocr_confidence_spin = QDoubleSpinBox()
         self.ocr_confidence_spin.setRange(0.1, 1.0)
         self.ocr_confidence_spin.setSingleStep(0.1)
         self.ocr_confidence_spin.setValue(0.7)
-        self.ocr_confidence_spin.setToolTip("Minimum confidence for OCR text extraction")
+        self.ocr_confidence_spin.setToolTip(_("Minimum confidence for OCR text extraction"))
         ocr_config_layout.addWidget(self.ocr_confidence_spin, 0, 1)
         
         # OCR text preprocessing
-        ocr_config_layout.addWidget(QLabel("Text Preprocessing:"), 1, 0)
+        ocr_config_layout.addWidget(QLabel(_("Text Preprocessing:")), 1, 0)
         self.ocr_preprocessing_combo = QComboBox()
-        self.ocr_preprocessing_combo.addItems(["None", "Remove extra spaces", "Clean formatting", "Extract structured data"])
+        self.ocr_preprocessing_combo.addItems([_("None"), _("Remove extra spaces"), _("Clean formatting"), _("Extract structured data")])
         ocr_config_layout.addWidget(self.ocr_preprocessing_combo, 1, 1)
         
         input_source_layout.addWidget(self.ocr_config_widget)
@@ -323,7 +312,7 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(input_source_group)
         
         layout.addStretch()
-        self.tab_widget.addTab(prompt_tab, "Prompt")
+        self.tab_widget.addTab(prompt_tab, _("Prompt"))
     
     def create_advanced_tab(self):
         """Create the Advanced Configuration tab"""
@@ -333,31 +322,31 @@ class LLMPropertiesDialog(QDialog):
         layout.setSpacing(8)
         
         # Output Configuration Group
-        output_group = QGroupBox("Output Configuration")
+        output_group = QGroupBox(_("Output Configuration"))
         output_layout = QGridLayout(output_group)
         output_layout.setContentsMargins(8, 12, 8, 8)
         output_layout.setSpacing(6)
         
         # Write text option
-        output_layout.addWidget(QLabel("Write Text:"), 0, 0)
-        self.write_text_checkbox = QCheckBox("Automatically write generated text")
+        output_layout.addWidget(QLabel(_("Write Text:")), 0, 0)
+        self.write_text_checkbox = QCheckBox(_("Automatically write generated text"))
         self.write_text_checkbox.setChecked(True)
         output_layout.addWidget(self.write_text_checkbox, 0, 1)
         
         # Typing speed parameters (only visible when write_text is checked)
-        output_layout.addWidget(QLabel("Typing Batch Size:"), 1, 0)
+        output_layout.addWidget(QLabel(_("Typing Batch Size:")), 1, 0)
         self.typing_batch_size_spin = QSpinBox()
         self.typing_batch_size_spin.setRange(1, 100)
         self.typing_batch_size_spin.setValue(20)
-        self.typing_batch_size_spin.setToolTip("Number of characters to type at once (higher = faster typing)")
+        self.typing_batch_size_spin.setToolTip(_("Number of characters to type at once (higher = faster typing)"))
         output_layout.addWidget(self.typing_batch_size_spin, 1, 1)
         
-        output_layout.addWidget(QLabel("Typing Batch Delay:"), 2, 0)
+        output_layout.addWidget(QLabel(_("Typing Batch Delay:")), 2, 0)
         self.typing_batch_delay_spin = QDoubleSpinBox()
         self.typing_batch_delay_spin.setRange(0.01, 1.0)
         self.typing_batch_delay_spin.setSingleStep(0.01)
         self.typing_batch_delay_spin.setValue(0.05)
-        self.typing_batch_delay_spin.setToolTip("Delay between typing batches in seconds (lower = faster typing)")
+        self.typing_batch_delay_spin.setToolTip(_("Delay between typing batches in seconds (lower = faster typing)"))
         output_layout.addWidget(self.typing_batch_delay_spin, 2, 1)
         
         # Connect write_text checkbox to enable/disable typing speed controls
@@ -367,20 +356,20 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(output_group)
         
         # Async Processing Group
-        async_group = QGroupBox("Async Processing")
+        async_group = QGroupBox(_("Async Processing"))
         async_layout = QGridLayout(async_group)
         async_layout.setContentsMargins(8, 12, 8, 8)
         async_layout.setSpacing(6)
         
         # Use async checkbox
-        async_layout.addWidget(QLabel("Enable Async:"), 0, 0)
-        self.use_async_checkbox = QCheckBox("Process requests asynchronously")
+        async_layout.addWidget(QLabel(_("Enable Async:")), 0, 0)
+        self.use_async_checkbox = QCheckBox(_("Process requests asynchronously"))
         self.use_async_checkbox.setChecked(True)
-        self.use_async_checkbox.setToolTip("Enable asynchronous processing for better performance")
+        self.use_async_checkbox.setToolTip(_("Enable asynchronous processing for better performance"))
         async_layout.addWidget(self.use_async_checkbox, 0, 1)
         
         # Add help text for async
-        async_help_label = QLabel("Async processing allows the workflow to continue while waiting for LLM responses.")
+        async_help_label = QLabel(_("Async processing allows the workflow to continue while waiting for LLM responses."))
         async_help_label.setWordWrap(True)
         async_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         async_layout.addWidget(async_help_label, 1, 0, 1, 2)
@@ -388,7 +377,7 @@ class LLMPropertiesDialog(QDialog):
         layout.addWidget(async_group)
         
         layout.addStretch()
-        self.tab_widget.addTab(advanced_tab, "Advanced")
+        self.tab_widget.addTab(advanced_tab, _("Advanced"))
     
     def create_features_tab(self):
         """Create the Features Configuration tab"""
@@ -398,25 +387,25 @@ class LLMPropertiesDialog(QDialog):
         layout.setSpacing(8)
         
         # Vision Configuration Group
-        vision_group = QGroupBox("Vision Configuration")
+        vision_group = QGroupBox(_("Vision Configuration"))
         vision_layout = QGridLayout(vision_group)
         vision_layout.setContentsMargins(8, 12, 8, 8)
         vision_layout.setSpacing(6)
         
         # Use vision checkbox
-        vision_layout.addWidget(QLabel("Use Vision:"), 0, 0)
-        self.use_vision_checkbox = QCheckBox("Enable vision capabilities for this model")
+        vision_layout.addWidget(QLabel(_("Use Vision:")), 0, 0)
+        self.use_vision_checkbox = QCheckBox(_("Enable vision capabilities for this model"))
         self.use_vision_checkbox.setChecked(False)
         vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
         
         # Screenshot enabled checkbox
-        vision_layout.addWidget(QLabel("Screenshot:"), 1, 0)
-        self.screenshot_enabled_checkbox = QCheckBox("Take screenshot automatically for vision models")
+        vision_layout.addWidget(QLabel(_("Screenshot:")), 1, 0)
+        self.screenshot_enabled_checkbox = QCheckBox(_("Take screenshot automatically for vision models"))
         self.screenshot_enabled_checkbox.setChecked(True)
         vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
         
         # Add help text
-        help_label = QLabel("Note: Vision models can analyze screenshots along with text prompts.")
+        help_label = QLabel(_("Note: Vision models can analyze screenshots along with text prompts."))
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         vision_layout.addWidget(help_label, 2, 0, 1, 2)

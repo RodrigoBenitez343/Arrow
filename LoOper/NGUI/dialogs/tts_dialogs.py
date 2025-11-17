@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QDialogButtonBox
 )
 from PyQt5.QtCore import Qt
+from ..i18n import _
 
 
 class TTSPropertiesDialog(QDialog):
@@ -16,13 +17,13 @@ class TTSPropertiesDialog(QDialog):
     
     def __init__(self, parent=None, config=None):
         super().__init__(parent)
-        self.setWindowTitle("TTS Properties")
+        self.setWindowTitle(_("TTS Properties"))
         self.setModal(True)
         self.resize(400, 250)
         
         # Store the configuration
         self.config = config or {
-            'text': 'Hello, this is a text to speech message.',
+            'text': _('Hello, this is a text to speech message.'),
             'language': 'en'
         }
         
@@ -34,7 +35,7 @@ class TTSPropertiesDialog(QDialog):
         layout = QVBoxLayout(self)
         
         # Text input
-        text_label = QLabel("Text to Speak:")
+        text_label = QLabel(_("Text to Speak:"))
         layout.addWidget(text_label)
         
         self.text_edit = QTextEdit()
@@ -43,7 +44,7 @@ class TTSPropertiesDialog(QDialog):
         
         # Language selection
         lang_layout = QHBoxLayout()
-        lang_layout.addWidget(QLabel("Language:"))
+        lang_layout.addWidget(QLabel(_("Language:")))
         self.language_combo = QComboBox()
         self.language_combo.addItems([
             'en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'ja', 'ko', 'zh'
@@ -57,6 +58,13 @@ class TTSPropertiesDialog(QDialog):
         button_box = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
+        # Localize button texts
+        ok_btn = button_box.button(QDialogButtonBox.Ok)
+        cancel_btn = button_box.button(QDialogButtonBox.Cancel)
+        if ok_btn:
+            ok_btn.setText(_("OK"))
+        if cancel_btn:
+            cancel_btn.setText(_("Cancel"))
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)

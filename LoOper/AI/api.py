@@ -10,6 +10,9 @@ from typing import List, Optional, Dict, Any, Union
 import uvicorn
 sys.path.append(os.path.dirname(__file__))
 from comorag_engine import ComoRAGEngine
+import asyncio
+from typing import Set
+import threading
 
 app = FastAPI(
     title="Ollama API Gateway",
@@ -41,6 +44,155 @@ VISION_MODELS = [
 ]
 
 VISION_CAPABLE_CACHE: Dict[str, bool] = {}
+
+# --- Model bootstrap and auto-pull helpers ---
+HARDCODED_REQUIRED_EMBED_MODELS: List[str] = [
+    'nomic-embed-text'
+]
+HARDCODED_REQUIRED_LLM_MODELS: List[str] = [
+    'llama3.1:8b-instruct-q8_0'
+]
+HARDCODED_REQUIRED_VISION_MODELS: List[str] = [
+    'minicpm-v:latest'
+]
+
+def _list_ollama_models() -> Set[str]:
+    try:
+        resp = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        names = set()
+        models = data.get("models") if isinstance(data, dict) else data
+        if isinstance(models, list):
+            for m in models:
+                n = m.get("name") if isinstance(m, dict) else str(m)
+                if n:
+                    names.add(n)
+        return names
+    except Exception:
+        return set()
+
+def _pull_ollama_model(model_name: str) -> bool:
+    try:
+        print(f"[BOOTSTRAP] Pulling model '{model_name}' from Ollama registry...")
+        r = requests.post(f"{get_ollama_base_url()}/api/pull", json={"name": model_name}, stream=True, timeout=120)
+        if r.status_code != 200:
+            # Some older servers only accept GET with params
+            r = requests.get(f"{get_ollama_base_url()}/api/pull", params={"name": model_name}, stream=True, timeout=120)
+        if r.status_code != 200:
+            print(f"[BOOTSTRAP] Failed to start pull for '{model_name}': {r.status_code}")
+            return False
+        # Stream progress (non-critical)
+        try:
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line.decode())
+                    status = msg.get("status") or msg.get("detail")
+                    if status:
+                        print(f"[BOOTSTRAP] {model_name}: {status}")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Verify availability
+        names = _list_ollama_models()
+        present = any(n.startswith(model_name) or model_name.startswith(n) for n in names)
+        if present:
+            print(f"[BOOTSTRAP] Model '{model_name}' available.")
+            return True
+        print(f"[BOOTSTRAP] Model '{model_name}' not listed after pull; continuing.")
+        return True
+    except Exception as e:
+        print(f"[BOOTSTRAP] Exception pulling '{model_name}': {e}")
+        return False
+
+def ensure_model_present(model_name: str) -> None:
+    if not model_name:
+        return
+    names = _list_ollama_models()
+    present = any(n.startswith(model_name) or model_name.startswith(n) for n in names)
+    if present:
+        return
+    _pull_ollama_model(model_name)
+
+def _parse_required_models_env(var_name: str, defaults: List[str]) -> List[str]:
+    raw = os.getenv(var_name)
+    if not raw:
+        return defaults
+    parts = [p.strip() for p in raw.split(',') if p.strip()]
+    return parts or defaults
+
+def _collect_required_models() -> List[str]:
+    all_required: List[str] = []
+    all_required.extend(HARDCODED_REQUIRED_EMBED_MODELS)
+    all_required.extend(HARDCODED_REQUIRED_LLM_MODELS)
+    all_required.extend(HARDCODED_REQUIRED_VISION_MODELS)
+
+    seen = set()
+    deduped: List[str] = []
+    for m in all_required:
+        key = (m or '').strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(m)
+    return deduped
+
+# Bootstrap state for health/status endpoints
+BOOTSTRAP_STATE: Dict[str, Any] = {
+    'in_progress': False,
+    'completed': False,
+    'required': [],
+    'missing': [],
+    'errors': []
+}
+_BOOTSTRAP_LOCK = threading.Lock()
+
+def _refresh_missing(required: List[str]) -> List[str]:
+    names = _list_ollama_models()
+    missing: List[str] = []
+    for m in required:
+        present = any(n.startswith(m) or m.startswith(n) for n in names)
+        if not present:
+            missing.append(m)
+    return missing
+
+def bootstrap_required_models() -> None:
+    required = _collect_required_models()
+    with _BOOTSTRAP_LOCK:
+        BOOTSTRAP_STATE['in_progress'] = True
+        BOOTSTRAP_STATE['completed'] = False
+        BOOTSTRAP_STATE['required'] = required
+        BOOTSTRAP_STATE['missing'] = _refresh_missing(required)
+        BOOTSTRAP_STATE['errors'] = []
+
+    if not required:
+        with _BOOTSTRAP_LOCK:
+            BOOTSTRAP_STATE['in_progress'] = False
+            BOOTSTRAP_STATE['completed'] = True
+        print("[BOOTSTRAP] No required models configured.")
+        return
+
+    print(f"[BOOTSTRAP] Ensuring required models are available: {', '.join(required)}")
+    for m in required:
+        try:
+            ensure_model_present(m)
+        except Exception as e:
+            print(f"[BOOTSTRAP] Failed ensuring model '{m}': {e}")
+            with _BOOTSTRAP_LOCK:
+                BOOTSTRAP_STATE['errors'].append(str(e))
+        # Update missing after each attempt
+        with _BOOTSTRAP_LOCK:
+            BOOTSTRAP_STATE['missing'] = _refresh_missing(required)
+
+    with _BOOTSTRAP_LOCK:
+        BOOTSTRAP_STATE['in_progress'] = False
+        BOOTSTRAP_STATE['completed'] = len(BOOTSTRAP_STATE['missing']) == 0
+    if BOOTSTRAP_STATE['completed']:
+        print("[BOOTSTRAP] All required models are present.")
+    else:
+        print(f"[BOOTSTRAP] Missing models after bootstrap: {', '.join(BOOTSTRAP_STATE['missing'])}")
 
 def _is_vision_model_static(model_name: str) -> bool:
     ml = model_name.lower()
@@ -186,10 +338,22 @@ async def health_check():
     """Check if Ollama server is running"""
     try:
         response = requests.get(f"{get_ollama_base_url()}/api/tags")
-        if response.status_code == 200:
-            return {"status": "healthy", "ollama_server": "running"}
-        else:
-            return {"status": "unhealthy", "ollama_server": "not responding"}
+        models_status = "running" if response.status_code == 200 else "not responding"
+        # Report bootstrap state and missing models
+        with _BOOTSTRAP_LOCK:
+            bs = {
+                'in_progress': BOOTSTRAP_STATE['in_progress'],
+                'completed': BOOTSTRAP_STATE['completed'],
+                'required': BOOTSTRAP_STATE['required'],
+                'missing': BOOTSTRAP_STATE['missing'],
+                'errors': BOOTSTRAP_STATE['errors'],
+            }
+        return {
+            "status": "healthy" if response.status_code == 200 else "unhealthy",
+            "ollama_server": models_status,
+            "models_ready": bs['completed'] and len(bs['missing']) == 0,
+            "bootstrap": bs,
+        }
     except requests.exceptions.RequestException as e:
         raise HTTPException(
             status_code=503,
@@ -247,6 +411,11 @@ async def list_models():
 async def chat_with_model(request: ChatRequest):
     """Chat with an Ollama model"""
     try:
+        # Ensure requested model is available
+        try:
+            ensure_model_present(request.model)
+        except Exception:
+            pass
         used_chat = False
         if request.images and len(request.images) > 0:
             if is_vision_model(request.model):
@@ -351,11 +520,32 @@ async def get_embeddings(request: EmbeddingsRequest):
     Accepts a list of input strings and returns a list of embedding vectors.
     """
     try:
+        # Ensure embedding model is available
+        try:
+            ensure_model_present(request.model)
+        except Exception:
+            pass
+
+        # Sanitize inputs: ensure strings and strip whitespace
+        inputs: List[str] = []
+        for x in request.inputs:
+            try:
+                s = str(x)
+            except Exception:
+                s = ""
+            s = s if s is not None else ""
+            inputs.append(s)
+
+        # If all inputs are empty, return empty embeddings
+        if not inputs or all((not s) or (s.strip() == "") for s in inputs):
+            return {"embeddings": []}
+
         # Prepare payload for Ollama embeddings API
         # Ollama expects { model: <model>, input: <string or [strings]> }
+        multiple = len(inputs) > 1
         ollama_payload: Dict[str, Any] = {
             "model": request.model,
-            "input": request.inputs if len(request.inputs) > 1 else request.inputs[0],
+            "input": inputs if multiple else inputs[0],
         }
         # Optional fields if needed in future
         if request.normalize is not None:
@@ -363,6 +553,7 @@ async def get_embeddings(request: EmbeddingsRequest):
         if request.pooling is not None:
             ollama_payload["pooling"] = request.pooling
 
+        # Call Ollama embeddings API
         response = requests.post(
             f"{get_ollama_base_url()}/api/embeddings",
             json=ollama_payload
@@ -370,28 +561,59 @@ async def get_embeddings(request: EmbeddingsRequest):
         response.raise_for_status()
         data = response.json()
 
-        # Normalize Ollama response variants
-        embeddings: List[List[float]] = []
-        if isinstance(data, dict):
-            if "embeddings" in data and isinstance(data["embeddings"], list):
-                embeddings = data["embeddings"]
-            elif "embedding" in data and isinstance(data["embedding"], list):
-                embeddings = [data["embedding"]]
-            else:
-                # Some servers may return a list directly
-                if isinstance(data, list) and data and isinstance(data[0], (list, float)):
-                    # If it's a list of floats -> single embedding
-                    if data and isinstance(data[0], float):
-                        embeddings = [data]
-                    else:
-                        embeddings = data  # assume list of embeddings
-                else:
-                    raise HTTPException(status_code=500, detail="Unexpected embeddings response format")
-        else:
+        # Normalize Ollama response variants robustly
+        def _normalize_response(payload_inputs_count: int, resp_data: Any) -> List[List[float]]:
+            if isinstance(resp_data, dict):
+                # Preferred batch format
+                if "embeddings" in resp_data and isinstance(resp_data["embeddings"], list):
+                    return resp_data["embeddings"]
+                # Single-vector format
+                if "embedding" in resp_data and isinstance(resp_data["embedding"], list):
+                    # If we sent multiple inputs but received a single embedding,
+                    # re-query per-input to ensure correct cardinality.
+                    if payload_inputs_count > 1:
+                        return _query_per_input(inputs, request.model)
+                    return [resp_data["embedding"]]
+                # Unexpected dict format
+                raise HTTPException(status_code=500, detail="Unexpected embeddings dict format")
+            # Some servers may return a list directly
+            if isinstance(resp_data, list):
+                if resp_data and isinstance(resp_data[0], float):
+                    # Single embedding vector
+                    if payload_inputs_count > 1:
+                        return _query_per_input(inputs, request.model)
+                    return [resp_data]
+                if resp_data and isinstance(resp_data[0], list):
+                    return resp_data
             raise HTTPException(status_code=500, detail="Invalid embeddings response type")
+
+        def _query_per_input(texts: List[str], model_name: str) -> List[List[float]]:
+            out: List[List[float]] = []
+            for t in texts:
+                sub_payload = {"model": model_name, "input": t}
+                sub_resp = requests.post(
+                    f"{get_ollama_base_url()}/api/embeddings",
+                    json=sub_payload
+                )
+                sub_resp.raise_for_status()
+                sub_data = sub_resp.json()
+                if isinstance(sub_data, dict) and "embedding" in sub_data and isinstance(sub_data["embedding"], list):
+                    out.append(sub_data["embedding"])
+                elif isinstance(sub_data, list) and sub_data and isinstance(sub_data[0], float):
+                    out.append(sub_data)
+                else:
+                    raise HTTPException(status_code=500, detail="Sub-embedding response format invalid")
+            return out
+
+        embeddings = _normalize_response(len(inputs), data)
+        # Ensure cardinality matches inputs
+        if len(embeddings) != len(inputs):
+            # As a safety, try per-input query if not yet done
+            embeddings = _query_per_input(inputs, request.model)
 
         return {"embeddings": embeddings}
     except requests.exceptions.RequestException as e:
+        # Propagate server/network errors directly; do not use local fallback
         raise HTTPException(status_code=503, detail=f"Failed to fetch embeddings from Ollama: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
@@ -430,6 +652,21 @@ async def list_vision_models():
             detail=f"Internal server error: {str(e)}"
         )
 
+@app.get("/bootstrap/status")
+async def bootstrap_status():
+    """Return current bootstrap state including required and missing models."""
+    try:
+        with _BOOTSTRAP_LOCK:
+            return {
+                'in_progress': BOOTSTRAP_STATE['in_progress'],
+                'completed': BOOTSTRAP_STATE['completed'],
+                'required': BOOTSTRAP_STATE['required'],
+                'missing': BOOTSTRAP_STATE['missing'],
+                'errors': BOOTSTRAP_STATE['errors'],
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     # Get Tailscale IP from environment variable, fallback to all interfaces
     tailscale_ip = os.getenv("TAILSCALE_IP", "0.0.0.0")
@@ -437,6 +674,18 @@ if __name__ == "__main__":
     
     print(f"Starting Ollama API Gateway on {tailscale_ip}:{port}")
     print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
+    # Start model bootstrap in background so API binds immediately
+    def _run_bootstrap_async():
+        try:
+            print("[BOOTSTRAP] Starting background model bootstrap...")
+            bootstrap_required_models()
+            print("[BOOTSTRAP] Background model bootstrap completed.")
+        except Exception as e:
+            print(f"[BOOTSTRAP] Background bootstrap error: {e}")
+    try:
+        threading.Thread(target=_run_bootstrap_async, daemon=True).start()
+    except Exception as e:
+        print(f"[BOOTSTRAP] Failed to start background bootstrap thread: {e}")
     
     uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info")
 class ComoRAGReasonRequest(BaseModel):

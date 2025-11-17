@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMe
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QIcon
 from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR
+from .i18n import _
 from pynput import mouse, keyboard
 from .graph_view import GraphViewWidget
 from recorder.element_recorder import ElementRecorder
@@ -47,7 +48,7 @@ class MainWindow(QMainWindow):
         logger.info("Initializing MainWindow")
         try:
             super().__init__()
-            self.setWindowTitle("LoOperV2")
+            self.setWindowTitle(_("LoOper BETA:1.8.0"))
             self.setGeometry(100, 100, 1200, 800)
             
             # Set window icon
@@ -111,36 +112,22 @@ class MainWindow(QMainWindow):
         menu_bar = self.menuBar()
         
         # File menu
-        file_menu = menu_bar.addMenu("&File")
-        
-        new_action = QAction("&New Chain", self)
-        new_action.triggered.connect(self.new_chain)
-        file_menu.addAction(new_action)
-        
-        open_action = QAction("&Open Chain", self)
-        open_action.triggered.connect(self.open_chain)
-        file_menu.addAction(open_action)
-        
-        save_action = QAction("&Save Chain", self)
-        save_action.triggered.connect(self.save_chain)
-        file_menu.addAction(save_action)
-        
-        file_menu.addSeparator()
-        
-        exit_action = QAction("&Exit", self)
+        file_menu = menu_bar.addMenu(_("&File"))
+        # Keep only Exit in File menu
+        exit_action = QAction(_("&Exit"), self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
         #settings menu
-        settings_menu = menu_bar.addMenu("&Settings")
+        settings_menu = menu_bar.addMenu(_("&Settings"))
         
-        ai_settings_action = QAction("&AI Configuration", self)
+        ai_settings_action = QAction(_("&AI Configuration"), self)
         ai_settings_action.triggered.connect(self.open_ai_settings)
         settings_menu.addAction(ai_settings_action)
         
         # View menu: allow showing/hiding the right toolbar
-        view_menu = menu_bar.addMenu("&View")
-        toggle_toolbar_action = QAction("Show Toolbar", self)
+        view_menu = menu_bar.addMenu(_("&View"))
+        toggle_toolbar_action = QAction(_("Show Toolbar"), self)
         toggle_toolbar_action.setCheckable(True)
         toggle_toolbar_action.setChecked(True)
         def _toggle_toolbar(checked):
@@ -151,20 +138,9 @@ class MainWindow(QMainWindow):
         toggle_toolbar_action.toggled.connect(_toggle_toolbar)
         view_menu.addAction(toggle_toolbar_action)
         
-        # Run menu
-        run_menu = menu_bar.addMenu("&Run")
-        
-        run_chain_action = QAction("&Run Chain", self)
-        run_chain_action.triggered.connect(self.run_chain)
-        run_menu.addAction(run_chain_action)
-        
-        record_sequence_action = QAction("&Record Sequence", self)
-        record_sequence_action.triggered.connect(self.record_sequence)
-        run_menu.addAction(record_sequence_action)
-        
         # Scheduler menu
-        scheduler_menu = menu_bar.addMenu("&Scheduler")
-        manage_sched_action = QAction("&Manage Schedules", self)
+        scheduler_menu = menu_bar.addMenu(_("&Scheduler"))
+        manage_sched_action = QAction(_("&Manage Schedules"), self)
         manage_sched_action.triggered.connect(self.open_scheduler_manager)
         scheduler_menu.addAction(manage_sched_action)
     
@@ -180,9 +156,9 @@ class MainWindow(QMainWindow):
             logger.debug("Showing sequence name input dialog")
             sequence_name, ok = QInputDialog.getText(
                 self,
-                "Record New Sequence",
-                "Enter sequence name:",
-                text="new_sequence"
+                _("Record New Sequence"),
+                _("Enter sequence name:"),
+                text=_("new_sequence")
             )
             
             if ok and sequence_name.strip():
@@ -190,13 +166,13 @@ class MainWindow(QMainWindow):
                 self.start_recording(sequence_name.strip())
             elif ok:
                 logger.warning("User provided empty sequence name")
-                QMessageBox.warning(self, "Invalid Input", "Please enter a valid sequence name.")
+                QMessageBox.warning(self, _("Invalid Input"), _("Please enter a valid sequence name."))
             else:
                 logger.info("User cancelled sequence recording")
         except Exception as e:
             logger.error(f"Error in record_sequence: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            QMessageBox.critical(self, "Recording Error", f"Failed to start recording: {str(e)}")
+            QMessageBox.critical(self, _("Recording Error"), f"Failed to start recording: {str(e)}")
 
     def run_chain(self):
         """Runs the current automation chain by saving it to a temporary file and passing it to the player."""
@@ -217,7 +193,7 @@ class MainWindow(QMainWindow):
             chain_config = self.graph_view.get_chain_config()
             if not chain_config:
                 logger.warning("No chain configuration available")
-                QMessageBox.warning(self, "No Chain", "No chain configuration available to run.")
+                QMessageBox.warning(self, _("No Chain"), _("No chain configuration available to run."))
                 return
 
             # Check if there are any nodes to run (sequences, conditionals, LLM, TTS, or chain imports)
@@ -230,7 +206,7 @@ class MainWindow(QMainWindow):
             total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes)
             if total_nodes == 0:
                 logger.warning("No nodes in chain configuration")
-                QMessageBox.warning(self, "Empty Chain", "No nodes found in the current chain.")
+                QMessageBox.warning(self, _("Empty Chain"), _("No nodes found in the current chain."))
                 return
 
             # Create a temporary file for the chain configuration
@@ -342,40 +318,40 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Error in run_chain: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            QMessageBox.critical(self, "Chain Error", f"Failed to run chain: {str(e)}")
+            QMessageBox.critical(self, _("Chain Error"), f"Failed to run chain: {str(e)}")
 
     def open_chain(self):
         """Open a chain configuration file."""
-        fileName, _ = QFileDialog.getOpenFileName(
-            self, "Open Chain", "", "JSON Files (*.json);;All Files (*)"
+        fileName, selected_filter = QFileDialog.getOpenFileName(
+            self, _("Open Chain"), "", "JSON Files (*.json);;All Files (*)"
         )
         if fileName:
             try:
                 # Check if graph view is ready
                 if not self.graph_view.is_ready():
                     QMessageBox.warning(
-                        self, 
-                        "Graph Not Ready", 
-                        "The graph view is not fully initialized yet. Please wait a moment and try again."
+                        self,
+                        _("Graph Not Ready"),
+                        _("The graph view is not fully initialized yet. Please wait a moment and try again.")
                     )
                     return
                 
                 self.graph_view.load_chain(fileName)
             except RuntimeError as e:
-                QMessageBox.critical(self, "Error", f"Graph not ready: {str(e)}")
+                QMessageBox.critical(self, _("Error"), f"Graph not ready: {str(e)}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to load chain: {str(e)}")
+                QMessageBox.critical(self, _("Error"), f"Failed to load chain: {str(e)}")
 
     def save_chain(self):
         """Saves the current chain to a file"""
         options = QFileDialog.Options()
-        fileName, _ = QFileDialog.getSaveFileName(self, "Save Chain File", "", "JSON Files (*.json)", options=options)
+        fileName, selected_filter = QFileDialog.getSaveFileName(self, _("Save Chain File"), "", "JSON Files (*.json)", options=options)
         if fileName:
             try:
                 self.graph_view.save_chain(fileName)
-                QMessageBox.information(self, "Success", "Chain saved successfully!")
+                QMessageBox.information(self, _("Success"), _("Chain saved successfully!"))
             except Exception as e:
-                QMessageBox.critical(self, "Save Error", f"Failed to save chain: {str(e)}")
+                QMessageBox.critical(self, _("Save Error"), f"Failed to save chain: {str(e)}")
     
     def start_recording(self, sequence_name):
         """Start recording a sequence using ElementRecorder with full capabilities"""

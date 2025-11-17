@@ -4,10 +4,13 @@ import sys
 from PyQt5.QtWidgets import QApplication
 from .main_window import MainWindow
 from .constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, RED_PRIMARY, RED_DARK
+from .i18n import set_language_from_os
 
 def main():
     """Main function to run the application"""
     app = QApplication(sys.argv)
+    # Detect and set UI language from OS
+    set_language_from_os()
     
     # Apply dark theme stylesheet
     dark_stylesheet = f"""
