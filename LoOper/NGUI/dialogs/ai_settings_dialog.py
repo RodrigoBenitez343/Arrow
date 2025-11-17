@@ -197,8 +197,7 @@ class AISettingsDialog(QDialog):
         
         self.setup_ui()
         self.load_settings()
-        
-        self.check_api_status()
+        # Do not automatically ping the API on dialog open
     
     def setup_ui(self):
         layout = QVBoxLayout()
@@ -381,6 +380,21 @@ class AISettingsDialog(QDialog):
             for key, value in config.items():
                 os.environ[key] = value
             
+            # After saving, refresh and cache models once using the configured API URL
+            try:
+                # Import lazily to avoid circular imports
+                ai_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AI"))
+                if ai_dir not in sys.path:
+                    sys.path.insert(0, ai_dir)
+                from config_loader import get_api_url
+                from model_cache import get_model_cache
+                api_url = get_api_url()
+                cache = get_model_cache()
+                cache.refresh_models(api_url)
+            except Exception as cache_err:
+                # Do not block saving if caching fails
+                print(f"Warning: failed to refresh model cache after saving settings: {cache_err}")
+
             QMessageBox.information(self, "Success", "Settings saved successfully!")
             self.accept()
             

@@ -1,5 +1,10 @@
 import logging
 from PyQt5.QtWidgets import QMessageBox
+try:
+    from ...AI.model_cache import get_real_cached_models
+except Exception:
+    def get_real_cached_models(timeout: float = 5.0):
+        return []
 from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode
 
 # Configure logging
@@ -250,10 +255,16 @@ class NodeTransforms:
                     prompt = f"Process condition type: {condition_type}"
                     
                 llm_node.set_property('prompt', prompt)
-                llm_node.set_property('model', 'gpt-3.5-turbo')
+                # Choose a cached real model if available
+                try:
+                    cached = get_real_cached_models(timeout=2.0)
+                    default_model = cached[0] if cached else ''
+                except Exception:
+                    default_model = ''
+                llm_node.set_property('model', default_model)
                 llm_node.set_property('temperature', '0.7')
                 llm_node.set_property('max_tokens', '150')
-                logger.debug(f"Set LLM properties from conditional - prompt: {prompt[:50]}..., model: gpt-3.5-turbo")
+                logger.debug(f"Set LLM properties from conditional - prompt: {prompt[:50]}..., model: {default_model}")
                 
                 # Restore connections
                 logger.debug("Restoring connections for LLM node from conditional")
@@ -311,10 +322,16 @@ class NodeTransforms:
                 # Set LLM properties based on sequence
                 prompt = f"Analyze and optimize the sequence '{sequence_name}' with {len(actions)} actions"
                 llm_node.set_property('prompt', prompt)
-                llm_node.set_property('model', 'gpt-3.5-turbo')
+                # Choose a cached real model if available
+                try:
+                    cached = get_real_cached_models(timeout=2.0)
+                    default_model = cached[0] if cached else ''
+                except Exception:
+                    default_model = ''
+                llm_node.set_property('model', default_model)
                 llm_node.set_property('temperature', '0.7')
                 llm_node.set_property('max_tokens', '200')
-                logger.debug(f"Set LLM properties from sequence - prompt: {prompt[:50]}..., model: gpt-3.5-turbo")
+                logger.debug(f"Set LLM properties from sequence - prompt: {prompt[:50]}..., model: {default_model}")
                 
                 # Restore connections
                 logger.debug("Restoring connections for LLM node from sequence")

@@ -71,6 +71,26 @@ class OllamaEngine:
                     await self.load_model(model_name)
                 except Exception as e:
                     logger.error(f"Failed to load default model {model_name}: {e}")
+
+        # Ensure additional required models are present (pull-only)
+        try:
+            hardcoded_required: List[str] = [
+                'nomic-embed-text',
+                'llama3.1:8b-instruct-q8_0',
+                'minicpm-v:latest'
+            ]
+
+            seen = set()
+            deduped: List[str] = []
+            for m in hardcoded_required:
+                key = (m or '').strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    deduped.append(m)
+
+            await self.ensure_models_present(deduped)
+        except Exception as e:
+            logger.warning(f"Failed to ensure required models: {e}")
         
         self._initialized = True
         logger.info("Ollama engine initialized successfully")
@@ -154,7 +174,26 @@ class OllamaEngine:
                             logger.info(f"Pull progress: {progress['status']}")
                     except json.JSONDecodeError:
                         pass
-    
+
+    async def ensure_models_present(self, model_names: List[str]) -> None:
+        """Ensure a set of models are present locally (pull if missing)."""
+        try:
+            available = await self._list_available_models()
+            names = {m.get('name') if isinstance(m, dict) else str(m) for m in available}
+            for model in model_names:
+                # Simple matching by prefix; Ollama lists names with tags
+                present = any(n.startswith(model) or model.startswith(n) for n in names if n)
+                if present:
+                    logger.info(f"Model '{model}' already available")
+                    continue
+                logger.info(f"Model '{model}' missing; pulling...")
+                try:
+                    await self._pull_model(model)
+                except Exception as e:
+                    logger.error(f"Failed to pull '{model}': {e}")
+        except Exception as e:
+            logger.error(f"Error checking/pulling models: {e}")
+            
     async def _generate_test(self, model_name: str) -> bool:
         """Test model with a simple generation"""
         try:

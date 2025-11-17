@@ -74,7 +74,23 @@ class LLMExecutor:
         use_vision = llm_config.get('use_vision', False)
         screenshot_enabled = llm_config.get('screenshot_enabled', True)
 
-        input_source = llm_config.get('input_source', 'none')
+        # Auto-detect concatenation: if this node has any inputs in the workflow graph,
+        # treat them as "previous" source and enable direct RAG unless explicitly disabled.
+        node_inputs = node.get('inputs', []) or []
+        has_input_connection = bool(node_inputs)
+        connected_ids = []
+        try:
+            connected_ids = [inp.get('from_node') for inp in node_inputs if isinstance(inp, dict) and inp.get('from_node')]
+        except Exception:
+            connected_ids = []
+        has_previous_llm_output = any(f"node_{cid}_output" in self.variables for cid in connected_ids)
+
+        configured_input_source = (llm_config.get('input_source', 'none') or 'none')
+        input_source = configured_input_source
+        if has_input_connection and has_previous_llm_output and configured_input_source.lower() in ('none', '', 'null'):
+            input_source = 'previous'
+            logger.info("Auto-enabled input_source='previous' due to detected input connection for concatenation")
+
         ocr_confidence = llm_config.get('ocr_confidence', 60)
         logger.info(f"Input source: {input_source}, OCR confidence: {ocr_confidence}")
 
@@ -83,6 +99,9 @@ class LLMExecutor:
         memory_size = int(llm_config.get('memory_size', 1000))
 
         use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
+        if has_input_connection and has_previous_llm_output and not use_direct_rag and input_source in ('previous', 'previous_node'):
+            use_direct_rag = True
+            logger.info("Auto-enabled direct RAG (embeddings) for concatenated LLM node")
         rag_embedding_model = llm_config.get('rag_embedding_model', 'nomic-embed-text')
         rag_chunk_size = int(llm_config.get('rag_chunk_size', 500))
         rag_overlap = int(llm_config.get('rag_overlap', 100))
@@ -236,6 +255,17 @@ class LLMExecutor:
 
         # Determine next node
         next_node = llm_data.get('next_node') or node.get('next')
+        if not next_node:
+            try:
+                connections = node.get('connections', {})
+                output_conns = connections.get('output', [])
+                if output_conns:
+                    next_node = output_conns[0].get('node_id')
+            except Exception:
+                pass
+        # Ensure a non-None return to indicate successful execution to the workflow engine
+        if not next_node:
+            next_node = "__done__"
         logger.info(f"LLM node execution complete. Next node: {next_node}")
         return next_node
 

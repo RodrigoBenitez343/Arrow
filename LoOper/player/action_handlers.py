@@ -55,12 +55,32 @@ class ActionHandlers:
             raise Exception(f"Action {idx} is a click without a screenshot.")
 
         screenshot_path = action['screenshot']
-        if not os.path.isabs(screenshot_path):
-            screenshot_path = os.path.join(os.getcwd(), screenshot_path)
+        # Resolve screenshot path robustly across common project layouts
+        cand_paths = []
+        norm_rel = os.path.normpath(screenshot_path)
+        if os.path.isabs(norm_rel):
+            cand_paths.append(os.path.normpath(norm_rel))
+        else:
+            cwd = os.getcwd()
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cand_paths.extend([
+                os.path.normpath(os.path.join(cwd, norm_rel)),
+                os.path.normpath(os.path.join(project_root, norm_rel)),
+                os.path.normpath(os.path.join(project_root, 'sequences', norm_rel)),
+                os.path.normpath(os.path.join(project_root, 'sequences', 'screenshots', os.path.basename(norm_rel))),
+                os.path.normpath(os.path.join(project_root, 'sequences', 'sequences', 'screenshots', os.path.basename(norm_rel))),
+            ])
 
-        if not os.path.exists(screenshot_path):
-            logger.error(f"Screenshot file for action {idx} does not exist: {screenshot_path}")
-            raise Exception(f"Screenshot file not found: {screenshot_path}")
+        resolved_path = None
+        for cand in cand_paths:
+            if os.path.exists(cand):
+                resolved_path = cand
+                break
+
+        if not resolved_path:
+            logger.error(f"Screenshot file for action {idx} does not exist: {cand_paths[0]}")
+            raise Exception(f"Screenshot file not found: {cand_paths[0]}")
+        screenshot_path = resolved_path
 
         target_coords = None
         screenshot_found = False

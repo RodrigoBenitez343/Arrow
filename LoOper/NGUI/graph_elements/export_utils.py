@@ -1,6 +1,11 @@
 import os
 import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
+try:
+    from ...AI.model_cache import get_real_cached_models
+except Exception:
+    def get_real_cached_models(timeout: float = 5.0):
+        return []
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -211,7 +216,12 @@ class ExportUtils:
                 
                 for i, llm_node in enumerate(llm_nodes):
                     prompt = llm_node.get("prompt", "")
-                    model = llm_node.get("model", "gpt-3.5-turbo")
+                    # Prefer the model stored in the node; if missing, pick first real cached model
+                    try:
+                        cached = get_real_cached_models(timeout=2.0)
+                    except Exception:
+                        cached = []
+                    model = llm_node.get("model") or (cached[0] if cached else "")
                     logger.debug(f"Adding LLM node {i}: {model}, prompt length: {len(prompt)}")
                     lines.append(f'echo Executing LLM: {model}')
                     lines.append(f'python "{self._get_main_script_path()}" --llm-prompt "{prompt}" --model "{model}"')

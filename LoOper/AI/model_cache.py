@@ -21,6 +21,7 @@ class ModelCache:
         self._loaded = False
         self._lock = threading.Lock()
         self._fallback_models = ["llama3.2", "llama3.1", "codellama", "mistral", "phi3"]
+        self._using_fallback = False
     
     def get_default_api_url(self) -> str:
         """Get the default API URL from environment variables"""
@@ -52,9 +53,11 @@ class ModelCache:
                 if models:
                     self._models = [model['name'] for model in models]
                     print(f"Successfully loaded {len(self._models)} models: {self._models}")
+                    self._using_fallback = False
                 else:
                     self._models = self._fallback_models.copy()
                     print(f"No models returned from API, using fallback models: {self._models}")
+                    self._using_fallback = True
                     
                 self._loaded = True
                 self._loading = False
@@ -65,6 +68,7 @@ class ModelCache:
                 self._models = self._fallback_models.copy()
                 self._loaded = True
                 self._loading = False
+                self._using_fallback = True
                 print(f"Using fallback models due to error: {self._models}")
     
     def get_models(self, timeout: float = 5.0) -> List[str]:
@@ -98,6 +102,7 @@ class ModelCache:
             self._loaded = False
             self._loading = True
             self._models = []
+            self._using_fallback = False
         
         # Run synchronously to ensure models are loaded before returning
         try:
@@ -136,9 +141,11 @@ class ModelCache:
                 if models:
                     self._models = models
                     print(f"Successfully refreshed {len(models)} models: {models}")
+                    self._using_fallback = False
                 else:
                     self._models = self._fallback_models
                     print("Failed to fetch models, using fallback")
+                    self._using_fallback = True
                 self._loaded = True
                 self._loading = False
                 
@@ -148,6 +155,7 @@ class ModelCache:
                 self._models = self._fallback_models
                 self._loaded = True
                 self._loading = False
+                self._using_fallback = True
 
     def _fetch_models_return_list(self, api_url: Optional[str] = None) -> List[str]:
         if api_url is None:
@@ -170,6 +178,19 @@ class ModelCache:
     async def _fetch_models_async(self, api_url: Optional[str] = None) -> List[str]:
         import asyncio
         return await asyncio.to_thread(self._fetch_models_return_list, api_url)
+
+    def is_using_fallback(self) -> bool:
+        """Return True if the current cache is using hardcoded fallback models"""
+        with self._lock:
+            return self._using_fallback
+
+    def get_real_models(self, timeout: float = 5.0) -> List[str]:
+        """Get cached models only if they are real (non-fallback). Otherwise return an empty list."""
+        models = self.get_models(timeout)
+        with self._lock:
+            if self._using_fallback:
+                return []
+        return models
 # Global instance
 _model_cache = ModelCache()
 
@@ -180,6 +201,10 @@ def get_model_cache() -> ModelCache:
 def get_cached_models(timeout: float = 5.0) -> List[str]:
     """Convenience function to get cached models"""
     return _model_cache.get_models(timeout)
+
+def get_real_cached_models(timeout: float = 5.0) -> List[str]:
+    """Convenience function to get cached models without falling back to hardcoded defaults"""
+    return _model_cache.get_real_models(timeout)
 
 def load_models_at_startup(api_url: Optional[str] = None) -> None:
     """Load models at application startup"""

@@ -5,6 +5,7 @@ import json
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
                              QDialogButtonBox, QPushButton, QMessageBox)
 from PyQt5.QtCore import Qt
+from ..i18n import _
 from ..graph_elements.config_manager import ConfigManager
 from ..constants import TEXT_COLOR
 
@@ -27,7 +28,7 @@ class ChainExpansionDialog(QDialog):
         self.parent_graph_view = parent_graph_view
         self.config_manager = None  # Will be initialized after graph_view is created
         
-        self.setWindowTitle("Edit Imported Chain")
+        self.setWindowTitle(_("Edit Imported Chain"))
         self.setModal(True)
         self.resize(1000, 700)
         
@@ -47,7 +48,7 @@ class ChainExpansionDialog(QDialog):
             
             if not chain_file or not os.path.exists(chain_file):
                 print(f"DEBUG: Chain file not found or not configured. File: {chain_file}, Exists: {os.path.exists(chain_file) if chain_file else False}")
-                QMessageBox.warning(self, "Warning", "Chain file not found or not configured.")
+                QMessageBox.warning(self, _("Warning"), _("Chain file not found or not configured."))
                 return
             
             print(f"DEBUG: Loading chain file: {chain_file}")
@@ -59,7 +60,7 @@ class ChainExpansionDialog(QDialog):
             print(f"DEBUG: Exception in load_chain_config: {str(e)}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to load chain configuration: {str(e)}")
+            QMessageBox.critical(self, _("Error"), _("Failed to load chain configuration: {error}").format(error=str(e)))
     
     def setup_ui(self):
         """Setup the dialog UI"""
@@ -68,7 +69,7 @@ class ChainExpansionDialog(QDialog):
         # Header
         header_layout = QHBoxLayout()
         chain_name = self.chain_import_node.name()
-        header_label = QLabel(f"Editing Chain: {chain_name}")
+        header_label = QLabel(_("Editing Chain: {chain_name}").format(chain_name=chain_name))
         header_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: bold;")
         header_layout.addWidget(header_label)
         header_layout.addStretch()
@@ -76,7 +77,7 @@ class ChainExpansionDialog(QDialog):
         # Add maximize button
         self.maximize_button = QPushButton("⛶")
         self.maximize_button.setFixedSize(30, 30)
-        self.maximize_button.setToolTip("Maximize/Restore")
+        self.maximize_button.setToolTip(_("Maximize/Restore"))
         self.maximize_button.setStyleSheet(f"""
             QPushButton {{
                 color: {TEXT_COLOR};
@@ -112,7 +113,7 @@ class ChainExpansionDialog(QDialog):
         button_box.rejected.connect(self.reject)
         
         # Add save button
-        save_button = QPushButton("Save Changes")
+        save_button = QPushButton(_("Save Changes"))
         save_button.clicked.connect(self.save_changes)
         button_box.addButton(save_button, QDialogButtonBox.ActionRole)
         
@@ -240,7 +241,7 @@ Node Types:
             chain_file = import_config.get('chain_file', '')
             
             if not chain_file:
-                QMessageBox.warning(self, "Warning", "No chain file configured.")
+                QMessageBox.warning(self, _("Warning"), _("No chain file configured."))
                 return
             
             # Save the updated configuration
@@ -251,10 +252,10 @@ Node Types:
             print(f"DEBUG: Clearing entire cache after modifying chain: {chain_file}")
             clear_cache()
             
-            QMessageBox.information(self, "Success", "Chain changes saved successfully.")
+            QMessageBox.information(self, _("Success"), _("Chain changes saved successfully."))
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save changes: {str(e)}")
+            QMessageBox.critical(self, _("Error"), _("Failed to save changes: {error}").format(error=str(e)))
     
     def accept_changes(self):
         """Accept and close dialog"""

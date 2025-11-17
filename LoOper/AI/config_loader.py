@@ -19,20 +19,24 @@ def load_ai_config() -> Dict[str, Any]:
     
     # Try to load from config file first
     config_path = os.path.join(os.path.dirname(__file__), "config.json")
+    file_config_loaded = False
     if os.path.exists(config_path):
         try:
             with open(config_path, 'r') as f:
                 file_config = json.load(f)
                 config.update(file_config)
+                file_config_loaded = True
         except Exception as e:
             print(f"Warning: Failed to load AI config file: {e}")
     
     # Override with environment variables where appropriate
-    # Prefer config file value for AUTO_START_API to honor GUI toggle
+    # Prefer config file value for AUTO_START_API to honor GUI toggle if present,
+    # but allow environment override when no config.json exists yet.
     for key in config.keys():
         env_value = os.getenv(key)
         if env_value is not None:
-            if key == "AUTO_START_API":
+            if key == "AUTO_START_API" and file_config_loaded:
+                # If a config file exists, keep its AUTO_START_API to honor GUI toggle
                 continue
             config[key] = env_value
     

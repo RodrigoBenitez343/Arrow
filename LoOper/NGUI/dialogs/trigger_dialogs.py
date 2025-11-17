@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QGridLayout, QWidget
 )
 from ..constants import TEXT_COLOR
+from ..i18n import _
 
 
 class TriggerConfigDialog(QDialog):
@@ -20,7 +21,7 @@ class TriggerConfigDialog(QDialog):
     def __init__(self, parent, is_absence_trigger=False):
         super().__init__(parent)
         self.is_absence_trigger = is_absence_trigger
-        title = "Absence Trigger Configuration" if is_absence_trigger else "Trigger Configuration"
+        title = _("Absence Trigger Configuration") if is_absence_trigger else _("Trigger Configuration")
         self.setWindowTitle(title)
         self.setModal(True)
         self.resize(400, 200)
@@ -32,18 +33,18 @@ class TriggerConfigDialog(QDialog):
         
         # Image path
         image_layout = QHBoxLayout()
-        image_layout.addWidget(QLabel("Image Path:"))
+        image_layout.addWidget(QLabel(_("Image Path:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
         
-        browse_btn = QPushButton("Browse...")
+        browse_btn = QPushButton(_("Browse..."))
         browse_btn.clicked.connect(self.browse_image)
         image_layout.addWidget(browse_btn)
         layout.addLayout(image_layout)
         
         # Confidence
         conf_layout = QHBoxLayout()
-        conf_layout.addWidget(QLabel("Confidence:"))
+        conf_layout.addWidget(QLabel(_("Confidence:")))
         self.confidence_spin = QDoubleSpinBox()
         self.confidence_spin.setRange(0.1, 1.0)
         self.confidence_spin.setSingleStep(0.1)
@@ -54,7 +55,7 @@ class TriggerConfigDialog(QDialog):
         
         # Timeout (optional for presence, required for absence)
         timeout_layout = QHBoxLayout()
-        timeout_label = "Timeout (s):" if not self.is_absence_trigger else "Timeout (s) - Required:"
+        timeout_label = _("Timeout (s):") if not self.is_absence_trigger else _("Timeout (s) - Required:")
         timeout_layout.addWidget(QLabel(timeout_label))
         self.timeout_spin = QSpinBox()
         
@@ -66,7 +67,7 @@ class TriggerConfigDialog(QDialog):
             # For presence triggers, allow no timeout (infinite wait)
             self.timeout_spin.setRange(0, 300)
             self.timeout_spin.setValue(0)
-            self.timeout_spin.setSpecialValueText("No timeout")
+            self.timeout_spin.setSpecialValueText(_("No timeout"))
         
         timeout_layout.addWidget(self.timeout_spin)
         timeout_layout.addStretch()
@@ -76,11 +77,11 @@ class TriggerConfigDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(_("OK"))
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
@@ -104,7 +105,7 @@ class TriggerConfigDialog(QDialog):
     def browse_image(self):
         """Browse for image file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image File", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
+            self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:
             self.image_path_entry.setText(file_path)
@@ -128,7 +129,7 @@ class OCRTriggerConfigDialog(QDialog):
     
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("OCR Trigger Configuration")
+        self.setWindowTitle(_("OCR Trigger Configuration"))
         self.setModal(True)
         self.resize(450, 350)
         self.setup_ui()
@@ -139,14 +140,14 @@ class OCRTriggerConfigDialog(QDialog):
         
         # Target text
         text_layout = QHBoxLayout()
-        text_layout.addWidget(QLabel("Target Text:"))
+        text_layout.addWidget(QLabel(_("Target Text:")))
         self.target_text_entry = QLineEdit()
         text_layout.addWidget(self.target_text_entry)
         layout.addLayout(text_layout)
         
         # Confidence
         conf_layout = QHBoxLayout()
-        conf_layout.addWidget(QLabel("Confidence:"))
+        conf_layout.addWidget(QLabel(_("Confidence:")))
         self.confidence_spin = QDoubleSpinBox()
         self.confidence_spin.setRange(0.1, 1.0)
         self.confidence_spin.setSingleStep(0.1)
@@ -157,7 +158,7 @@ class OCRTriggerConfigDialog(QDialog):
         
         # Case sensitive
         case_layout = QHBoxLayout()
-        self.case_sensitive_check = QCheckBox("Case Sensitive")
+        self.case_sensitive_check = QCheckBox(_("Case Sensitive:"))
         case_layout.addWidget(self.case_sensitive_check)
         case_layout.addStretch()
         layout.addLayout(case_layout)
@@ -168,11 +169,11 @@ class OCRTriggerConfigDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(_("OK"))
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
@@ -194,7 +195,7 @@ class WaitConditionDialog(QDialog):
     
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Wait Condition")
+        self.setWindowTitle(_("Wait Condition"))
         self.setModal(True)
         self.resize(400, 250)
         self.setup_ui()
@@ -205,7 +206,7 @@ class WaitConditionDialog(QDialog):
         
         # Condition type
         type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("Wait Type:"))
+        type_layout.addWidget(QLabel(_("Wait Type:")))
         self.type_combo = QComboBox()
         self.type_combo.addItems(["presence", "absence", "ocr", "wait_time"])
         self.type_combo.currentTextChanged.connect(self.on_wait_type_changed)
@@ -217,11 +218,11 @@ class WaitConditionDialog(QDialog):
         self.image_widget = QWidget()
         image_layout = QHBoxLayout(self.image_widget)
         image_layout.setContentsMargins(0, 0, 0, 0)
-        image_layout.addWidget(QLabel("Image Path:"))
+        image_layout.addWidget(QLabel(_("Image Path:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
         
-        browse_btn = QPushButton("Browse...")
+        browse_btn = QPushButton(_("Browse..."))
         browse_btn.clicked.connect(self.browse_image)
         image_layout.addWidget(browse_btn)
         layout.addWidget(self.image_widget)
@@ -232,13 +233,13 @@ class WaitConditionDialog(QDialog):
         ocr_layout.setContentsMargins(0, 0, 0, 0)
         
         text_layout = QHBoxLayout()
-        text_layout.addWidget(QLabel("Target Text:"))
+        text_layout.addWidget(QLabel(_("Target Text:")))
         self.target_text_entry = QLineEdit()
         text_layout.addWidget(self.target_text_entry)
         ocr_layout.addLayout(text_layout)
         
         ocr_params_layout = QHBoxLayout()
-        ocr_params_layout.addWidget(QLabel("Case Sensitive:"))
+        ocr_params_layout.addWidget(QLabel(_("Case Sensitive:")))
         self.case_sensitive_check = QCheckBox()
         self.case_sensitive_check.setChecked(True)
         ocr_params_layout.addWidget(self.case_sensitive_check)
@@ -254,7 +255,7 @@ class WaitConditionDialog(QDialog):
         self.wait_time_widget = QWidget()
         wait_time_layout = QHBoxLayout(self.wait_time_widget)
         wait_time_layout.setContentsMargins(0, 0, 0, 0)
-        wait_time_layout.addWidget(QLabel("Wait Duration (s):"))
+        wait_time_layout.addWidget(QLabel(_("Wait Duration (s):")))
         self.wait_duration_spin = QDoubleSpinBox()
         self.wait_duration_spin.setRange(0.1, 300.0)
         self.wait_duration_spin.setSingleStep(0.1)
@@ -266,7 +267,7 @@ class WaitConditionDialog(QDialog):
         
         # Confidence
         conf_layout = QHBoxLayout()
-        conf_layout.addWidget(QLabel("Confidence:"))
+        conf_layout.addWidget(QLabel(_("Confidence:")))
         self.confidence_spin = QDoubleSpinBox()
         self.confidence_spin.setRange(0.1, 1.0)
         self.confidence_spin.setSingleStep(0.1)
@@ -277,7 +278,7 @@ class WaitConditionDialog(QDialog):
         
         # Timeout
         timeout_layout = QHBoxLayout()
-        timeout_layout.addWidget(QLabel("Timeout (s):"))
+        timeout_layout.addWidget(QLabel(_("Timeout (s):")))
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 300)
         self.timeout_spin.setValue(30)
@@ -289,11 +290,11 @@ class WaitConditionDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(_("OK"))
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
@@ -302,7 +303,7 @@ class WaitConditionDialog(QDialog):
     def browse_image(self):
         """Browse for image file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image File", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
+            self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:
             self.image_path_entry.setText(file_path)
@@ -338,7 +339,7 @@ class ConditionalLoopDialog(QDialog):
     
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Conditional Loop")
+        self.setWindowTitle(_("Conditional Loop"))
         self.setModal(True)
         self.resize(500, 350)
         self.setup_ui()
@@ -349,7 +350,7 @@ class ConditionalLoopDialog(QDialog):
         
         # Loop type
         type_layout = QHBoxLayout()
-        type_layout.addWidget(QLabel("Loop Type:"))
+        type_layout.addWidget(QLabel(_("Loop Type:")))
         self.type_combo = QComboBox()
         self.type_combo.addItems(["while_present", "until_present"])
         self.type_combo.currentTextChanged.connect(self.on_loop_type_changed)
@@ -359,18 +360,18 @@ class ConditionalLoopDialog(QDialog):
         
         # Sequence file
         seq_layout = QHBoxLayout()
-        seq_layout.addWidget(QLabel("Sequence File:"))
+        seq_layout.addWidget(QLabel(_("Sequence File:")))
         self.sequence_file_entry = QLineEdit()
         seq_layout.addWidget(self.sequence_file_entry)
         
-        browse_seq_btn = QPushButton("Browse...")
+        browse_seq_btn = QPushButton(_("Browse..."))
         browse_seq_btn.clicked.connect(self.browse_sequence)
         seq_layout.addWidget(browse_seq_btn)
         layout.addLayout(seq_layout)
         
         # Condition method (image or OCR)
         cond_method_layout = QHBoxLayout()
-        cond_method_layout.addWidget(QLabel("Condition Method:"))
+        cond_method_layout.addWidget(QLabel(_("Condition Method:")))
         self.condition_method_combo = QComboBox()
         self.condition_method_combo.addItems(["image", "ocr"])
         self.condition_method_combo.currentTextChanged.connect(self.on_condition_method_changed)
@@ -382,11 +383,11 @@ class ConditionalLoopDialog(QDialog):
         self.image_widget = QWidget()
         image_layout = QHBoxLayout(self.image_widget)
         image_layout.setContentsMargins(0, 0, 0, 0)
-        image_layout.addWidget(QLabel("Condition Image:"))
+        image_layout.addWidget(QLabel(_("Condition Image:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
         
-        browse_img_btn = QPushButton("Browse...")
+        browse_img_btn = QPushButton(_("Browse..."))
         browse_img_btn.clicked.connect(self.browse_image)
         image_layout.addWidget(browse_img_btn)
         layout.addWidget(self.image_widget)
@@ -397,13 +398,13 @@ class ConditionalLoopDialog(QDialog):
         ocr_layout.setContentsMargins(0, 0, 0, 0)
         
         text_layout = QHBoxLayout()
-        text_layout.addWidget(QLabel("Target Text:"))
+        text_layout.addWidget(QLabel(_("Target Text:")))
         self.target_text_entry = QLineEdit()
         text_layout.addWidget(self.target_text_entry)
         ocr_layout.addLayout(text_layout)
         
         ocr_params_layout = QHBoxLayout()
-        ocr_params_layout.addWidget(QLabel("Case Sensitive:"))
+        ocr_params_layout.addWidget(QLabel(_("Case Sensitive:")))
         self.case_sensitive_check = QCheckBox()
         self.case_sensitive_check.setChecked(True)
         ocr_params_layout.addWidget(self.case_sensitive_check)
@@ -418,20 +419,20 @@ class ConditionalLoopDialog(QDialog):
         # Parameters
         params_layout = QGridLayout()
         
-        params_layout.addWidget(QLabel("Max Iterations:"), 0, 0)
+        params_layout.addWidget(QLabel(_("Max Iterations:")), 0, 0)
         self.max_iterations_spin = QSpinBox()
         self.max_iterations_spin.setRange(1, 100)
         self.max_iterations_spin.setValue(10)
         params_layout.addWidget(self.max_iterations_spin, 0, 1)
         
-        params_layout.addWidget(QLabel("Iteration Delay (s):"), 1, 0)
+        params_layout.addWidget(QLabel(_("Iteration Delay (s):")), 1, 0)
         self.iteration_delay_spin = QDoubleSpinBox()
         self.iteration_delay_spin.setRange(0.1, 60.0)
         self.iteration_delay_spin.setSingleStep(0.1)
         self.iteration_delay_spin.setValue(1.0)
         params_layout.addWidget(self.iteration_delay_spin, 1, 1)
         
-        params_layout.addWidget(QLabel("Confidence:"), 2, 0)
+        params_layout.addWidget(QLabel(_("Confidence:")), 2, 0)
         self.confidence_spin = QDoubleSpinBox()
         self.confidence_spin.setRange(0.1, 1.0)
         self.confidence_spin.setSingleStep(0.1)
@@ -444,11 +445,11 @@ class ConditionalLoopDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        ok_btn = QPushButton("OK")
+        ok_btn = QPushButton(_("OK"))
         ok_btn.clicked.connect(self.accept)
         button_layout.addWidget(ok_btn)
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
         
@@ -473,7 +474,7 @@ class ConditionalLoopDialog(QDialog):
     def browse_sequence(self):
         """Browse for sequence file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Sequence File", "", "JSON Files (*.json)"
+            self, _("Select Sequence File"), "", _("JSON Files (*.json)")
         )
         if file_path:
             self.sequence_file_entry.setText(file_path)
@@ -481,7 +482,7 @@ class ConditionalLoopDialog(QDialog):
     def browse_image(self):
         """Browse for image file"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Image File", "", "Image Files (*.png *.jpg *.jpeg *.bmp)"
+            self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:
             self.image_path_entry.setText(file_path)
