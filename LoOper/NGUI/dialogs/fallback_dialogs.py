@@ -129,7 +129,7 @@ class ActionFallbackConfigDialog(QDialog):
     
     def browse_fallback_file(self):
         """Browse for fallback sequence file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self, _("Select Fallback Sequence"), "", _("JSON Files (*.json)")
         )
         if file_path:

@@ -104,7 +104,7 @@ class TriggerConfigDialog(QDialog):
     
     def browse_image(self):
         """Browse for image file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:
@@ -302,7 +302,7 @@ class WaitConditionDialog(QDialog):
     
     def browse_image(self):
         """Browse for image file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:
@@ -473,7 +473,7 @@ class ConditionalLoopDialog(QDialog):
     
     def browse_sequence(self):
         """Browse for sequence file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self, _("Select Sequence File"), "", _("JSON Files (*.json)")
         )
         if file_path:
@@ -481,7 +481,7 @@ class ConditionalLoopDialog(QDialog):
     
     def browse_image(self):
         """Browse for image file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
         )
         if file_path:

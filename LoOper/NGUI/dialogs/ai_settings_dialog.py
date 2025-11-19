@@ -16,64 +16,43 @@ import requests
 import json
 
 class APIServerThread(QThread):
-    """Thread to run the local API server"""
     status_update = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
-    
-    def __init__(self, api_path):
+
+    def __init__(self):
         super().__init__()
-        self.api_path = api_path
-        self.process = None
         self.running = False
-    
+        self.server = None
+
     def run(self):
         try:
             self.running = True
             self.status_update.emit("Starting local API server...")
-            run_dir = os.path.dirname(self.api_path)
-            script_name = os.path.basename(self.api_path)
-            self.process = subprocess.Popen(
-                [sys.executable, script_name],
-                cwd=run_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                universal_newlines=True
-            )
-            ready_emitted = False
-            while self.running:
-                if self.process.poll() is not None:
-                    break
-                line = self.process.stdout.readline()
-                if not line:
-                    self.msleep(200)
-                    continue
-                msg = line.strip()
-                if msg:
-                    self.status_update.emit(msg)
-                    if (not ready_emitted) and (
-                        ("Application startup complete" in msg) or
-                        ("Uvicorn running" in msg) or
-                        ("Starting server with standard configuration" in msg)
-                    ):
-                        ready_emitted = True
-                        self.status_update.emit("✅ Local API server started successfully")
+            ai_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AI"))
+            if ai_dir not in sys.path:
+                sys.path.insert(0, ai_dir)
+            from config_loader import load_ai_config
+            cfg = load_ai_config()
+            host = cfg.get("TAILSCALE_SERVER_IP", "localhost") or "localhost"
+            port = int(cfg.get("API_PORT", "8000"))
+            import uvicorn
+            from api import app
+            config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            self.server = uvicorn.Server(config)
+            self.status_update.emit(f"Uvicorn starting on {host}:{port}")
+            self.server.run()
             if self.running:
-                try:
-                    remaining = self.process.stdout.read() or ""
-                except Exception:
-                    remaining = ""
-                error_msg = remaining.strip() or "Process terminated unexpectedly"
-                self.error_occurred.emit(f"API server stopped: {error_msg}")
+                self.error_occurred.emit("API server stopped")
         except Exception as e:
-            self.error_occurred.emit(f"Failed to start API server: {str(e)}")
-    
+            self.error_occurred.emit(str(e))
+
     def stop(self):
         self.running = False
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            self.process.wait()
+        try:
+            if self.server:
+                self.server.should_exit = True
+        except Exception:
+            pass
 
 class AISettingsDialog(QDialog):
     """Dialog for configuring AI settings"""
@@ -464,32 +443,22 @@ class AISettingsDialog(QDialog):
     def start_local_server(self):
         """Start the local API server"""
         try:
-            # Use the main.py from OverWatch directory instead of AI/api.py
-            overwatch_main_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "OverWatch", "main.py")
-            overwatch_main_path = os.path.normpath(overwatch_main_path)
-            
-            if not os.path.exists(overwatch_main_path):
-                QMessageBox.critical(self, "Error", f"OverWatch main.py not found at: {overwatch_main_path}")
-                return
-            
-            # Stop any existing server first
             if self.server_thread and self.server_thread.isRunning():
                 self.stop_local_server()
-                # Wait a moment for the previous server to fully stop
                 import time
                 time.sleep(1)
-            
-            self.server_thread = APIServerThread(overwatch_main_path)
+
+            self.server_thread = APIServerThread()
             self.server_thread.status_update.connect(self.on_server_status_update)
             self.server_thread.error_occurred.connect(self.on_server_error)
             self.server_thread.start()
-            
+
             self.start_server_btn.setEnabled(False)
             self.stop_server_btn.setEnabled(True)
             self.status_label.setText("🔄 Starting local API server...")
-            
+
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to start server: {str(e)}")
+            QMessageBox.critical(self, "Error", str(e))
             self.start_server_btn.setEnabled(True)
             self.stop_server_btn.setEnabled(False)
     

@@ -1,6 +1,7 @@
 # NGUI/graph_view.py
 
 import os
+import sys
 import logging
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtCore import pyqtSignal
@@ -67,6 +68,8 @@ class GraphViewWidget(QWidget):
             
             # Set up folder paths
             project_root = os.path.dirname(os.path.dirname(__file__))
+            if getattr(sys, 'frozen', False):
+                project_root = os.getcwd()
             self.sequences_folder = os.path.join(project_root, "sequences")
             self.chains_folder = os.path.join(project_root, "chains")
             

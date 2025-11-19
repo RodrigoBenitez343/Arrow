@@ -318,6 +318,10 @@ class CollapsibleToolbar(QWidget):
         try:
             if folder and os.path.isdir(folder):
                 files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.json')])
+                nested = os.path.join(folder, 'sequences')
+                if os.path.isdir(nested):
+                    extra = [f for f in os.listdir(nested) if f.lower().endswith('.json')]
+                    files = sorted(set(files + extra))
         except Exception:
             files = []
         if not files:
@@ -338,7 +342,9 @@ class CollapsibleToolbar(QWidget):
             scroll.setWidget(container)
             return scroll
         for name in files:
-            full_path = os.path.join(folder, name)
+            p1 = os.path.join(folder, name)
+            p2 = os.path.join(folder, 'sequences', name)
+            full_path = p1 if os.path.exists(p1) else p2
             btn = DraggableSequenceButton(name, full_path, self.graph_view, self)
             layout.addWidget(btn)
         scroll.setWidget(container)

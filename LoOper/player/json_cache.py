@@ -231,6 +231,11 @@ class JSONCache:
                 os.path.join(looper_sequences, sequence_file + '.json'),
                 os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file + '.json'),
             ])
+        nested_sequences = os.path.join(os.getcwd(), 'sequences', 'sequences')
+        possible_paths.extend([
+            os.path.join(nested_sequences, sequence_file),
+            os.path.join(nested_sequences, sequence_file + '.json') if not sequence_file.endswith('.json') else os.path.join(nested_sequences, sequence_file),
+        ])
         
         # Find the first existing file
         for path in possible_paths:
