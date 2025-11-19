@@ -9,9 +9,9 @@ from .sequence_manager import SequenceManager
 class ElementRecorder:
     """Main recorder class that coordinates all recording functionality"""
     
-    def __init__(self, sequence_name="new_sequence"):
+    def __init__(self, sequence_name="new_sequence", screenshots_dir=None):
         # Initialize all managers
-        self.screenshot_manager = ScreenshotManager()
+        self.screenshot_manager = ScreenshotManager(screenshots_dir or 'sequences/screenshots')
         self.scroll_manager = ScrollManager()
         self.keyboard_handler = KeyboardHandler()
         self.mouse_handler = MouseHandler()
@@ -109,8 +109,11 @@ class ElementRecorder:
             self.sequence_manager.add_action(final_scroll)
         
         # Create filename with sequence name and save to sequences folder
-        import os
-        sequences_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'sequences')
+        import os, sys
+        base_dir = os.path.dirname(os.path.dirname(__file__))
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        sequences_dir = os.path.join(base_dir, 'sequences')
         os.makedirs(sequences_dir, exist_ok=True)
         filename = os.path.join(sequences_dir, f'{self.sequence_name}.json')
         self.sequence_manager.save_sequence(filename)

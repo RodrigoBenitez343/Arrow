@@ -100,7 +100,7 @@ class NodeOperations:
         try:
             # Open file dialog to select a sequence file from the sequences folder
             logger.debug(f"Opening file dialog for sequence selection from: {self.parent_widget.sequences_folder}")
-            file_path, _ = QFileDialog.getOpenFileName(
+            file_path, selected_filter = QFileDialog.getOpenFileName(
                 self.parent_widget,
                 "Select Sequence File",
                 self.parent_widget.sequences_folder,  # Default to sequences folder

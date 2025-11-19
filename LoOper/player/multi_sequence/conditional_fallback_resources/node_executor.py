@@ -4,6 +4,7 @@ Node executor module for conditional fallback handler.
 Handles conditional node execution and workflow branching logic.
 """
 import json
+import os
 from ...config import logger
 
 
@@ -244,11 +245,10 @@ class NodeExecutor:
                 image_path = data.get('image_path')
                 if not image_path:
                     return False, f"Image path required for {trigger_type} trigger"
-                
-                # Check if image exists
+                # Only ensure a path is provided; screen presence is validated at runtime via OpenCV
                 resolved_path = self.path_resolver.resolve_path(image_path, add_json=False)
                 if not resolved_path:
-                    return False, f"Image file not found: {image_path}"
+                    return False, f"Invalid image path: {image_path}"
             
             elif trigger_type == 'ocr':
                 target_text = data.get('ocr_text') or data.get('target_text')

@@ -9,7 +9,7 @@ import sys
 from typing import List, Optional, Dict, Any, Union
 import uvicorn
 sys.path.append(os.path.dirname(__file__))
-from comorag_engine import ComoRAGEngine
+from AI.comorag_engine import ComoRAGEngine
 import asyncio
 from typing import Set
 import threading

@@ -386,7 +386,8 @@ class MainWindow(QMainWindow):
                     
                     # Initialize ElementRecorder with sequence name
                     thread_logger.info(f"Initializing ElementRecorder with sequence name: {sequence_name}")
-                    recorder = ElementRecorder(sequence_name)
+                    screenshots_dir = os.path.join(target_dir, 'screenshots')
+                    recorder = ElementRecorder(sequence_name, screenshots_dir=screenshots_dir)
                     thread_logger.info("ElementRecorder initialized successfully")
                     
                     print(f"\n🟢 Recording '{sequence_name}'. Try all actions now!")

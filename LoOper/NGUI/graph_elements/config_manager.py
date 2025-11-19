@@ -101,7 +101,7 @@ class ConfigManager:
         try:
             if not file_path:
                 logger.debug("No file path provided, opening file dialog")
-                file_path, _ = QFileDialog.getOpenFileName(
+                file_path, selected_filter = QFileDialog.getOpenFileName(
                     self.parent_widget,
                     "Load Chain",
                     self.parent_widget.chains_folder,

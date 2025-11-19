@@ -192,7 +192,7 @@ class ChainImportDialog(QDialog):
         
     def browse_chain_file(self):
         """Open file dialog to select chain file"""
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, selected_filter = QFileDialog.getOpenFileName(
             self,
             _("Select Chain File"),
             "",
