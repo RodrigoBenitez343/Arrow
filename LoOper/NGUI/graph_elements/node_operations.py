@@ -11,7 +11,7 @@ except Exception:
 from ..dialogs import AdvancedConditionalDialog, LLMPropertiesDialog, TTSPropertiesDialog
 from ..dialogs.sequence_dialogs import SequencePropertiesDialog
 from ..dialogs.chain_import_dialogs import ChainImportDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode  # ContextBuilderNode deprecated
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode  # ContextBuilderNode deprecated
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -421,6 +421,40 @@ class NodeOperations:
             )
             
         return None
+
+    def add_form_filler_node(self, pos=None):
+        """Add a new Form Filler node."""
+        logger.info(f"Adding Form Filler node at position: {pos}")
+        try:
+            # Create the node
+            logger.debug("Creating Form Filler node")
+            node = self.parent_widget.graph_manager.create_node(
+                'form_filler.FormFillerNode', 
+                name='Form Filler', 
+                pos=pos
+            )
+            
+            if node:
+                logger.debug(f"Setting default properties for Form Filler node {node.id}")
+                # Set default properties
+                node.set_property('instruction', 'Fill the form on the screen.')
+                node.set_property('model', 'llama3.2:latest')
+                node.set_property('confidence_threshold', '0.8')
+                
+                logger.info(f"Successfully added Form Filler node {node.id}")
+                return node
+            else:
+                logger.error("Failed to create Form Filler node")
+                
+        except Exception as e:
+            logger.error(f"Error adding Form Filler node: {e}")
+            QMessageBox.critical(
+                self.parent_widget, 
+                "Error", 
+                f"Failed to add Form Filler node: {str(e)}"
+            )
+            
+        return None
         
     def delete_node(self, node):
         """Delete a node based on its type."""
@@ -432,7 +466,7 @@ class NodeOperations:
             elif isinstance(node, ActionNode):
                 logger.debug("Deleting action node")
                 self.delete_action_node(node)
-            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode)):
+            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode)):
                 logger.debug(f"Deleting {type(node).__name__} node")
                 self.parent_widget.graph_manager.delete_node(node)
             else:
@@ -753,6 +787,25 @@ class NodeOperations:
             
             memory_size = int(node.get_property('memory_size') or 1000)
             dialog.memory_size_spin.setValue(memory_size)
+            use_direct_rag_str = node.get_property('use_direct_rag') or 'false'
+            use_direct_rag = use_direct_rag_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_direct_rag_checkbox.setChecked(use_direct_rag)
+            dialog.rag_embedding_model_entry.setText(node.get_property('rag_embedding_model') or 'nomic-embed-text')
+            dialog.rag_chunk_size_spin.setValue(int(node.get_property('rag_chunk_size') or 500))
+            dialog.rag_overlap_spin.setValue(int(node.get_property('rag_overlap') or 100))
+            dialog.rag_top_k_spin.setValue(int(node.get_property('rag_top_k') or 3))
+            rag_include_raw_input_str = node.get_property('rag_include_raw_input') or 'false'
+            rag_include_raw_input = rag_include_raw_input_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.rag_include_raw_input_checkbox.setChecked(rag_include_raw_input)
+            dialog.rag_max_chars_spin.setValue(int(node.get_property('rag_max_chars') or 1500))
+            try:
+                import json as _json
+                docs = node.get_property('rag_documents') or '[]'
+                docs_list = _json.loads(docs) if isinstance(docs, str) else []
+            except Exception:
+                docs_list = []
+            for p in docs_list:
+                dialog.rag_documents_list.addItem(p)
             
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
@@ -794,6 +847,19 @@ class NodeOperations:
                 node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
                 node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
                 node.set_property('memory_size', str(dialog.memory_size_spin.value()))
+                node.set_property('use_direct_rag', str(dialog.use_direct_rag_checkbox.isChecked()).lower())
+                node.set_property('rag_embedding_model', dialog.rag_embedding_model_entry.text())
+                node.set_property('rag_chunk_size', str(dialog.rag_chunk_size_spin.value()))
+                node.set_property('rag_overlap', str(dialog.rag_overlap_spin.value()))
+                node.set_property('rag_top_k', str(dialog.rag_top_k_spin.value()))
+                node.set_property('rag_include_raw_input', str(dialog.rag_include_raw_input_checkbox.isChecked()).lower())
+                node.set_property('rag_max_chars', str(dialog.rag_max_chars_spin.value()))
+                try:
+                    import json as _json
+                    docs = [dialog.rag_documents_list.item(i).text() for i in range(dialog.rag_documents_list.count())]
+                    node.set_property('rag_documents', _json.dumps(docs))
+                except Exception:
+                    node.set_property('rag_documents', '[]')
                 
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:
@@ -879,6 +945,51 @@ class NodeOperations:
                 self.parent_widget, 
                 "Error", 
                 f"Failed to edit TTS node: {str(e)}"
+            )
+
+    def edit_form_filler_node(self, node):
+        """Edit a Form Filler node's properties."""
+        logger.info(f"Editing Form Filler node: {node.id}")
+        try:
+            logger.debug("Creating Form Filler dialog")
+            from ..dialogs import FormFillerDialog
+            
+            # Get current Form Filler configuration
+            current_config = {
+                'instruction': node.get_property('instruction') or 'Fill the form on the screen.',
+                'model': node.get_property('model') or 'llama3.2:latest',
+                'confidence_threshold': node.get_property('confidence_threshold') or '0.8'
+            }
+            
+            dialog = FormFillerDialog(self.parent_widget, current_config)
+            
+            if dialog.exec_() == dialog.Accepted:
+                logger.debug("Dialog accepted, updating node properties")
+                config = dialog.get_config()
+                
+                # Update node properties
+                # For now, since the dialog is empty/placeholder, we might not get updated config back
+                # But we should prepare for it. 
+                # The dialog implementation returns self.current_config
+                
+                if config:
+                    if 'instruction' in config:
+                        node.set_property('instruction', config['instruction'])
+                    if 'model' in config:
+                        node.set_property('model', config['model'])
+                    if 'confidence_threshold' in config:
+                        node.set_property('confidence_threshold', config['confidence_threshold'])
+                
+                logger.info(f"Successfully edited Form Filler node: {node.id}")
+            else:
+                logger.debug("Dialog cancelled")
+                
+        except Exception as e:
+            logger.error(f"Error editing Form Filler node: {e}")
+            QMessageBox.critical(
+                self.parent_widget, 
+                "Error", 
+                f"Failed to edit Form Filler node: {str(e)}"
             )
             
     # DEPRECATED: Context Builder - edit function disabled

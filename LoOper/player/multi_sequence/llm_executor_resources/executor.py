@@ -6,7 +6,7 @@ from ...config import logger
 from .config_utils import get_default_api_url
 from .prompt_utils import substitute_variables, assemble_enhanced_prompt
 from .inputs import get_input_text
-from .rag_utils import build_rag_context
+from .rag_utils import build_rag_context, build_rag_context_from_docs
 from .vision_utils import prepare_vision_images
 
 
@@ -163,6 +163,7 @@ class LLMExecutor:
             return None
 
         rag_context_text = None
+        rag_docs_context = None
         if use_direct_rag and input_source in ('previous', 'previous_node') and input_text and input_text.strip():
             rag_context_text, updated_prompt = build_rag_context(
                 client,
@@ -180,6 +181,25 @@ class LLMExecutor:
             if updated_prompt:
                 prompt = updated_prompt
 
+        try:
+            import json as _json
+            rag_docs = llm_config.get('rag_documents', []) or []
+            if isinstance(rag_docs, str):
+                rag_docs = _json.loads(rag_docs)
+        except Exception:
+            rag_docs = []
+        if rag_docs and use_direct_rag:
+            rag_docs_context = build_rag_context_from_docs(
+                client,
+                prompt,
+                rag_docs,
+                rag_embedding_model,
+                rag_chunk_size,
+                rag_overlap,
+                rag_top_k,
+                rag_max_chars,
+            )
+
         is_vision_model = client.is_vision_model(model)
         should_use_vision = use_vision or is_vision_model
         images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
@@ -187,6 +207,8 @@ class LLMExecutor:
         # Combine RAG context if available
         if rag_context_text:
             prompt = f"{rag_context_text}\n\n{prompt}"
+        if rag_docs_context:
+            prompt = f"{rag_docs_context}\n\n{prompt}"
 
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before API call")

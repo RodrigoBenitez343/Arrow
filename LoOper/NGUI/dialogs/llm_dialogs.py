@@ -79,12 +79,9 @@ class LLMPropertiesDialog(QDialog):
             self.model_combo.setCurrentText(current_model)
     
     def setup_ui(self):
-        """Setup the UI for the dialog with tabbed interface"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        
-        # Create tab widget
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
@@ -107,18 +104,13 @@ class LLMPropertiesDialog(QDialog):
                 background-color: #404040;
             }
         """)
-        
-        # Create tabs
         self.create_basic_tab()
         self.create_prompt_tab()
         self.create_advanced_tab()
         self.create_features_tab()
-        
+        self.create_rag_tab()
         layout.addWidget(self.tab_widget)
-        
-        # Dialog buttons
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        # Localize button texts
         ok_btn = button_box.button(QDialogButtonBox.Ok)
         cancel_btn = button_box.button(QDialogButtonBox.Cancel)
         if ok_btn:
@@ -560,6 +552,22 @@ class LLMPropertiesDialog(QDialog):
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
             self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
+            self.use_direct_rag_checkbox.setChecked(self.current_config.get('use_direct_rag', False))
+            self.rag_embedding_model_entry.setText(self.current_config.get('rag_embedding_model', 'nomic-embed-text'))
+            self.rag_chunk_size_spin.setValue(self.current_config.get('rag_chunk_size', 500))
+            self.rag_overlap_spin.setValue(self.current_config.get('rag_overlap', 100))
+            self.rag_top_k_spin.setValue(self.current_config.get('rag_top_k', 3))
+            self.rag_include_raw_input_checkbox.setChecked(self.current_config.get('rag_include_raw_input', False))
+            self.rag_max_chars_spin.setValue(self.current_config.get('rag_max_chars', 1500))
+            docs = self.current_config.get('rag_documents', []) or []
+            try:
+                import json as _json
+                if isinstance(docs, str):
+                    docs = _json.loads(docs)
+            except Exception:
+                docs = []
+            for p in docs:
+                self.rag_documents_list.addItem(p)
             
             # Load template
             template_applied = self.current_config.get('template_applied', 'Custom (no template)')
@@ -714,6 +722,7 @@ class LLMPropertiesDialog(QDialog):
             'max_tokens': self.max_tokens_spin.value(),
             'output_variable': self.output_variable_entry.text() or 'llm_output',
             'write_text': self.write_text_checkbox.isChecked(),
+            'use_async': self.use_async_checkbox.isChecked(),
             'use_vision': self.use_vision_checkbox.isChecked(),
             'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
             
@@ -730,15 +739,99 @@ class LLMPropertiesDialog(QDialog):
         # Add input source configuration
         selected_button = self.input_source_group.checkedButton()
         if selected_button:
-            config['input_source'] = self.input_source_group.id(selected_button)
+            source_id = self.input_source_group.id(selected_button)
+            mapping = {0: 'none', 1: 'ocr', 2: 'previous', 3: 'clipboard'}
+            config['input_source'] = mapping.get(source_id, 'none')
         else:
-            config['input_source'] = 0
+            config['input_source'] = 'none'
             
         config['ocr_confidence'] = self.ocr_confidence_spin.value()
         config['ocr_preprocessing'] = self.ocr_preprocessing_combo.currentText()
         config['template_applied'] = self.template_combo.currentText()
         
+        config.update({
+            'use_direct_rag': self.use_direct_rag_checkbox.isChecked(),
+            'rag_embedding_model': self.rag_embedding_model_entry.text() or 'nomic-embed-text',
+            'rag_chunk_size': self.rag_chunk_size_spin.value(),
+            'rag_overlap': self.rag_overlap_spin.value(),
+            'rag_top_k': self.rag_top_k_spin.value(),
+            'rag_include_raw_input': self.rag_include_raw_input_checkbox.isChecked(),
+            'rag_max_chars': self.rag_max_chars_spin.value(),
+            'rag_documents': [self.rag_documents_list.item(i).text() for i in range(self.rag_documents_list.count())]
+        })
         return config
+
+    def create_rag_tab(self):
+        rag_tab = QWidget()
+        layout = QVBoxLayout(rag_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        params_group = QGroupBox("RAG Configuration")
+        params_layout = QGridLayout(params_group)
+        params_layout.setContentsMargins(8, 12, 8, 8)
+        params_layout.setSpacing(6)
+        params_layout.addWidget(QLabel("Enable RAG:"), 0, 0)
+        self.use_direct_rag_checkbox = QCheckBox("Use embeddings to add context")
+        params_layout.addWidget(self.use_direct_rag_checkbox, 0, 1)
+        params_layout.addWidget(QLabel("Embedding Model:"), 1, 0)
+        self.rag_embedding_model_entry = QLineEdit()
+        self.rag_embedding_model_entry.setText("nomic-embed-text")
+        params_layout.addWidget(self.rag_embedding_model_entry, 1, 1)
+        params_layout.addWidget(QLabel("Chunk Size:"), 2, 0)
+        self.rag_chunk_size_spin = QSpinBox()
+        self.rag_chunk_size_spin.setRange(50, 5000)
+        self.rag_chunk_size_spin.setValue(500)
+        params_layout.addWidget(self.rag_chunk_size_spin, 2, 1)
+        params_layout.addWidget(QLabel("Overlap:"), 3, 0)
+        self.rag_overlap_spin = QSpinBox()
+        self.rag_overlap_spin.setRange(0, 1000)
+        self.rag_overlap_spin.setValue(100)
+        params_layout.addWidget(self.rag_overlap_spin, 3, 1)
+        params_layout.addWidget(QLabel("Top K:"), 4, 0)
+        self.rag_top_k_spin = QSpinBox()
+        self.rag_top_k_spin.setRange(1, 20)
+        self.rag_top_k_spin.setValue(3)
+        params_layout.addWidget(self.rag_top_k_spin, 4, 1)
+        params_layout.addWidget(QLabel("Include Raw Input:"), 5, 0)
+        self.rag_include_raw_input_checkbox = QCheckBox("Also include raw previous input")
+        params_layout.addWidget(self.rag_include_raw_input_checkbox, 5, 1)
+        params_layout.addWidget(QLabel("Max Context Chars:"), 6, 0)
+        self.rag_max_chars_spin = QSpinBox()
+        self.rag_max_chars_spin.setRange(100, 10000)
+        self.rag_max_chars_spin.setValue(1500)
+        params_layout.addWidget(self.rag_max_chars_spin, 6, 1)
+        layout.addWidget(params_group)
+        docs_group = QGroupBox("Documents")
+        docs_layout = QVBoxLayout(docs_group)
+        self.rag_documents_list = QListWidget()
+        docs_layout.addWidget(self.rag_documents_list)
+        btns = QHBoxLayout()
+        add_btn = QPushButton("Add Document")
+        rem_btn = QPushButton("Remove Selected")
+        add_btn.clicked.connect(self.add_document)
+        rem_btn.clicked.connect(self.remove_selected_document)
+        btns.addWidget(add_btn)
+        btns.addWidget(rem_btn)
+        docs_layout.addLayout(btns)
+        layout.addWidget(docs_group)
+        layout.addStretch()
+        self.tab_widget.addTab(rag_tab, "RAG")
+
+    def add_document(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Document",
+            os.path.expanduser("~"),
+            "All Files (*.*);;Text Files (*.txt *.md *.csv *.json);;Word Documents (*.docx);;PDF Files (*.pdf)"
+        )
+        if path:
+            self.rag_documents_list.addItem(path)
+
+    def remove_selected_document(self):
+        items = self.rag_documents_list.selectedItems()
+        for it in items:
+            row = self.rag_documents_list.row(it)
+            self.rag_documents_list.takeItem(row)
     
     def apply_template(self, template_name):
         """Apply a predefined template to configure the LLM node"""

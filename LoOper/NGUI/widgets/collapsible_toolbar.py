@@ -10,7 +10,7 @@ from PyQt5.QtCore import QMimeData
 
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR,
-    LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR
+    LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR
 )
 
 
@@ -231,6 +231,7 @@ class CollapsibleToolbar(QWidget):
         nodes_col.addWidget(self._make_node_button("LLM", "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip="Add LLM Node"))
         nodes_col.addWidget(self._make_node_button("Chain", "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip="Add Chain Import Node"))
         nodes_col.addWidget(self._make_node_button("TTS", "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip="Add TTS Node"))
+        nodes_col.addWidget(self._make_node_button("Form", "form_filler", FORM_FILLER_COLOR, lambda: self.graph_view.add_form_filler_node(), tooltip="Add Form Filler Node"))
         nodes_col.addWidget(self._make_node_button("Cond", "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip="Add Conditional Node"))
         self._top_layout.addLayout(nodes_col)
         content_layout.addWidget(top_cluster)

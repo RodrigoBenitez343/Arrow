@@ -1,7 +1,7 @@
 import logging
 from NodeGraphQt import NodeGraph
 from PyQt5.QtWidgets import QVBoxLayout, QSplitter
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode  # ContextBuilderNode deprecated
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode  # ContextBuilderNode deprecated
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -77,6 +77,8 @@ class GraphManager:
             # self.node_graph.register_node(ContextBuilderNode)
             logger.debug("Registering ChainImportNode")
             self.node_graph.register_node(ChainImportNode)
+            logger.debug("Registering FormFillerNode")
+            self.node_graph.register_node(FormFillerNode)
             logger.info("All custom node types registered successfully")
         except Exception as e:
             logger.error(f"Error registering custom nodes: {e}")

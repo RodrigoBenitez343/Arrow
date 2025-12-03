@@ -53,8 +53,9 @@ class OllamaEngine:
         """Initialize the Ollama engine"""
         logger.info("Initializing Ollama engine...")
         
-        # Create HTTP session
-        self._session = aiohttp.ClientSession()
+        # Create HTTP session with no timeout for local models
+        timeout = aiohttp.ClientTimeout(total=None)
+        self._session = aiohttp.ClientSession(timeout=timeout)
         
         # Check if Ollama is running
         try:
@@ -218,6 +219,161 @@ class OllamaEngine:
             logger.error(f"Test generation failed: {e}")
             return False
     
+    async def embeddings(self, model: str, inputs: List[str], normalize: Optional[bool] = None, pooling: Optional[str] = None) -> List[List[float]]:
+        """Generate embeddings using Ollama"""
+        if not self._initialized:
+            raise RuntimeError("Ollama engine not initialized")
+        
+        # Ensure model is present/loaded
+        # We try to load it if we track it, otherwise we assume Ollama handles it
+        if model not in self.loaded_models:
+             # Attempt to pull/load if not known, but don't fail strictly if it's just an embedding model not in our list
+             # For now, we rely on Ollama to handle the model if it exists.
+             pass
+
+        # Sanitize inputs
+        clean_inputs = []
+        for x in inputs:
+            s = str(x) if x is not None else ""
+            clean_inputs.append(s)
+            
+        if not clean_inputs or all(not s.strip() for s in clean_inputs):
+            return []
+
+        # Prepare payload
+        multiple = len(clean_inputs) > 1
+        val = clean_inputs if multiple else clean_inputs[0]
+        
+        payload = {
+            "model": model,
+            "input": val,
+        }
+        if normalize is not None:
+            payload["normalize"] = normalize
+        if pooling is not None:
+            payload["pooling"] = pooling
+
+        logger.info(f"Sending embeddings request to Ollama: {json.dumps(payload)[:500]}...")
+            
+        try:
+            async with self._session.post(f"{self.base_url}/api/embed", json=payload) as response:
+                if response.status == 404:
+                     # Fallback to old /api/embeddings endpoint if /api/embed doesn't exist
+                     logger.info("Endpoint /api/embed not found, falling back to /api/embeddings")
+                     # Legacy endpoint might need 'prompt'
+                     payload["prompt"] = val
+                     async with self._session.post(f"{self.base_url}/api/embeddings", json=payload) as response_old:
+                         response = response_old
+                         if response.status != 200:
+                            text = await response.text()
+                            logger.error(f"Embeddings failed with status {response.status}: {text}")
+                            raise RuntimeError(f"Embeddings failed with status {response.status}")
+                        
+                         data = await response.json()
+                elif response.status != 200:
+                    text = await response.text()
+                    logger.error(f"Embeddings failed with status {response.status}: {text}")
+                    raise RuntimeError(f"Embeddings failed with status {response.status}")
+                else:
+                    text = await response.text()
+                    logger.info(f"Raw Ollama response (first 500 chars): {text[:500]}")
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                         logger.error("Failed to decode JSON from Ollama response")
+                         raise
+
+                # Normalize response
+                embeddings = await self._normalize_embeddings_response(len(clean_inputs), data, clean_inputs, model)
+                
+                # Ensure cardinality and non-empty vectors
+                if len(embeddings) != len(clean_inputs) or any((not v) or (isinstance(v, list) and len(v) == 0) for v in embeddings):
+                    # Fallback to per-input
+                    embeddings = await self._query_embeddings_per_input(clean_inputs, model)
+                    
+                return embeddings
+                
+        except Exception as e:
+            logger.error(f"Failed to generate embeddings: {e}")
+            raise
+
+    async def _normalize_embeddings_response(self, input_count: int, resp_data: Any, inputs: List[str], model: str) -> List[List[float]]:
+        """Normalize embeddings response to list of lists of floats"""
+        if isinstance(resp_data, dict):
+            # Preferred batch format
+            if "embeddings" in resp_data and isinstance(resp_data["embeddings"], list):
+                return resp_data["embeddings"]
+            # Single-vector format
+            if "embedding" in resp_data and isinstance(resp_data["embedding"], list):
+                if input_count > 1:
+                    logger.debug(f"Received single embedding for {input_count} inputs, triggering fallback")
+                    return await self._query_embeddings_per_input(inputs, model)
+                return [resp_data["embedding"]]
+            
+            logger.warning(f"Unexpected embeddings dict format: keys={list(resp_data.keys())}")
+            raise RuntimeError("Unexpected embeddings dict format")
+            
+        # List format
+        if isinstance(resp_data, list):
+            if resp_data and isinstance(resp_data[0], float):
+                # Single embedding vector
+                if input_count > 1:
+                    logger.debug(f"Received single flat embedding for {input_count} inputs, triggering fallback")
+                    return await self._query_embeddings_per_input(inputs, model)
+                return [resp_data]
+            if resp_data and isinstance(resp_data[0], list):
+                return resp_data
+        
+        logger.warning(f"Invalid embeddings response type: {type(resp_data)}")
+        raise RuntimeError("Invalid embeddings response type")
+
+    async def _query_embeddings_per_input(self, texts: List[str], model: str) -> List[List[float]]:
+        """Query embeddings one by one (fallback)"""
+        out: List[List[float]] = []
+        for t in texts:
+            # Fix: Do not send 'prompt' parameter as it breaks newer Ollama versions
+            payload = {"model": model, "input": t}
+            
+            # Try /api/embed first
+            try:
+                async with self._session.post(f"{self.base_url}/api/embed", json=payload) as response:
+                    if response.status == 404:
+                        # Fallback to /api/embeddings
+                         # Ensure 'prompt' is set for legacy endpoint
+                         payload["prompt"] = t
+                         async with self._session.post(f"{self.base_url}/api/embeddings", json=payload) as response_old:
+                             response = response_old
+                             if response.status != 200:
+                                 logger.warning(f"Per-input embedding failed (legacy): {response.status}")
+                                 out.append([])
+                                 continue
+                             sub_data = await response.json()
+                    elif response.status != 200:
+                        logger.warning(f"Per-input embedding failed: {response.status}")
+                        out.append([])
+                        continue
+                    else:
+                        sub_data = await response.json()
+
+                    if isinstance(sub_data, dict):
+                        if "embeddings" in sub_data and isinstance(sub_data["embeddings"], list) and sub_data["embeddings"]:
+                             # /api/embed returns list of lists even for single input
+                             out.append(sub_data["embeddings"][0])
+                        elif "embedding" in sub_data and isinstance(sub_data["embedding"], list):
+                             out.append(sub_data["embedding"])
+                        else:
+                             out.append([])
+                    elif isinstance(sub_data, list) and sub_data and isinstance(sub_data[0], float):
+                        out.append(sub_data)
+                    else:
+                        out.append([])
+                        
+            except Exception as e:
+                logger.error(f"Per-input embedding exception: {e}")
+                out.append([])
+                
+        return out
+
     async def unload_model(self, model_name: str) -> bool:
         """Unload a model from memory (Ollama handles this automatically)"""
         if model_name not in self.loaded_models:

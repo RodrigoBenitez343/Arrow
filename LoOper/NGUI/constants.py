@@ -16,6 +16,7 @@ CONDITIONAL_COLOR = '#800080' # Purple for conditionals
 LLM_COLOR = '#FF6B35' # Orange for LLM nodes
 TTS_COLOR = '#00CED1' # Dark turquoise for TTS nodes
 CHAIN_IMPORT_COLOR = '#32CD32' # Lime green for chain import nodes
+FORM_FILLER_COLOR = '#DDA0DD' # Plum for Form Filler nodes
 
 # Port Color Mapping (visual emphasis; labels are background logic)
 INPUT_PORT_COLOR = '#4DB6FF'   # Bright blue for inputs

@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode
 
 # Import cache invalidation function
 try:
@@ -34,7 +34,7 @@ class ConfigManager:
         logger.info("Initializing ConfigManager")
         try:
             self.parent_widget = parent_widget
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": []}
             logger.debug("ConfigManager initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing ConfigManager: {e}")
@@ -46,7 +46,7 @@ class ConfigManager:
         try:
             self.save_current_state()
             config_copy = self.chain_config.copy()
-            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes")
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes")
             return config_copy
         except Exception as e:
             logger.error(f"Error getting chain config: {e}")
@@ -58,7 +58,7 @@ class ConfigManager:
         try:
             # Clear current config
             logger.debug("Clearing current configuration")
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": []}
             
             # Get all nodes
             logger.debug("Getting all nodes from graph")
@@ -82,10 +82,13 @@ class ConfigManager:
                 elif isinstance(node, ChainImportNode):
                     logger.debug(f"Saving chain import node: {node.id}")
                     self._save_chain_import_node(node)
+                elif isinstance(node, FormFillerNode):
+                    logger.debug(f"Saving form filler node: {node.id}")
+                    self._save_form_filler_node(node)
                 else:
                     logger.warning(f"Unknown node type: {type(node).__name__}")
             
-            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes")
+            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes")
                     
         except Exception as e:
             logger.error(f"Error saving current state: {e}")
@@ -120,10 +123,11 @@ class ConfigManager:
                     "conditional_nodes": loaded_config.get("conditional_nodes", []),
                     "llm_nodes": loaded_config.get("llm_nodes", []),
                     "tts_nodes": loaded_config.get("tts_nodes", []),
-                    "chain_import_nodes": loaded_config.get("chain_import_nodes", [])
+                    "chain_import_nodes": loaded_config.get("chain_import_nodes", []),
+                    "form_filler_nodes": loaded_config.get("form_filler_nodes", [])
                 }
                 
-                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes")
+                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes, {len(self.chain_config.get('form_filler_nodes', []))} form filler nodes")
                     
                 # Build graph from config
                 logger.debug("Building graph from loaded configuration")
@@ -243,6 +247,10 @@ class ConfigManager:
             # Create chain import nodes
             logger.debug("Creating chain import nodes")
             self._create_chain_import_nodes(node_map)
+            
+            # Create form filler nodes
+            logger.debug("Creating form filler nodes")
+            self._create_form_filler_nodes(node_map)
             
             # Restore connections
             logger.debug("Restoring node connections")
@@ -391,10 +399,7 @@ class ConfigManager:
         """Save an LLM node to configuration."""
         logger.debug(f"Saving LLM node {node.id} to configuration")
         try:
-            # Get the complete LLM configuration from the node
             llm_config = node.get_llm_config() if hasattr(node, 'get_llm_config') else {}
-            
-            # Build comprehensive LLM data with all properties from llm_config
             llm_data = {
                 "prompt": llm_config.get('prompt', ''),
                 "model": llm_config.get('model', 'llama3.2:latest'),
@@ -415,11 +420,18 @@ class ConfigManager:
                 "ocr_confidence": llm_config.get('ocr_confidence', 0.5),
                 "ocr_preprocessing": llm_config.get('ocr_preprocessing', True),
                 "use_async": llm_config.get('use_async', True),
+                "use_direct_rag": llm_config.get('use_direct_rag', False),
+                "rag_embedding_model": llm_config.get('rag_embedding_model', 'nomic-embed-text'),
+                "rag_chunk_size": llm_config.get('rag_chunk_size', 500),
+                "rag_overlap": llm_config.get('rag_overlap', 100),
+                "rag_top_k": llm_config.get('rag_top_k', 3),
+                "rag_include_raw_input": llm_config.get('rag_include_raw_input', False),
+                "rag_max_chars": llm_config.get('rag_max_chars', 1500),
+                "rag_documents": llm_config.get('rag_documents', []),
                 "node_id": node.id,
-                "position": node.pos(),  # pos() returns [x, y] list directly
+                "position": node.pos(),
                 "connections": self._get_node_connections(node)
             }
-            
             self.chain_config["llm_nodes"].append(llm_data)
             logger.debug(f"Successfully saved LLM node with model: {llm_data['model']} and all properties")
         except Exception as e:
@@ -487,6 +499,27 @@ class ConfigManager:
             logger.debug(f"Successfully saved chain import node with file: {chain_import_data['chain_file_path']}")
         except Exception as e:
             logger.error(f"Error saving chain import node {node.id}: {e}")
+            raise
+            
+    def _save_form_filler_node(self, node):
+        """Save a form filler node to configuration."""
+        logger.debug(f"Saving form filler node {node.id} to configuration")
+        try:
+            form_filler_config = node.get_form_filler_config()
+            
+            form_filler_data = {
+                "instruction": form_filler_config.get('instruction', ''),
+                "model": form_filler_config.get('model', 'llama3.2:latest'),
+                "confidence_threshold": form_filler_config.get('confidence_threshold', 0.8),
+                "node_id": node.id,
+                "position": node.pos(),
+                "connections": self._get_node_connections(node)
+            }
+            
+            self.chain_config["form_filler_nodes"].append(form_filler_data)
+            logger.debug(f"Successfully saved form filler node with instruction: {form_filler_data['instruction'][:30]}...")
+        except Exception as e:
+            logger.error(f"Error saving form filler node {node.id}: {e}")
             raise
         
     def _get_node_connections(self, node):
@@ -642,31 +675,24 @@ class ConfigManager:
         try:
             llm_nodes = self.chain_config.get("llm_nodes", [])
             logger.debug(f"Found {len(llm_nodes)} LLM nodes to create")
-            
             for llm_data in llm_nodes:
-                # Handle both formats: direct properties and nested llm_configuration
                 if "llm_configuration" in llm_data:
-                    # New format with nested configuration
                     config = llm_data["llm_configuration"]
                     model = config.get('model', 'llama3.2:latest')
                     prompt = config.get('prompt', '')
                     temperature = config.get('temperature', 0.7)
                     max_tokens = config.get('max_tokens', 500)
                 else:
-                    # Old format with direct properties - use all available properties
                     model = llm_data.get('model', 'llama3.2:latest')
                     prompt = llm_data.get('prompt', '')
                     temperature = llm_data.get('temperature', 0.7)
                     max_tokens = llm_data.get('max_tokens', 500)
-                
                 logger.debug(f"Creating LLM node with model: {model}")
                 node = self.parent_widget.graph_manager.create_node(
                     'llm.LLMNode',
                     name='LLM'
                 )
-                
                 if node:
-                    # Set all available properties from the saved data
                     node.set_property('prompt', llm_data.get('prompt', ''))
                     node.set_property('model', llm_data.get('model', 'llama3.2:latest'))
                     node.set_property('system_message', llm_data.get('system_message', ''))
@@ -686,32 +712,24 @@ class ConfigManager:
                     node.set_property('ocr_confidence', str(llm_data.get('ocr_confidence', 0.5)))
                     node.set_property('ocr_preprocessing', str(llm_data.get('ocr_preprocessing', 'true')))
                     node.set_property('use_async', str(llm_data.get('use_async', 'true')))
-                    
-                    logger.debug(f"Set all properties for LLM node with model: {model}")
-                    
-                    # Set position
+                    node.set_property('use_direct_rag', str(llm_data.get('use_direct_rag', 'false')).lower())
+                    node.set_property('rag_embedding_model', llm_data.get('rag_embedding_model', 'nomic-embed-text'))
+                    node.set_property('rag_chunk_size', str(llm_data.get('rag_chunk_size', 500)))
+                    node.set_property('rag_overlap', str(llm_data.get('rag_overlap', 100)))
+                    node.set_property('rag_top_k', str(llm_data.get('rag_top_k', 3)))
+                    node.set_property('rag_include_raw_input', str(llm_data.get('rag_include_raw_input', 'false')).lower())
+                    node.set_property('rag_max_chars', str(llm_data.get('rag_max_chars', 1500)))
+                    try:
+                        import json as _json
+                        node.set_property('rag_documents', _json.dumps(llm_data.get('rag_documents', [])))
+                    except Exception:
+                        node.set_property('rag_documents', '[]')
                     position = llm_data.get("position", [0, 0])
                     node.set_pos(*position)
-                    logger.debug(f"Set position for LLM node: {position}")
-                    
-                    # Add to parent widget's tracking list
                     if hasattr(self.parent_widget, 'llm_nodes'):
                         self.parent_widget.llm_nodes.append(node)
-                        logger.debug(f"Added LLM node to parent widget tracking list")
-                    # Set position
-                    position = llm_data.get("position", [0, 0])
-                    node.set_pos(*position)
-                    logger.debug(f"Set position for LLM node: {position}")
-                    
-                    # Add to parent widget's tracking list
-                    if hasattr(self.parent_widget, 'llm_nodes'):
-                        self.parent_widget.llm_nodes.append(node)
-                        logger.debug(f"Added LLM node to parent widget tracking list")
-                        
-                    # Store in node map
                     node_id = llm_data.get("id") or llm_data.get("node_id", node.id)
                     node_map[node_id] = node
-                    logger.debug(f"Added LLM node to node map: {node_id}")
                 else:
                     logger.error(f"Failed to create LLM node with model: {model}")
         except Exception as e:
@@ -845,6 +863,52 @@ class ConfigManager:
             logger.error(f"Error creating chain import nodes: {e}")
             raise
                 
+    def _create_form_filler_nodes(self, node_map):
+        """Create form filler nodes from configuration."""
+        logger.debug("Creating form filler nodes from configuration")
+        try:
+            form_filler_nodes = self.chain_config.get("form_filler_nodes", [])
+            logger.debug(f"Found {len(form_filler_nodes)} form filler nodes to create")
+            
+            for ff_data in form_filler_nodes:
+                instruction = ff_data.get('instruction', 'Fill the form on the screen.')
+                model = ff_data.get('model', 'llama3.2:latest')
+                confidence_threshold = ff_data.get('confidence_threshold', 0.8)
+                
+                logger.debug(f"Creating form filler node with instruction: {instruction[:30]}...")
+                node = self.parent_widget.graph_manager.create_node(
+                    'form_filler.FormFillerNode',
+                    name='Form Filler'
+                )
+                
+                if node:
+                    # Set properties
+                    node.set_property('instruction', instruction)
+                    node.set_property('model', model)
+                    node.set_property('confidence_threshold', str(confidence_threshold))
+                    
+                    logger.debug(f"Set properties for form filler node")
+                    
+                    # Set position
+                    position = ff_data.get("position", [0, 0])
+                    node.set_pos(*position)
+                    logger.debug(f"Set position for form filler node: {position}")
+                    
+                    # Add to parent widget's tracking list
+                    if hasattr(self.parent_widget, 'form_filler_nodes'):
+                         self.parent_widget.form_filler_nodes.append(node)
+                         logger.debug(f"Added form filler node to parent widget tracking list")
+                         
+                    # Store in node map
+                    node_id = ff_data.get("node_id", node.id)
+                    node_map[node_id] = node
+                    logger.debug(f"Added form filler node to node map: {node_id}")
+                else:
+                    logger.error(f"Failed to create form filler node")
+        except Exception as e:
+            logger.error(f"Error creating form filler nodes: {e}")
+            raise
+
     def _restore_connections(self, node_map):
         """Restore connections between nodes."""
         logger.debug("Restoring connections between nodes")
@@ -854,7 +918,8 @@ class ConfigManager:
                 self.chain_config.get("conditional_nodes", []) +
                 self.chain_config.get("llm_nodes", []) +
                 self.chain_config.get("tts_nodes", []) +
-                self.chain_config.get("chain_import_nodes", [])
+                self.chain_config.get("chain_import_nodes", []) +
+                self.chain_config.get("form_filler_nodes", [])
             )
             
             total_connections = sum(len(node_data.get("connections", [])) for node_data in all_node_data)
