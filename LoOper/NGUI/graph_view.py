@@ -53,12 +53,13 @@ class GraphViewWidget(QWidget):
             self._paste_counter = 0
             # Track last context menu scene position for paste anchoring
             self._last_context_scene_pos = None
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": []}
             self.sequence_nodes = []
             self.action_nodes = []
             self.conditional_nodes = []
             self.llm_nodes = []
             self.tts_nodes = []
+            self.form_filler_nodes = []
             self.current_view = 'sequence'  # Track current view: 'sequence' or 'action'
             self.current_sequence_idx = None  # Track currently selected sequence
             self.saved_sequence_state = None  # Store sequence view state when switching to action view
@@ -273,6 +274,9 @@ class GraphViewWidget(QWidget):
                         elif node_type == 'chain_import':
                             logger.debug(f"Creating Chain Import node at position: {drop_pos}")
                             self.node_operations.add_chain_import_node(pos=drop_pos)
+                        elif node_type == 'form_filler':
+                            logger.debug(f"Creating Form Filler node at position: {drop_pos}")
+                            self.node_operations.add_form_filler_node(pos=drop_pos)
                         elif node_type == 'sequence':
                             try:
                                 if mime.hasFormat('application/x-looper-sequence-file'):
@@ -359,6 +363,12 @@ class GraphViewWidget(QWidget):
                 "loop_count",
                 "extra_delay",
                 "enabled",
+            }
+        if node_type in ("form_filler", "form_filler.FormFillerNode") or node_type.endswith("FormFillerNode"):
+            return {
+                "instruction",
+                "model",
+                "confidence_threshold",
             }
         return set()
 
@@ -482,6 +492,8 @@ class GraphViewWidget(QWidget):
                     new_node = self.graph_manager.create_node("tts.TTSNode", pos=new_pos)
                 elif node_type.endswith("ChainImportNode") or node_type == "chain_import":
                     new_node = self.graph_manager.create_node("chain_import.ChainImportNode", pos=new_pos)
+                elif node_type.endswith("FormFillerNode") or node_type == "form_filler":
+                    new_node = self.graph_manager.create_node("form_filler.FormFillerNode", pos=new_pos)
                 else:
                     # Fallback: attempt using the identifier directly
                     new_node = self.graph_manager.create_node(node_type, pos=new_pos)
@@ -670,6 +682,18 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error adding TTS node: {str(e)}", exc_info=True)
             return None
+
+    def add_form_filler_node(self, position=None):
+        """Add a new Form Filler node to the graph"""
+        logger.debug(f"Adding Form Filler node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_form_filler_node(resolved_pos)
+            logger.info(f"Form Filler node added successfully: {result.name() if result else 'None'}")
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Form Filler node: {str(e)}", exc_info=True)
+            return None
             
     # DEPRECATED: Context Builder - remove add function
     # def add_context_builder_node(self, position=None):
@@ -802,7 +826,7 @@ class GraphViewWidget(QWidget):
         logger.debug("Getting chain configuration")
         try:
             config_copy = self.config_manager.get_chain_config()
-            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes")
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes")
             return config_copy
         except Exception as e:
             logger.error(f"Error getting chain config: {e}")
@@ -923,6 +947,15 @@ class GraphViewWidget(QWidget):
             logger.info("Chain Import node edited successfully")
         except Exception as e:
             logger.error(f"Error editing Chain Import node: {str(e)}", exc_info=True)
+
+    def edit_form_filler_node(self, node):
+        """Open the dialog to edit a Form Filler node"""
+        logger.debug(f"Editing Form Filler node: {node.name() if node else 'None'}")
+        try:
+            self.node_operations.edit_form_filler_node(node)
+            logger.info("Form Filler node edited successfully")
+        except Exception as e:
+            logger.error(f"Error editing Form Filler node: {str(e)}", exc_info=True)
 
     def edit_sequence(self, node):
         """Open the dialog to edit a Sequence node"""

@@ -71,7 +71,7 @@ class OllamaClient:
     def list_models(self) -> List[Dict[str, Any]]:
         """Get list of available models"""
         try:
-            response = self.session.get(f"{self.base_url}/models", timeout=10)
+            response = self.session.get(f"{self.base_url}/models")
             response.raise_for_status()
             data = response.json()
             # Extract the models array from the response
@@ -115,21 +115,29 @@ class OllamaClient:
         if images is not None:
             payload["images"] = self._process_images(images)
         
-        try:
-            response = self.session.post(
-                f"{self.base_url}/generate",
-                json=payload
-            )
-            response.raise_for_status()
-            result = response.json()
-            
-            # Normalize response format - convert 'text' to 'response' if needed
-            if 'text' in result and 'response' not in result:
-                result['response'] = result['text']
-            
-            return result
-        except requests.exceptions.RequestException as e:
-            return {"error": str(e)}
+        attempt = 0
+        last_error: Optional[Exception] = None
+        while attempt < 3:
+            try:
+                response = self.session.post(
+                    f"{self.base_url}/generate",
+                    json=payload
+                )
+                response.raise_for_status()
+                result = response.json()
+                if 'text' in result and 'response' not in result:
+                    result['response'] = result['text']
+                return result
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                attempt += 1
+                if self.debug:
+                    print(f"Generate request failed (attempt {attempt}): {e}")
+                try:
+                    time.sleep(min(1.0, 0.5 * attempt))
+                except Exception:
+                    pass
+        return {"error": str(last_error) if last_error else "Generate request failed"}
     
     def generate(self, model: str, prompt: str, 
                 temperature: Optional[float] = None,
@@ -171,30 +179,23 @@ class OllamaClient:
     def embeddings(self, model: str, inputs: List[str],
                    normalize: Optional[bool] = None,
                    pooling: Optional[str] = None) -> List[List[float]]:
-        """Get embeddings for a list of input texts via the API gateway.
-
-        Args:
-            model: Embedding-capable model name
-            inputs: List of texts to embed
-            normalize: Optional normalization flag
-            pooling: Optional pooling strategy (e.g., 'mean')
-
-        Returns:
-            List of embedding vectors (each is a list of floats)
-        """
         payload: Dict[str, Any] = {"model": model, "inputs": inputs}
         if normalize is not None:
             payload["normalize"] = normalize
         if pooling is not None:
             payload["pooling"] = pooling
 
-        # Short-circuit if inputs are empty or whitespace-only
         if not inputs or all((not s) or (isinstance(s, str) and s.strip() == "") for s in inputs):
             if self.debug:
                 print("Embeddings skipped: no valid input texts provided.")
             return []
 
-        # Try API call with a short retry; then fall back to local embeddings
+        if self.debug:
+            print(f"Sending {len(inputs)} inputs to embeddings endpoint at {self.base_url}/embeddings")
+            # Print first input preview
+            if inputs:
+                print(f"Input 0 preview: {inputs[0][:100]}...")
+
         attempt_count = 0
         last_error: Optional[Exception] = None
         while attempt_count < 2:
@@ -205,32 +206,94 @@ class OllamaClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-                # Normalize gateway response
+
+                if self.debug:
+                    print(f"Embeddings response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+
+                vectors: List[List[float]] = []
                 if isinstance(data, dict):
                     if "embeddings" in data and isinstance(data["embeddings"], list):
-                        return cast(List[List[float]], data["embeddings"])
+                        vectors = cast(List[List[float]], data["embeddings"])
                     elif "embedding" in data and isinstance(data["embedding"], list):
-                        return [cast(List[float], data["embedding"])]
-                # Fallbacks
-                if isinstance(data, list) and data and isinstance(data[0], (list, float)):
+                        vectors = [cast(List[float], data["embedding"])]
+                elif isinstance(data, list):
                     if data and isinstance(data[0], float):
-                        return [cast(List[float], data)]
-                    return cast(List[List[float]], data)
-                # Unexpected format
-                if self.debug:
-                    print(f"Unexpected embeddings response: {data}")
-                break
+                        vectors = [cast(List[float], data)]
+                    elif data and isinstance(data[0], list):
+                        vectors = cast(List[List[float]], data)
+                else:
+                    if self.debug:
+                        print(f"Unexpected embeddings response: {data}")
+                    raise ValueError("Invalid embeddings response")
+
+                def _valid(vecs: List[List[float]]) -> bool:
+                    if len(vecs) != len(inputs):
+                        return False
+                    for v in vecs:
+                        if not isinstance(v, list) or len(v) == 0:
+                            return False
+                    return True
+
+                if not _valid(vectors):
+                    if self.debug:
+                        print(f"Batch embeddings failed validation. Falling back to per-input processing for {len(inputs)} inputs.")
+                    
+                    per_vectors: List[List[float]] = []
+                    for idx, t in enumerate(inputs):
+                        try:
+                            # Add prompt for legacy endpoint compatibility
+                            payload_single = {"model": model, "inputs": [t], "prompt": t}
+                            r2 = self.session.post(
+                                f"{self.base_url}/embeddings",
+                                json=payload_single
+                            )
+                            r2.raise_for_status()
+                            d2 = r2.json()
+                            
+                            v = []
+                            if isinstance(d2, dict):
+                                if "embeddings" in d2 and isinstance(d2["embeddings"], list) and len(d2["embeddings"]) == 1:
+                                    v = cast(List[float], d2["embeddings"][0])
+                                elif "embedding" in d2 and isinstance(d2["embedding"], list):
+                                    v = cast(List[float], d2["embedding"])
+                            elif isinstance(d2, list) and d2 and isinstance(d2[0], float):
+                                v = cast(List[float], d2)
+                                
+                            per_vectors.append(v if v else [])
+                        except Exception as e:
+                            if self.debug:
+                                print(f"Per-input embedding failed for item {idx}: {e}")
+                            per_vectors.append([])
+
+                    if _valid(per_vectors):
+                        return per_vectors
+                    
+                    valid_count = sum(1 for v in per_vectors if isinstance(v, list) and len(v) > 0)
+                    if self.debug:
+                        print(f"Embeddings fallback failed. Inputs: {len(inputs)}, Valid vectors: {valid_count}")
+                        
+                    raise ValueError(f"Empty embedding vectors (valid: {valid_count}/{len(inputs)})")
+
+                return vectors
             except requests.exceptions.RequestException as e:
                 last_error = e
                 attempt_count += 1
                 if self.debug:
                     print(f"Embeddings request failed (attempt {attempt_count}): {e}")
-                # Small delay before retry
+                try:
+                    time.sleep(0.3)
+                except Exception:
+                    pass
+            except Exception as e:
+                last_error = e
+                attempt_count += 1
+                if self.debug:
+                    print(f"Embeddings processing error (attempt {attempt_count}): {e}")
                 try:
                     time.sleep(0.2)
                 except Exception:
                     pass
-        # Do not use local fallback; return empty to indicate failure
+
         if self.debug:
             print("Embeddings API did not return a usable result; no local fallback will be used.")
         return []

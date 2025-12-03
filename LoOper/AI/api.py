@@ -9,7 +9,7 @@ import sys
 from typing import List, Optional, Dict, Any, Union
 import uvicorn
 sys.path.append(os.path.dirname(__file__))
-from AI.comorag_engine import ComoRAGEngine
+from comorag_engine import ComoRAGEngine
 import asyncio
 from typing import Set
 import threading
@@ -58,7 +58,7 @@ HARDCODED_REQUIRED_VISION_MODELS: List[str] = [
 
 def _list_ollama_models() -> Set[str]:
     try:
-        resp = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=10)
+        resp = requests.get(f"{get_ollama_base_url()}/api/tags")
         resp.raise_for_status()
         data = resp.json()
         names = set()
@@ -75,10 +75,10 @@ def _list_ollama_models() -> Set[str]:
 def _pull_ollama_model(model_name: str) -> bool:
     try:
         print(f"[BOOTSTRAP] Pulling model '{model_name}' from Ollama registry...")
-        r = requests.post(f"{get_ollama_base_url()}/api/pull", json={"name": model_name}, stream=True, timeout=120)
+        r = requests.post(f"{get_ollama_base_url()}/api/pull", json={"name": model_name}, stream=True)
         if r.status_code != 200:
             # Some older servers only accept GET with params
-            r = requests.get(f"{get_ollama_base_url()}/api/pull", params={"name": model_name}, stream=True, timeout=120)
+            r = requests.get(f"{get_ollama_base_url()}/api/pull", params={"name": model_name}, stream=True)
         if r.status_code != 200:
             print(f"[BOOTSTRAP] Failed to start pull for '{model_name}': {r.status_code}")
             return False
@@ -204,9 +204,9 @@ def is_vision_model(model_name: str) -> bool:
     base = get_ollama_base_url()
     try:
         url = f"{base}/api/show"
-        resp = requests.get(url, params={"name": model_name}, timeout=5)
+        resp = requests.get(url, params={"name": model_name})
         if resp.status_code != 200:
-            resp = requests.post(url, json={"name": model_name}, timeout=5)
+            resp = requests.post(url, json={"name": model_name})
         if resp.status_code == 200:
             data = resp.json() if isinstance(resp.json(), dict) else {}
             template = str(data.get("template", "")).lower()
@@ -538,14 +538,20 @@ async def get_embeddings(request: EmbeddingsRequest):
 
         # If all inputs are empty, return empty embeddings
         if not inputs or all((not s) or (s.strip() == "") for s in inputs):
+            print("[DEBUG] Embeddings: No valid inputs provided")
             return {"embeddings": []}
+            
+        print(f"[DEBUG] Embeddings: Processing {len(inputs)} inputs for model {request.model}")
+        if inputs:
+            print(f"[DEBUG] Embeddings: Input 0 preview: {inputs[0][:50]}...")
 
         # Prepare payload for Ollama embeddings API
         # Ollama expects { model: <model>, input: <string or [strings]> }
         multiple = len(inputs) > 1
+        val = inputs if multiple else inputs[0]
         ollama_payload: Dict[str, Any] = {
             "model": request.model,
-            "input": inputs if multiple else inputs[0],
+            "input": val,
         }
         # Optional fields if needed in future
         if request.normalize is not None:
@@ -553,13 +559,35 @@ async def get_embeddings(request: EmbeddingsRequest):
         if request.pooling is not None:
             ollama_payload["pooling"] = request.pooling
 
-        # Call Ollama embeddings API
-        response = requests.post(
-            f"{get_ollama_base_url()}/api/embeddings",
-            json=ollama_payload
-        )
+        print(f"[DEBUG] Embeddings: Sending payload to Ollama: {json.dumps(ollama_payload)[:200]}...")
+
+        # Try /api/embed first (newer endpoint)
+        url = f"{get_ollama_base_url()}/api/embed"
+        try:
+            response = requests.post(url, json=ollama_payload)
+            if response.status_code == 404:
+                 # Fallback to /api/embeddings (legacy)
+                 # Some older/custom Ollama versions require "prompt" instead of "input"
+                 ollama_payload["prompt"] = val
+                 url = f"{get_ollama_base_url()}/api/embeddings"
+                 response = requests.post(url, json=ollama_payload)
+        except requests.exceptions.RequestException:
+            # If /api/embed fails completely (e.g. connection error), try /api/embeddings
+             ollama_payload["prompt"] = val
+             url = f"{get_ollama_base_url()}/api/embeddings"
+             response = requests.post(url, json=ollama_payload)
+
+        print(f"[DEBUG] Embeddings: Request to {url} returned status {response.status_code}")
+        try:
+            print(f"[DEBUG] Embeddings: Raw response body: {response.text[:500]}")
+        except Exception:
+            pass
+            
         response.raise_for_status()
         data = response.json()
+        
+        if isinstance(data, dict):
+             print(f"[DEBUG] Embeddings: Response keys: {list(data.keys())}")
 
         # Normalize Ollama response variants robustly
         def _normalize_response(payload_inputs_count: int, resp_data: Any) -> List[List[float]]:
@@ -572,44 +600,75 @@ async def get_embeddings(request: EmbeddingsRequest):
                     # If we sent multiple inputs but received a single embedding,
                     # re-query per-input to ensure correct cardinality.
                     if payload_inputs_count > 1:
+                        print("[DEBUG] Embeddings: Received single embedding for multiple inputs, falling back to per-input")
                         return _query_per_input(inputs, request.model)
                     return [resp_data["embedding"]]
                 # Unexpected dict format
+                print(f"[ERROR] Embeddings: Unexpected dict format: {resp_data.keys()}")
                 raise HTTPException(status_code=500, detail="Unexpected embeddings dict format")
             # Some servers may return a list directly
             if isinstance(resp_data, list):
                 if resp_data and isinstance(resp_data[0], float):
                     # Single embedding vector
                     if payload_inputs_count > 1:
-                        return _query_per_input(inputs, request.model)
+                         print("[DEBUG] Embeddings: Received single list embedding for multiple inputs, falling back to per-input")
+                         return _query_per_input(inputs, request.model)
                     return [resp_data]
                 if resp_data and isinstance(resp_data[0], list):
                     return resp_data
+            print(f"[ERROR] Embeddings: Invalid response type: {type(resp_data)}")
             raise HTTPException(status_code=500, detail="Invalid embeddings response type")
 
         def _query_per_input(texts: List[str], model_name: str) -> List[List[float]]:
             out: List[List[float]] = []
-            for t in texts:
+            for i, t in enumerate(texts):
+                # Try /api/embed first
                 sub_payload = {"model": model_name, "input": t}
-                sub_resp = requests.post(
-                    f"{get_ollama_base_url()}/api/embeddings",
-                    json=sub_payload
-                )
-                sub_resp.raise_for_status()
+                sub_url = f"{get_ollama_base_url()}/api/embed"
+                sub_resp = requests.post(sub_url, json=sub_payload)
+                
+                if sub_resp.status_code == 404 or sub_resp.status_code != 200:
+                     # Fallback
+                     sub_payload["prompt"] = t
+                     sub_url = f"{get_ollama_base_url()}/api/embeddings"
+                     sub_resp = requests.post(sub_url, json=sub_payload)
+                
+                if sub_resp.status_code != 200:
+                    print(f"[ERROR] Embeddings: Per-input request {i} failed: {sub_resp.status_code}")
+                    raise HTTPException(status_code=500, detail=f"Per-input request failed: {sub_resp.status_code}")
+                    
                 sub_data = sub_resp.json()
-                if isinstance(sub_data, dict) and "embedding" in sub_data and isinstance(sub_data["embedding"], list):
-                    out.append(sub_data["embedding"])
+                if isinstance(sub_data, dict):
+                    if "embeddings" in sub_data and isinstance(sub_data["embeddings"], list) and sub_data["embeddings"]:
+                         out.append(sub_data["embeddings"][0])
+                    elif "embedding" in sub_data and isinstance(sub_data["embedding"], list):
+                        out.append(sub_data["embedding"])
+                    else:
+                         print(f"[ERROR] Embeddings: Per-input {i} invalid dict: {sub_data.keys()}")
+                         raise HTTPException(status_code=500, detail="Sub-embedding response format invalid")
                 elif isinstance(sub_data, list) and sub_data and isinstance(sub_data[0], float):
                     out.append(sub_data)
                 else:
+                    print(f"[ERROR] Embeddings: Per-input {i} invalid type: {type(sub_data)}")
                     raise HTTPException(status_code=500, detail="Sub-embedding response format invalid")
             return out
 
         embeddings = _normalize_response(len(inputs), data)
-        # Ensure cardinality matches inputs
-        if len(embeddings) != len(inputs):
-            # As a safety, try per-input query if not yet done
+        
+        print(f"[DEBUG] Embeddings: Generated {len(embeddings)} vectors")
+        if embeddings:
+             print(f"[DEBUG] Embeddings: First vector length: {len(embeddings[0]) if embeddings[0] else 0}")
+        
+        # Ensure cardinality and non-empty vectors
+        if len(embeddings) != len(inputs) or any((not v) or (isinstance(v, list) and len(v) == 0) for v in embeddings):
+            print("[DEBUG] Embeddings: Validation failed (empty vectors or count mismatch), retrying per-input")
             embeddings = _query_per_input(inputs, request.model)
+            # If still empty, raise error to indicate unusable embeddings
+            if len(embeddings) != len(inputs) or any((not v) or (isinstance(v, list) and len(v) == 0) for v in embeddings):
+                print(f"[ERROR] Embeddings: Final validation failed. Inputs: {len(inputs)}, Vectors: {len(embeddings)}")
+                valid_count = sum(1 for v in embeddings if v and len(v) > 0)
+                print(f"[ERROR] Embeddings: Valid vectors: {valid_count}")
+                raise HTTPException(status_code=500, detail="Embeddings endpoint returned empty vectors")
 
         return {"embeddings": embeddings}
     except requests.exceptions.RequestException as e:

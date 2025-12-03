@@ -30,6 +30,8 @@ class NodeContextMenuManager:
             self.add_tts_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'chain_import':
             self.add_chain_import_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'form_filler':
+            self.add_form_filler_node_actions(menu, node)
         else:
             # Show graph actions for background clicks or any other case
             self.add_graph_actions(menu, pos)
@@ -98,6 +100,12 @@ class NodeContextMenuManager:
         expand_action = QAction(_("Expand Chain (Edit in Separate View)"), menu)
         expand_action.triggered.connect(lambda: self.graph_view.expand_chain_import(node))
         menu.addAction(expand_action)
+
+    def add_form_filler_node_actions(self, menu, node):
+        """Add actions for a Form Filler node to the context menu"""
+        edit_action = QAction(_("Edit Form Filler Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_form_filler_node(node))
+        menu.addAction(edit_action)
     
 
 

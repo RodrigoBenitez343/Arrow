@@ -11,6 +11,7 @@ from .constants import (
     LLM_COLOR,
     TTS_COLOR,
     CHAIN_IMPORT_COLOR,
+    FORM_FILLER_COLOR,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
     PORT_TRUE_COLOR,
@@ -417,6 +418,14 @@ class LLMNode(BaseNode):
         self.create_property('typing_batch_size', '20')
         self.create_property('typing_batch_delay', '0.05')
         self.create_property('use_async', 'true')
+        self.create_property('use_direct_rag', 'false')
+        self.create_property('rag_embedding_model', 'nomic-embed-text')
+        self.create_property('rag_chunk_size', '500')
+        self.create_property('rag_overlap', '100')
+        self.create_property('rag_top_k', '3')
+        self.create_property('rag_include_raw_input', 'false')
+        self.create_property('rag_max_chars', '1500')
+        self.create_property('rag_documents', '[]')
 
         # Visual indicator for editable nodes (border accent)
         try:
@@ -455,6 +464,18 @@ class LLMNode(BaseNode):
         self.set_property('ocr_preprocessing', str(config.get('ocr_preprocessing', True)).lower())
         self.set_property('use_async', str(config.get('use_async', True)).lower())
         self.set_property('typing_batch_delay', str(config.get('typing_batch_delay', 0.05)))
+        self.set_property('use_direct_rag', str(config.get('use_direct_rag', False)).lower())
+        self.set_property('rag_embedding_model', config.get('rag_embedding_model', 'nomic-embed-text'))
+        self.set_property('rag_chunk_size', str(config.get('rag_chunk_size', 500)))
+        self.set_property('rag_overlap', str(config.get('rag_overlap', 100)))
+        self.set_property('rag_top_k', str(config.get('rag_top_k', 3)))
+        self.set_property('rag_include_raw_input', str(config.get('rag_include_raw_input', False)).lower())
+        self.set_property('rag_max_chars', str(config.get('rag_max_chars', 1500)))
+        try:
+            import json as _json
+            self.set_property('rag_documents', _json.dumps(config.get('rag_documents', [])))
+        except Exception:
+            self.set_property('rag_documents', '[]')
     
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
@@ -470,6 +491,18 @@ class LLMNode(BaseNode):
         ocr_preprocessing = ocr_preprocessing_str.lower() in ('true', '1', 'yes', 'on')
         use_async_str = self.get_property('use_async') or 'true'
         use_async = use_async_str.lower() in ('true', '1', 'yes', 'on')
+        use_direct_rag_str = self.get_property('use_direct_rag') or 'false'
+        use_direct_rag = use_direct_rag_str.lower() in ('true', '1', 'yes', 'on')
+        rag_include_raw_input_str = self.get_property('rag_include_raw_input') or 'false'
+        rag_include_raw_input = rag_include_raw_input_str.lower() in ('true', '1', 'yes', 'on')
+        docs_raw = self.get_property('rag_documents') or '[]'
+        try:
+            import json as _json
+            rag_documents = _json.loads(docs_raw) if isinstance(docs_raw, str) else (docs_raw or [])
+            if isinstance(rag_documents, str):
+                rag_documents = [rag_documents]
+        except Exception:
+            rag_documents = []
         return {
             'model': self.get_property('model'),
             'prompt': self.get_property('prompt'),
@@ -489,7 +522,15 @@ class LLMNode(BaseNode):
             'input_source': self.get_property('input_source') or 'none',
             'ocr_confidence': float(self.get_property('ocr_confidence') or 0.5),
             'ocr_preprocessing': ocr_preprocessing,
-            'use_async': use_async
+            'use_async': use_async,
+            'use_direct_rag': use_direct_rag,
+            'rag_embedding_model': self.get_property('rag_embedding_model') or 'nomic-embed-text',
+            'rag_chunk_size': int(self.get_property('rag_chunk_size') or 500),
+            'rag_overlap': int(self.get_property('rag_overlap') or 100),
+            'rag_top_k': int(self.get_property('rag_top_k') or 3),
+            'rag_include_raw_input': rag_include_raw_input,
+            'rag_max_chars': int(self.get_property('rag_max_chars') or 1500),
+            'rag_documents': rag_documents
         }
     
     def is_vision_model(self, model_name):
@@ -937,3 +978,55 @@ class ChainImportNode(BaseNode):
             self.chain_config.get('llm_nodes') or 
             self.chain_config.get('tts_nodes')
         ))
+
+
+class FormFillerNode(BaseNode):
+    """Node representing a Form Filler action using Computer Vision and LLM"""
+    
+    __identifier__ = 'form_filler'
+    NODE_NAME = 'Form Filler'
+    
+    def __init__(self):
+        super(FormFillerNode, self).__init__()
+        
+        self.set_color(*[int(FORM_FILLER_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        
+        # Title styling: bigger font, black text
+        try:
+            self.set_text_color(0, 0, 0)
+        except Exception:
+            pass
+        try:
+            self.set_font_size(14)
+        except Exception:
+            pass
+            
+        # Port color mapping
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Add 5 inputs and 5 outputs with visual color coding
+        for i in range(5):
+            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
+            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+            
+        # Register properties
+        self.create_property('instruction', 'Fill the form on the screen.')
+        self.create_property('model', 'llama3.2:latest')
+        self.create_property('confidence_threshold', '0.8')
+        
+        # Visual indicator for editable nodes (border accent)
+        try:
+            from .constants import BLOCK_HOVER
+            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
+            self.set_border_color(*border_rgb)
+        except Exception:
+            pass
+
+    def get_form_filler_config(self):
+        """Get the configuration for this node"""
+        return {
+            'instruction': self.get_property('instruction'),
+            'model': self.get_property('model'),
+            'confidence_threshold': float(self.get_property('confidence_threshold') or 0.8)
+        }

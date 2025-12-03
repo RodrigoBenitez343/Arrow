@@ -135,6 +135,17 @@ class ComoRAGRequest(BaseModel):
     images: Optional[List[str]] = Field(None, description="Base64 encoded images for vision analysis")
 
 
+class EmbeddingsRequest(BaseModel):
+    model: str = Field(..., description="Model name")
+    inputs: List[str] = Field(..., description="List of input texts")
+    normalize: Optional[bool] = None
+    pooling: Optional[str] = None
+
+
+class EmbeddingsResponse(BaseModel):
+    embeddings: List[List[float]]
+
+
 class HealthResponse(BaseModel):
     status: str
     ollama_status: str
@@ -258,6 +269,26 @@ async def chat_completion(request: ChatRequest):
         return response
     except Exception as e:
         logger.error(f"Chat completion failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/embeddings", response_model=EmbeddingsResponse)
+async def get_embeddings(request: EmbeddingsRequest):
+    """Get embeddings from Ollama"""
+    try:
+        if not ollama_engine:
+            raise HTTPException(status_code=503, detail="Ollama engine not initialized")
+            
+        embeddings = await ollama_engine.embeddings(
+            model=request.model,
+            inputs=request.inputs,
+            normalize=request.normalize,
+            pooling=request.pooling
+        )
+        
+        return {"embeddings": embeddings}
+    except Exception as e:
+        logger.error(f"Embeddings generation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
