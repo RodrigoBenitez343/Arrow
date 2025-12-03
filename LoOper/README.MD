@@ -110,11 +110,21 @@ The NGUI (Node-based Graphical User Interface) provides an intuitive visual envi
 
 #### 🖼️ Visual Editor Features
 
+##### Orthogonal Wire Routing (Custom Implementation)
+- **90-Degree Connections**: All wires between nodes use clean horizontal and vertical segments only
+- **No Diagonal Lines**: Professional, organized appearance with right-angle turns
+- **Live Wire Preview**: Real-time orthogonal routing while connecting nodes
+- **Draggable Control Points**: Manually adjust wire paths with control points
+- **Grid Snapping**: Control points snap to 10px grid for precision alignment
+- **Horizontal-First Algorithm**: Intelligent routing that prioritizes horizontal connections first
+
+This custom implementation patches NodeGraphQt's default diagonal wire drawing to provide a cleaner, more professional workflow visualization that's easier to read and maintain.
+
 ##### Graph View Manager
 - **Zoom and Pan**: Navigate large workflows easily
 - **Auto-layout**: Automatically arrange nodes for clarity
 - **Multi-selection**: Edit multiple nodes simultaneously
-- **Connection Management**: Visual connection between nodes
+- **Connection Management**: Visual connection between nodes with orthogonal routing
 
 ##### UI Components
 - **Dark Theme**: Professional dark interface
@@ -506,11 +516,21 @@ Visual workflows are saved as graph structures:
    ```bash
    python main.py
    ```
+   
+   Alternative launch methods:
+   ```bash
+   # Launch GUI directly
+   python -m NGUI.app
+   
+   # Windows batch file
+   start.bat
+   ```
 
 2. **Create Your First Automation**
    - Click "File" → "New Chain" to start
    - Add nodes by right-clicking in the graph area
-   - Connect nodes to create workflow
+   - Connect nodes with orthogonal wires (90-degree routing automatically applied)
+   - Drag control points to adjust wire paths if needed
 
 3. **Record Actions**
    - Click "Record Sequence" in the menu
