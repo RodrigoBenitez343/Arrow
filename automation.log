@@ -1,0 +1,1737 @@
+2025-10-27 11:43:49,225 - DEBUG - mss library available for fast screenshot capture
+2025-10-27 11:43:49,801 - ERROR - Failed to load sequence from LoOper\sequences\ALL_BRANCHES_CHAIN.json: Invalid sequence format: Missing actions
+2025-10-27 11:43:49,803 - INFO - Sequence loaded and cached: 19 actions from LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - INFO - Loaded sequence for playback: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - DEBUG - Using cached sequence data for: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,804 - INFO - Loaded sequence for playback: LoOper\sequences\ARROW_UP_MANY_TIMES.json
+2025-10-27 11:43:49,851 - ERROR - Failed to load sequence from LoOper\sequences\AUXILIAR34.json: Invalid sequence format: Missing actions
+2025-10-27 11:43:49,891 - INFO - Sequence loaded and cached: 150 actions from large_test_sequence.json
+2025-10-27 11:43:49,892 - INFO - Loaded sequence for playback: large_test_sequence.json
+2025-10-27 11:43:49,892 - DEBUG - Sequence player initialized with lazy loading: large_test_sequence.json
+2025-10-27 11:43:49,959 - INFO - Sequence loaded and cached: 30 actions from cache_test_sequence_0.json
+2025-10-27 11:43:49,959 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:49,984 - INFO - Sequence loaded and cached: 45 actions from cache_test_sequence_1.json
+2025-10-27 11:43:49,984 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,016 - INFO - Sequence loaded and cached: 60 actions from cache_test_sequence_2.json
+2025-10-27 11:43:50,020 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,058 - INFO - Sequence loaded and cached: 75 actions from cache_test_sequence_3.json
+2025-10-27 11:43:50,059 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,090 - INFO - Sequence loaded and cached: 90 actions from cache_test_sequence_4.json
+2025-10-27 11:43:50,092 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,093 - INFO - Sequence loaded and cached: 30 actions from cache_test_sequence_0.json
+2025-10-27 11:43:50,094 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,097 - INFO - Sequence loaded and cached: 45 actions from cache_test_sequence_1.json
+2025-10-27 11:43:50,097 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,098 - INFO - Sequence loaded and cached: 60 actions from cache_test_sequence_2.json
+2025-10-27 11:43:50,099 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,102 - INFO - Sequence loaded and cached: 75 actions from cache_test_sequence_3.json
+2025-10-27 11:43:50,104 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,105 - INFO - Sequence loaded and cached: 90 actions from cache_test_sequence_4.json
+2025-10-27 11:43:50,106 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,107 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,108 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,108 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,109 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,110 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,110 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,110 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,111 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,111 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,111 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,113 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,113 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-10-27 11:43:50,124 - DEBUG - Using cached sequence data for: cache_test_sequence_0.json
+2025-10-27 11:43:50,124 - INFO - Loaded sequence for playback: cache_test_sequence_0.json
+2025-10-27 11:43:50,124 - DEBUG - Using cached sequence data for: cache_test_sequence_1.json
+2025-10-27 11:43:50,125 - INFO - Loaded sequence for playback: cache_test_sequence_1.json
+2025-10-27 11:43:50,126 - DEBUG - Using cached sequence data for: cache_test_sequence_2.json
+2025-10-27 11:43:50,126 - INFO - Loaded sequence for playback: cache_test_sequence_2.json
+2025-10-27 11:43:50,127 - DEBUG - Using cached sequence data for: cache_test_sequence_3.json
+2025-10-27 11:43:50,127 - INFO - Loaded sequence for playback: cache_test_sequence_3.json
+2025-10-27 11:43:50,129 - DEBUG - Using cached sequence data for: cache_test_sequence_4.json
+2025-10-27 11:43:50,130 - INFO - Loaded sequence for playback: cache_test_sequence_4.json
+2025-11-08 17:19:55,122 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:19:55,288 - INFO - Initializing GraphViewWidget
+2025-11-08 17:19:55,291 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:19:55,293 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:19:55,293 - DEBUG - Initializing modular components...
+2025-11-08 17:19:55,294 - INFO - Initializing UIComponents
+2025-11-08 17:19:55,294 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:19:55,295 - DEBUG - UIComponents initialized
+2025-11-08 17:19:55,295 - INFO - Initializing GraphManager
+2025-11-08 17:19:55,296 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:19:55,297 - DEBUG - GraphManager initialized
+2025-11-08 17:19:55,297 - INFO - Initializing NodeOperations
+2025-11-08 17:19:55,298 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:19:55,298 - DEBUG - NodeOperations initialized
+2025-11-08 17:19:55,299 - INFO - Initializing ViewManager
+2025-11-08 17:19:55,299 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:19:55,300 - DEBUG - ViewManager initialized
+2025-11-08 17:19:55,300 - INFO - Initializing ConfigManager
+2025-11-08 17:19:55,301 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:19:55,301 - DEBUG - ConfigManager initialized
+2025-11-08 17:19:55,302 - INFO - Initializing ExportUtils
+2025-11-08 17:19:55,302 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:19:55,303 - DEBUG - ExportUtils initialized
+2025-11-08 17:19:55,303 - INFO - Initializing NodeTransforms
+2025-11-08 17:19:55,303 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:19:55,304 - DEBUG - NodeTransforms initialized
+2025-11-08 17:19:55,304 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:19:55,304 - DEBUG - Setting up UI...
+2025-11-08 17:19:55,305 - DEBUG - Setting up UI components
+2025-11-08 17:19:55,305 - INFO - Setting up main UI layout and components
+2025-11-08 17:19:55,305 - DEBUG - Applying main widget styling
+2025-11-08 17:19:55,306 - DEBUG - Creating main layout
+2025-11-08 17:19:55,307 - DEBUG - Creating control panel
+2025-11-08 17:19:55,310 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:19:55,318 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:19:55,323 - DEBUG - Control panel added to main layout
+2025-11-08 17:19:55,324 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:19:55,325 - DEBUG - Node graph widget added to main layout
+2025-11-08 17:19:55,325 - INFO - UI setup completed successfully
+2025-11-08 17:19:55,326 - DEBUG - UI setup completed successfully
+2025-11-08 17:19:55,326 - DEBUG - Setting up node graph...
+2025-11-08 17:19:55,327 - DEBUG - Setting up node graph
+2025-11-08 17:19:55,327 - INFO - Setting up node graph
+2025-11-08 17:19:55,330 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:19:55,350 - DEBUG - Registering custom nodes
+2025-11-08 17:19:55,351 - DEBUG - Registering custom node types
+2025-11-08 17:19:55,351 - DEBUG - Registering SequenceNode
+2025-11-08 17:19:55,352 - DEBUG - Registering ActionNode
+2025-11-08 17:19:55,352 - DEBUG - Registering ConditionalNode
+2025-11-08 17:19:55,353 - DEBUG - Registering LLMNode
+2025-11-08 17:19:55,354 - DEBUG - Registering TTSNode
+2025-11-08 17:19:55,354 - DEBUG - Registering ChainImportNode
+2025-11-08 17:19:55,355 - INFO - All custom node types registered successfully
+2025-11-08 17:19:55,355 - DEBUG - Setting up graph widget
+2025-11-08 17:19:55,356 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:19:55,356 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:19:56,269 - DEBUG - Setting up context menu policy
+2025-11-08 17:19:56,270 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:19:56,270 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:19:56,272 - DEBUG - Storing graph widget references
+2025-11-08 17:19:56,272 - INFO - Graph widget setup completed successfully
+2025-11-08 17:19:56,273 - DEBUG - Configuring graph properties
+2025-11-08 17:19:56,273 - DEBUG - Configuring graph properties
+2025-11-08 17:19:56,273 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:19:56,274 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:19:56,275 - INFO - Node graph setup completed successfully
+2025-11-08 17:19:56,276 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:19:56,277 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:19:56,277 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:20:13,053 - DEBUG - Recording new sequence
+2025-11-08 17:20:13,053 - INFO - Starting new sequence recording
+2025-11-08 17:20:13,054 - DEBUG - Finding main window for recording
+2025-11-08 17:20:13,055 - DEBUG - Found main window, starting recording
+2025-11-08 17:20:14,273 - INFO - Successfully started sequence recording
+2025-11-08 17:20:14,273 - INFO - New sequence recorded successfully
+2025-11-08 17:20:15,077 - DEBUG - Adding sequence node
+2025-11-08 17:20:15,079 - INFO - Adding sequence node at position: None
+2025-11-08 17:20:15,080 - DEBUG - Opening file dialog for sequence selection from: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:20:16,501 - DEBUG - No file selected for sequence
+2025-11-08 17:20:16,501 - INFO - Sequence node added successfully
+2025-11-08 17:20:18,429 - DEBUG - Deleting selected nodes
+2025-11-08 17:20:18,430 - DEBUG - No selected nodes to delete
+2025-11-08 17:20:19,420 - DEBUG - Adding LLM node at position: None
+2025-11-08 17:20:19,421 - INFO - Adding LLM node at position: None
+2025-11-08 17:20:19,422 - DEBUG - Creating LLM node
+2025-11-08 17:20:19,423 - INFO - Creating node of type: llm.LLMNode
+2025-11-08 17:20:19,424 - DEBUG - Node creation parameters - name: LLM, pos: None
+2025-11-08 17:20:19,425 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:19,559 - INFO - Successfully created llm.LLMNode node with ID: 0x26390347770
+2025-11-08 17:20:19,560 - DEBUG - Setting default properties for LLM node 0x26390347770
+2025-11-08 17:20:19,570 - INFO - Successfully added LLM node 0x26390347770
+2025-11-08 17:20:19,571 - INFO - LLM node added successfully: LLM
+2025-11-08 17:20:21,589 - DEBUG - Deleting selected nodes
+2025-11-08 17:20:21,590 - INFO - Deleting 1 selected nodes
+2025-11-08 17:20:21,590 - DEBUG - Deleting node: LLM (LLMNode)
+2025-11-08 17:20:21,591 - INFO - Deleting node: 0x26390347770 of type: LLMNode
+2025-11-08 17:20:21,592 - DEBUG - Deleting LLMNode node
+2025-11-08 17:20:21,592 - INFO - Deleting node: 0x26390347770
+2025-11-08 17:20:21,593 - DEBUG - Deleting LLMNode node with ID: 0x26390347770
+2025-11-08 17:20:21,594 - INFO - Successfully deleted LLMNode node with ID: 0x26390347770
+2025-11-08 17:20:21,595 - INFO - Selected nodes deleted successfully
+2025-11-08 17:20:22,661 - DEBUG - Adding LLM node at position: None
+2025-11-08 17:20:22,661 - INFO - Adding LLM node at position: None
+2025-11-08 17:20:22,662 - DEBUG - Creating LLM node
+2025-11-08 17:20:22,662 - INFO - Creating node of type: llm.LLMNode
+2025-11-08 17:20:22,663 - DEBUG - Node creation parameters - name: LLM, pos: None
+2025-11-08 17:20:22,664 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:22,751 - INFO - Successfully created llm.LLMNode node with ID: 0x2639047ce10
+2025-11-08 17:20:22,752 - DEBUG - Setting default properties for LLM node 0x2639047ce10
+2025-11-08 17:20:22,759 - INFO - Successfully added LLM node 0x2639047ce10
+2025-11-08 17:20:22,761 - INFO - LLM node added successfully: LLM
+2025-11-08 17:20:23,052 - DEBUG - Adding Chain Import node at position: None
+2025-11-08 17:20:23,053 - INFO - Adding Chain Import node at position: None
+2025-11-08 17:20:23,054 - DEBUG - Creating Chain Import node
+2025-11-08 17:20:23,055 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:20:23,055 - DEBUG - Node creation parameters - name: Chain Import, pos: None
+2025-11-08 17:20:23,056 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:23,086 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x2639047ccd0
+2025-11-08 17:20:23,087 - DEBUG - Setting default properties for Chain Import node 0x2639047ccd0
+2025-11-08 17:20:23,087 - INFO - Successfully added Chain Import node 0x2639047ccd0
+2025-11-08 17:20:23,088 - INFO - Chain Import node added successfully: Chain Import
+2025-11-08 17:20:23,677 - DEBUG - Adding TTS node at position: None
+2025-11-08 17:20:23,678 - INFO - Adding TTS node at position: None
+2025-11-08 17:20:23,679 - DEBUG - Creating TTS node
+2025-11-08 17:20:23,680 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:20:23,681 - DEBUG - Node creation parameters - name: TTS, pos: None
+2025-11-08 17:20:23,683 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:23,701 - INFO - Successfully created tts.TTSNode node with ID: 0x2639033f490
+2025-11-08 17:20:23,702 - DEBUG - Setting default properties for TTS node 0x2639033f490
+2025-11-08 17:20:23,704 - INFO - Successfully added TTS node 0x2639033f490
+2025-11-08 17:20:23,705 - INFO - TTS node added successfully: TTS
+2025-11-08 17:20:26,421 - DEBUG - Deleting selected nodes
+2025-11-08 17:20:26,422 - INFO - Deleting 1 selected nodes
+2025-11-08 17:20:26,423 - DEBUG - Deleting node: TTS (TTSNode)
+2025-11-08 17:20:26,423 - INFO - Deleting node: 0x2639033f490 of type: TTSNode
+2025-11-08 17:20:26,424 - DEBUG - Deleting TTSNode node
+2025-11-08 17:20:26,425 - INFO - Deleting node: 0x2639033f490
+2025-11-08 17:20:26,426 - DEBUG - Deleting TTSNode node with ID: 0x2639033f490
+2025-11-08 17:20:26,427 - INFO - Successfully deleted TTSNode node with ID: 0x2639033f490
+2025-11-08 17:20:26,428 - INFO - Selected nodes deleted successfully
+2025-11-08 17:20:29,325 - DEBUG - Copy props for LLM (llm): []
+2025-11-08 17:20:29,325 - DEBUG - Copy props for Chain Import (chain_import): ['prefix', 'loop_count', 'import_mode', 'extra_delay', 'chain_file', 'enabled']
+2025-11-08 17:20:30,677 - DEBUG - Showing custom context menu at position: PyQt5.QtCore.QPoint(1206, 128)
+2025-11-08 17:20:30,677 - DEBUG - Selected nodes: 0
+2025-11-08 17:20:31,966 - INFO - Creating node of type: llm.LLMNode
+2025-11-08 17:20:31,967 - DEBUG - Node creation parameters - name: None, pos: [200.0, 200.0]
+2025-11-08 17:20:31,968 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:32,064 - INFO - Successfully created llm.LLMNode node with ID: 0x2639033f5c0
+2025-11-08 17:20:32,064 - DEBUG - Pasted props for LLM 1 (llm): []
+2025-11-08 17:20:32,065 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:20:32,065 - DEBUG - Node creation parameters - name: None, pos: [210.0, 210.0]
+2025-11-08 17:20:32,066 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:32,087 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x2639033f6f0
+2025-11-08 17:20:32,088 - DEBUG - Pasted props for Chain Import 1 (chain_import): ['prefix', 'loop_count', 'import_mode', 'extra_delay', 'chain_file', 'enabled']
+2025-11-08 17:20:32,089 - DEBUG - Context menu displayed successfully
+2025-11-08 17:20:36,690 - DEBUG - Deleting selected nodes
+2025-11-08 17:20:36,690 - INFO - Deleting 4 selected nodes
+2025-11-08 17:20:36,690 - DEBUG - Deleting node: LLM (LLMNode)
+2025-11-08 17:20:36,691 - INFO - Deleting node: 0x2639047ce10 of type: LLMNode
+2025-11-08 17:20:36,691 - DEBUG - Deleting LLMNode node
+2025-11-08 17:20:36,692 - INFO - Deleting node: 0x2639047ce10
+2025-11-08 17:20:36,692 - DEBUG - Deleting LLMNode node with ID: 0x2639047ce10
+2025-11-08 17:20:36,693 - INFO - Successfully deleted LLMNode node with ID: 0x2639047ce10
+2025-11-08 17:20:36,694 - DEBUG - Deleting node: Chain Import_copy (ChainImportNode)
+2025-11-08 17:20:36,695 - INFO - Deleting node: 0x2639033f6f0 of type: ChainImportNode
+2025-11-08 17:20:36,696 - DEBUG - Deleting ChainImportNode node
+2025-11-08 17:20:36,697 - INFO - Deleting node: 0x2639033f6f0
+2025-11-08 17:20:36,697 - DEBUG - Deleting ChainImportNode node with ID: 0x2639033f6f0
+2025-11-08 17:20:36,698 - INFO - Successfully deleted ChainImportNode node with ID: 0x2639033f6f0
+2025-11-08 17:20:36,699 - DEBUG - Deleting node: Chain Import (ChainImportNode)
+2025-11-08 17:20:36,701 - INFO - Deleting node: 0x2639047ccd0 of type: ChainImportNode
+2025-11-08 17:20:36,702 - DEBUG - Deleting ChainImportNode node
+2025-11-08 17:20:36,703 - INFO - Deleting node: 0x2639047ccd0
+2025-11-08 17:20:36,704 - DEBUG - Deleting ChainImportNode node with ID: 0x2639047ccd0
+2025-11-08 17:20:36,705 - INFO - Successfully deleted ChainImportNode node with ID: 0x2639047ccd0
+2025-11-08 17:20:36,706 - DEBUG - Deleting node: LLM_copy (LLMNode)
+2025-11-08 17:20:36,707 - INFO - Deleting node: 0x2639033f5c0 of type: LLMNode
+2025-11-08 17:20:36,707 - DEBUG - Deleting LLMNode node
+2025-11-08 17:20:36,708 - INFO - Deleting node: 0x2639033f5c0
+2025-11-08 17:20:36,708 - DEBUG - Deleting LLMNode node with ID: 0x2639033f5c0
+2025-11-08 17:20:36,709 - INFO - Successfully deleted LLMNode node with ID: 0x2639033f5c0
+2025-11-08 17:20:36,709 - INFO - Selected nodes deleted successfully
+2025-11-08 17:20:49,067 - DEBUG - Loading chain from file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/sequences/ALL_BRANCHES_CHAIN.json
+2025-11-08 17:20:49,067 - INFO - Loading chain configuration from file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/sequences/ALL_BRANCHES_CHAIN.json
+2025-11-08 17:20:49,068 - DEBUG - Loading configuration from: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/sequences/ALL_BRANCHES_CHAIN.json
+2025-11-08 17:20:49,070 - DEBUG - Loaded config with 1 sequences, 0 conditional nodes, 0 LLM nodes, 1 TTS nodes, 1 chain import nodes
+2025-11-08 17:20:49,071 - DEBUG - Building graph from loaded configuration
+2025-11-08 17:20:49,071 - INFO - Building node graph from configuration
+2025-11-08 17:20:49,071 - DEBUG - Clearing existing graph
+2025-11-08 17:20:49,071 - INFO - Clearing graph
+2025-11-08 17:20:49,071 - DEBUG - Clearing node graph session
+2025-11-08 17:20:49,072 - INFO - Graph cleared successfully
+2025-11-08 17:20:49,072 - DEBUG - Cleared sequence_nodes tracking list
+2025-11-08 17:20:49,072 - DEBUG - Cleared conditional_nodes tracking list
+2025-11-08 17:20:49,073 - DEBUG - Cleared llm_nodes tracking list
+2025-11-08 17:20:49,073 - DEBUG - Cleared tts_nodes tracking list
+2025-11-08 17:20:49,074 - DEBUG - Created node map for connection restoration
+2025-11-08 17:20:49,074 - DEBUG - Creating sequence nodes
+2025-11-08 17:20:49,075 - DEBUG - Creating sequence nodes from configuration
+2025-11-08 17:20:49,075 - DEBUG - Found 1 sequence nodes to create
+2025-11-08 17:20:49,076 - DEBUG - Creating sequence node: GO_TO_TD.json with sequence_file: GO_TO_TD.json
+2025-11-08 17:20:49,076 - INFO - Creating node of type: sequence.SequenceNode
+2025-11-08 17:20:49,077 - DEBUG - Node creation parameters - name: GO_TO_TD.json, pos: None
+2025-11-08 17:20:49,077 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:49,102 - INFO - Successfully created sequence.SequenceNode node with ID: 0x2639033f820
+2025-11-08 17:20:49,103 - DEBUG - Set sequence_file property for sequence node: GO_TO_TD.json
+2025-11-08 17:20:49,104 - DEBUG - Set loop_count property for sequence node: 1
+2025-11-08 17:20:49,104 - DEBUG - Set extra_delay property for sequence node: 1.0
+2025-11-08 17:20:49,105 - DEBUG - Set position for sequence node: [60.98059426925337, -689.4194963218366]
+2025-11-08 17:20:49,105 - DEBUG - Added sequence node to parent widget tracking list
+2025-11-08 17:20:49,106 - DEBUG - Added sequence node to node map: 0x25eda407ce0
+2025-11-08 17:20:49,106 - DEBUG - Creating conditional nodes
+2025-11-08 17:20:49,107 - DEBUG - Creating conditional nodes from configuration
+2025-11-08 17:20:49,107 - DEBUG - Found 0 conditional nodes to create
+2025-11-08 17:20:49,108 - DEBUG - Creating LLM nodes
+2025-11-08 17:20:49,108 - DEBUG - Creating LLM nodes from configuration
+2025-11-08 17:20:49,109 - DEBUG - Found 0 LLM nodes to create
+2025-11-08 17:20:49,109 - DEBUG - Creating TTS nodes
+2025-11-08 17:20:49,109 - DEBUG - Creating TTS nodes from configuration
+2025-11-08 17:20:49,110 - DEBUG - Found 1 TTS nodes to create
+2025-11-08 17:20:49,111 - DEBUG - Creating TTS node with text: extraccion de status en tede r...
+2025-11-08 17:20:49,111 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:20:49,112 - DEBUG - Node creation parameters - name: TTS, pos: None
+2025-11-08 17:20:49,113 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:49,125 - INFO - Successfully created tts.TTSNode node with ID: 0x2639033fa80
+2025-11-08 17:20:49,127 - DEBUG - Set properties for TTS node with text: extraccion de status en tede r...
+2025-11-08 17:20:49,132 - DEBUG - Set position for TTS node: [65.15990729587287, -13.196943249797034]
+2025-11-08 17:20:49,132 - DEBUG - Added TTS node to parent widget tracking list
+2025-11-08 17:20:49,132 - DEBUG - Added TTS node to node map: 0x25eda3e42b0
+2025-11-08 17:20:49,133 - DEBUG - Creating chain import nodes
+2025-11-08 17:20:49,133 - DEBUG - Creating chain import nodes from configuration
+2025-11-08 17:20:49,133 - DEBUG - Found 1 chain import nodes to create
+2025-11-08 17:20:49,134 - DEBUG - Creating chain import node with file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/PCI_FULL_CHAIN.json
+2025-11-08 17:20:49,134 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:20:49,134 - DEBUG - Node creation parameters - name: Chain Import, pos: None
+2025-11-08 17:20:49,135 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:49,170 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x2639033f950
+2025-11-08 17:20:49,211 - DEBUG - Set chain import data for node: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/PCI_FULL_CHAIN.json
+2025-11-08 17:20:49,211 - DEBUG - Restoring imported chain configuration for node 0x2639033f950
+2025-11-08 17:20:49,212 - DEBUG - Successfully restored imported chain configuration for node 0x2639033f950
+2025-11-08 17:20:49,212 - DEBUG - Set position for chain import node: [43.694779213974414, -415.1004025327565]
+2025-11-08 17:20:49,213 - DEBUG - Added chain import node to node map: 0x25eda404fc0
+2025-11-08 17:20:49,213 - DEBUG - Restoring node connections
+2025-11-08 17:20:49,213 - DEBUG - Restoring connections between nodes
+2025-11-08 17:20:49,214 - DEBUG - Found 2 connections to restore
+2025-11-08 17:20:49,214 - DEBUG - Connecting 0x25eda407ce0:output_5 -> 0x25eda404fc0:input_1
+2025-11-08 17:20:49,214 - INFO - Connecting nodes: 0x2639033f820 -> 0x2639033f950
+2025-11-08 17:20:49,215 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:49,215 - DEBUG - Found output port: output_5
+2025-11-08 17:20:49,215 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:49,216 - DEBUG - Found input port: input_1
+2025-11-08 17:20:49,217 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:49,222 - INFO - Successfully connected nodes: 0x2639033f820 -> 0x2639033f950
+2025-11-08 17:20:49,223 - DEBUG - Connecting 0x25eda404fc0:output_1 -> 0x25eda3e42b0:input_1
+2025-11-08 17:20:49,225 - INFO - Connecting nodes: 0x2639033f950 -> 0x2639033fa80
+2025-11-08 17:20:49,226 - DEBUG - Finding output port by name: output_1
+2025-11-08 17:20:49,227 - DEBUG - Found output port: output_1
+2025-11-08 17:20:49,227 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:49,228 - DEBUG - Found input port: input_1
+2025-11-08 17:20:49,228 - DEBUG - Creating connection: output_1 -> input_1
+2025-11-08 17:20:49,229 - INFO - Successfully connected nodes: 0x2639033f950 -> 0x2639033fa80
+2025-11-08 17:20:49,230 - INFO - Successfully restored 2 connections
+2025-11-08 17:20:49,232 - DEBUG - Refreshing current view
+2025-11-08 17:20:49,233 - INFO - Refreshing current view: sequence
+2025-11-08 17:20:49,233 - DEBUG - Refreshing sequence view
+2025-11-08 17:20:49,233 - INFO - Switching to sequence view
+2025-11-08 17:20:49,234 - DEBUG - Current view set to sequence
+2025-11-08 17:20:49,234 - DEBUG - Getting all nodes from graph
+2025-11-08 17:20:49,234 - DEBUG - Retrieved 3 nodes from graph
+2025-11-08 17:20:49,235 - DEBUG - Found 3 total nodes
+2025-11-08 17:20:49,236 - DEBUG - Sequence view: 2 nodes visible, 0 nodes hidden
+2025-11-08 17:20:49,236 - DEBUG - Button state update skipped - view buttons removed
+2025-11-08 17:20:49,236 - INFO - Sequence view activated successfully
+2025-11-08 17:20:49,237 - INFO - Current view refreshed successfully
+2025-11-08 17:20:49,237 - INFO - Successfully built graph with 3 nodes
+2025-11-08 17:20:49,238 - INFO - Successfully loaded chain from: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/sequences/ALL_BRANCHES_CHAIN.json
+2025-11-08 17:20:49,238 - INFO - Chain loaded successfully
+2025-11-08 17:20:51,700 - DEBUG - Showing custom context menu at position: PyQt5.QtCore.QPoint(731, 284)
+2025-11-08 17:20:51,700 - DEBUG - Selected nodes: 1
+2025-11-08 17:20:51,701 - DEBUG - Context menu for node: Import: PCI_FULL_CHAIN
+2025-11-08 17:20:52,439 - DEBUG - Opening chain editor for: Import: PCI_FULL_CHAIN
+2025-11-08 17:20:52,441 - INFO - Initializing GraphViewWidget
+2025-11-08 17:20:52,442 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:20:52,442 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:20:52,442 - DEBUG - Initializing modular components...
+2025-11-08 17:20:52,443 - INFO - Initializing UIComponents
+2025-11-08 17:20:52,443 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:20:52,443 - DEBUG - UIComponents initialized
+2025-11-08 17:20:52,443 - INFO - Initializing GraphManager
+2025-11-08 17:20:52,444 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:20:52,444 - DEBUG - GraphManager initialized
+2025-11-08 17:20:52,444 - INFO - Initializing NodeOperations
+2025-11-08 17:20:52,445 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:20:52,445 - DEBUG - NodeOperations initialized
+2025-11-08 17:20:52,446 - INFO - Initializing ViewManager
+2025-11-08 17:20:52,447 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:20:52,447 - DEBUG - ViewManager initialized
+2025-11-08 17:20:52,447 - INFO - Initializing ConfigManager
+2025-11-08 17:20:52,448 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:20:52,448 - DEBUG - ConfigManager initialized
+2025-11-08 17:20:52,448 - INFO - Initializing ExportUtils
+2025-11-08 17:20:52,449 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:20:52,449 - DEBUG - ExportUtils initialized
+2025-11-08 17:20:52,449 - INFO - Initializing NodeTransforms
+2025-11-08 17:20:52,449 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:20:52,449 - DEBUG - NodeTransforms initialized
+2025-11-08 17:20:52,449 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:20:52,450 - DEBUG - Setting up UI...
+2025-11-08 17:20:52,450 - DEBUG - Setting up UI components
+2025-11-08 17:20:52,450 - INFO - Setting up main UI layout and components
+2025-11-08 17:20:52,451 - DEBUG - Applying main widget styling
+2025-11-08 17:20:52,452 - DEBUG - Creating main layout
+2025-11-08 17:20:52,452 - DEBUG - Creating control panel
+2025-11-08 17:20:52,453 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:20:52,457 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:20:52,461 - DEBUG - Control panel added to main layout
+2025-11-08 17:20:52,461 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:20:52,462 - DEBUG - Node graph widget added to main layout
+2025-11-08 17:20:52,462 - INFO - UI setup completed successfully
+2025-11-08 17:20:52,462 - DEBUG - UI setup completed successfully
+2025-11-08 17:20:52,462 - DEBUG - Setting up node graph...
+2025-11-08 17:20:52,462 - DEBUG - Setting up node graph
+2025-11-08 17:20:52,462 - INFO - Setting up node graph
+2025-11-08 17:20:52,463 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:20:52,465 - DEBUG - Registering custom nodes
+2025-11-08 17:20:52,465 - DEBUG - Registering custom node types
+2025-11-08 17:20:52,466 - DEBUG - Registering SequenceNode
+2025-11-08 17:20:52,466 - DEBUG - Registering ActionNode
+2025-11-08 17:20:52,467 - DEBUG - Registering ConditionalNode
+2025-11-08 17:20:52,468 - DEBUG - Registering LLMNode
+2025-11-08 17:20:52,468 - DEBUG - Registering TTSNode
+2025-11-08 17:20:52,469 - DEBUG - Registering ChainImportNode
+2025-11-08 17:20:52,469 - INFO - All custom node types registered successfully
+2025-11-08 17:20:52,469 - DEBUG - Setting up graph widget
+2025-11-08 17:20:52,469 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:20:52,470 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:20:52,471 - DEBUG - Setting up context menu policy
+2025-11-08 17:20:52,472 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:20:52,473 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:20:52,475 - DEBUG - Storing graph widget references
+2025-11-08 17:20:52,476 - INFO - Graph widget setup completed successfully
+2025-11-08 17:20:52,476 - DEBUG - Configuring graph properties
+2025-11-08 17:20:52,477 - DEBUG - Configuring graph properties
+2025-11-08 17:20:52,477 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:20:52,477 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:20:52,478 - INFO - Node graph setup completed successfully
+2025-11-08 17:20:52,478 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:20:52,479 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:20:52,479 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:20:52,499 - INFO - Initializing ConfigManager
+2025-11-08 17:20:52,499 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:20:52,500 - INFO - Building node graph from configuration
+2025-11-08 17:20:52,500 - DEBUG - Clearing existing graph
+2025-11-08 17:20:52,501 - INFO - Clearing graph
+2025-11-08 17:20:52,503 - DEBUG - Clearing node graph session
+2025-11-08 17:20:52,503 - INFO - Graph cleared successfully
+2025-11-08 17:20:52,504 - DEBUG - Cleared sequence_nodes tracking list
+2025-11-08 17:20:52,504 - DEBUG - Cleared conditional_nodes tracking list
+2025-11-08 17:20:52,505 - DEBUG - Cleared llm_nodes tracking list
+2025-11-08 17:20:52,505 - DEBUG - Cleared tts_nodes tracking list
+2025-11-08 17:20:52,506 - DEBUG - Created node map for connection restoration
+2025-11-08 17:20:52,506 - DEBUG - Creating sequence nodes
+2025-11-08 17:20:52,506 - DEBUG - Creating sequence nodes from configuration
+2025-11-08 17:20:52,508 - DEBUG - Found 4 sequence nodes to create
+2025-11-08 17:20:52,509 - DEBUG - Creating sequence node: CLOSE_EXCEL.json with sequence_file: CLOSE_EXCEL.json
+2025-11-08 17:20:52,510 - INFO - Creating node of type: sequence.SequenceNode
+2025-11-08 17:20:52,510 - DEBUG - Node creation parameters - name: CLOSE_EXCEL.json, pos: None
+2025-11-08 17:20:52,510 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,525 - INFO - Successfully created sequence.SequenceNode node with ID: 0x2639033f6f0
+2025-11-08 17:20:52,528 - DEBUG - Set sequence_file property for sequence node: CLOSE_EXCEL.json
+2025-11-08 17:20:52,531 - DEBUG - Set loop_count property for sequence node: 1
+2025-11-08 17:20:52,532 - DEBUG - Set extra_delay property for sequence node: 0.0
+2025-11-08 17:20:52,534 - DEBUG - Set position for sequence node: [176.3615719471128, -32.32508596571182]
+2025-11-08 17:20:52,535 - DEBUG - Added sequence node to parent widget tracking list
+2025-11-08 17:20:52,535 - DEBUG - Added sequence node to node map: 0x15037807820
+2025-11-08 17:20:52,539 - DEBUG - Creating sequence node: GO_TO_PCI.json with sequence_file: GO_TO_PCI.json
+2025-11-08 17:20:52,540 - INFO - Creating node of type: sequence.SequenceNode
+2025-11-08 17:20:52,540 - DEBUG - Node creation parameters - name: GO_TO_PCI.json, pos: None
+2025-11-08 17:20:52,541 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,556 - INFO - Successfully created sequence.SequenceNode node with ID: 0x2639033fbb0
+2025-11-08 17:20:52,558 - DEBUG - Set sequence_file property for sequence node: GO_TO_PCI.json
+2025-11-08 17:20:52,558 - DEBUG - Set loop_count property for sequence node: 1
+2025-11-08 17:20:52,559 - DEBUG - Set extra_delay property for sequence node: 0.0
+2025-11-08 17:20:52,560 - DEBUG - Set position for sequence node: [172.44632048611481, 207.98485160281172]
+2025-11-08 17:20:52,560 - DEBUG - Added sequence node to parent widget tracking list
+2025-11-08 17:20:52,561 - DEBUG - Added sequence node to node map: 0x150378076f0
+2025-11-08 17:20:52,561 - DEBUG - Creating sequence node: DELETE_RECENT_DOWNLOAD1.json with sequence_file: DELETE_RECENT_DOWNLOAD1.json
+2025-11-08 17:20:52,562 - INFO - Creating node of type: sequence.SequenceNode
+2025-11-08 17:20:52,562 - DEBUG - Node creation parameters - name: DELETE_RECENT_DOWNLOAD1.json, pos: None
+2025-11-08 17:20:52,562 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,574 - INFO - Successfully created sequence.SequenceNode node with ID: 0x2639033fe10
+2025-11-08 17:20:52,576 - DEBUG - Set sequence_file property for sequence node: DELETE_RECENT_DOWNLOAD1.json
+2025-11-08 17:20:52,576 - DEBUG - Set loop_count property for sequence node: 1
+2025-11-08 17:20:52,577 - DEBUG - Set extra_delay property for sequence node: 1.0
+2025-11-08 17:20:52,578 - DEBUG - Set position for sequence node: [114.99058143995455, 456.06433994829433]
+2025-11-08 17:20:52,578 - DEBUG - Added sequence node to parent widget tracking list
+2025-11-08 17:20:52,578 - DEBUG - Added sequence node to node map: 0x150378075c0
+2025-11-08 17:20:52,579 - DEBUG - Creating sequence node: FOCUS_PCI_2.json with sequence_file: FOCUS_PCI_2.json
+2025-11-08 17:20:52,579 - INFO - Creating node of type: sequence.SequenceNode
+2025-11-08 17:20:52,579 - DEBUG - Node creation parameters - name: FOCUS_PCI_2.json, pos: None
+2025-11-08 17:20:52,579 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,591 - INFO - Successfully created sequence.SequenceNode node with ID: 0x26393ccc180
+2025-11-08 17:20:52,592 - DEBUG - Set sequence_file property for sequence node: FOCUS_PCI_2.json
+2025-11-08 17:20:52,592 - DEBUG - Set loop_count property for sequence node: 1
+2025-11-08 17:20:52,593 - DEBUG - Set extra_delay property for sequence node: 1.0
+2025-11-08 17:20:52,593 - DEBUG - Set position for sequence node: [174.12420947962195, 713.4255805067843]
+2025-11-08 17:20:52,593 - DEBUG - Added sequence node to parent widget tracking list
+2025-11-08 17:20:52,594 - DEBUG - Added sequence node to node map: 0x15037807490
+2025-11-08 17:20:52,594 - DEBUG - Creating conditional nodes
+2025-11-08 17:20:52,594 - DEBUG - Creating conditional nodes from configuration
+2025-11-08 17:20:52,594 - DEBUG - Found 0 conditional nodes to create
+2025-11-08 17:20:52,594 - DEBUG - Creating LLM nodes
+2025-11-08 17:20:52,595 - DEBUG - Creating LLM nodes from configuration
+2025-11-08 17:20:52,595 - DEBUG - Found 0 LLM nodes to create
+2025-11-08 17:20:52,595 - DEBUG - Creating TTS nodes
+2025-11-08 17:20:52,595 - DEBUG - Creating TTS nodes from configuration
+2025-11-08 17:20:52,595 - DEBUG - Found 0 TTS nodes to create
+2025-11-08 17:20:52,596 - DEBUG - Creating chain import nodes
+2025-11-08 17:20:52,596 - DEBUG - Creating chain import nodes from configuration
+2025-11-08 17:20:52,596 - DEBUG - Found 2 chain import nodes to create
+2025-11-08 17:20:52,596 - DEBUG - Creating chain import node with file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/EXTRACT_TAT.json
+2025-11-08 17:20:52,597 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:20:52,597 - DEBUG - Node creation parameters - name: Chain Import, pos: None
+2025-11-08 17:20:52,597 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,621 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x26393ccc3e0
+2025-11-08 17:20:52,649 - DEBUG - Set chain import data for node: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/EXTRACT_TAT.json
+2025-11-08 17:20:52,650 - DEBUG - Restoring imported chain configuration for node 0x26393ccc3e0
+2025-11-08 17:20:52,651 - DEBUG - Successfully restored imported chain configuration for node 0x26393ccc3e0
+2025-11-08 17:20:52,651 - DEBUG - Set position for chain import node: [188.89233638100575, 1021.1269131508895]
+2025-11-08 17:20:52,652 - DEBUG - Added chain import node to node map: 0x15037806190
+2025-11-08 17:20:52,652 - DEBUG - Creating chain import node with file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/EXTRACT_BUILDS_PER_FLAVOR.json
+2025-11-08 17:20:52,653 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:20:52,653 - DEBUG - Node creation parameters - name: Chain Import, pos: None
+2025-11-08 17:20:52,654 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:20:52,678 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x26393ccc640
+2025-11-08 17:20:52,717 - DEBUG - Set chain import data for node: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/EXTRACT_BUILDS_PER_FLAVOR.json
+2025-11-08 17:20:52,718 - DEBUG - Restoring imported chain configuration for node 0x26393ccc640
+2025-11-08 17:20:52,719 - DEBUG - Successfully restored imported chain configuration for node 0x26393ccc640
+2025-11-08 17:20:52,720 - DEBUG - Set position for chain import node: [100.95118031869458, -409.7919016965073]
+2025-11-08 17:20:52,720 - DEBUG - Added chain import node to node map: 0x150378063f0
+2025-11-08 17:20:52,722 - DEBUG - Restoring node connections
+2025-11-08 17:20:52,723 - DEBUG - Restoring connections between nodes
+2025-11-08 17:20:52,723 - DEBUG - Found 5 connections to restore
+2025-11-08 17:20:52,725 - DEBUG - Connecting 0x15037807820:output_5 -> 0x150378076f0:input_1
+2025-11-08 17:20:52,726 - INFO - Connecting nodes: 0x2639033f6f0 -> 0x2639033fbb0
+2025-11-08 17:20:52,726 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:52,727 - DEBUG - Found output port: output_5
+2025-11-08 17:20:52,728 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:52,731 - DEBUG - Found input port: input_1
+2025-11-08 17:20:52,732 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:52,733 - INFO - Successfully connected nodes: 0x2639033f6f0 -> 0x2639033fbb0
+2025-11-08 17:20:52,734 - DEBUG - Connecting 0x150378076f0:output_5 -> 0x150378075c0:input_1
+2025-11-08 17:20:52,735 - INFO - Connecting nodes: 0x2639033fbb0 -> 0x2639033fe10
+2025-11-08 17:20:52,736 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:52,737 - DEBUG - Found output port: output_5
+2025-11-08 17:20:52,738 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:52,739 - DEBUG - Found input port: input_1
+2025-11-08 17:20:52,739 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:52,742 - INFO - Successfully connected nodes: 0x2639033fbb0 -> 0x2639033fe10
+2025-11-08 17:20:52,743 - DEBUG - Connecting 0x150378075c0:output_5 -> 0x15037807490:input_1
+2025-11-08 17:20:52,743 - INFO - Connecting nodes: 0x2639033fe10 -> 0x26393ccc180
+2025-11-08 17:20:52,744 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:52,744 - DEBUG - Found output port: output_5
+2025-11-08 17:20:52,746 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:52,746 - DEBUG - Found input port: input_1
+2025-11-08 17:20:52,747 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:52,747 - INFO - Successfully connected nodes: 0x2639033fe10 -> 0x26393ccc180
+2025-11-08 17:20:52,748 - DEBUG - Connecting 0x15037807490:output_5 -> 0x15037806190:input_1
+2025-11-08 17:20:52,748 - INFO - Connecting nodes: 0x26393ccc180 -> 0x26393ccc3e0
+2025-11-08 17:20:52,749 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:52,749 - DEBUG - Found output port: output_5
+2025-11-08 17:20:52,749 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:52,750 - DEBUG - Found input port: input_1
+2025-11-08 17:20:52,750 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:52,751 - INFO - Successfully connected nodes: 0x26393ccc180 -> 0x26393ccc3e0
+2025-11-08 17:20:52,751 - DEBUG - Connecting 0x150378063f0:output_5 -> 0x15037807820:input_1
+2025-11-08 17:20:52,756 - INFO - Connecting nodes: 0x26393ccc640 -> 0x2639033f6f0
+2025-11-08 17:20:52,757 - DEBUG - Finding output port by name: output_5
+2025-11-08 17:20:52,758 - DEBUG - Found output port: output_5
+2025-11-08 17:20:52,759 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:20:52,760 - DEBUG - Found input port: input_1
+2025-11-08 17:20:52,763 - DEBUG - Creating connection: output_5 -> input_1
+2025-11-08 17:20:52,764 - INFO - Successfully connected nodes: 0x26393ccc640 -> 0x2639033f6f0
+2025-11-08 17:20:52,765 - INFO - Successfully restored 5 connections
+2025-11-08 17:20:52,767 - DEBUG - Refreshing current view
+2025-11-08 17:20:52,768 - INFO - Refreshing current view: sequence
+2025-11-08 17:20:52,773 - DEBUG - Refreshing sequence view
+2025-11-08 17:20:52,774 - INFO - Switching to sequence view
+2025-11-08 17:20:52,775 - DEBUG - Current view set to sequence
+2025-11-08 17:20:52,776 - DEBUG - Getting all nodes from graph
+2025-11-08 17:20:52,782 - DEBUG - Retrieved 6 nodes from graph
+2025-11-08 17:20:52,784 - DEBUG - Found 6 total nodes
+2025-11-08 17:20:52,784 - DEBUG - Sequence view: 4 nodes visible, 0 nodes hidden
+2025-11-08 17:20:52,785 - DEBUG - Button state update skipped - view buttons removed
+2025-11-08 17:20:52,785 - INFO - Sequence view activated successfully
+2025-11-08 17:20:52,786 - INFO - Current view refreshed successfully
+2025-11-08 17:20:52,791 - INFO - Successfully built graph with 6 nodes
+2025-11-08 17:21:00,807 - INFO - Chain editor dialog closed
+2025-11-08 17:21:00,832 - DEBUG - Context menu displayed successfully
+2025-11-08 17:21:09,757 - WARNING - MainWindow.run_chain not found
+2025-11-08 17:21:26,670 - WARNING - MainWindow.run_chain not found
+2025-11-08 17:21:28,301 - WARNING - MainWindow.open_chain not found
+2025-11-08 17:21:29,780 - WARNING - MainWindow.save_chain not found
+2025-11-08 17:24:18,114 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:24:18,474 - INFO - Initializing GraphViewWidget
+2025-11-08 17:24:18,475 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:24:18,476 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:24:18,476 - DEBUG - Initializing modular components...
+2025-11-08 17:24:18,476 - INFO - Initializing UIComponents
+2025-11-08 17:24:18,477 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:24:18,477 - DEBUG - UIComponents initialized
+2025-11-08 17:24:18,477 - INFO - Initializing GraphManager
+2025-11-08 17:24:18,477 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:24:18,479 - DEBUG - GraphManager initialized
+2025-11-08 17:24:18,480 - INFO - Initializing NodeOperations
+2025-11-08 17:24:18,480 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:24:18,481 - DEBUG - NodeOperations initialized
+2025-11-08 17:24:18,481 - INFO - Initializing ViewManager
+2025-11-08 17:24:18,482 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:24:18,482 - DEBUG - ViewManager initialized
+2025-11-08 17:24:18,482 - INFO - Initializing ConfigManager
+2025-11-08 17:24:18,482 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:24:18,483 - DEBUG - ConfigManager initialized
+2025-11-08 17:24:18,484 - INFO - Initializing ExportUtils
+2025-11-08 17:24:18,484 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:24:18,484 - DEBUG - ExportUtils initialized
+2025-11-08 17:24:18,485 - INFO - Initializing NodeTransforms
+2025-11-08 17:24:18,485 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:24:18,485 - DEBUG - NodeTransforms initialized
+2025-11-08 17:24:18,489 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:24:18,490 - DEBUG - Setting up UI...
+2025-11-08 17:24:18,491 - DEBUG - Setting up UI components
+2025-11-08 17:24:18,491 - INFO - Setting up main UI layout and components
+2025-11-08 17:24:18,492 - DEBUG - Applying main widget styling
+2025-11-08 17:24:18,492 - DEBUG - Creating main horizontal layout
+2025-11-08 17:24:18,493 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:24:18,493 - DEBUG - Node graph widget added to main layout (stretch=1)
+2025-11-08 17:24:18,494 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:24:18,495 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:24:18,501 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:24:18,666 - DEBUG - Toolbar added to main layout (stretch=0)
+2025-11-08 17:24:18,666 - INFO - UI setup completed successfully
+2025-11-08 17:24:18,666 - DEBUG - UI setup completed successfully
+2025-11-08 17:24:18,666 - DEBUG - Setting up node graph...
+2025-11-08 17:24:18,667 - DEBUG - Setting up node graph
+2025-11-08 17:24:18,667 - INFO - Setting up node graph
+2025-11-08 17:24:18,667 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:24:18,804 - DEBUG - Registering custom nodes
+2025-11-08 17:24:18,807 - DEBUG - Registering custom node types
+2025-11-08 17:24:18,808 - DEBUG - Registering SequenceNode
+2025-11-08 17:24:18,811 - DEBUG - Registering ActionNode
+2025-11-08 17:24:18,813 - DEBUG - Registering ConditionalNode
+2025-11-08 17:24:18,815 - DEBUG - Registering LLMNode
+2025-11-08 17:24:18,816 - DEBUG - Registering TTSNode
+2025-11-08 17:24:18,817 - DEBUG - Registering ChainImportNode
+2025-11-08 17:24:18,876 - INFO - All custom node types registered successfully
+2025-11-08 17:24:18,978 - DEBUG - Setting up graph widget
+2025-11-08 17:24:18,996 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:24:19,005 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:24:22,062 - DEBUG - Setting up context menu policy
+2025-11-08 17:24:22,072 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:24:22,086 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:24:22,098 - DEBUG - Storing graph widget references
+2025-11-08 17:24:22,194 - INFO - Graph widget setup completed successfully
+2025-11-08 17:24:22,220 - DEBUG - Configuring graph properties
+2025-11-08 17:24:22,329 - DEBUG - Configuring graph properties
+2025-11-08 17:24:22,395 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:24:22,466 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:24:22,474 - INFO - Node graph setup completed successfully
+2025-11-08 17:24:22,476 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:24:22,477 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:24:22,478 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:24:36,917 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:24:37,007 - INFO - Initializing GraphViewWidget
+2025-11-08 17:24:37,008 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:24:37,008 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:24:37,008 - DEBUG - Initializing modular components...
+2025-11-08 17:24:37,009 - INFO - Initializing UIComponents
+2025-11-08 17:24:37,009 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:24:37,009 - DEBUG - UIComponents initialized
+2025-11-08 17:24:37,009 - INFO - Initializing GraphManager
+2025-11-08 17:24:37,010 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:24:37,010 - DEBUG - GraphManager initialized
+2025-11-08 17:24:37,010 - INFO - Initializing NodeOperations
+2025-11-08 17:24:37,011 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:24:37,011 - DEBUG - NodeOperations initialized
+2025-11-08 17:24:37,011 - INFO - Initializing ViewManager
+2025-11-08 17:24:37,012 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:24:37,012 - DEBUG - ViewManager initialized
+2025-11-08 17:24:37,012 - INFO - Initializing ConfigManager
+2025-11-08 17:24:37,013 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:24:37,013 - DEBUG - ConfigManager initialized
+2025-11-08 17:24:37,013 - INFO - Initializing ExportUtils
+2025-11-08 17:24:37,013 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:24:37,014 - DEBUG - ExportUtils initialized
+2025-11-08 17:24:37,014 - INFO - Initializing NodeTransforms
+2025-11-08 17:24:37,014 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:24:37,014 - DEBUG - NodeTransforms initialized
+2025-11-08 17:24:37,014 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:24:37,014 - DEBUG - Setting up UI...
+2025-11-08 17:24:37,015 - DEBUG - Setting up UI components
+2025-11-08 17:24:37,015 - INFO - Setting up main UI layout and components
+2025-11-08 17:24:37,015 - DEBUG - Applying main widget styling
+2025-11-08 17:24:37,016 - DEBUG - Creating main horizontal layout
+2025-11-08 17:24:37,016 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:24:37,017 - DEBUG - Node graph widget added to main layout (stretch=1)
+2025-11-08 17:24:37,021 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:24:37,023 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:24:37,032 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:24:37,035 - DEBUG - Toolbar added to main layout (stretch=0)
+2025-11-08 17:24:37,035 - INFO - UI setup completed successfully
+2025-11-08 17:24:37,036 - DEBUG - UI setup completed successfully
+2025-11-08 17:24:37,036 - DEBUG - Setting up node graph...
+2025-11-08 17:24:37,036 - DEBUG - Setting up node graph
+2025-11-08 17:24:37,037 - INFO - Setting up node graph
+2025-11-08 17:24:37,037 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:24:37,050 - DEBUG - Registering custom nodes
+2025-11-08 17:24:37,051 - DEBUG - Registering custom node types
+2025-11-08 17:24:37,052 - DEBUG - Registering SequenceNode
+2025-11-08 17:24:37,053 - DEBUG - Registering ActionNode
+2025-11-08 17:24:37,053 - DEBUG - Registering ConditionalNode
+2025-11-08 17:24:37,054 - DEBUG - Registering LLMNode
+2025-11-08 17:24:37,054 - DEBUG - Registering TTSNode
+2025-11-08 17:24:37,055 - DEBUG - Registering ChainImportNode
+2025-11-08 17:24:37,056 - INFO - All custom node types registered successfully
+2025-11-08 17:24:37,057 - DEBUG - Setting up graph widget
+2025-11-08 17:24:37,058 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:24:37,058 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:24:37,639 - DEBUG - Setting up context menu policy
+2025-11-08 17:24:37,640 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:24:37,640 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:24:37,642 - DEBUG - Storing graph widget references
+2025-11-08 17:24:37,643 - INFO - Graph widget setup completed successfully
+2025-11-08 17:24:37,643 - DEBUG - Configuring graph properties
+2025-11-08 17:24:37,643 - DEBUG - Configuring graph properties
+2025-11-08 17:24:37,643 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:24:37,644 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:24:37,644 - INFO - Node graph setup completed successfully
+2025-11-08 17:24:37,644 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:24:37,644 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:24:37,645 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:25:26,529 - DEBUG - Loading chain from file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/conditionaltest.json
+2025-11-08 17:25:26,635 - INFO - Loading chain configuration from file: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/conditionaltest.json
+2025-11-08 17:25:26,637 - DEBUG - Loading configuration from: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/conditionaltest.json
+2025-11-08 17:25:26,639 - DEBUG - Loaded config with 0 sequences, 1 conditional nodes, 0 LLM nodes, 2 TTS nodes, 0 chain import nodes
+2025-11-08 17:25:26,640 - DEBUG - Building graph from loaded configuration
+2025-11-08 17:25:26,641 - INFO - Building node graph from configuration
+2025-11-08 17:25:26,642 - DEBUG - Clearing existing graph
+2025-11-08 17:25:26,643 - INFO - Clearing graph
+2025-11-08 17:25:26,643 - DEBUG - Clearing node graph session
+2025-11-08 17:25:26,644 - INFO - Graph cleared successfully
+2025-11-08 17:25:26,645 - DEBUG - Cleared sequence_nodes tracking list
+2025-11-08 17:25:26,660 - DEBUG - Cleared conditional_nodes tracking list
+2025-11-08 17:25:26,661 - DEBUG - Cleared llm_nodes tracking list
+2025-11-08 17:25:26,663 - DEBUG - Cleared tts_nodes tracking list
+2025-11-08 17:25:26,674 - DEBUG - Created node map for connection restoration
+2025-11-08 17:25:26,677 - DEBUG - Creating sequence nodes
+2025-11-08 17:25:26,678 - DEBUG - Creating sequence nodes from configuration
+2025-11-08 17:25:26,678 - DEBUG - Found 0 sequence nodes to create
+2025-11-08 17:25:26,679 - DEBUG - Creating conditional nodes
+2025-11-08 17:25:26,685 - DEBUG - Creating conditional nodes from configuration
+2025-11-08 17:25:26,686 - DEBUG - Found 1 conditional nodes to create
+2025-11-08 17:25:26,688 - DEBUG - Creating conditional node with condition type: presence
+2025-11-08 17:25:26,689 - INFO - Creating node of type: conditional.ConditionalNode
+2025-11-08 17:25:26,689 - DEBUG - Node creation parameters - name: Conditional, pos: None
+2025-11-08 17:25:26,689 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:25:26,795 - INFO - Successfully created conditional.ConditionalNode node with ID: 0x1fef035b770
+2025-11-08 17:25:26,803 - DEBUG - Set properties for conditional node with condition: presence
+2025-11-08 17:25:26,805 - DEBUG - Set position for conditional node: [-102.83067764994169, -52.00631973100499]
+2025-11-08 17:25:26,806 - DEBUG - Added conditional node to parent widget tracking list
+2025-11-08 17:25:26,807 - DEBUG - Added conditional node to node map: 0x1d5db8f4b00
+2025-11-08 17:25:26,807 - DEBUG - Creating LLM nodes
+2025-11-08 17:25:26,808 - DEBUG - Creating LLM nodes from configuration
+2025-11-08 17:25:26,808 - DEBUG - Found 0 LLM nodes to create
+2025-11-08 17:25:26,809 - DEBUG - Creating TTS nodes
+2025-11-08 17:25:26,809 - DEBUG - Creating TTS nodes from configuration
+2025-11-08 17:25:26,810 - DEBUG - Found 2 TTS nodes to create
+2025-11-08 17:25:26,813 - DEBUG - Creating TTS node with text: si...
+2025-11-08 17:25:26,814 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:25:26,814 - DEBUG - Node creation parameters - name: TTS, pos: None
+2025-11-08 17:25:26,815 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:25:26,835 - INFO - Successfully created tts.TTSNode node with ID: 0x1fef0488cd0
+2025-11-08 17:25:26,837 - DEBUG - Set properties for TTS node with text: si...
+2025-11-08 17:25:26,838 - DEBUG - Set position for TTS node: [226.88964545839724, -216.58254463327825]
+2025-11-08 17:25:26,838 - DEBUG - Added TTS node to parent widget tracking list
+2025-11-08 17:25:26,839 - DEBUG - Added TTS node to node map: 0x1d5db8f4c30
+2025-11-08 17:25:26,840 - DEBUG - Creating TTS node with text: no...
+2025-11-08 17:25:26,840 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:25:26,841 - DEBUG - Node creation parameters - name: TTS, pos: None
+2025-11-08 17:25:26,841 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:25:26,860 - INFO - Successfully created tts.TTSNode node with ID: 0x1fef0489090
+2025-11-08 17:25:26,863 - DEBUG - Set properties for TTS node with text: no...
+2025-11-08 17:25:26,874 - DEBUG - Set position for TTS node: [254.7859133426266, 71.60042090285488]
+2025-11-08 17:25:26,875 - DEBUG - Added TTS node to parent widget tracking list
+2025-11-08 17:25:26,876 - DEBUG - Added TTS node to node map: 0x1d5db8f4e90
+2025-11-08 17:25:26,876 - DEBUG - Creating chain import nodes
+2025-11-08 17:25:26,877 - DEBUG - Creating chain import nodes from configuration
+2025-11-08 17:25:26,878 - DEBUG - Found 0 chain import nodes to create
+2025-11-08 17:25:26,880 - DEBUG - Restoring node connections
+2025-11-08 17:25:26,881 - DEBUG - Restoring connections between nodes
+2025-11-08 17:25:26,881 - DEBUG - Found 2 connections to restore
+2025-11-08 17:25:26,883 - DEBUG - Connecting 0x1d5db8f4b00:true -> 0x1d5db8f4c30:input_5
+2025-11-08 17:25:26,884 - INFO - Connecting nodes: 0x1fef035b770 -> 0x1fef0488cd0
+2025-11-08 17:25:26,974 - DEBUG - Finding output port by name: true
+2025-11-08 17:25:26,979 - DEBUG - Found output port: true
+2025-11-08 17:25:26,986 - DEBUG - Finding input port by name: input_5
+2025-11-08 17:25:26,988 - DEBUG - Found input port: input_5
+2025-11-08 17:25:26,989 - DEBUG - Creating connection: true -> input_5
+2025-11-08 17:25:26,992 - INFO - Successfully connected nodes: 0x1fef035b770 -> 0x1fef0488cd0
+2025-11-08 17:25:26,992 - DEBUG - Connecting 0x1d5db8f4b00:false -> 0x1d5db8f4e90:input_1
+2025-11-08 17:25:26,993 - INFO - Connecting nodes: 0x1fef035b770 -> 0x1fef0489090
+2025-11-08 17:25:26,994 - DEBUG - Finding output port by name: false
+2025-11-08 17:25:26,994 - DEBUG - Found output port: false
+2025-11-08 17:25:26,995 - DEBUG - Finding input port by name: input_1
+2025-11-08 17:25:26,995 - DEBUG - Found input port: input_1
+2025-11-08 17:25:26,996 - DEBUG - Creating connection: false -> input_1
+2025-11-08 17:25:26,998 - INFO - Successfully connected nodes: 0x1fef035b770 -> 0x1fef0489090
+2025-11-08 17:25:26,999 - INFO - Successfully restored 2 connections
+2025-11-08 17:25:27,002 - DEBUG - Refreshing current view
+2025-11-08 17:25:27,003 - INFO - Refreshing current view: sequence
+2025-11-08 17:25:27,004 - DEBUG - Refreshing sequence view
+2025-11-08 17:25:27,004 - INFO - Switching to sequence view
+2025-11-08 17:25:27,005 - DEBUG - Current view set to sequence
+2025-11-08 17:25:27,005 - DEBUG - Getting all nodes from graph
+2025-11-08 17:25:27,006 - DEBUG - Retrieved 3 nodes from graph
+2025-11-08 17:25:27,006 - DEBUG - Found 3 total nodes
+2025-11-08 17:25:27,007 - DEBUG - Sequence view: 3 nodes visible, 0 nodes hidden
+2025-11-08 17:25:27,008 - DEBUG - Button state update skipped - view buttons removed
+2025-11-08 17:25:27,008 - INFO - Sequence view activated successfully
+2025-11-08 17:25:27,009 - INFO - Current view refreshed successfully
+2025-11-08 17:25:27,009 - INFO - Successfully built graph with 3 nodes
+2025-11-08 17:25:27,010 - INFO - Successfully loaded chain from: C:/Users/david.benitez/OneDrive - Motivus/Desktop/LoOper/LoOperV2/LoOper/chains/conditionaltest.json
+2025-11-08 17:25:27,010 - INFO - Chain loaded successfully
+2025-11-08 17:25:31,689 - DEBUG - Showing custom context menu at position: PyQt5.QtCore.QPoint(769, 341)
+2025-11-08 17:25:31,690 - DEBUG - Selected nodes: 1
+2025-11-08 17:25:31,690 - DEBUG - Context menu for node: Conditional
+2025-11-08 17:25:32,801 - DEBUG - Editing conditional node: Conditional
+2025-11-08 17:25:32,833 - INFO - Editing conditional node: 0x1fef035b770
+2025-11-08 17:25:32,835 - DEBUG - Creating conditional dialog
+2025-11-08 17:25:35,479 - DEBUG - Dialog cancelled
+2025-11-08 17:25:35,484 - INFO - Conditional node edited successfully
+2025-11-08 17:25:35,485 - DEBUG - Context menu displayed successfully
+2025-11-08 17:25:41,951 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:25:41,998 - INFO - JSON cache cleared
+2025-11-08 17:25:42,334 - DEBUG - Getting chain configuration
+2025-11-08 17:25:42,336 - DEBUG - Getting chain configuration
+2025-11-08 17:25:42,337 - INFO - Saving current graph state to configuration
+2025-11-08 17:25:42,338 - DEBUG - Clearing current configuration
+2025-11-08 17:25:42,338 - DEBUG - Getting all nodes from graph
+2025-11-08 17:25:42,339 - DEBUG - Getting all nodes from graph
+2025-11-08 17:25:42,339 - DEBUG - Retrieved 3 nodes from graph
+2025-11-08 17:25:42,457 - DEBUG - Found 3 nodes to process
+2025-11-08 17:25:42,476 - DEBUG - Saving conditional node: 0x1fef035b770
+2025-11-08 17:25:42,477 - DEBUG - Saving conditional node 0x1fef035b770 to configuration
+2025-11-08 17:25:42,501 - DEBUG - Getting connections for node 0x1fef035b770
+2025-11-08 17:25:42,501 - DEBUG - Found connection: true -> 0x1fef0488cd0:input_5
+2025-11-08 17:25:42,537 - DEBUG - Found connection: false -> 0x1fef0489090:input_1
+2025-11-08 17:25:42,646 - DEBUG - Node 0x1fef035b770 has 2 output connections
+2025-11-08 17:25:42,646 - DEBUG - Successfully saved conditional node with condition type: presence
+2025-11-08 17:25:42,647 - DEBUG - Saving TTS node: 0x1fef0488cd0
+2025-11-08 17:25:42,652 - DEBUG - Saving TTS node 0x1fef0488cd0 to configuration
+2025-11-08 17:25:42,652 - DEBUG - Getting connections for node 0x1fef0488cd0
+2025-11-08 17:25:42,653 - DEBUG - Node 0x1fef0488cd0 has 0 output connections
+2025-11-08 17:25:42,653 - DEBUG - Successfully saved TTS node with text: si...
+2025-11-08 17:25:42,653 - DEBUG - Saving TTS node: 0x1fef0489090
+2025-11-08 17:25:42,653 - DEBUG - Saving TTS node 0x1fef0489090 to configuration
+2025-11-08 17:25:42,782 - DEBUG - Getting connections for node 0x1fef0489090
+2025-11-08 17:25:42,783 - DEBUG - Node 0x1fef0489090 has 0 output connections
+2025-11-08 17:25:42,783 - DEBUG - Successfully saved TTS node with text: no...
+2025-11-08 17:25:42,784 - INFO - Successfully saved current state: 0 sequences, 1 conditional nodes, 0 LLM nodes, 2 TTS nodes, 0 chain import nodes
+2025-11-08 17:25:42,784 - DEBUG - Chain config contains 0 sequences, 1 conditional nodes, 0 LLM nodes, 2 TTS nodes, 0 chain import nodes
+2025-11-08 17:25:42,785 - DEBUG - Chain config contains 0 sequences, 1 conditional nodes, 0 LLM nodes, 2 TTS nodes, 0 chain import nodes
+2025-11-08 17:25:43,542 - INFO - Preloading entire chain and all sequences...
+2025-11-08 17:25:43,542 - INFO - Preloading chain: C:\Users\DAVID~1.BEN\AppData\Local\Temp\temp_chain_1762633542.json
+2025-11-08 17:25:43,544 - INFO - Chain preloading completed in 0.002s: 0 sequences, 0 chain imports
+2025-11-08 17:25:43,545 - INFO - Chain preloading completed in 0.003s - Cached 0 sequences, 1 chains
+2025-11-08 17:25:43,546 - INFO - Built workflow graph with 3 nodes
+2025-11-08 17:25:43,547 - INFO - Loaded workflow chain with 0 sequences, 1 conditional nodes, 0 LLM nodes, 2 TTS nodes, and 0 chain import nodes
+2025-11-08 17:25:43,598 - DEBUG - Stop flag reset
+2025-11-08 17:25:43,642 - INFO - Starting ESC key monitoring for abort functionality
+2025-11-08 17:25:43,650 - INFO - Starting chain playback
+2025-11-08 17:25:43,651 - DEBUG - Chain playback - workflow_graph exists: True
+2025-11-08 17:25:43,652 - DEBUG - Chain playback - sequences count: 0
+2025-11-08 17:25:43,664 - DEBUG - Keyboard listener created, starting monitoring
+2025-11-08 17:25:45,677 - INFO - Using workflow executor for chain playback
+2025-11-08 17:25:45,795 - DEBUG - Looking for starting nodes in graph with 3 nodes
+2025-11-08 17:25:45,809 - DEBUG - Node 0x1fef035b770 (type: conditional) has 0 inputs: []
+2025-11-08 17:25:45,825 - DEBUG -   Conditional node 0x1fef035b770 connections: {'true': [{'node_id': '0x1fef0488cd0'}], 'false': [{'node_id': '0x1fef0489090'}]}
+2025-11-08 17:25:45,937 - DEBUG - Node 0x1fef0488cd0 (type: tts) has 1 inputs: [{'from_node': '0x1fef035b770', 'output_type': 'true'}]
+2025-11-08 17:25:45,956 - DEBUG - Node 0x1fef0489090 (type: tts) has 1 inputs: [{'from_node': '0x1fef035b770', 'output_type': 'false'}]
+2025-11-08 17:25:45,961 - DEBUG - Found starting node: 0x1fef035b770 (type: conditional)
+2025-11-08 17:25:45,992 - INFO - Starting workflow execution from nodes: ['0x1fef035b770']
+2025-11-08 17:25:46,000 - DEBUG - Workflow graph has 3 nodes: ['0x1fef035b770', '0x1fef0488cd0', '0x1fef0489090']
+2025-11-08 17:25:46,007 - INFO - Executing node 0x1fef035b770 (type: conditional)
+2025-11-08 17:25:46,038 - INFO - Evaluating conditional with raw trigger type: presence_trigger -> mapped to: presence_trigger
+2025-11-08 17:25:46,105 - DEBUG - Condition config: {'image_path': '', 'confidence': 0.8, 'timeout': 5.0, 'target_text': None, 'region': None, 'strict_validation': False}
+2025-11-08 17:25:47,630 - INFO - Starting presence check with timeout: 5.0s, check_interval: 0.5s
+2025-11-08 17:25:48,085 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:48,199 - DEBUG - Cached validation result: False for key: 256f4502...
+2025-11-08 17:25:48,208 - DEBUG - Attempt 1 failed, waiting 0.5s before retry
+2025-11-08 17:25:48,783 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:48,835 - DEBUG - Cached validation result: False for key: a6eb3fd8...
+2025-11-08 17:25:48,837 - DEBUG - Attempt 2 failed, waiting 0.5s before retry
+2025-11-08 17:25:49,403 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:49,475 - DEBUG - Cached validation result: False for key: d57f2b83...
+2025-11-08 17:25:49,477 - DEBUG - Attempt 3 failed, waiting 0.5s before retry
+2025-11-08 17:25:50,050 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:50,113 - DEBUG - Cached validation result: False for key: dacb7c1c...
+2025-11-08 17:25:50,113 - DEBUG - Attempt 4 failed, waiting 0.5s before retry
+2025-11-08 17:25:50,682 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:50,744 - DEBUG - Cached validation result: False for key: d4cededa...
+2025-11-08 17:25:50,744 - DEBUG - Attempt 5 failed, waiting 0.5s before retry
+2025-11-08 17:25:51,316 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:51,399 - DEBUG - Cached validation result: False for key: ec793a44...
+2025-11-08 17:25:51,399 - DEBUG - Attempt 6 failed, waiting 0.5s before retry
+2025-11-08 17:25:51,964 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:52,027 - DEBUG - Cached validation result: False for key: 1b77354f...
+2025-11-08 17:25:52,028 - DEBUG - Attempt 7 failed, waiting 0.5s before retry
+2025-11-08 17:25:52,601 - WARNING - Presence trigger image not found: 
+2025-11-08 17:25:52,704 - DEBUG - Cached validation result: False for key: a10198a8...
+2025-11-08 17:25:52,738 - DEBUG - Attempt 8 failed, waiting 0.5s before retry
+2025-11-08 17:25:53,240 - INFO - Presence trigger timeout after 5.0 seconds (8 attempts)
+2025-11-08 17:25:53,242 - INFO - Conditional evaluation result: False
+2025-11-08 17:25:53,242 - INFO - Node 0x1fef035b770 completed successfully
+2025-11-08 17:25:53,243 - DEBUG - Node 0x1fef0489090 inputs: [{'from_node': '0x1fef035b770', 'output_type': 'false'}]
+2025-11-08 17:25:53,244 - DEBUG - Node 0x1fef0489090 dependency 0x1fef035b770 satisfied - node is ready
+2025-11-08 17:25:53,244 - INFO - Conditional branch chosen: 0x1fef0489090
+2025-11-08 17:25:53,244 - INFO - Marked 1 nodes as skipped from unchosen branch: {'0x1fef0488cd0'}
+2025-11-08 17:25:53,245 - INFO - Executing node 0x1fef0489090 (type: tts)
+2025-11-08 17:25:53,247 - INFO - === STARTING TTS NODE EXECUTION ===
+2025-11-08 17:25:53,247 - INFO - Executing TTS node: 0x1fef0489090
+2025-11-08 17:25:53,247 - INFO - Full node data: {'type': 'tts', 'data': {'type': 'tts', 'text': 'no', 'language': 'en', 'node_id': '0x1fef0489090', 'position': [254.7859133426266, 71.60042090285488], 'connections': []}, 'connections': {'output': []}, 'inputs': [{'from_node': '0x1fef035b770', 'output_type': 'false'}]}
+2025-11-08 17:25:53,410 - DEBUG - CoInitializeEx(None, 2)
+2025-11-08 17:25:53,968 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\david.benitez\\OneDrive - Motivus\\Desktop\\LoOper\\LoOperV2\\LoOper\\venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-11-08 17:25:53,969 - INFO - Using writeable comtypes cache directory: 'C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\venv\Lib\site-packages\comtypes\gen'
+2025-11-08 17:25:55,122 - DEBUG - SAPI.SPVoice -> {96749377-3391-11D2-9EE3-00C04F797396}
+2025-11-08 17:25:55,123 - DEBUG - CoCreateInstance({96749377-3391-11D2-9EE3-00C04F797396}, clsctx=None, interface=None)
+2025-11-08 17:25:55,147 - DEBUG - GetBestInterface(<POINTER(IUnknown) ptr=0x1fef1f6a5f0 at 1fef308f350>)
+2025-11-08 17:25:55,148 - DEBUG - Does implement IProvideClassInfo
+2025-11-08 17:25:55,154 - DEBUG - Default interface is {269316D8-57BD-11D2-9EEE-00C04F797396}
+2025-11-08 17:25:55,154 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f6a630 at 1fef336a3d0>
+2025-11-08 17:25:55,155 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:55,156 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechVoice'>
+2025-11-08 17:25:55,157 - DEBUG - Final result is <POINTER(ISpeechVoice) ptr=0x1fef1f6a630 at 1fef336a350>
+2025-11-08 17:25:55,157 - DEBUG - Release <POINTER(IProvideClassInfo) ptr=0x1fef1f6a650 at 1fef3369fd0>
+2025-11-08 17:25:55,158 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37df8 at 1fef336a050>
+2025-11-08 17:25:55,159 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37e50 at 1fef336a1d0>
+2025-11-08 17:25:55,160 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336a3d0>
+2025-11-08 17:25:55,160 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f6a5f0 at 1fef308f350>
+2025-11-08 17:25:55,161 - DEBUG - <POINTER(ISpeechVoice) ptr=0x1fef1f6a630 at 1fef336a350> using sinkinterface from clsid <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4._ISpeechVoiceEvents'>
+2025-11-08 17:25:55,162 - DEBUG - Release <POINTER(IProvideClassInfo2) ptr=0x1fef1f6a650 at 1fef308f350>
+2025-11-08 17:25:55,163 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.VoiceChange not implemented
+2025-11-08 17:25:55,164 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.Bookmark not implemented
+2025-11-08 17:25:55,165 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.Sentence not implemented
+2025-11-08 17:25:55,165 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.Phoneme not implemented
+2025-11-08 17:25:55,165 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.Viseme not implemented
+2025-11-08 17:25:55,166 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.AudioLevel not implemented
+2025-11-08 17:25:55,166 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>: _ISpeechVoiceEvents.EnginePrivate not implemented
+2025-11-08 17:25:55,166 - DEBUG - Start advise <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4._ISpeechVoiceEvents'>
+2025-11-08 17:25:55,167 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.QueryInterface({A372ACD1-3BEF-4BBD-8FFB-CB3E2B416AF8}) -> S_OK
+2025-11-08 17:25:55,167 - DEBUG - 1 active COM objects: Added   <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>
+2025-11-08 17:25:55,168 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 1
+2025-11-08 17:25:55,175 - DEBUG - Release <POINTER(IConnectionPointContainer) ptr=0x1fef1f6a658 at 1fef2de1450>
+2025-11-08 17:25:55,955 - DEBUG - wrap_outparam(<POINTER(ISpeechObjectToken) ptr=0x1fef1f6a450 at 1fef2de1450>)
+2025-11-08 17:25:55,956 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f6a450 at 1fef2de1450>
+2025-11-08 17:25:55,959 - DEBUG - wrap_outparam(<POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef2de1450>)
+2025-11-08 17:25:55,959 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f6e4c0 at 1fef2de12d0>
+2025-11-08 17:25:55,960 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f72350 at 1fef2de1050>)
+2025-11-08 17:25:55,960 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f72350 at 1fef2de1050>)
+2025-11-08 17:25:55,961 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:55,961 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:55,963 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336b7d0>
+2025-11-08 17:25:55,964 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:55,964 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f72350 at 1fef336b8d0>
+2025-11-08 17:25:55,964 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:55,965 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:55,965 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f72350 at 1fef336b7d0>
+2025-11-08 17:25:55,966 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f72350 at 1fef336b750>
+2025-11-08 17:25:55,966 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336b850>
+2025-11-08 17:25:55,967 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336b8d0>
+2025-11-08 17:25:55,968 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f72350 at 1fef2de1050>
+2025-11-08 17:25:55,968 - DEBUG - Release <POINTER(IEnumVARIANT) ptr=0x1fef1f6e4c0 at 1fef2de11d0>
+2025-11-08 17:25:55,968 - DEBUG - Release <POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef2de1450>
+2025-11-08 17:25:55,969 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f72350 at 1fef336b7d0>
+2025-11-08 17:25:55,972 - DEBUG - wrap_outparam(<POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef2de1150>)
+2025-11-08 17:25:55,972 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f6e760 at 1fef2de1450>
+2025-11-08 17:25:55,973 - DEBUG - Release <POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef2de1150>
+2025-11-08 17:25:55,973 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f726b0 at 1fef2de12d0>)
+2025-11-08 17:25:55,974 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f726b0 at 1fef2de12d0>)
+2025-11-08 17:25:55,974 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:55,975 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:55,975 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336b7d0>
+2025-11-08 17:25:55,975 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:55,975 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f726b0 at 1fef336b650>
+2025-11-08 17:25:55,976 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:55,976 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:55,976 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f726b0 at 1fef336b7d0>
+2025-11-08 17:25:55,977 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f726b0 at 1fef308f7d0>
+2025-11-08 17:25:55,978 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336b8d0>
+2025-11-08 17:25:55,979 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336b650>
+2025-11-08 17:25:55,979 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f726b0 at 1fef2de12d0>
+2025-11-08 17:25:55,980 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f72620 at 1fef2de1050>)
+2025-11-08 17:25:55,980 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f72620 at 1fef2de1050>)
+2025-11-08 17:25:55,981 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:55,981 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:55,982 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336b8d0>
+2025-11-08 17:25:55,982 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:55,987 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f72620 at 1fef336b850>
+2025-11-08 17:25:55,989 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:55,990 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:55,990 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f72620 at 1fef336b8d0>
+2025-11-08 17:25:55,991 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f72620 at 1fef336b650>
+2025-11-08 17:25:55,992 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336b750>
+2025-11-08 17:25:55,992 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336b850>
+2025-11-08 17:25:55,992 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f72620 at 1fef2de1050>
+2025-11-08 17:25:55,993 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f726b0 at 1fef336b7d0>
+2025-11-08 17:25:55,993 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f71ae0 at 1fef2de1050>)
+2025-11-08 17:25:55,994 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f71ae0 at 1fef2de1050>)
+2025-11-08 17:25:55,994 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:55,995 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:55,995 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336b750>
+2025-11-08 17:25:55,996 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:55,996 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f71ae0 at 1fef336b950>
+2025-11-08 17:25:55,996 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:55,997 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:55,997 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f71ae0 at 1fef336b750>
+2025-11-08 17:25:55,997 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f71ae0 at 1fef336b850>
+2025-11-08 17:25:55,998 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336b650>
+2025-11-08 17:25:55,998 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336b950>
+2025-11-08 17:25:55,998 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f71ae0 at 1fef2de1050>
+2025-11-08 17:25:55,999 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f72620 at 1fef336b8d0>
+2025-11-08 17:25:55,999 - DEBUG - Release <POINTER(IEnumVARIANT) ptr=0x1fef1f6e760 at 1fef2de11d0>
+2025-11-08 17:25:56,000 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f71ae0 at 1fef336b750>
+2025-11-08 17:25:56,000 - DEBUG - wrap_outparam(<POINTER(ISpeechObjectToken) ptr=0x1fef1f6a450 at 1fef308f7d0>)
+2025-11-08 17:25:56,000 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f6a450 at 1fef308f7d0>
+2025-11-08 17:25:56,004 - DEBUG - wrap_outparam(<POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef308f7d0>)
+2025-11-08 17:25:56,006 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f6ef40 at 1fef2de11d0>
+2025-11-08 17:25:56,007 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f719c0 at 1fef336b750>)
+2025-11-08 17:25:56,007 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f719c0 at 1fef336b750>)
+2025-11-08 17:25:56,008 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:56,009 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:56,009 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336b650>
+2025-11-08 17:25:56,010 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:56,010 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f719c0 at 1fef336ba50>
+2025-11-08 17:25:56,011 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:56,011 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:56,011 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f719c0 at 1fef336b650>
+2025-11-08 17:25:56,012 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f719c0 at 1fef336b7d0>
+2025-11-08 17:25:56,012 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336b850>
+2025-11-08 17:25:56,012 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336ba50>
+2025-11-08 17:25:56,013 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f719c0 at 1fef336b750>
+2025-11-08 17:25:56,013 - DEBUG - Release <POINTER(IEnumVARIANT) ptr=0x1fef1f6ef40 at 1fef2de1050>
+2025-11-08 17:25:56,013 - DEBUG - Release <POINTER(ISpeechObjectTokens) ptr=0x1fef1f7eaa0 at 1fef308f7d0>
+2025-11-08 17:25:56,014 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f719c0 at 1fef336b650>
+2025-11-08 17:25:56,348 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,351 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,351 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,352 - DEBUG - wrap_outparam(<POINTER(IDispatch) ptr=0x1fef1f62180 at 1fef336b850>)
+2025-11-08 17:25:56,352 - DEBUG - GetBestInterface(<POINTER(IDispatch) ptr=0x1fef1f62180 at 1fef336b850>)
+2025-11-08 17:25:56,353 - DEBUG - Does NOT implement IProvideClassInfo, trying IProvideClassInfo2
+2025-11-08 17:25:56,353 - DEBUG - Does NOT implement IProvideClassInfo/IProvideClassInfo2
+2025-11-08 17:25:56,354 - DEBUG - Release <POINTER(IUnknown) ptr=0x1feeee37f00 at 1fef336bc50>
+2025-11-08 17:25:56,354 - DEBUG - Default interface is {C74A3ADC-B727-4500-A84A-B526721C8B8C}
+2025-11-08 17:25:56,354 - DEBUG - Release <POINTER(IUnknown) ptr=0x1fef1f62180 at 1fef336bd50>
+2025-11-08 17:25:56,355 - DEBUG - GetModule(TLIBATTR(GUID={C866CA3A-32F7-11D2-9602-00C04F8EE628}, Version=5.4, LCID=0, FLags=0x8))
+2025-11-08 17:25:56,355 - DEBUG - Implements default interface from typeinfo <class 'comtypes.gen._C866CA3A_32F7_11D2_9602_00C04F8EE628_0_5_4.ISpeechObjectToken'>
+2025-11-08 17:25:56,356 - DEBUG - Final result is <POINTER(ISpeechObjectToken) ptr=0x1fef1f62180 at 1fef336bc50>
+2025-11-08 17:25:56,356 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f62180 at 1fef336bbd0>
+2025-11-08 17:25:56,357 - DEBUG - Release <POINTER(ITypeInfo) ptr=0x1feeee37f00 at 1fef336bcd0>
+2025-11-08 17:25:56,357 - DEBUG - Release <POINTER(ITypeLib) ptr=0x1feeea9bc50 at 1fef336bd50>
+2025-11-08 17:25:56,357 - DEBUG - Release <POINTER(IDispatch) ptr=0x1fef1f62180 at 1fef336b850>
+2025-11-08 17:25:56,358 - DEBUG - unimplemented method _ISpeechVoiceEvents_VoiceChange called
+2025-11-08 17:25:56,358 - DEBUG - Release <POINTER(ISpeechObjectToken) ptr=0x1fef1f62180 at 1fef336bc50>
+2025-11-08 17:25:56,358 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,358 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,359 - DEBUG - unimplemented method _ISpeechVoiceEvents_Sentence called
+2025-11-08 17:25:56,359 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,359 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,359 - DEBUG - unimplemented method _ISpeechVoiceEvents_Phoneme called
+2025-11-08 17:25:56,360 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,360 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,360 - DEBUG - unimplemented method _ISpeechVoiceEvents_Viseme called
+2025-11-08 17:25:56,361 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,967 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,968 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,969 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,969 - DEBUG - unimplemented method _ISpeechVoiceEvents_Phoneme called
+2025-11-08 17:25:56,970 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:56,970 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:56,971 - DEBUG - unimplemented method _ISpeechVoiceEvents_Viseme called
+2025-11-08 17:25:56,971 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,024 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:57,026 - DEBUG - unimplemented method _ISpeechVoiceEvents_Phoneme called
+2025-11-08 17:25:57,026 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,027 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:57,027 - DEBUG - unimplemented method _ISpeechVoiceEvents_Viseme called
+2025-11-08 17:25:57,028 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,130 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:57,131 - DEBUG - unimplemented method _ISpeechVoiceEvents_Phoneme called
+2025-11-08 17:25:57,131 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,132 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:57,133 - DEBUG - unimplemented method _ISpeechVoiceEvents_Viseme called
+2025-11-08 17:25:57,134 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,735 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.AddRef() -> 2
+2025-11-08 17:25:57,736 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 1
+2025-11-08 17:25:57,791 - DEBUG - Release <POINTER(ISpeechVoice) ptr=0x1fef1f6a630 at 1fef336a350>
+2025-11-08 17:25:57,793 - DEBUG - <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>.Release() -> 0
+2025-11-08 17:25:57,794 - DEBUG - 0 active COM objects: Removed <comtypes.client._events.CreateEventReceiver.<locals>.Sink object at 0x000001FEF314ABA0>
+2025-11-08 17:25:57,794 - DEBUG - Remaining: []
+2025-11-08 17:25:57,796 - DEBUG - Release <POINTER(IConnectionPoint) ptr=0x1fef1f6a638 at 1fef2de13d0>
+2025-11-08 17:25:57,801 - INFO - TTS node execution successful: TTS spoke: "no"
+2025-11-08 17:25:57,802 - INFO - No output connections found for TTS node, ending workflow
+2025-11-08 17:25:57,804 - ERROR - Node 0x1fef0489090 execution failed, stopping workflow
+2025-11-08 17:25:57,804 - INFO - Workflow execution completed with result: False
+2025-11-08 17:25:57,805 - INFO - Stopping ESC key monitoring
+2025-11-08 17:25:57,807 - DEBUG - Keyboard monitoring thread finished
+2025-11-08 17:32:52,100 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:32:52,203 - INFO - Initializing GraphViewWidget
+2025-11-08 17:32:52,204 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:32:52,204 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:32:52,204 - DEBUG - Initializing modular components...
+2025-11-08 17:32:52,204 - INFO - Initializing UIComponents
+2025-11-08 17:32:52,205 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:32:52,205 - DEBUG - UIComponents initialized
+2025-11-08 17:32:52,205 - INFO - Initializing GraphManager
+2025-11-08 17:32:52,205 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:32:52,206 - DEBUG - GraphManager initialized
+2025-11-08 17:32:52,206 - INFO - Initializing NodeOperations
+2025-11-08 17:32:52,207 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:32:52,208 - DEBUG - NodeOperations initialized
+2025-11-08 17:32:52,208 - INFO - Initializing ViewManager
+2025-11-08 17:32:52,211 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:32:52,211 - DEBUG - ViewManager initialized
+2025-11-08 17:32:52,212 - INFO - Initializing ConfigManager
+2025-11-08 17:32:52,213 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:32:52,213 - DEBUG - ConfigManager initialized
+2025-11-08 17:32:52,213 - INFO - Initializing ExportUtils
+2025-11-08 17:32:52,214 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:32:52,214 - DEBUG - ExportUtils initialized
+2025-11-08 17:32:52,215 - INFO - Initializing NodeTransforms
+2025-11-08 17:32:52,215 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:32:52,215 - DEBUG - NodeTransforms initialized
+2025-11-08 17:32:52,216 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:32:52,216 - DEBUG - Setting up UI...
+2025-11-08 17:32:52,216 - DEBUG - Setting up UI components
+2025-11-08 17:32:52,217 - INFO - Setting up main UI layout and components
+2025-11-08 17:32:52,217 - DEBUG - Applying main widget styling
+2025-11-08 17:32:52,217 - DEBUG - Creating main horizontal layout
+2025-11-08 17:32:52,217 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:32:52,218 - DEBUG - Node graph widget added to main layout (stretch=1)
+2025-11-08 17:32:52,218 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:32:52,218 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:32:52,225 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:32:52,228 - DEBUG - Toolbar added to main layout (stretch=0)
+2025-11-08 17:32:52,322 - INFO - UI setup completed successfully
+2025-11-08 17:32:52,324 - DEBUG - UI setup completed successfully
+2025-11-08 17:32:52,324 - DEBUG - Setting up node graph...
+2025-11-08 17:32:52,325 - DEBUG - Setting up node graph
+2025-11-08 17:32:52,325 - INFO - Setting up node graph
+2025-11-08 17:32:52,326 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:32:52,337 - DEBUG - Registering custom nodes
+2025-11-08 17:32:52,338 - DEBUG - Registering custom node types
+2025-11-08 17:32:52,339 - DEBUG - Registering SequenceNode
+2025-11-08 17:32:52,339 - DEBUG - Registering ActionNode
+2025-11-08 17:32:52,340 - DEBUG - Registering ConditionalNode
+2025-11-08 17:32:52,341 - DEBUG - Registering LLMNode
+2025-11-08 17:32:52,341 - DEBUG - Registering TTSNode
+2025-11-08 17:32:52,342 - DEBUG - Registering ChainImportNode
+2025-11-08 17:32:52,364 - INFO - All custom node types registered successfully
+2025-11-08 17:32:52,365 - DEBUG - Setting up graph widget
+2025-11-08 17:32:52,365 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:32:52,366 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:32:52,892 - DEBUG - Setting up context menu policy
+2025-11-08 17:32:52,893 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:32:52,893 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:32:52,895 - DEBUG - Storing graph widget references
+2025-11-08 17:32:52,896 - INFO - Graph widget setup completed successfully
+2025-11-08 17:32:52,896 - DEBUG - Configuring graph properties
+2025-11-08 17:32:52,897 - DEBUG - Configuring graph properties
+2025-11-08 17:32:52,897 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:32:52,898 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:32:52,899 - INFO - Node graph setup completed successfully
+2025-11-08 17:32:52,900 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:32:52,901 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:32:52,903 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:33:46,897 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:33:46,976 - INFO - Initializing GraphViewWidget
+2025-11-08 17:33:46,983 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:33:46,984 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:33:46,984 - DEBUG - Initializing modular components...
+2025-11-08 17:33:46,985 - INFO - Initializing UIComponents
+2025-11-08 17:33:46,985 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:33:46,985 - DEBUG - UIComponents initialized
+2025-11-08 17:33:46,986 - INFO - Initializing GraphManager
+2025-11-08 17:33:46,986 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:33:46,987 - DEBUG - GraphManager initialized
+2025-11-08 17:33:46,987 - INFO - Initializing NodeOperations
+2025-11-08 17:33:46,987 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:33:46,988 - DEBUG - NodeOperations initialized
+2025-11-08 17:33:46,988 - INFO - Initializing ViewManager
+2025-11-08 17:33:46,990 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:33:46,991 - DEBUG - ViewManager initialized
+2025-11-08 17:33:46,991 - INFO - Initializing ConfigManager
+2025-11-08 17:33:46,992 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:33:46,995 - DEBUG - ConfigManager initialized
+2025-11-08 17:33:46,996 - INFO - Initializing ExportUtils
+2025-11-08 17:33:46,996 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:33:46,997 - DEBUG - ExportUtils initialized
+2025-11-08 17:33:46,998 - INFO - Initializing NodeTransforms
+2025-11-08 17:33:46,998 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:33:46,999 - DEBUG - NodeTransforms initialized
+2025-11-08 17:33:47,000 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:33:47,000 - DEBUG - Setting up UI...
+2025-11-08 17:33:47,000 - DEBUG - Setting up UI components
+2025-11-08 17:33:47,001 - INFO - Setting up main UI layout and components
+2025-11-08 17:33:47,002 - DEBUG - Applying main widget styling
+2025-11-08 17:33:47,005 - DEBUG - Creating main horizontal layout
+2025-11-08 17:33:47,009 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:33:47,010 - DEBUG - Node graph widget added to main layout (stretch=1)
+2025-11-08 17:33:47,011 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:33:47,011 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:33:47,022 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:33:47,024 - DEBUG - Toolbar added to main layout (stretch=0)
+2025-11-08 17:33:47,025 - INFO - UI setup completed successfully
+2025-11-08 17:33:47,025 - DEBUG - UI setup completed successfully
+2025-11-08 17:33:47,025 - DEBUG - Setting up node graph...
+2025-11-08 17:33:47,025 - DEBUG - Setting up node graph
+2025-11-08 17:33:47,026 - INFO - Setting up node graph
+2025-11-08 17:33:47,026 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:33:47,038 - DEBUG - Registering custom nodes
+2025-11-08 17:33:47,038 - DEBUG - Registering custom node types
+2025-11-08 17:33:47,038 - DEBUG - Registering SequenceNode
+2025-11-08 17:33:47,039 - DEBUG - Registering ActionNode
+2025-11-08 17:33:47,039 - DEBUG - Registering ConditionalNode
+2025-11-08 17:33:47,039 - DEBUG - Registering LLMNode
+2025-11-08 17:33:47,040 - DEBUG - Registering TTSNode
+2025-11-08 17:33:47,040 - DEBUG - Registering ChainImportNode
+2025-11-08 17:33:47,041 - INFO - All custom node types registered successfully
+2025-11-08 17:33:47,042 - DEBUG - Setting up graph widget
+2025-11-08 17:33:47,042 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:33:47,042 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:33:47,632 - DEBUG - Setting up context menu policy
+2025-11-08 17:33:47,633 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:33:47,633 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:33:47,635 - DEBUG - Storing graph widget references
+2025-11-08 17:33:47,636 - INFO - Graph widget setup completed successfully
+2025-11-08 17:33:47,636 - DEBUG - Configuring graph properties
+2025-11-08 17:33:47,637 - DEBUG - Configuring graph properties
+2025-11-08 17:33:47,637 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:33:47,642 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:33:47,644 - INFO - Node graph setup completed successfully
+2025-11-08 17:33:47,646 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:33:47,648 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:33:47,648 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:36:10,179 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:36:10,267 - INFO - Initializing GraphViewWidget
+2025-11-08 17:36:10,270 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:36:10,271 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:36:10,272 - DEBUG - Initializing modular components...
+2025-11-08 17:36:10,273 - INFO - Initializing UIComponents
+2025-11-08 17:36:10,273 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:36:10,273 - DEBUG - UIComponents initialized
+2025-11-08 17:36:10,274 - INFO - Initializing GraphManager
+2025-11-08 17:36:10,274 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:36:10,274 - DEBUG - GraphManager initialized
+2025-11-08 17:36:10,275 - INFO - Initializing NodeOperations
+2025-11-08 17:36:10,275 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:36:10,275 - DEBUG - NodeOperations initialized
+2025-11-08 17:36:10,276 - INFO - Initializing ViewManager
+2025-11-08 17:36:10,276 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:36:10,277 - DEBUG - ViewManager initialized
+2025-11-08 17:36:10,277 - INFO - Initializing ConfigManager
+2025-11-08 17:36:10,279 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:36:10,280 - DEBUG - ConfigManager initialized
+2025-11-08 17:36:10,280 - INFO - Initializing ExportUtils
+2025-11-08 17:36:10,280 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:36:10,281 - DEBUG - ExportUtils initialized
+2025-11-08 17:36:10,281 - INFO - Initializing NodeTransforms
+2025-11-08 17:36:10,281 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:36:10,281 - DEBUG - NodeTransforms initialized
+2025-11-08 17:36:10,282 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:36:10,282 - DEBUG - Setting up UI...
+2025-11-08 17:36:10,282 - DEBUG - Setting up UI components
+2025-11-08 17:36:10,283 - INFO - Setting up main UI layout and components
+2025-11-08 17:36:10,283 - DEBUG - Applying main widget styling
+2025-11-08 17:36:10,283 - DEBUG - Creating main horizontal layout
+2025-11-08 17:36:10,284 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:36:10,284 - DEBUG - Node graph widget added to main layout (stretch=1)
+2025-11-08 17:36:10,284 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:36:10,284 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:36:10,292 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:36:10,294 - DEBUG - Toolbar added to main layout (stretch=0)
+2025-11-08 17:36:10,294 - INFO - UI setup completed successfully
+2025-11-08 17:36:10,295 - DEBUG - UI setup completed successfully
+2025-11-08 17:36:10,295 - DEBUG - Setting up node graph...
+2025-11-08 17:36:10,296 - DEBUG - Setting up node graph
+2025-11-08 17:36:10,296 - INFO - Setting up node graph
+2025-11-08 17:36:10,297 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:36:10,311 - DEBUG - Registering custom nodes
+2025-11-08 17:36:10,312 - DEBUG - Registering custom node types
+2025-11-08 17:36:10,312 - DEBUG - Registering SequenceNode
+2025-11-08 17:36:10,313 - DEBUG - Registering ActionNode
+2025-11-08 17:36:10,313 - DEBUG - Registering ConditionalNode
+2025-11-08 17:36:10,314 - DEBUG - Registering LLMNode
+2025-11-08 17:36:10,314 - DEBUG - Registering TTSNode
+2025-11-08 17:36:10,314 - DEBUG - Registering ChainImportNode
+2025-11-08 17:36:10,314 - INFO - All custom node types registered successfully
+2025-11-08 17:36:10,315 - DEBUG - Setting up graph widget
+2025-11-08 17:36:10,315 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:36:10,315 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:36:11,338 - DEBUG - Setting up context menu policy
+2025-11-08 17:36:11,339 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:36:11,339 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:36:11,341 - DEBUG - Storing graph widget references
+2025-11-08 17:36:11,341 - INFO - Graph widget setup completed successfully
+2025-11-08 17:36:11,342 - DEBUG - Configuring graph properties
+2025-11-08 17:36:11,342 - DEBUG - Configuring graph properties
+2025-11-08 17:36:11,342 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:36:11,342 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:36:11,343 - INFO - Node graph setup completed successfully
+2025-11-08 17:36:11,343 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:36:11,343 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:36:11,343 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:38:48,706 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:38:48,783 - INFO - Initializing GraphViewWidget
+2025-11-08 17:38:48,784 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:38:48,785 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:38:48,785 - DEBUG - Initializing modular components...
+2025-11-08 17:38:48,785 - INFO - Initializing UIComponents
+2025-11-08 17:38:48,785 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:38:48,786 - DEBUG - UIComponents initialized
+2025-11-08 17:38:48,786 - INFO - Initializing GraphManager
+2025-11-08 17:38:48,789 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:38:48,790 - DEBUG - GraphManager initialized
+2025-11-08 17:38:48,791 - INFO - Initializing NodeOperations
+2025-11-08 17:38:48,792 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:38:48,793 - DEBUG - NodeOperations initialized
+2025-11-08 17:38:48,793 - INFO - Initializing ViewManager
+2025-11-08 17:38:48,793 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:38:48,794 - DEBUG - ViewManager initialized
+2025-11-08 17:38:48,794 - INFO - Initializing ConfigManager
+2025-11-08 17:38:48,794 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:38:48,795 - DEBUG - ConfigManager initialized
+2025-11-08 17:38:48,795 - INFO - Initializing ExportUtils
+2025-11-08 17:38:48,795 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:38:48,795 - DEBUG - ExportUtils initialized
+2025-11-08 17:38:48,795 - INFO - Initializing NodeTransforms
+2025-11-08 17:38:48,796 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:38:48,797 - DEBUG - NodeTransforms initialized
+2025-11-08 17:38:48,797 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:38:48,797 - DEBUG - Setting up UI...
+2025-11-08 17:38:48,798 - DEBUG - Setting up UI components
+2025-11-08 17:38:48,798 - INFO - Setting up main UI layout and components
+2025-11-08 17:38:48,799 - DEBUG - Applying main widget styling
+2025-11-08 17:38:48,799 - DEBUG - Creating main horizontal layout with splitter
+2025-11-08 17:38:48,800 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:38:48,801 - DEBUG - Node graph widget added to splitter (stretchFactor=1)
+2025-11-08 17:38:48,801 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:38:48,801 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:38:48,815 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:38:49,916 - DEBUG - Toolbar added to splitter
+2025-11-08 17:38:49,918 - INFO - UI setup completed successfully
+2025-11-08 17:38:49,919 - DEBUG - UI setup completed successfully
+2025-11-08 17:38:49,919 - DEBUG - Setting up node graph...
+2025-11-08 17:38:49,920 - DEBUG - Setting up node graph
+2025-11-08 17:38:49,920 - INFO - Setting up node graph
+2025-11-08 17:38:49,920 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:38:49,929 - DEBUG - Registering custom nodes
+2025-11-08 17:38:49,929 - DEBUG - Registering custom node types
+2025-11-08 17:38:49,931 - DEBUG - Registering SequenceNode
+2025-11-08 17:38:49,931 - DEBUG - Registering ActionNode
+2025-11-08 17:38:49,932 - DEBUG - Registering ConditionalNode
+2025-11-08 17:38:49,932 - DEBUG - Registering LLMNode
+2025-11-08 17:38:49,933 - DEBUG - Registering TTSNode
+2025-11-08 17:38:49,934 - DEBUG - Registering ChainImportNode
+2025-11-08 17:38:49,935 - INFO - All custom node types registered successfully
+2025-11-08 17:38:49,936 - DEBUG - Setting up graph widget
+2025-11-08 17:38:49,938 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:38:49,939 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:38:49,948 - DEBUG - Setting up context menu policy
+2025-11-08 17:38:49,949 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:38:49,950 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:38:49,951 - ERROR - Error setting up graph widget: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:38:49,951 - ERROR - Error setting up node graph: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:38:49,952 - ERROR - Error setting up node graph: 'NoneType' object has no attribute 'replaceWidget'
+Traceback (most recent call last):
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 127, in setup_node_graph
+    self.graph_manager.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 46, in setup_node_graph
+    self.setup_graph_widget()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 108, in setup_graph_widget
+    layout.replaceWidget(old_widget, graph_widget)
+    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:38:49,959 - ERROR - Error during GraphViewWidget initialization: 'NoneType' object has no attribute 'replaceWidget'
+Traceback (most recent call last):
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 104, in __init__
+    self.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 127, in setup_node_graph
+    self.graph_manager.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 46, in setup_node_graph
+    self.setup_graph_widget()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 108, in setup_graph_widget
+    layout.replaceWidget(old_widget, graph_widget)
+    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:39:17,938 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:39:18,004 - INFO - Initializing GraphViewWidget
+2025-11-08 17:39:18,005 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:39:18,005 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:39:18,005 - DEBUG - Initializing modular components...
+2025-11-08 17:39:18,005 - INFO - Initializing UIComponents
+2025-11-08 17:39:18,005 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:39:18,006 - DEBUG - UIComponents initialized
+2025-11-08 17:39:18,006 - INFO - Initializing GraphManager
+2025-11-08 17:39:18,006 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:39:18,006 - DEBUG - GraphManager initialized
+2025-11-08 17:39:18,006 - INFO - Initializing NodeOperations
+2025-11-08 17:39:18,007 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:39:18,007 - DEBUG - NodeOperations initialized
+2025-11-08 17:39:18,007 - INFO - Initializing ViewManager
+2025-11-08 17:39:18,007 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:39:18,007 - DEBUG - ViewManager initialized
+2025-11-08 17:39:18,007 - INFO - Initializing ConfigManager
+2025-11-08 17:39:18,008 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:39:18,008 - DEBUG - ConfigManager initialized
+2025-11-08 17:39:18,008 - INFO - Initializing ExportUtils
+2025-11-08 17:39:18,009 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:39:18,009 - DEBUG - ExportUtils initialized
+2025-11-08 17:39:18,009 - INFO - Initializing NodeTransforms
+2025-11-08 17:39:18,009 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:39:18,009 - DEBUG - NodeTransforms initialized
+2025-11-08 17:39:18,009 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:39:18,010 - DEBUG - Setting up UI...
+2025-11-08 17:39:18,010 - DEBUG - Setting up UI components
+2025-11-08 17:39:18,010 - INFO - Setting up main UI layout and components
+2025-11-08 17:39:18,010 - DEBUG - Applying main widget styling
+2025-11-08 17:39:18,010 - DEBUG - Creating main horizontal layout with splitter
+2025-11-08 17:39:18,011 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:39:18,011 - DEBUG - Node graph widget added to splitter (stretchFactor=1)
+2025-11-08 17:39:18,011 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:39:18,011 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:39:18,017 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:39:18,725 - DEBUG - Toolbar added to splitter
+2025-11-08 17:39:18,728 - INFO - UI setup completed successfully
+2025-11-08 17:39:18,729 - DEBUG - UI setup completed successfully
+2025-11-08 17:39:18,729 - DEBUG - Setting up node graph...
+2025-11-08 17:39:18,729 - DEBUG - Setting up node graph
+2025-11-08 17:39:18,729 - INFO - Setting up node graph
+2025-11-08 17:39:18,730 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:39:18,735 - DEBUG - Registering custom nodes
+2025-11-08 17:39:18,736 - DEBUG - Registering custom node types
+2025-11-08 17:39:18,736 - DEBUG - Registering SequenceNode
+2025-11-08 17:39:18,737 - DEBUG - Registering ActionNode
+2025-11-08 17:39:18,739 - DEBUG - Registering ConditionalNode
+2025-11-08 17:39:18,739 - DEBUG - Registering LLMNode
+2025-11-08 17:39:18,740 - DEBUG - Registering TTSNode
+2025-11-08 17:39:18,741 - DEBUG - Registering ChainImportNode
+2025-11-08 17:39:18,743 - INFO - All custom node types registered successfully
+2025-11-08 17:39:18,744 - DEBUG - Setting up graph widget
+2025-11-08 17:39:18,744 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:39:18,745 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:39:18,754 - DEBUG - Setting up context menu policy
+2025-11-08 17:39:18,756 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:39:18,757 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:39:18,758 - ERROR - Error setting up graph widget: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:39:18,759 - ERROR - Error setting up node graph: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:39:18,760 - ERROR - Error setting up node graph: 'NoneType' object has no attribute 'replaceWidget'
+Traceback (most recent call last):
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 127, in setup_node_graph
+    self.graph_manager.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 46, in setup_node_graph
+    self.setup_graph_widget()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 108, in setup_graph_widget
+    layout.replaceWidget(old_widget, graph_widget)
+    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:39:18,765 - ERROR - Error during GraphViewWidget initialization: 'NoneType' object has no attribute 'replaceWidget'
+Traceback (most recent call last):
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 104, in __init__
+    self.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_view.py", line 127, in setup_node_graph
+    self.graph_manager.setup_node_graph()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 46, in setup_node_graph
+    self.setup_graph_widget()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\NGUI\graph_elements\graph_manager.py", line 108, in setup_graph_widget
+    layout.replaceWidget(old_widget, graph_widget)
+    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'replaceWidget'
+2025-11-08 17:39:30,937 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:39:31,030 - INFO - Initializing GraphViewWidget
+2025-11-08 17:39:31,031 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:39:31,031 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:39:31,031 - DEBUG - Initializing modular components...
+2025-11-08 17:39:31,032 - INFO - Initializing UIComponents
+2025-11-08 17:39:31,032 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:39:31,033 - DEBUG - UIComponents initialized
+2025-11-08 17:39:31,033 - INFO - Initializing GraphManager
+2025-11-08 17:39:31,034 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:39:31,036 - DEBUG - GraphManager initialized
+2025-11-08 17:39:31,040 - INFO - Initializing NodeOperations
+2025-11-08 17:39:31,041 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:39:31,041 - DEBUG - NodeOperations initialized
+2025-11-08 17:39:31,041 - INFO - Initializing ViewManager
+2025-11-08 17:39:31,042 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:39:31,042 - DEBUG - ViewManager initialized
+2025-11-08 17:39:31,042 - INFO - Initializing ConfigManager
+2025-11-08 17:39:31,043 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:39:31,043 - DEBUG - ConfigManager initialized
+2025-11-08 17:39:31,045 - INFO - Initializing ExportUtils
+2025-11-08 17:39:31,046 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:39:31,046 - DEBUG - ExportUtils initialized
+2025-11-08 17:39:31,047 - INFO - Initializing NodeTransforms
+2025-11-08 17:39:31,047 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:39:31,047 - DEBUG - NodeTransforms initialized
+2025-11-08 17:39:31,048 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:39:31,048 - DEBUG - Setting up UI...
+2025-11-08 17:39:31,048 - DEBUG - Setting up UI components
+2025-11-08 17:39:31,049 - INFO - Setting up main UI layout and components
+2025-11-08 17:39:31,049 - DEBUG - Applying main widget styling
+2025-11-08 17:39:31,049 - DEBUG - Creating main horizontal layout with splitter
+2025-11-08 17:39:31,050 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:39:31,050 - DEBUG - Node graph widget added to splitter (stretchFactor=1)
+2025-11-08 17:39:31,053 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:39:31,054 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:39:31,060 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:39:31,853 - DEBUG - Toolbar added to splitter
+2025-11-08 17:39:31,856 - INFO - UI setup completed successfully
+2025-11-08 17:39:31,856 - DEBUG - UI setup completed successfully
+2025-11-08 17:39:31,856 - DEBUG - Setting up node graph...
+2025-11-08 17:39:31,857 - DEBUG - Setting up node graph
+2025-11-08 17:39:31,857 - INFO - Setting up node graph
+2025-11-08 17:39:31,857 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:39:31,864 - DEBUG - Registering custom nodes
+2025-11-08 17:39:31,865 - DEBUG - Registering custom node types
+2025-11-08 17:39:31,865 - DEBUG - Registering SequenceNode
+2025-11-08 17:39:31,866 - DEBUG - Registering ActionNode
+2025-11-08 17:39:31,866 - DEBUG - Registering ConditionalNode
+2025-11-08 17:39:31,866 - DEBUG - Registering LLMNode
+2025-11-08 17:39:31,867 - DEBUG - Registering TTSNode
+2025-11-08 17:39:31,867 - DEBUG - Registering ChainImportNode
+2025-11-08 17:39:31,867 - INFO - All custom node types registered successfully
+2025-11-08 17:39:31,868 - DEBUG - Setting up graph widget
+2025-11-08 17:39:31,868 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:39:31,868 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:39:31,873 - DEBUG - Setting up context menu policy
+2025-11-08 17:39:31,874 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:39:31,877 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:39:31,881 - DEBUG - Inserted graph widget into splitter at index 0
+2025-11-08 17:39:31,882 - DEBUG - Storing graph widget references
+2025-11-08 17:39:31,889 - INFO - Graph widget setup completed successfully
+2025-11-08 17:39:31,891 - DEBUG - Configuring graph properties
+2025-11-08 17:39:31,895 - DEBUG - Configuring graph properties
+2025-11-08 17:39:31,897 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:39:31,898 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:39:31,900 - INFO - Node graph setup completed successfully
+2025-11-08 17:39:31,901 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:39:31,901 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:39:31,901 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:42:20,015 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:42:20,113 - INFO - Initializing GraphViewWidget
+2025-11-08 17:42:20,114 - DEBUG - Set sequences_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:42:20,115 - DEBUG - Set chains_folder to: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\chains
+2025-11-08 17:42:20,115 - DEBUG - Initializing modular components...
+2025-11-08 17:42:20,115 - INFO - Initializing UIComponents
+2025-11-08 17:42:20,116 - DEBUG - UIComponents initialized with parent widget: GraphViewWidget
+2025-11-08 17:42:20,116 - DEBUG - UIComponents initialized
+2025-11-08 17:42:20,116 - INFO - Initializing GraphManager
+2025-11-08 17:42:20,116 - DEBUG - GraphManager initialized with parent_widget: GraphViewWidget
+2025-11-08 17:42:20,117 - DEBUG - GraphManager initialized
+2025-11-08 17:42:20,117 - INFO - Initializing NodeOperations
+2025-11-08 17:42:20,117 - DEBUG - NodeOperations initialized with parent_widget: GraphViewWidget
+2025-11-08 17:42:20,118 - DEBUG - NodeOperations initialized
+2025-11-08 17:42:20,118 - INFO - Initializing ViewManager
+2025-11-08 17:42:20,118 - DEBUG - ViewManager initialized with default view: sequence
+2025-11-08 17:42:20,119 - DEBUG - ViewManager initialized
+2025-11-08 17:42:20,119 - INFO - Initializing ConfigManager
+2025-11-08 17:42:20,119 - DEBUG - ConfigManager initialized successfully
+2025-11-08 17:42:20,120 - DEBUG - ConfigManager initialized
+2025-11-08 17:42:20,120 - INFO - Initializing ExportUtils
+2025-11-08 17:42:20,120 - DEBUG - ExportUtils initialized successfully
+2025-11-08 17:42:20,120 - DEBUG - ExportUtils initialized
+2025-11-08 17:42:20,121 - INFO - Initializing NodeTransforms
+2025-11-08 17:42:20,121 - DEBUG - NodeTransforms initialized with parent widget: GraphViewWidget
+2025-11-08 17:42:20,121 - DEBUG - NodeTransforms initialized
+2025-11-08 17:42:20,122 - DEBUG - NodeContextMenuManager initialized
+2025-11-08 17:42:20,122 - DEBUG - Setting up UI...
+2025-11-08 17:42:20,122 - DEBUG - Setting up UI components
+2025-11-08 17:42:20,122 - INFO - Setting up main UI layout and components
+2025-11-08 17:42:20,123 - DEBUG - Applying main widget styling
+2025-11-08 17:42:20,123 - DEBUG - Creating main horizontal layout with splitter
+2025-11-08 17:42:20,124 - DEBUG - Creating node graph widget placeholder
+2025-11-08 17:42:20,124 - DEBUG - Node graph widget added to splitter (stretchFactor=1)
+2025-11-08 17:42:20,124 - DEBUG - Creating right-side collapsible toolbar
+2025-11-08 17:42:20,125 - DEBUG - Creating collapsible toolbar control panel
+2025-11-08 17:42:20,132 - INFO - Collapsible toolbar created successfully
+2025-11-08 17:42:20,915 - DEBUG - Toolbar added to splitter
+2025-11-08 17:42:20,916 - INFO - UI setup completed successfully
+2025-11-08 17:42:20,917 - DEBUG - UI setup completed successfully
+2025-11-08 17:42:20,917 - DEBUG - Setting up node graph...
+2025-11-08 17:42:20,917 - DEBUG - Setting up node graph
+2025-11-08 17:42:20,918 - INFO - Setting up node graph
+2025-11-08 17:42:20,918 - DEBUG - Creating NodeGraph instance
+2025-11-08 17:42:20,923 - DEBUG - Registering custom nodes
+2025-11-08 17:42:20,924 - DEBUG - Registering custom node types
+2025-11-08 17:42:20,924 - DEBUG - Registering SequenceNode
+2025-11-08 17:42:20,925 - DEBUG - Registering ActionNode
+2025-11-08 17:42:20,925 - DEBUG - Registering ConditionalNode
+2025-11-08 17:42:20,925 - DEBUG - Registering LLMNode
+2025-11-08 17:42:20,926 - DEBUG - Registering TTSNode
+2025-11-08 17:42:20,926 - DEBUG - Registering ChainImportNode
+2025-11-08 17:42:20,926 - INFO - All custom node types registered successfully
+2025-11-08 17:42:20,927 - DEBUG - Setting up graph widget
+2025-11-08 17:42:20,927 - DEBUG - Setting up graph widget in UI
+2025-11-08 17:42:20,927 - DEBUG - Getting graph widget from node_graph
+2025-11-08 17:42:20,932 - DEBUG - Setting up context menu policy
+2025-11-08 17:42:20,933 - DEBUG - Setting focus policy for graph widget
+2025-11-08 17:42:20,933 - DEBUG - Replacing placeholder widget with graph widget
+2025-11-08 17:42:20,937 - DEBUG - Inserted graph widget into splitter at index 0
+2025-11-08 17:42:20,938 - DEBUG - Storing graph widget references
+2025-11-08 17:42:20,940 - INFO - Graph widget setup completed successfully
+2025-11-08 17:42:20,941 - DEBUG - Configuring graph properties
+2025-11-08 17:42:20,942 - DEBUG - Configuring graph properties
+2025-11-08 17:42:20,942 - DEBUG - Graph configuration completed (context menu handled in setup_graph_widget)
+2025-11-08 17:42:20,942 - DEBUG - Storing node_graph reference in parent widget
+2025-11-08 17:42:20,942 - INFO - Node graph setup completed successfully
+2025-11-08 17:42:20,943 - DEBUG - Drag-and-drop event filter installed on graph widget
+2025-11-08 17:42:20,943 - DEBUG - Node graph setup completed successfully
+2025-11-08 17:42:20,943 - INFO - GraphViewWidget initialization completed successfully
+2025-11-08 17:42:31,456 - DEBUG - Recording new sequence
+2025-11-08 17:42:31,457 - INFO - Starting new sequence recording
+2025-11-08 17:42:31,457 - DEBUG - Finding main window for recording
+2025-11-08 17:42:31,457 - DEBUG - Found main window, starting recording
+2025-11-08 17:42:32,416 - INFO - Successfully started sequence recording
+2025-11-08 17:42:32,417 - INFO - New sequence recorded successfully
+2025-11-08 17:42:33,482 - DEBUG - Adding sequence node
+2025-11-08 17:42:33,483 - INFO - Adding sequence node at position: None
+2025-11-08 17:42:33,483 - DEBUG - Opening file dialog for sequence selection from: C:\Users\david.benitez\OneDrive - Motivus\Desktop\LoOper\LoOperV2\LoOper\sequences
+2025-11-08 17:42:35,033 - DEBUG - No file selected for sequence
+2025-11-08 17:42:35,104 - INFO - Sequence node added successfully
+2025-11-08 17:42:35,814 - DEBUG - Adding LLM node at position: None
+2025-11-08 17:42:35,815 - INFO - Adding LLM node at position: None
+2025-11-08 17:42:35,816 - DEBUG - Creating LLM node
+2025-11-08 17:42:35,816 - INFO - Creating node of type: llm.LLMNode
+2025-11-08 17:42:35,817 - DEBUG - Node creation parameters - name: LLM, pos: None
+2025-11-08 17:42:35,818 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:35,976 - INFO - Successfully created llm.LLMNode node with ID: 0x2c0d616b620
+2025-11-08 17:42:35,977 - DEBUG - Setting default properties for LLM node 0x2c0d616b620
+2025-11-08 17:42:35,991 - INFO - Successfully added LLM node 0x2c0d616b620
+2025-11-08 17:42:35,992 - INFO - LLM node added successfully: LLM
+2025-11-08 17:42:36,973 - DEBUG - Adding Chain Import node at position: None
+2025-11-08 17:42:36,975 - INFO - Adding Chain Import node at position: None
+2025-11-08 17:42:36,977 - DEBUG - Creating Chain Import node
+2025-11-08 17:42:36,978 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:42:36,980 - DEBUG - Node creation parameters - name: Chain Import, pos: None
+2025-11-08 17:42:36,983 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:37,027 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x2c0d6288910
+2025-11-08 17:42:37,028 - DEBUG - Setting default properties for Chain Import node 0x2c0d6288910
+2025-11-08 17:42:37,028 - INFO - Successfully added Chain Import node 0x2c0d6288910
+2025-11-08 17:42:37,029 - INFO - Chain Import node added successfully: Chain Import
+2025-11-08 17:42:37,935 - DEBUG - Adding TTS node at position: None
+2025-11-08 17:42:37,936 - INFO - Adding TTS node at position: None
+2025-11-08 17:42:37,936 - DEBUG - Creating TTS node
+2025-11-08 17:42:37,937 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:42:37,937 - DEBUG - Node creation parameters - name: TTS, pos: None
+2025-11-08 17:42:37,937 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:37,957 - INFO - Successfully created tts.TTSNode node with ID: 0x2c0d6288b90
+2025-11-08 17:42:37,958 - DEBUG - Setting default properties for TTS node 0x2c0d6288b90
+2025-11-08 17:42:37,960 - INFO - Successfully added TTS node 0x2c0d6288b90
+2025-11-08 17:42:37,961 - INFO - TTS node added successfully: TTS
+2025-11-08 17:42:38,960 - DEBUG - Adding conditional node at position: None
+2025-11-08 17:42:38,970 - INFO - Adding conditional node at position: None
+2025-11-08 17:42:38,972 - DEBUG - Creating conditional node
+2025-11-08 17:42:38,973 - INFO - Creating node of type: conditional.ConditionalNode
+2025-11-08 17:42:38,973 - DEBUG - Node creation parameters - name: Conditional, pos: None
+2025-11-08 17:42:38,974 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:39,092 - INFO - Successfully created conditional.ConditionalNode node with ID: 0x2c0d6153820
+2025-11-08 17:42:39,093 - INFO - Successfully added conditional node 0x2c0d6153820 (empty, ready for configuration)
+2025-11-08 17:42:39,093 - INFO - Conditional node added successfully: Conditional
+2025-11-08 17:42:42,780 - DEBUG - Copy props for Conditional (conditional): []
+2025-11-08 17:42:42,794 - DEBUG - Copy props for Chain Import (chain_import): ['loop_count', 'import_mode', 'chain_file', 'enabled', 'prefix', 'extra_delay']
+2025-11-08 17:42:42,799 - DEBUG - Copy props for LLM (llm): []
+2025-11-08 17:42:42,935 - DEBUG - Copy props for TTS (tts): []
+2025-11-08 17:42:43,928 - INFO - Creating node of type: conditional.ConditionalNode
+2025-11-08 17:42:43,929 - DEBUG - Node creation parameters - name: None, pos: [200.0, 200.0]
+2025-11-08 17:42:43,930 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:44,100 - INFO - Successfully created conditional.ConditionalNode node with ID: 0x2c0d6153950
+2025-11-08 17:42:44,101 - DEBUG - Pasted props for Conditional 1 (conditional): []
+2025-11-08 17:42:44,102 - INFO - Creating node of type: chain_import.ChainImportNode
+2025-11-08 17:42:44,102 - DEBUG - Node creation parameters - name: None, pos: [210.0, 210.0]
+2025-11-08 17:42:44,102 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:44,148 - INFO - Successfully created chain_import.ChainImportNode node with ID: 0x2c0d6153a80
+2025-11-08 17:42:44,153 - DEBUG - Pasted props for Chain Import 1 (chain_import): ['loop_count', 'import_mode', 'chain_file', 'enabled', 'prefix', 'extra_delay']
+2025-11-08 17:42:44,155 - INFO - Creating node of type: llm.LLMNode
+2025-11-08 17:42:44,159 - DEBUG - Node creation parameters - name: None, pos: [220.0, 220.0]
+2025-11-08 17:42:44,160 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:44,369 - INFO - Successfully created llm.LLMNode node with ID: 0x2c0d6153bb0
+2025-11-08 17:42:44,394 - DEBUG - Pasted props for LLM 1 (llm): []
+2025-11-08 17:42:44,401 - INFO - Creating node of type: tts.TTSNode
+2025-11-08 17:42:44,405 - DEBUG - Node creation parameters - name: None, pos: [230.0, 230.0]
+2025-11-08 17:42:44,414 - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'conditional.ConditionalNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
+2025-11-08 17:42:44,439 - INFO - Successfully created tts.TTSNode node with ID: 0x2c0d6153ce0
+2025-11-08 17:42:44,441 - DEBUG - Pasted props for TTS 1 (tts): []
+2025-11-08 17:42:48,502 - DEBUG - Deleting selected nodes
+2025-11-08 17:42:48,502 - INFO - Deleting 8 selected nodes
+2025-11-08 17:42:48,502 - DEBUG - Deleting node: Conditional_copy (ConditionalNode)
+2025-11-08 17:42:48,503 - INFO - Deleting node: 0x2c0d6153950 of type: ConditionalNode
+2025-11-08 17:42:48,503 - DEBUG - Deleting ConditionalNode node
+2025-11-08 17:42:48,504 - INFO - Deleting node: 0x2c0d6153950
+2025-11-08 17:42:48,504 - DEBUG - Deleting ConditionalNode node with ID: 0x2c0d6153950
+2025-11-08 17:42:48,504 - INFO - Successfully deleted ConditionalNode node with ID: 0x2c0d6153950
+2025-11-08 17:42:48,505 - DEBUG - Deleting node: LLM_copy (LLMNode)
+2025-11-08 17:42:48,505 - INFO - Deleting node: 0x2c0d6153bb0 of type: LLMNode
+2025-11-08 17:42:48,505 - DEBUG - Deleting LLMNode node
+2025-11-08 17:42:48,506 - INFO - Deleting node: 0x2c0d6153bb0
+2025-11-08 17:42:48,506 - DEBUG - Deleting LLMNode node with ID: 0x2c0d6153bb0
+2025-11-08 17:42:48,507 - INFO - Successfully deleted LLMNode node with ID: 0x2c0d6153bb0
+2025-11-08 17:42:48,507 - DEBUG - Deleting node: Conditional (ConditionalNode)
+2025-11-08 17:42:48,507 - INFO - Deleting node: 0x2c0d6153820 of type: ConditionalNode
+2025-11-08 17:42:48,507 - DEBUG - Deleting ConditionalNode node
+2025-11-08 17:42:48,508 - INFO - Deleting node: 0x2c0d6153820
+2025-11-08 17:42:48,508 - DEBUG - Deleting ConditionalNode node with ID: 0x2c0d6153820
+2025-11-08 17:42:48,509 - INFO - Successfully deleted ConditionalNode node with ID: 0x2c0d6153820
+2025-11-08 17:42:48,509 - DEBUG - Deleting node: Chain Import_copy (ChainImportNode)
+2025-11-08 17:42:48,509 - INFO - Deleting node: 0x2c0d6153a80 of type: ChainImportNode
+2025-11-08 17:42:48,510 - DEBUG - Deleting ChainImportNode node
+2025-11-08 17:42:48,510 - INFO - Deleting node: 0x2c0d6153a80
+2025-11-08 17:42:48,510 - DEBUG - Deleting ChainImportNode node with ID: 0x2c0d6153a80
+2025-11-08 17:42:48,511 - INFO - Successfully deleted ChainImportNode node with ID: 0x2c0d6153a80
+2025-11-08 17:42:48,512 - DEBUG - Deleting node: TTS_copy (TTSNode)
+2025-11-08 17:42:48,512 - INFO - Deleting node: 0x2c0d6153ce0 of type: TTSNode
+2025-11-08 17:42:48,513 - DEBUG - Deleting TTSNode node
+2025-11-08 17:42:48,513 - INFO - Deleting node: 0x2c0d6153ce0
+2025-11-08 17:42:48,513 - DEBUG - Deleting TTSNode node with ID: 0x2c0d6153ce0
+2025-11-08 17:42:48,514 - INFO - Successfully deleted TTSNode node with ID: 0x2c0d6153ce0
+2025-11-08 17:42:48,514 - DEBUG - Deleting node: Chain Import (ChainImportNode)
+2025-11-08 17:42:48,515 - INFO - Deleting node: 0x2c0d6288910 of type: ChainImportNode
+2025-11-08 17:42:48,515 - DEBUG - Deleting ChainImportNode node
+2025-11-08 17:42:48,515 - INFO - Deleting node: 0x2c0d6288910
+2025-11-08 17:42:48,515 - DEBUG - Deleting ChainImportNode node with ID: 0x2c0d6288910
+2025-11-08 17:42:48,516 - INFO - Successfully deleted ChainImportNode node with ID: 0x2c0d6288910
+2025-11-08 17:42:48,516 - DEBUG - Deleting node: LLM (LLMNode)
+2025-11-08 17:42:48,517 - INFO - Deleting node: 0x2c0d616b620 of type: LLMNode
+2025-11-08 17:42:48,517 - DEBUG - Deleting LLMNode node
+2025-11-08 17:42:48,517 - INFO - Deleting node: 0x2c0d616b620
+2025-11-08 17:42:48,518 - DEBUG - Deleting LLMNode node with ID: 0x2c0d616b620
+2025-11-08 17:42:48,519 - INFO - Successfully deleted LLMNode node with ID: 0x2c0d616b620
+2025-11-08 17:42:48,519 - DEBUG - Deleting node: TTS (TTSNode)
+2025-11-08 17:42:48,519 - INFO - Deleting node: 0x2c0d6288b90 of type: TTSNode
+2025-11-08 17:42:48,520 - DEBUG - Deleting TTSNode node
+2025-11-08 17:42:48,520 - INFO - Deleting node: 0x2c0d6288b90
+2025-11-08 17:42:48,520 - DEBUG - Deleting TTSNode node with ID: 0x2c0d6288b90
+2025-11-08 17:42:48,521 - INFO - Successfully deleted TTSNode node with ID: 0x2c0d6288b90
+2025-11-08 17:42:48,521 - INFO - Selected nodes deleted successfully
+2025-11-08 17:42:55,379 - DEBUG - mss library not available, falling back to pyautogui
+2025-11-08 17:42:55,401 - INFO - JSON cache cleared
+2025-11-08 17:42:55,402 - DEBUG - Getting chain configuration
+2025-11-08 17:42:55,402 - DEBUG - Getting chain configuration
+2025-11-08 17:42:55,402 - INFO - Saving current graph state to configuration
+2025-11-08 17:42:55,402 - DEBUG - Clearing current configuration
+2025-11-08 17:42:55,403 - DEBUG - Getting all nodes from graph
+2025-11-08 17:42:55,403 - DEBUG - Getting all nodes from graph
+2025-11-08 17:42:55,404 - DEBUG - Retrieved 0 nodes from graph
+2025-11-08 17:42:55,404 - DEBUG - Found 0 nodes to process
+2025-11-08 17:42:55,404 - INFO - Successfully saved current state: 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes
+2025-11-08 17:42:55,405 - DEBUG - Chain config contains 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes
+2025-11-08 17:42:55,405 - DEBUG - Chain config contains 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes

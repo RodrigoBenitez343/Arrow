@@ -1,0 +1,9 @@
+{
+    "bottomlayer": "Property",
+    "toplayer": "Property",
+    "close_window" : "Interaction",
+    "maximize" : "Interaction",
+    "minize_window" : "Interaction",
+    "text" : "Text",
+    "window" : "Object"
+}
