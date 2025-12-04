@@ -405,7 +405,7 @@ class ConfigManager:
                 "model": llm_config.get('model', 'llama3.2:latest'),
                 "system_message": llm_config.get('system_message', ''),
                 "temperature": llm_config.get('temperature', 0.7),
-                "max_tokens": llm_config.get('max_tokens', 500),
+                "max_tokens": llm_config.get('max_tokens', 4096),
                 "output_variable": llm_config.get('output_variable', 'llm_output'),
                 "api_url": llm_config.get('api_url', ''),
                 "write_text": llm_config.get('write_text', True),
@@ -681,12 +681,12 @@ class ConfigManager:
                     model = config.get('model', 'llama3.2:latest')
                     prompt = config.get('prompt', '')
                     temperature = config.get('temperature', 0.7)
-                    max_tokens = config.get('max_tokens', 500)
+                    max_tokens = config.get('max_tokens', 4096)
                 else:
                     model = llm_data.get('model', 'llama3.2:latest')
                     prompt = llm_data.get('prompt', '')
                     temperature = llm_data.get('temperature', 0.7)
-                    max_tokens = llm_data.get('max_tokens', 500)
+                    max_tokens = llm_data.get('max_tokens', 4096)
                 logger.debug(f"Creating LLM node with model: {model}")
                 node = self.parent_widget.graph_manager.create_node(
                     'llm.LLMNode',
@@ -697,7 +697,7 @@ class ConfigManager:
                     node.set_property('model', llm_data.get('model', 'llama3.2:latest'))
                     node.set_property('system_message', llm_data.get('system_message', ''))
                     node.set_property('temperature', str(llm_data.get('temperature', 0.7)))
-                    node.set_property('max_tokens', str(llm_data.get('max_tokens', 500)))
+                    node.set_property('max_tokens', str(llm_data.get('max_tokens', 4096)))
                     node.set_property('output_variable', llm_data.get('output_variable', 'llm_output'))
                     node.set_property('api_url', llm_data.get('api_url', ''))
                     node.set_property('write_text', str(llm_data.get('write_text', 'true')))
@@ -712,7 +712,7 @@ class ConfigManager:
                     node.set_property('ocr_confidence', str(llm_data.get('ocr_confidence', 0.5)))
                     node.set_property('ocr_preprocessing', str(llm_data.get('ocr_preprocessing', 'true')))
                     node.set_property('use_async', str(llm_data.get('use_async', 'true')))
-                    node.set_property('use_direct_rag', str(llm_data.get('use_direct_rag', 'false')).lower())
+                    node.set_property('use_direct_rag', str(llm_data.get('use_direct_rag', 'true')).lower())
                     node.set_property('rag_embedding_model', llm_data.get('rag_embedding_model', 'nomic-embed-text'))
                     node.set_property('rag_chunk_size', str(llm_data.get('rag_chunk_size', 500)))
                     node.set_property('rag_overlap', str(llm_data.get('rag_overlap', 100)))

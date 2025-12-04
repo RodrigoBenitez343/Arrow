@@ -4,6 +4,7 @@ Action execution handlers for different types of automation actions.
 """
 
 import os
+import threading
 import time
 import math
 import pyautogui
@@ -35,6 +36,7 @@ class ActionHandlers:
         """
         self.bot = bot_instance
         self.template_matcher = TemplateMatching()
+        self.typing_lock = threading.Lock()
 
     def handle_click_action(self, idx, action, fallback_callback=None, stop_flag=None):
         """
@@ -469,10 +471,11 @@ class ActionHandlers:
             bool: True when typing is complete
         """
         if 'text' in action:
-            # Check stop flag before starting typing
-            if stop_flag and stop_flag():
-                logger.info("Stop flag detected before typing - aborting type string action")
-                return False
+            with self.typing_lock:
+                # Check stop flag before starting typing
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected before typing - aborting type string action")
+                    return False
             
             # Check if a specific delay is required after a click before typing
             if 'delay_after_click' in action:
@@ -503,7 +506,8 @@ class ActionHandlers:
 
             # Auto-detect presence of non-ASCII characters (e.g., accented letters, smart quotes)
             contains_non_ascii = any(ord(c) > 126 for c in text)
-            use_clipboard = force_clipboard or contains_non_ascii or len(text) > 1000
+            force_typing = bool(action.get('force_typing', False))
+            use_clipboard = False if force_typing else (force_clipboard or contains_non_ascii or len(text) > 1000)
 
             if use_clipboard:
                 try:
@@ -591,8 +595,6 @@ class ActionHandlers:
                     time.sleep(batch_delay)
             
             logger.info(f"Typed text ({len(text)} chars) using optimized batching")
-            
-            # Set completion flag in action for workflow integration
             action['completed'] = True
             return True
         
@@ -607,15 +609,16 @@ class ActionHandlers:
             action (dict): Action configuration
             stop_flag (callable): Function to check if execution should stop
         """
-        # Similar to typing, check for a required delay after a click.
-        if 'delay_after_click' in action:
-            time_since_click = time.time() - self.bot.last_click_time
-            required_delay = action['delay_after_click']
-            if time_since_click < required_delay:
-                wait_time = required_delay - time_since_click
-                logger.debug(f"Waiting {wait_time:.2f}s after click before keystroke")
-                # Sleep in small increments to allow interruption
-                elapsed = 0.0
+        with self.typing_lock:
+            # Similar to typing, check for a required delay after a click.
+            if 'delay_after_click' in action:
+                time_since_click = time.time() - self.bot.last_click_time
+                required_delay = action['delay_after_click']
+                if time_since_click < required_delay:
+                    wait_time = required_delay - time_since_click
+                    logger.debug(f"Waiting {wait_time:.2f}s after click before keystroke")
+                    # Sleep in small increments to allow interruption
+                    elapsed = 0.0
                 while elapsed < wait_time:
                     if stop_flag and stop_flag():
                         logger.info("Stop flag detected before keystroke - aborting keystroke action")

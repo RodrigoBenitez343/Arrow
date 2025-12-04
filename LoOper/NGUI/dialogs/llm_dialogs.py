@@ -179,7 +179,7 @@ class LLMPropertiesDialog(QDialog):
         params_layout.addWidget(QLabel(_("Max Tokens:")), 1, 0)
         self.max_tokens_spin = QSpinBox()
         self.max_tokens_spin.setRange(1, 4096)
-        self.max_tokens_spin.setValue(150)
+        self.max_tokens_spin.setValue(4096)
         params_layout.addWidget(self.max_tokens_spin, 1, 1)
         
         # Output variable
@@ -277,6 +277,21 @@ class LLMPropertiesDialog(QDialog):
         input_source_layout.addWidget(self.input_ocr_radio)
         input_source_layout.addWidget(self.input_previous_radio)
         input_source_layout.addWidget(self.input_clipboard_radio)
+        # Previous input mode controls
+        self.previous_mode_widget = QWidget()
+        prev_mode_layout = QGridLayout(self.previous_mode_widget)
+        prev_mode_layout.setContentsMargins(0, 8, 0, 0)
+        prev_mode_layout.setSpacing(6)
+        prev_mode_layout.addWidget(QLabel(_("Previous Input Mode:")), 0, 0)
+        self.previous_mode_embeddings_radio = QRadioButton(_("Use embeddings (RAG)"))
+        self.previous_mode_raw_radio = QRadioButton(_("Use raw previous output"))
+        self.previous_mode_embeddings_radio.setChecked(True)
+        self.previous_input_mode_group = QButtonGroup(self)
+        self.previous_input_mode_group.addButton(self.previous_mode_embeddings_radio, 1)
+        self.previous_input_mode_group.addButton(self.previous_mode_raw_radio, 0)
+        prev_mode_layout.addWidget(self.previous_mode_embeddings_radio, 0, 1)
+        prev_mode_layout.addWidget(self.previous_mode_raw_radio, 1, 1)
+        input_source_layout.addWidget(self.previous_mode_widget)
         
         # OCR Configuration (visible when OCR is selected)
         self.ocr_config_widget = QWidget()
@@ -452,6 +467,7 @@ class LLMPropertiesDialog(QDialog):
         # Input source changes
         self.input_source_group.buttonClicked.connect(self.update_input_source_visibility)
         self.input_source_group.buttonClicked.connect(self.update_template_description)
+        self.input_source_group.buttonClicked.connect(self.update_previous_mode_visibility)
         
         # Template selection
         self.template_combo.currentTextChanged.connect(self.apply_template)
@@ -553,6 +569,11 @@ class LLMPropertiesDialog(QDialog):
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
             self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
             self.use_direct_rag_checkbox.setChecked(self.current_config.get('use_direct_rag', False))
+            if (self.current_config.get('input_source') in ('previous', 2)):
+                if self.current_config.get('use_direct_rag', False):
+                    self.previous_mode_embeddings_radio.setChecked(True)
+                else:
+                    self.previous_mode_raw_radio.setChecked(True)
             self.rag_embedding_model_entry.setText(self.current_config.get('rag_embedding_model', 'nomic-embed-text'))
             self.rag_chunk_size_spin.setValue(self.current_config.get('rag_chunk_size', 500))
             self.rag_overlap_spin.setValue(self.current_config.get('rag_overlap', 100))
@@ -577,6 +598,7 @@ class LLMPropertiesDialog(QDialog):
             
             # Update visibility based on input source
         self.update_input_source_visibility()
+        self.update_previous_mode_visibility()
     
     def apply_template(self, template_name):
         """Apply a predefined template configuration"""
@@ -585,7 +607,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are an AI assistant that extracts specific information from text. Follow the user's instructions carefully and provide only the requested information.",
                 "prompt": "Extract the following information from the provided text: [SPECIFY WHAT TO EXTRACT]. Return only the extracted information, nothing else.",
                 "temperature": 0.1,
-                "max_tokens": 500,
+                "max_tokens": 4096,
                 "input_source": 1,  # OCR
                 "ocr_confidence": 0.8,
                 "ocr_preprocessing": "Enhance contrast",
@@ -595,7 +617,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a helpful AI assistant. Follow the user's instructions carefully.",
                 "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
                 "temperature": 0.7,
-                "max_tokens": 1000,
+                "max_tokens": 4096,
                 "input_source": 0,  # No input
                 "output_variable": "llm_output"
             },
@@ -603,7 +625,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are an AI assistant with memory and context awareness. Use the provided context to give informed responses.",
                 "prompt": "Analyze the following information and provide insights based on the context: [DESCRIBE ANALYSIS GOAL]",
                 "temperature": 0.3,
-                "max_tokens": 800,
+                "max_tokens": 4096,
                 "input_source": 2,  # Previous node output
                 "use_comorag": True,
                 "max_cycles": 3,
@@ -614,7 +636,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a data processing assistant. Process the input data according to the specified requirements.",
                 "prompt": "Process the input data as follows: [DESCRIBE PROCESSING STEPS]",
                 "temperature": 0.2,
-                "max_tokens": 1500,
+                "max_tokens": 4096,
                 "input_source": 2,  # Previous node output
                 "output_variable": "processed_data"
             },
@@ -622,7 +644,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a text analysis expert. Analyze the provided text thoroughly.",
                 "prompt": "Analyze the following text and provide: 1) Main themes, 2) Key points, 3) Sentiment, 4) Actionable insights: [DESCRIBE ANALYSIS FOCUS]",
                 "temperature": 0.4,
-                "max_tokens": 1200,
+                "max_tokens": 4096,
                 "input_source": 3,  # Clipboard
                 "output_variable": "text_analysis"
             },
@@ -630,7 +652,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a content summarization expert. Create concise, accurate summaries.",
                 "prompt": "Summarize the following content in [SPECIFY LENGTH] focusing on [SPECIFY FOCUS AREAS]: ",
                 "temperature": 0.3,
-                "max_tokens": 800,
+                "max_tokens": 4096,
                 "input_source": 1,  # OCR
                 "ocr_confidence": 0.7,
                 "output_variable": "summary"
@@ -685,6 +707,8 @@ class LLMPropertiesDialog(QDialog):
         self.ocr_confidence_spin.setVisible(ocr_visible)
         self.ocr_preprocessing_label.setVisible(ocr_visible)
         self.ocr_preprocessing_combo.setVisible(ocr_visible)
+        # Show/hide previous input mode controls
+        self.previous_mode_widget.setVisible(input_source == 2)
         
         # Update prompt placeholder based on input source
         if input_source == 0:  # No input
@@ -695,6 +719,11 @@ class LLMPropertiesDialog(QDialog):
             self.prompt_edit.setPlaceholderText("Process the previous node's output...")
         elif input_source == 3:  # Clipboard
             self.prompt_edit.setPlaceholderText("Process the clipboard content...")
+
+    def update_previous_mode_visibility(self):
+        """Ensure previous input mode controls reflect current selection and stay visible appropriately"""
+        input_source_id = self.input_source_group.checkedId()
+        self.previous_mode_widget.setVisible(input_source_id == 2)
     
     def update_template_description(self):
         """Update template description based on current selection"""
@@ -749,8 +778,14 @@ class LLMPropertiesDialog(QDialog):
         config['ocr_preprocessing'] = self.ocr_preprocessing_combo.currentText()
         config['template_applied'] = self.template_combo.currentText()
         
+        # Determine RAG usage based on input source and previous mode selection
+        use_direct_rag_value = self.use_direct_rag_checkbox.isChecked()
+        if config.get('input_source') == 'previous':
+            # Override with previous input mode selection
+            selected_prev_mode = self.previous_input_mode_group.checkedId()
+            use_direct_rag_value = (selected_prev_mode == 1)
         config.update({
-            'use_direct_rag': self.use_direct_rag_checkbox.isChecked(),
+            'use_direct_rag': use_direct_rag_value,
             'rag_embedding_model': self.rag_embedding_model_entry.text() or 'nomic-embed-text',
             'rag_chunk_size': self.rag_chunk_size_spin.value(),
             'rag_overlap': self.rag_overlap_spin.value(),
@@ -772,6 +807,7 @@ class LLMPropertiesDialog(QDialog):
         params_layout.setSpacing(6)
         params_layout.addWidget(QLabel("Enable RAG:"), 0, 0)
         self.use_direct_rag_checkbox = QCheckBox("Use embeddings to add context")
+        self.use_direct_rag_checkbox.setChecked(True)
         params_layout.addWidget(self.use_direct_rag_checkbox, 0, 1)
         params_layout.addWidget(QLabel("Embedding Model:"), 1, 0)
         self.rag_embedding_model_entry = QLineEdit()
@@ -842,7 +878,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are an expert at extracting specific information from text. Extract the requested information accurately and concisely.",
                 "prompt": "Extract the following information from the text: [SPECIFY WHAT TO EXTRACT]",
                 "temperature": 0.3,
-                "max_tokens": 200,
+                "max_tokens": 4096,
                 "use_comorag": False,
                 "ocr_confidence": 0.7,
                 "ocr_preprocessing": "Clean formatting"
@@ -853,7 +889,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a helpful assistant that follows instructions precisely.",
                 "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
                 "temperature": 0.7,
-                "max_tokens": 500,
+                "max_tokens": 4096,
                 "use_comorag": False
             },
             "Direct Prompt": {
@@ -862,7 +898,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "",
                 "prompt": "[ENTER YOUR PROMPT HERE]",
                 "temperature": 0.7,
-                "max_tokens": 150,
+                "max_tokens": 4096,
                 "use_comorag": False
             },
             "ComoRAG Analysis": {
@@ -871,7 +907,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are an intelligent assistant with access to context-aware reasoning. Analyze the request and provide comprehensive insights.",
                 "prompt": "[ENTER YOUR ANALYSIS REQUEST]",
                 "temperature": 0.5,
-                "max_tokens": 1000,
+                "max_tokens": 4096,
                 "use_comorag": True,
                 "max_cycles": 5,
                 "memory_size": 1000
@@ -882,7 +918,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a data processing node in an automation chain. Process the input data according to the specified requirements.",
                 "prompt": "Process the input data to: [SPECIFY PROCESSING REQUIREMENTS]",
                 "temperature": 0.3,
-                "max_tokens": 300,
+                "max_tokens": 4096,
                 "use_comorag": False
             },
             "Text Analysis": {
@@ -891,7 +927,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are a text analysis expert. Analyze the provided text and extract insights, patterns, or requested information.",
                 "prompt": "Analyze the text and provide: [SPECIFY ANALYSIS REQUIREMENTS]",
                 "temperature": 0.4,
-                "max_tokens": 400,
+                "max_tokens": 4096,
                 "use_comorag": False,
                 "ocr_confidence": 0.6,
                 "ocr_preprocessing": "Remove extra spaces"
@@ -902,7 +938,7 @@ class LLMPropertiesDialog(QDialog):
                 "system_message": "You are an expert at creating concise, accurate summaries. Summarize the content clearly and effectively.",
                 "prompt": "Summarize the key points from the content. Focus on the most important information.",
                 "temperature": 0.3,
-                "max_tokens": 250,
+                "max_tokens": 4096,
                 "use_comorag": False,
                 "ocr_confidence": 0.6,
                 "ocr_preprocessing": "Clean formatting"
@@ -971,6 +1007,9 @@ class LLMPropertiesDialog(QDialog):
         
         # Show/hide OCR configuration
         self.ocr_config_widget.setVisible(input_source_id == 1)  # OCR
+        # Show/hide previous input mode controls
+        if hasattr(self, 'previous_mode_widget'):
+            self.previous_mode_widget.setVisible(input_source_id == 2)
         
         # Update prompt placeholder based on input source
         if input_source_id == 1:  # OCR

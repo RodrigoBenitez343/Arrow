@@ -116,6 +116,7 @@ class ChatRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="Enable streaming response")
     use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
     ephemeral: Optional[bool] = Field(False, description="Unload model after request")
+    cleanup_after: Optional[bool] = Field(True, description="Run cleanup after response")
 
 
 class GenerateRequest(BaseModel):
@@ -126,6 +127,7 @@ class GenerateRequest(BaseModel):
     stream: Optional[bool] = Field(False, description="Enable streaming response")
     use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
     ephemeral: Optional[bool] = Field(False, description="Unload model after request")
+    cleanup_after: Optional[bool] = Field(True, description="Run cleanup after response")
 
 
 class ComoRAGRequest(BaseModel):
@@ -143,6 +145,171 @@ class EmbeddingsRequest(BaseModel):
     normalize: Optional[bool] = None
     pooling: Optional[str] = None
     ephemeral: Optional[bool] = Field(False, description="Unload model after request")
+    cleanup_after: Optional[bool] = Field(True, description="Run cleanup after response")
+
+# Cleanup helpers
+import requests as _rq
+import subprocess as _sp
+import json as _json
+import time as _tm
+from fastapi.responses import StreamingResponse
+def _ow_base_url():
+    host = os.getenv("OLLAMA_HOST", "localhost")
+    port = os.getenv("OLLAMA_PORT", "11434")
+    return f"http://{host}:{port}"
+def _ow_list_http():
+    try:
+        r = _rq.get(f"{_ow_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        out = []
+        for m in items if isinstance(items, list) else []:
+            name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+            mid = m.get("id") if isinstance(m, dict) else None
+            if name or mid:
+                out.append({"name": name, "id": mid})
+        return out
+    except Exception:
+        return []
+def _ow_stop_http(name=None, mid=None):
+    try:
+        payload = {}
+        if name:
+            payload["model"] = name
+        if mid:
+            payload["id"] = mid
+        if not payload:
+            return False
+        _rq.post(f"{_ow_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+        return True
+    except Exception:
+        return False
+def _ow_list_cli():
+    try:
+        def _find_ollama_bin():
+            cands = []
+            for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
+                v = os.getenv(k)
+                if v:
+                    cands.append(v)
+            la = os.getenv("LOCALAPPDATA")
+            if la:
+                cands.append(os.path.join(la, "Programs", "Ollama", "ollama.exe"))
+            cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
+            cands.append("ollama")
+            return cands
+        env = os.environ.copy()
+        data = None
+        for cmd in _find_ollama_bin():
+            try:
+                p = _sp.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+                if p.returncode != 0:
+                    continue
+                s = (p.stdout or "").strip()
+                if not s:
+                    data = {"models": []}
+                    break
+                data = _json.loads(s)
+                break
+            except Exception:
+                continue
+        if data is None:
+            return []
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        res = []
+        if isinstance(items, list):
+            for m in items:
+                name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                if name:
+                    res.append({"name": name})
+        return res
+    except Exception:
+        return []
+def _ow_stop_cli(name):
+    try:
+        if not name:
+            return False
+        def _find_ollama_bin():
+            cands = []
+            for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
+                v = os.getenv(k)
+                if v:
+                    cands.append(v)
+            la = os.getenv("LOCALAPPDATA")
+            if la:
+                cands.append(os.path.join(la, "Programs", "Ollama", "ollama.exe"))
+            cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
+            cands.append("ollama")
+            return cands
+        env = os.environ.copy()
+        for cmd in _find_ollama_bin():
+            try:
+                _sp.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env)
+                return True
+            except Exception:
+                continue
+        return False
+    except Exception:
+        return False
+def _ow_list_tags():
+    try:
+        r = _rq.get(f"{_ow_base_url()}/api/tags", headers={"Connection": "close"}, timeout=4)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        models = data.get("models") if isinstance(data, dict) else []
+        names = []
+        for m in models if isinstance(models, list) else []:
+            n = m.get("name") if isinstance(m, dict) else None
+            if n:
+                names.append(n)
+        return names
+    except Exception:
+        return []
+def _ow_candidate_names():
+    names = set()
+    for x in _ow_list_http():
+        if x.get("name"):
+            names.add(x.get("name"))
+    for x in _ow_list_cli():
+        if x.get("name"):
+            names.add(x.get("name"))
+    for n in _ow_list_tags():
+        names.add(n)
+    return list(names)
+def _ow_cleanup_all(max_passes=3, wait_s=0.5):
+    ok = False
+    for _ in range(max_passes):
+        for r in _ow_list_http():
+            _ow_stop_http(r.get("name"), r.get("id"))
+        for r in _ow_list_cli():
+            _ow_stop_cli(r.get("name"))
+        for name in _ow_candidate_names():
+            _ow_stop_http(name, None)
+            _ow_stop_cli(name)
+        _tm.sleep(wait_s)
+        if not _ow_list_http() and not _ow_list_cli():
+            ok = True
+            break
+    return ok
+def _ow_cleanup_model(name, max_passes=2, wait_s=0.3):
+    ok = False
+    for _ in range(max_passes):
+        _ow_stop_http(name, None)
+        _ow_stop_cli(name)
+        _tm.sleep(wait_s)
+        names = [x.get("name") for x in _ow_list_http()] + [x.get("name") for x in _ow_list_cli()]
+        if name not in names:
+            ok = True
+            break
+    return ok
+def _ow_cleanup_after_task(model):
+    try:
+        _ow_cleanup_model(model, max_passes=3, wait_s=0.5)
+    except Exception:
+        pass
 
 
 class EmbeddingsResponse(BaseModel):
@@ -245,7 +412,7 @@ async def unload_model(model_name: str):
 
 
 @app.post("/chat")
-async def chat_completion(request: ChatRequest):
+async def chat_completion(request: ChatRequest, background_tasks: BackgroundTasks):
     """Chat completion endpoint"""
     try:
         if not ollama_engine:
@@ -274,6 +441,8 @@ async def chat_completion(request: ChatRequest):
                 await ollama_engine.unload_model(request.model)
             except Exception:
                 pass
+        if request.cleanup_after:
+            background_tasks.add_task(_ow_cleanup_after_task, request.model)
         return response
     except Exception as e:
         logger.error(f"Chat completion failed: {e}")
@@ -281,7 +450,7 @@ async def chat_completion(request: ChatRequest):
 
 
 @app.post("/embeddings", response_model=EmbeddingsResponse)
-async def get_embeddings(request: EmbeddingsRequest):
+async def get_embeddings(request: EmbeddingsRequest, background_tasks: BackgroundTasks):
     """Get embeddings from Ollama"""
     try:
         if not ollama_engine:
@@ -298,6 +467,8 @@ async def get_embeddings(request: EmbeddingsRequest):
                 await ollama_engine.unload_model(request.model)
             except Exception:
                 pass
+        if request.cleanup_after:
+            background_tasks.add_task(_ow_cleanup_after_task, request.model)
         return {"embeddings": embeddings}
     except Exception as e:
         logger.error(f"Embeddings generation failed: {e}")
@@ -305,7 +476,7 @@ async def get_embeddings(request: EmbeddingsRequest):
 
 
 @app.post("/generate")
-async def generate_text(request: GenerateRequest):
+async def generate_text(request: GenerateRequest, background_tasks: BackgroundTasks):
     """Text generation endpoint"""
     try:
         if not ollama_engine:
@@ -335,9 +506,68 @@ async def generate_text(request: GenerateRequest):
                 await ollama_engine.unload_model(request.model)
             except Exception:
                 pass
+        if request.cleanup_after:
+            background_tasks.add_task(_ow_cleanup_after_task, request.model)
         return response
     except Exception as e:
         logger.error(f"Text generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate_stream")
+async def generate_stream(request: GenerateRequest):
+    try:
+        base = getattr(ollama_engine, 'base_url', 'http://localhost:11434') if ollama_engine else 'http://localhost:11434'
+        payload = {
+            "model": request.model,
+            "prompt": request.prompt,
+            "stream": True,
+            "keep_alive": 0,
+            "options": {
+                "temperature": request.temperature if request.temperature is not None else 0.7,
+                "num_predict": request.max_tokens if request.max_tokens is not None else -1
+            }
+        }
+        r = _rq.post(f"{base}/api/generate", json=payload, headers={"Connection": "close"}, stream=True)
+        r.raise_for_status()
+        def _iter():
+            try:
+                accumulated = ""
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = _json.loads(line)
+                        delta = obj.get("response") or obj.get("text") or (obj.get("message", {}) or {}).get("content")
+                        if delta:
+                            accumulated += delta
+                            yield _json.dumps({"text": accumulated}) + "\n"
+                    except Exception:
+                        continue
+            finally:
+                try:
+                    _rq.post(f"{base}/api/stop", json={"model": request.model}, headers={"Connection": "close"}, timeout=3)
+                except Exception:
+                    pass
+        return StreamingResponse(_iter(), media_type="application/x-ndjson")
+    except Exception as e:
+        logger.error(f"Streaming generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/cleanup")
+async def cleanup_endpoint(body: Dict[str, Any]):
+    try:
+        all_flag = bool(body.get("all", False))
+        model = body.get("model")
+        retries = int(body.get("retries", 3))
+        wait_s = float(body.get("wait", 0.5))
+        if all_flag or not model:
+            ok = _ow_cleanup_all(max_passes=retries, wait_s=wait_s)
+            return {"ok": ok}
+        else:
+            ok = _ow_cleanup_model(model, max_passes=retries, wait_s=wait_s)
+            return {"ok": ok, "model": model}
+    except Exception as e:
+        logger.error(f"Cleanup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

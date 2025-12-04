@@ -420,7 +420,7 @@ class LLMNode(BaseNode):
             'prompt': '',
             'system_message': '',
             'temperature': 0.7,
-            'max_tokens': 500,
+            'max_tokens': 4096,
             'output_variable': 'llm_output',
             'api_url': get_default_api_url(),
             'write_text': True,
@@ -476,7 +476,7 @@ class LLMNode(BaseNode):
         self.create_property('prompt', '')
         self.create_property('system_message', '')
         self.create_property('temperature', '0.7')
-        self.create_property('max_tokens', '500')
+        self.create_property('max_tokens', '4096')
         self.create_property('output_variable', 'llm_output')
         self.create_property('api_url', get_default_api_url())
         self.create_property('write_text', 'true')
@@ -491,7 +491,7 @@ class LLMNode(BaseNode):
         self.create_property('typing_batch_size', '20')
         self.create_property('typing_batch_delay', '0.05')
         self.create_property('use_async', 'true')
-        self.create_property('use_direct_rag', 'false')
+        self.create_property('use_direct_rag', 'true')
         self.create_property('rag_embedding_model', 'nomic-embed-text')
         self.create_property('rag_chunk_size', '500')
         self.create_property('rag_overlap', '100')
@@ -521,7 +521,7 @@ class LLMNode(BaseNode):
         self.set_property('prompt', config.get('prompt', ''))
         self.set_property('system_message', config.get('system_message', ''))
         self.set_property('temperature', str(config.get('temperature', 0.7)))
-        self.set_property('max_tokens', str(config.get('max_tokens', 500)))
+        self.set_property('max_tokens', str(config.get('max_tokens', 4096)))
         self.set_property('output_variable', config.get('output_variable', 'llm_output'))
         self.set_property('api_url', config.get('api_url', get_default_api_url()))
         self.set_property('write_text', str(config.get('write_text', True)).lower())
@@ -581,7 +581,7 @@ class LLMNode(BaseNode):
             'prompt': self.get_property('prompt'),
             'system_message': self.get_property('system_message'),
             'temperature': float(self.get_property('temperature') or 0.7),
-            'max_tokens': int(self.get_property('max_tokens') or 500),
+            'max_tokens': int(self.get_property('max_tokens') or 4096),
             'output_variable': self.get_property('output_variable'),
             'api_url': self.get_property('api_url'),
             'write_text': write_text,

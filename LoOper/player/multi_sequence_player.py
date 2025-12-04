@@ -19,6 +19,10 @@ from .multi_sequence import (
     SequenceExecutor,
     WorkflowExecutor
 )
+try:
+    from AI.api import _cleanup_ollama_runners
+except Exception:
+    _cleanup_ollama_runners = None
 
 
 # ConditionalFallbackHandler, WorkflowGraphBuilder, WorkflowNavigator, 
@@ -136,6 +140,11 @@ class MultiSequencePlayer(SeleniumBot):
         logger.debug(f"Chain playback - workflow_graph exists: {self.workflow_graph is not None}")
         logger.debug(f"Chain playback - sequences count: {len(self.sequences) if self.sequences else 0}")
         
+        try:
+            if _cleanup_ollama_runners:
+                _cleanup_ollama_runners()
+        except Exception:
+            pass
         # Interruption-friendly initial delay
         initial_delay = 2.0
         elapsed = 0.0
@@ -168,6 +177,12 @@ class MultiSequencePlayer(SeleniumBot):
             import traceback
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
+        finally:
+            try:
+                if _cleanup_ollama_runners:
+                    _cleanup_ollama_runners()
+            except Exception:
+                pass
     
 
     

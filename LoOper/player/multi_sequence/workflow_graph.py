@@ -498,12 +498,58 @@ class WorkflowExecutor:
         logger.info(f"Starting workflow execution from nodes: {starting_nodes}")
         logger.debug(f"Workflow graph has {len(self.workflow_graph)} nodes: {list(self.workflow_graph.keys())}")
         ready_nodes.update(starting_nodes)
+        last_completed_node_id = None
         
-        while ready_nodes:
+        while True:
             # Check stop flag
             if stop_flag and stop_flag():
                 logger.info("Workflow execution stopped by user request")
                 return True
+            # Defer all execution while any LLM node is actively typing
+            try:
+                vars_snapshot = self.llm_executor.get_all_variables()
+            except Exception:
+                vars_snapshot = {}
+            typing_active = any(k.endswith('_writing') and vars_snapshot.get(k) for k in vars_snapshot.keys())
+            if typing_active:
+                try:
+                    time.sleep(0.05)
+                except Exception:
+                    pass
+                # Refresh readiness so nodes queue up but do not execute until typing ends
+                for node_id, node_data in self.workflow_graph.items():
+                    if node_id in completed_nodes:
+                        continue
+                    if self._are_all_dependencies_satisfied(node_id, completed_nodes):
+                        ready_nodes.add(node_id)
+                continue
+            if not ready_nodes:
+                try:
+                    vars_snapshot = self.llm_executor.get_all_variables()
+                except Exception:
+                    vars_snapshot = {}
+                typing_active = any(k.endswith('_writing') and vars_snapshot.get(k) for k in vars_snapshot.keys())
+                if typing_active:
+                    try:
+                        time.sleep(0.05)
+                    except Exception:
+                        pass
+                    for node_id, node_data in self.workflow_graph.items():
+                        if node_id in completed_nodes:
+                            continue
+                        if self._are_all_dependencies_satisfied(node_id, completed_nodes):
+                            ready_nodes.add(node_id)
+                    if not ready_nodes:
+                        continue
+                else:
+                    for node_id, node_data in self.workflow_graph.items():
+                        if node_id in completed_nodes:
+                            continue
+                        if self._are_all_dependencies_satisfied(node_id, completed_nodes):
+                            ready_nodes.add(node_id)
+                    if not ready_nodes:
+                        logger.info("Workflow execution completed successfully")
+                        return True
             
             current_node_id = self._select_next_node(ready_nodes)
             
@@ -548,6 +594,7 @@ class WorkflowExecutor:
             if success:
                 # Mark node as completed
                 completed_nodes.add(current_node_id)
+                last_completed_node_id = current_node_id
                 logger.info(f"Node {current_node_id} completed successfully")
                 self._apply_extra_delay(node, stop_flag)
                 
@@ -691,6 +738,16 @@ class WorkflowExecutor:
             completed_node = self.workflow_graph[completed_node_id]
             connections = completed_node.get('connections', {})
             completed_is_llm = completed_node.get('type') == 'llm'
+            defer_outputs_due_to_typing = False
+            if completed_is_llm:
+                # If upstream LLM is still typing, defer scheduling of its targets (but continue dependency scan)
+                try:
+                    vars_snapshot = self.llm_executor.get_all_variables()
+                except Exception:
+                    vars_snapshot = {}
+                if vars_snapshot.get(f"node_{completed_node_id}_writing"):
+                    logger.info(f"Deferring targets of LLM {completed_node_id}: still typing")
+                    defer_outputs_due_to_typing = True
             has_pending_non_llm_outputs = False
             for output_type, output_connections in connections.items():
                 for connection in output_connections:
@@ -703,18 +760,19 @@ class WorkflowExecutor:
                         break
                 if has_pending_non_llm_outputs:
                     break
-            for output_type, output_connections in connections.items():
-                for connection in output_connections:
-                    target_node_id = connection.get('node_id')
-                    if not target_node_id or target_node_id in completed_nodes:
-                        continue
-                    target_node = self.workflow_graph.get(target_node_id, {})
-                    if completed_is_llm and has_pending_non_llm_outputs and target_node.get('type') == 'llm':
-                        continue
-                    if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
-                        if target_node_id not in newly_ready:
-                            newly_ready.append(target_node_id)
-                            logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
+            if not defer_outputs_due_to_typing:
+                for output_type, output_connections in connections.items():
+                    for connection in output_connections:
+                        target_node_id = connection.get('node_id')
+                        if not target_node_id or target_node_id in completed_nodes:
+                            continue
+                        target_node = self.workflow_graph.get(target_node_id, {})
+                        if completed_is_llm and has_pending_non_llm_outputs and target_node.get('type') == 'llm':
+                            continue
+                        if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
+                            if target_node_id not in newly_ready:
+                                newly_ready.append(target_node_id)
+                                logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
         
         # Then check all nodes to see if any are now ready based on input dependencies
         for node_id, node_data in self.workflow_graph.items():
@@ -753,19 +811,11 @@ class WorkflowExecutor:
             if should_skip_conditional_handling:
                 continue  # Skip nodes that haven't been chosen by conditional branching
             
-            all_inputs_satisfied = True
-            for input_connection in node_inputs:
-                input_node_id = input_connection['from_node']
-                if input_node_id not in completed_nodes:
-                    all_inputs_satisfied = False
-                    break
-            if not all_inputs_satisfied:
-                continue
-            if node_data.get('type') == 'llm' and self._llm_inputs_have_pending_non_llm_outputs(node_id, completed_nodes):
-                logger.info(f"Deferring LLM {node_id} due to pending non-LLM outputs from its LLM inputs")
+            # Use comprehensive dependency check to include upstream-typing deferral and other rules
+            if not self._are_all_dependencies_satisfied(node_id, completed_nodes):
                 continue
             newly_ready.append(node_id)
-            logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
+            logger.debug(f"Node {node_id} is now ready (dependencies satisfied)")
         return newly_ready
 
     def _llm_inputs_have_pending_non_llm_outputs(self, node_id, completed_nodes):
@@ -872,6 +922,28 @@ class WorkflowExecutor:
                         return True
                 logger.debug(f"No chosen conditional inputs satisfied for node {node_id}")
                 return False
+
+            # Prevent readiness if any upstream LLM is still actively typing/outputting
+            try:
+                vars_snapshot = self.llm_executor.get_all_variables()
+            except Exception:
+                vars_snapshot = {}
+            for input_connection in inputs:
+                upstream_id = input_connection.get('from_node')
+                upstream_node = self.workflow_graph.get(upstream_id, {})
+                if upstream_node.get('type') == 'llm':
+                    if vars_snapshot.get(f"node_{upstream_id}_writing"):
+                        logger.info(f"Deferring node {node_id}: upstream LLM {upstream_id} still typing")
+                        return False
+
+            # For LLM targets, defer readiness if upstream LLM inputs have pending non-LLM outputs
+            try:
+                node_type = node.get('type')
+                if node_type == 'llm' and self._llm_inputs_have_pending_non_llm_outputs(node_id, completed_nodes):
+                    logger.info(f"Deferring LLM {node_id}: pending non-LLM outputs from its LLM inputs")
+                    return False
+            except Exception:
+                pass
 
             # No conditional inputs: require all inputs completed
             for input_connection in inputs:

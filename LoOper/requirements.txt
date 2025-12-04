@@ -114,3 +114,4 @@ websockets
 win32_setctime
 wsproto
 yarl
+pytablericons

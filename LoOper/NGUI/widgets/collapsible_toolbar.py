@@ -2,14 +2,25 @@ import logging
 import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea
+    QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
+    QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
 from PyQt5.QtCore import QMimeData
+try:
+    from pytablericons import TablerIcons, OutlineIcon
+except Exception:
+    TablerIcons = None
+    OutlineIcon = None
+try:
+    from PIL.ImageQt import ImageQt
+except Exception:
+    ImageQt = None
 
 from ..constants import (
-    DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR,
+    DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
+    BLOCK_COLOR, BLOCK_HOVER,
     LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR
 )
 
@@ -24,6 +35,43 @@ if not logger.handlers:
     logger.addHandler(fh)
     logger.addHandler(ch)
     logger.setLevel(logging.DEBUG)
+
+
+# Module-level helper for modern chevron icons with robust fallback
+def load_tabler_icon(name: str, size: int) -> QIcon:
+    try:
+        if TablerIcons and OutlineIcon:
+            icon_enum = getattr(OutlineIcon, name, None)
+            if icon_enum is not None:
+                img = TablerIcons.load(icon_enum, size=size, color=TEXT_COLOR, stroke_width=2.0)
+                try:
+                    return QIcon(img.toqpixmap())
+                except Exception:
+                    qimg = ImageQt(img) if ImageQt else None
+                    if qimg:
+                        return QIcon(QPixmap.fromImage(qimg))
+    except Exception:
+        pass
+    # Fallback: draw minimal chevrons
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    pen.setWidth(2)
+    p.setPen(pen)
+    s = size
+    if name == 'CHEVRON_RIGHT':
+        p.drawPolyline(QPoint(int(0.35*s), int(0.25*s)), QPoint(int(0.65*s), int(0.5*s)), QPoint(int(0.35*s), int(0.75*s)))
+    elif name == 'CHEVRON_LEFT':
+        p.drawPolyline(QPoint(int(0.65*s), int(0.25*s)), QPoint(int(0.35*s), int(0.5*s)), QPoint(int(0.65*s), int(0.75*s)))
+    elif name == 'CHEVRON_UP':
+        p.drawPolyline(QPoint(int(0.25*s), int(0.65*s)), QPoint(int(0.5*s), int(0.35*s)), QPoint(int(0.75*s), int(0.65*s)))
+    else:  # CHEVRON_DOWN
+        p.drawPolyline(QPoint(int(0.25*s), int(0.35*s)), QPoint(int(0.5*s), int(0.65*s)), QPoint(int(0.75*s), int(0.35*s)))
+    p.end()
+    return QIcon(pix)
 
 
 class DraggableButton(QPushButton):
@@ -43,17 +91,17 @@ class DraggableButton(QPushButton):
                 background-color: {bg_color};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 4px 8px;
-                border-radius: 10px;
-                min-width: 90px;
-                min-height: 44px;
+                padding: 4px 10px;
+                border-radius: 14px;
+                min-width: 96px;
+                min-height: 42px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
-                background-color: {bg_color};
+                border-color: {ACCENT_COLOR};
             }}
             QPushButton:pressed {{
-                background-color: {bg_color};
+                background-color: {BLOCK_HOVER};
             }}
             """
         )
@@ -113,17 +161,17 @@ class DraggableSequenceButton(QPushButton):
         self.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {MEDIUM_GREY};
+                background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 4px 8px;
-                border-radius: 10px;
-                min-width: 90px;
-                min-height: 40px;
+                padding: 4px 10px;
+                border-radius: 12px;
+                min-width: 96px;
+                min-height: 38px;
                 font-weight: 600;
             }}
-            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
-            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
+            QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
+            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
             """
         )
 
@@ -196,27 +244,30 @@ class CollapsibleToolbar(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        # Right-side vertical panel: resizable via splitter, expands vertically
+        # Start expanded
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
-        # Allow manual resizing with reasonable limits (allow full collapse to 0)
-        self.setMinimumWidth(0)
+        self.setMinimumWidth(160)
         self.setMaximumWidth(160)
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(2)
+        # Minimal margins so we can shrink to near-zero
+        main_layout.setContentsMargins(0, 0, 4, 0)
+        main_layout.setSpacing(0)
+        
+        # Make the main widget transparent (content frame provides background)
+        # This ensures no "black frame" when integrated in layout
+        self.setAttribute(Qt.WA_TranslucentBackground)
 
-        # No header; start content at the very top
-
-        # Content frame
+        # Container for content
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("toolbarContent")
-        self._content_frame.setStyleSheet("")
+        self._content_frame.setStyleSheet(
+            f"QFrame#toolbarContent {{ background-color: {DARK_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 6px; }}"
+        )
         content_layout = QVBoxLayout(self._content_frame)
         content_layout.setContentsMargins(2, 2, 2, 2)
-        content_layout.setSpacing(1)
+        content_layout.setSpacing(4)
 
-        # Top cluster: sequences list and node types
-        top_cluster = QFrame(self)
+        top_cluster = QFrame(self._content_frame)
         top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._top_layout = QVBoxLayout(top_cluster)
         self._top_layout.setContentsMargins(0, 0, 0, 0)
@@ -224,7 +275,6 @@ class CollapsibleToolbar(QWidget):
         self._sequences_scroll = self._make_sequences_scroll_box()
         self._top_layout.addWidget(self._sequences_scroll)
 
-        # Section 2: Node types (vertical, draggable)
         nodes_col = QVBoxLayout()
         nodes_col.setSpacing(1)
         nodes_col.setContentsMargins(0, 0, 0, 0)
@@ -235,50 +285,115 @@ class CollapsibleToolbar(QWidget):
         self._top_layout.addLayout(nodes_col)
         content_layout.addWidget(top_cluster)
 
-        
-
-        # Spacing between clusters
         content_layout.addSpacing(8)
-        # Navigation/System cluster: Record, Load, Save, Playback
-        nav_cluster = QFrame(self)
-        nav_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        chain_col = QVBoxLayout(nav_cluster)
-        chain_col.setSpacing(1)
-        chain_col.setContentsMargins(0, 0, 0, 0)
-        chain_col.addWidget(self._make_record_icon_button())
-        chain_col.addWidget(self._make_icon_button(QStyle.SP_DialogOpenButton, self._open_chain, tooltip="Load Chain"))
-        chain_col.addWidget(self._make_icon_button(QStyle.SP_DialogSaveButton, self._save_chain, tooltip="Save Chain"))
-        chain_col.addWidget(self._make_icon_button(QStyle.SP_MediaPlay, self._run_chain, tooltip="Run Chain"))
-        content_layout.addWidget(nav_cluster)
         try:
             content_layout.setStretch(0, 1)
-            content_layout.setStretch(2, 0)
         except Exception:
             pass
 
         main_layout.addWidget(self._content_frame)
 
-    def refresh_sequences_list(self):
+        # Floating toggle button (modern chevron), parented to graph_view to float outside
+        self._toggle_btn_nodes = QToolButton(self.graph_view)
+        self._toggle_btn_nodes.setToolTip("Toggle Nodes Toolbar")
+        ico = load_tabler_icon('CHEVRON_RIGHT', 14)
+        if ico:
+            self._toggle_btn_nodes.setIcon(ico)
+            self._toggle_btn_nodes.setIconSize(QSize(14, 14))
+        else:
+            self._toggle_btn_nodes.setText("❯")
+        self._toggle_btn_nodes.setAutoRaise(True)
+        self._toggle_btn_nodes.setCursor(Qt.PointingHandCursor)
+        self._toggle_btn_nodes.setFixedSize(28, 28)
+        self._toggle_btn_nodes.setStyleSheet(
+            f"QToolButton {{ background-color: rgba(32,32,32,180); border: 1px solid {LIGHT_GREY}; border-radius: 14px; }}"
+            f"QToolButton:hover {{ border-color: {ACCENT_COLOR}; }}"
+        )
+        # Shadow effect removed to prevent "floating window" artifacts during toggle
+        self._toggle_btn_nodes.clicked.connect(self._toggle_nodes_toolbar)
+        
+        # Initial position
+        QTimer.singleShot(0, self._position_nodes_toggle)
+
+    def _toggle_nodes_toolbar(self):
+        try:
+            self._collapsed = not self._collapsed
+            if self._collapsed:
+                # Hide content and shrink toolbar to zero (visually)
+                self._content_frame.setVisible(False)
+                self.setMinimumWidth(0)
+                self.setMaximumWidth(0)
+                
+                ico = load_tabler_icon('CHEVRON_LEFT', 14)
+                if ico:
+                    self._toggle_btn_nodes.setIcon(ico)
+                else:
+                    self._toggle_btn_nodes.setText("❮")
+            else:
+                # Show content and restore width
+                self._content_frame.setVisible(True)
+                self.setMinimumWidth(160)
+                self.setMaximumWidth(160)
+                
+                ico = load_tabler_icon('CHEVRON_RIGHT', 14)
+                if ico:
+                    self._toggle_btn_nodes.setIcon(ico)
+                else:
+                    self._toggle_btn_nodes.setText("❯")
+            
+            # Re-position vertically and horizontally after layout update
+            QTimer.singleShot(0, self._position_nodes_toggle)
+            QTimer.singleShot(50, self._position_nodes_toggle)
+        except Exception:
+            pass
+
+    def _position_nodes_toggle(self):
+        # Position the button relative to the toolbar's position on the screen
+        if hasattr(self, '_toggle_btn_nodes') and self._toggle_btn_nodes:
+            try:
+                # Map our (0,0) to the parent (graph_view)
+                # If we are collapsed (width 0), mapTo parent might give the position where we would be?
+                # Actually, mapTo(parent, (0,0)) gives the top-left corner in parent coords.
+                
+                # If collapsed (width 0), we want the button to be at the right edge of the graph view?
+                # No, the toolbar is on the right. So (0,0) of the toolbar is the start of the toolbar.
+                # If collapsed, width is 0, so it's at the far right.
+                
+                pos_in_parent = self.mapTo(self.graph_view, QPoint(0, 0))
+                
+                # We want the button to be to the LEFT of the toolbar.
+                # Button width is 28.
+                # Overlap slightly? 
+                # Let's say we want it exactly adjacent to the left edge of the toolbar.
+                x = pos_in_parent.x() - 28 + 2 # +2 overlap
+                
+                # Vertical center relative to toolbar
+                y = pos_in_parent.y() + (self.height() // 2) - 14
+                
+                # Constrain y to be within graph view
+                if y < 0: y = 0
+                
+                self._toggle_btn_nodes.move(x, y)
+                self._toggle_btn_nodes.raise_()
+            except Exception:
+                pass
         try:
             new_scroll = self._make_sequences_scroll_box()
             if hasattr(self, '_sequences_scroll') and self._sequences_scroll is not None:
+                old_scroll = self._sequences_scroll
                 try:
-                    idx = self._top_layout.indexOf(self._sequences_scroll)
-                except Exception:
-                    idx = 0
-                try:
-                    self._sequences_scroll.setParent(None)
-                except Exception:
-                    pass
-                try:
-                    self._sequences_scroll.deleteLater()
+                    # Hide it first to avoid ghost window
+                    old_scroll.hide()
+                    # Remove from layout
+                    self._top_layout.removeWidget(old_scroll)
+                    old_scroll.setParent(None)
+                    old_scroll.deleteLater()
                 except Exception:
                     pass
+                
+                # Insert new scroll at top (index 0)
                 self._sequences_scroll = new_scroll
-                if idx < 0:
-                    self._top_layout.insertWidget(0, self._sequences_scroll)
-                else:
-                    self._top_layout.insertWidget(idx, self._sequences_scroll)
+                self._top_layout.insertWidget(0, self._sequences_scroll)
             else:
                 self._sequences_scroll = new_scroll
                 self._top_layout.insertWidget(0, self._sequences_scroll)
@@ -351,124 +466,34 @@ class CollapsibleToolbar(QWidget):
         return scroll
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
-        btn = DraggableButton(label, node_type, color, click_handler, self)
+        # Use icon-only modern button when tabler is available
+        if TablerIcons and OutlineIcon:
+            icon_map = {
+                'llm': OutlineIcon.BRAIN,
+                'chain_import': OutlineIcon.LINK,
+                'tts': OutlineIcon.MICROPHONE,
+                'conditional': OutlineIcon.CIRCUIT_SWITCH_CLOSED,
+            }
+            icon_key = icon_map.get(node_type)
+            if icon_key:
+                btn = DraggableButton("", node_type, color, click_handler, self)
+                try:
+                    img = TablerIcons.load(icon_key, size=20, color=TEXT_COLOR, stroke_width=2.0)
+                    btn.setIcon(QIcon(img.toqpixmap()))
+                    btn.setIconSize(QSize(20, 20))
+                except Exception:
+                    pass
+            else:
+                btn = DraggableButton(label, node_type, color, click_handler, self)
+        else:
+            btn = DraggableButton(label, node_type, color, click_handler, self)
         if tooltip:
             btn.setToolTip(tooltip)
         return btn
 
-    def _make_plain_button(self, label, handler, tooltip=None):
-        btn = QPushButton(label, self)
-        btn.clicked.connect(handler)
-        if tooltip:
-            btn.setToolTip(tooltip)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {MEDIUM_GREY};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 4px 8px;
-                min-width: 90px;
-                min-height: 52px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
-            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
-            """
-        )
-        return btn
-
-    def _make_icon_button(self, std_icon, handler, tooltip=None):
-        btn = QPushButton("", self)
-        btn.clicked.connect(handler)
-        if tooltip:
-            btn.setToolTip(tooltip)
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        # Use standard Qt icons to avoid external assets
-        style = QApplication.style()
-        btn.setIcon(style.standardIcon(std_icon))
-        btn.setIconSize(QSize(28, 28))
-        # Simple flat style, taller height
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {MEDIUM_GREY};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 6px;
-                min-width: 90px;
-                min-height: 52px;
-            }}
-            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
-            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
-            """
-        )
-        return btn
-
-    def _make_record_icon_button(self):
-        btn = QPushButton("", self)
-        btn.clicked.connect(lambda: self.graph_view.record_new_sequence())
-        btn.setToolTip("Record Sequence")
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        pix = QPixmap(28, 28)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setBrush(QColor(220, 0, 0))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(4, 4, 20, 20)
-        p.end()
-        btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(28, 28))
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {MEDIUM_GREY};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 6px;
-                min-width: 90px;
-                min-height: 52px;
-            }}
-            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
-            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
-            """
-        )
-        return btn
-
-    # Removed: add action helper per request (not needed)
-
-    # Chain operations wiring via MainWindow where appropriate
-    def _run_chain(self):
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
         try:
-            window = self.graph_view.window()
-            if hasattr(window, 'run_chain'):
-                window.run_chain()
-            else:
-                logger.warning('MainWindow.run_chain not found')
-        except Exception as e:
-            logger.error(f"Run chain error: {e}")
-
-    def _open_chain(self):
-        try:
-            window = self.graph_view.window()
-            if hasattr(window, 'open_chain'):
-                window.open_chain()
-            else:
-                logger.warning('MainWindow.open_chain not found')
-        except Exception as e:
-            logger.error(f"Open chain error: {e}")
-
-    def _save_chain(self):
-        try:
-            window = self.graph_view.window()
-            if hasattr(window, 'save_chain'):
-                window.save_chain()
-            else:
-                logger.warning('MainWindow.save_chain not found')
-        except Exception as e:
-            logger.error(f"Save chain error: {e}")
+            QTimer.singleShot(0, self._position_nodes_toggle)
+        except Exception:
+            pass

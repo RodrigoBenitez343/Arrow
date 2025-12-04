@@ -101,7 +101,8 @@ class OllamaClient:
              temperature: Optional[float] = None,
              max_tokens: Optional[int] = None,
              system: Optional[str] = None,
-             images: Optional[List[str]] = None) -> Dict[str, Any]:
+             images: Optional[List[str]] = None,
+             stream: bool = False) -> Dict[str, Any]:
         """Send a chat request to the specified model
         
         Args:
@@ -115,7 +116,7 @@ class OllamaClient:
         payload = {
             "model": model,
             "prompt": prompt,
-            "stream": False,
+            "stream": bool(stream),
             "ephemeral": True
         }
         
@@ -125,7 +126,11 @@ class OllamaClient:
             payload["system"] = system
         if images is not None:
             payload["images"] = self._process_images(images)
-        
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+
+        if stream:
+            return self._post_stream_text('/generate', payload)
         result = self._post_json('/generate', payload)
         if isinstance(result, dict):
             if 'text' in result and 'response' not in result:
@@ -167,7 +172,7 @@ class OllamaClient:
                                            system, images, context)
         
         # For non-ComoRAG requests, we don't use the queue system
-        return self.chat(model, prompt, temperature, max_tokens, system, images)
+        return self.chat(model, prompt, temperature, max_tokens, system, images, stream=False)
 
     def embeddings(self, model: str, inputs: List[str],
                    normalize: Optional[bool] = None,
@@ -672,6 +677,110 @@ class OllamaClient:
                 except Exception:
                     pass
         return {"error": str(last_error) if last_error else "request_failed"}
+
+    def _post_stream_text(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._shutdown_event.is_set():
+            return {"error": "client_shutdown"}
+        url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
+        try:
+            with self.session.post(url, json=payload, stream=True) as response:
+                response.raise_for_status()
+                accumulated = ""
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        # OverWatch streaming returns {text: ...}, Ollama returns {response: ...}
+                        chunk = obj.get('text') or obj.get('response') or obj.get('message', {}).get('content')
+                        if chunk:
+                            accumulated += chunk
+                    except Exception:
+                        continue
+                return {"response": accumulated}
+        except requests.exceptions.RequestException as e:
+            return {"error": str(e)}
+
+    def _post_stream_iter(self, path: str, payload: Dict[str, Any]):
+        url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
+        with self.session.post(url, json=payload, stream=True) as response:
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    delta = obj.get('response') or obj.get('text') or (obj.get('message', {}) or {}).get('content')
+                    if delta:
+                        yield delta
+                except Exception:
+                    continue
+
+    def chat_stream(self, model: str, prompt: str,
+                    temperature: Optional[float] = None,
+                    max_tokens: Optional[int] = None,
+                    system: Optional[str] = None,
+                    images: Optional[List[str]] = None,
+                    on_delta: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+        payload = {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+            "ephemeral": True,
+            "keep_alive": 0
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if system is not None:
+            payload["system"] = system
+        if images is not None:
+            payload["images"] = self._process_images(images)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        accumulated = ""
+        try:
+            try:
+                for delta in self._post_stream_iter('/generate_stream', payload):
+                    accumulated += delta
+                    if on_delta:
+                        try:
+                            on_delta(delta)
+                        except Exception:
+                            pass
+            except requests.exceptions.RequestException:
+                try:
+                    for delta in self._post_stream_iter('/api/generate', payload):
+                        accumulated += delta
+                        if on_delta:
+                            try:
+                                on_delta(delta)
+                            except Exception:
+                                pass
+                except requests.exceptions.RequestException:
+                    host = os.getenv('OLLAMA_HOST', 'localhost')
+                    port = os.getenv('OLLAMA_PORT', '11434')
+                    base = f"http://{host}:{port}"
+                    url = f"{base}/api/generate"
+                    with self.session.post(url, json=payload, stream=True) as response:
+                        response.raise_for_status()
+                        for line in response.iter_lines(decode_unicode=True):
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                                delta = obj.get('response') or obj.get('text') or (obj.get('message', {}) or {}).get('content')
+                                if delta:
+                                    accumulated += delta
+                                    if on_delta:
+                                        try:
+                                            on_delta(delta)
+                                        except Exception:
+                                            pass
+                            except Exception:
+                                continue
+        except requests.exceptions.RequestException as e:
+            return {"error": str(e)}
+        return {"response": accumulated}
     
     def add_context(self, context_item: Dict[str, Any]) -> None:
         """Add a context item to the ComoRAG context data"""

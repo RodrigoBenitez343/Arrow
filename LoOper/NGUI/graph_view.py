@@ -142,8 +142,7 @@ class GraphViewWidget(QWidget):
             if not current_sizes or len(current_sizes) < 2:
                 current_sizes = [900, 120]
             if visible:
-                # restore right pane width to 120 keeping left size proportional
-                splitter.setSizes([max(1, current_sizes[0]), 120])
+                splitter.setSizes([max(1, current_sizes[0]), 160])
             else:
                 # collapse right pane to zero width
                 splitter.setSizes([max(1, sum(current_sizes)), 0])
@@ -167,6 +166,10 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error setting up node graph: {str(e)}", exc_info=True)
             raise
+
+    def resizeEvent(self, event):
+        """Handle resize events"""
+        super().resizeEvent(event)
 
     def keyPressEvent(self, event):
         """Handle keyboard events for copy/paste functionality"""

@@ -1,6 +1,10 @@
 import sys
 import os
+import threading
+import time
 from typing import Dict, Optional, Any
+import requests as _rq
+import subprocess as _sp
 
 from ...config import logger
 from .config_utils import get_default_api_url
@@ -68,7 +72,7 @@ class LLMExecutor:
         system_message = llm_config.get('system_message', '')
         prompt = llm_config.get('prompt', '')
         temperature = llm_config.get('temperature', 0.7)
-        max_tokens = None
+        max_tokens = int(llm_config.get('max_tokens', 4096) or 4096)
         output_variable = llm_config.get('output_variable', 'llm_output')
         write_text = llm_config.get('write_text', True)
         use_vision = llm_config.get('use_vision', False)
@@ -99,9 +103,7 @@ class LLMExecutor:
         memory_size = int(llm_config.get('memory_size', 1000))
 
         use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
-        if has_input_connection and has_previous_llm_output and not use_direct_rag and input_source in ('previous', 'previous_node'):
-            use_direct_rag = True
-            logger.info("Auto-enabled direct RAG (embeddings) for concatenated LLM node")
+        # Respect explicit user choice for RAG; do not auto-enable on concatenation.
         rag_embedding_model = llm_config.get('rag_embedding_model', 'nomic-embed-text')
         rag_chunk_size = int(llm_config.get('rag_chunk_size', 500))
         rag_overlap = int(llm_config.get('rag_overlap', 100))
@@ -150,20 +152,38 @@ class LLMExecutor:
         if use_comorag and input_text and not use_input_text_in_prompt:
             prompt = f"{input_text}\n\n{prompt}"
 
-        logger.info(f"Creating OllamaClient with base_url: {api_url}")
+        logger.info(f"Preparing Ollama request thread for base_url: {api_url}")
         try:
-            client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
-            if use_comorag and hasattr(client, 'set_comorag_config'):
-                client.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
-                logger.info(f"ComoRAG enabled with max_cycles={max_cycles}, memory_size={memory_size}")
-            else:
-                logger.info("Using regular chat endpoint (ComoRAG disabled)")
-        except Exception as e:
-            logger.error(f"Failed to create OllamaClient: {e}")
-            return None
+            _pre_stop = str(os.getenv('OLLAMA_PRE_STOP','false')).lower() in ('true','1','yes','on')
+            if _pre_stop:
+                _base = f"http://{os.getenv('OLLAMA_HOST','localhost')}:{os.getenv('OLLAMA_PORT','11434')}"
+                _ps = _rq.get(f"{_base}/api/ps", headers={"Connection": "close"}, timeout=4)
+                if _ps.status_code == 200:
+                    _data = _ps.json() if hasattr(_ps, 'json') else {}
+                    _items = _data.get("models") if isinstance(_data, dict) else (_data if isinstance(_data, list) else [])
+                    for _m in _items if isinstance(_items, list) else []:
+                        _pid = _m.get("id") if isinstance(_m, dict) else None
+                        _name = (_m.get("model") or _m.get("name")) if isinstance(_m, dict) else None
+                        _payload = {}
+                        if _pid:
+                            _payload["id"] = _pid
+                        if _name:
+                            _payload["model"] = _name
+                        if _payload:
+                            try:
+                                _rq.post(f"{_base}/api/stop", json=_payload, headers={"Connection": "close"}, timeout=3)
+                            except Exception:
+                                pass
+        except Exception:
+            pass
 
         rag_context_text = None
         rag_docs_context = None
+        emb_client = None
+        try:
+            emb_client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
+        except Exception:
+            emb_client = None
         if use_direct_rag and input_source in ('previous', 'previous_node') and input_text and input_text.strip():
             pre_chunks = None
             pre_embs = None
@@ -177,7 +197,7 @@ class LLMExecutor:
             except Exception:
                 pass
             rag_context_text, updated_prompt = build_rag_context(
-                client,
+                emb_client,
                 prompt,
                 input_text,
                 rag_embedding_model,
@@ -201,9 +221,9 @@ class LLMExecutor:
                 rag_docs = _json.loads(rag_docs)
         except Exception:
             rag_docs = []
-        if rag_docs and use_direct_rag:
+        if rag_docs and use_direct_rag and emb_client is not None:
             rag_docs_context = build_rag_context_from_docs(
-                client,
+                emb_client,
                 prompt,
                 rag_docs,
                 rag_embedding_model,
@@ -213,9 +233,20 @@ class LLMExecutor:
                 rag_max_chars,
             )
 
-        is_vision_model = client.is_vision_model(model)
+        def _is_vision_model_name(name: str) -> bool:
+            ml = str(name or "").lower()
+            for v in ('llava', 'bakllava', 'moondream', 'llava-llama3', 'llava-phi3', 'minicpm-v'):
+                if v in ml:
+                    return True
+            return False
+        is_vision_model = _is_vision_model_name(model)
         should_use_vision = use_vision or is_vision_model
         images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
+        try:
+            if emb_client:
+                emb_client.close()
+        except Exception:
+            pass
 
         if rag_context_text:
             prompt = f"{rag_context_text}\n\n{prompt}"
@@ -228,36 +259,216 @@ class LLMExecutor:
             logger.info("LLM node execution stopped by user request before API call")
             return None
 
-        # Perform generation
-        logger.info("Sending request to LLM API")
-        try:
-            if use_comorag:
-                result = client.generate(
-                    model=model,
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    system=system_message or None,
-                    images=images,
-                    context=None,
-                    async_request=False,
-                )
-            else:
-                result = client.chat(
-                    model=model,
-                    prompt=prompt,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    system=system_message or None,
-                    images=images,
-                )
-        except Exception as e:
-            logger.error(f"LLM request failed: {e}")
-            return None
-        finally:
+        def _task_runner(out_dict: Dict[str, Any]):
             try:
-                if client:
-                    client.close()
+                from AI.consult import OllamaClient as _Client
+                cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag)
+                if use_comorag and hasattr(cli, 'set_comorag_config'):
+                    cli.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
+                # Mark writing active for streaming typing paths
+                _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+                if use_comorag:
+                    res = cli.generate(
+                        model=model,
+                        prompt=prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        system=system_message or None,
+                        images=images,
+                        context=None,
+                        async_request=False,
+                    )
+                else:
+                    stream_flag = bool(llm_config.get('stream', True))
+                    out_dict["stream_used"] = stream_flag
+                    if stream_flag and write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and hasattr(cli, 'chat_stream'):
+                        write_mode = str(llm_config.get('write_mode') or 'type').lower()
+                        _accum = []
+                        # Signal: upstream LLM is actively typing via stream
+                        try:
+                            if _node_id:
+                                self.variables[f"node_{_node_id}_writing"] = True
+                        except Exception:
+                            pass
+                        if write_mode == 'paste':
+                            res = cli.chat_stream(
+                                model=model,
+                                prompt=prompt,
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                                system=system_message or None,
+                                images=images,
+                                on_delta=None,
+                            )
+                        else:
+                            _buf = []
+                            _last_flush = time.time()
+                            _FLUSH_CHARS = int(llm_config.get('stream_flush_chars', 120) or 120)
+                            _FLUSH_MS = float(llm_config.get('stream_flush_ms', 0.25) or 0.25)
+                            def _flush_buffer():
+                                if not _buf:
+                                    return
+                                try:
+                                    chunk = "".join(_buf)
+                                    _buf.clear()
+                                    action_handlers.handle_type_string_action(0, {
+                                        "text": chunk,
+                                        "force_typing": True,
+                                        "batch_size": int(llm_config.get('typing_batch_size', 5) or 5),
+                                        "batch_delay": float(llm_config.get('typing_batch_delay', 0.01) or 0.01),
+                                        "char_by_char": bool(llm_config.get('char_by_char', False)),
+                                        "keystroke_delay": float(llm_config.get('keystroke_delay', 0.001) or 0.001),
+                                    }, stop_flag)
+                                except Exception:
+                                    pass
+                            def _on_delta(s: str):
+                                try:
+                                    _accum.append(s)
+                                    _buf.append(s)
+                                    try:
+                                        if _node_id:
+                                            _cur = out_dict.get("_accum_text") or ""
+                                            _cur += s
+                                            out_dict["_accum_text"] = _cur
+                                            self.variables[f"node_{_node_id}_output"] = _cur
+                                            self.variables[output_variable] = _cur
+                                    except Exception:
+                                        pass
+                                    if sum(len(x) for x in _buf) >= _FLUSH_CHARS or (time.time() - _last_flush) >= _FLUSH_MS:
+                                        _flush_buffer()
+                                        _last_flush = time.time()
+                                except Exception:
+                                    pass
+                            res = cli.chat_stream(
+                                model=model,
+                                prompt=prompt,
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                                system=system_message or None,
+                                images=images,
+                                on_delta=_on_delta,
+                            )
+                            # Final flush for remaining buffered text
+                            try:
+                                _flush_buffer()
+                            except Exception:
+                                pass
+                        # If streaming returned no result but we accumulated deltas, construct a response
+                        if (not isinstance(res, dict)) or (isinstance(res, dict) and not (res.get('response') or res.get('text'))):
+                            if _accum:
+                                res = {"response": "".join(_accum)}
+                        # Detect streaming failure and fallback to non-stream
+                        if (not isinstance(res, dict)) or (isinstance(res, dict) and (res.get('error') or not res.get('response'))):
+                            out_dict["stream_failed"] = True
+                            try:
+                                res2 = cli.chat(
+                                    model=model,
+                                    prompt=prompt,
+                                    temperature=temperature,
+                                    max_tokens=max_tokens,
+                                    system=system_message or None,
+                                    images=images,
+                                    stream=False,
+                                )
+                                res = res2
+                            except Exception:
+                                pass
+                        out_dict["result"] = res
+                    else:
+                        res = cli.chat(
+                            model=model,
+                            prompt=prompt,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            system=system_message or None,
+                            images=images,
+                            stream=False,
+                        )
+                        out_dict["result"] = res
+            except Exception as _e:
+                out_dict["error"] = str(_e)
+            finally:
+                # Clear typing-active signal
+                try:
+                    if _node_id:
+                        self.variables.pop(f"node_{_node_id}_writing", None)
+                except Exception:
+                    pass
+                try:
+                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+                except Exception:
+                    pass
+                try:
+                    def _find_ollama_bin():
+                        cands = []
+                        for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
+                            v = os.getenv(k)
+                            if v:
+                                cands.append(v)
+                        la = os.getenv("LOCALAPPDATA")
+                        if la:
+                            cands.append(os.path.join(la, "Programs", "Ollama", "ollama.exe"))
+                        cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
+                        cands.append("ollama")
+                        return cands
+                    env = os.environ.copy()
+                    for cmd in _find_ollama_bin():
+                        try:
+                            _sp.run([cmd, "stop", model], capture_output=True, text=True, timeout=4, env=env)
+                            break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+                try:
+                    cli.close()
+                except Exception:
+                    pass
+
+        logger.info("Sending request to LLM API in thread")
+        shared: Dict[str, Any] = {}
+        th = threading.Thread(target=_task_runner, args=(shared,), daemon=True)
+        th.start()
+        timeout_s = float(llm_config.get('request_timeout', 120))
+        start_t = time.time()
+        while th.is_alive():
+            if stop_flag and stop_flag():
+                try:
+                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+                except Exception:
+                    pass
+                break
+            if time.time() - start_t > timeout_s:
+                try:
+                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+                except Exception:
+                    pass
+                break
+            try:
+                time.sleep(0.05)
+            except Exception:
+                break
+        try:
+            th.join(timeout=0.2)
+        except Exception:
+            pass
+        result = shared.get("result")
+        if result is None and shared.get("error"):
+            logger.error(f"LLM request failed: {shared.get('error')}")
+            # Continue execution with empty response to avoid workflow stall
+            result = {"response": ""}
+        # If no explicit result but streaming accumulated text exists, use it
+        if result is None and isinstance(shared.get("stream_used"), bool):
+            # Attempt to salvage from a typed buffer stored via variables
+            try:
+                # Prefer node-specific output if already captured by action handler
+                node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+                fallback_text = None
+                if node_id:
+                    fallback_text = self.variables.get(f"node_{node_id}_output")
+                fallback_text = fallback_text or self.variables.get(output_variable)
+                if fallback_text:
+                    result = {"response": str(fallback_text)}
             except Exception:
                 pass
 
@@ -270,7 +481,8 @@ class LLMExecutor:
                 or (result.get('message') or {}).get('content')
             )
         if not response_text:
-            logger.warning(f"LLM returned unexpected format: {result}")
+            logger.error(f"LLM returned unexpected format or empty response: {result}")
+            # Proceed with empty text to allow chaining
             response_text = ""
 
         # Store outputs
@@ -282,16 +494,35 @@ class LLMExecutor:
         except Exception:
             pass
 
-        # Optional: write text via handlers
+        # Optional: write text via handlers when not streaming
         try:
-            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text:
-                # Minimal integration: type the response where focus is
+            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not bool(llm_config.get('stream', True)) or bool(shared.get('stream_failed'))):
                 logger.info("Writing LLM output via action handlers")
-                action_handlers.handle_type_string_action(
-                    idx=0,
-                    action={"text": response_text, "use_clipboard": True},
-                    stop_flag=stop_flag,
-                )
+                write_mode = str(llm_config.get('write_mode') or 'type').lower()
+                if write_mode == 'paste':
+                    try:
+                        node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+                        if node_id:
+                            self.variables[f"node_{node_id}_writing"] = True
+                    except Exception:
+                        pass
+                    action = {"text": response_text, "use_clipboard": True}
+                else:
+                    action = {
+                        "text": response_text,
+                        "force_typing": True,
+                        "batch_size": int(llm_config.get('typing_batch_size', 5) or 5),
+                        "batch_delay": float(llm_config.get('typing_batch_delay', 0.01) or 0.01),
+                        "char_by_char": bool(llm_config.get('char_by_char', False)),
+                        "keystroke_delay": float(llm_config.get('keystroke_delay', 0.001) or 0.001),
+                    }
+                action_handlers.handle_type_string_action(0, action, stop_flag)
+                try:
+                    node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+                    if node_id:
+                        self.variables.pop(f"node_{node_id}_writing", None)
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"Failed to write text via action handlers: {e}")
 
@@ -300,9 +531,13 @@ class LLMExecutor:
         if not next_node:
             try:
                 connections = node.get('connections', {})
-                output_conns = connections.get('output', [])
-                if output_conns:
-                    next_node = output_conns[0].get('node_id')
+                if isinstance(connections, dict):
+                    output_conns = connections.get('output', [])
+                    if output_conns:
+                        next_node = output_conns[0].get('node_id')
+                elif isinstance(connections, list) and connections:
+                    # Handle list-style connections from chain JSON
+                    next_node = connections[0].get('target_node_id') or connections[0].get('node_id')
             except Exception:
                 pass
         # Ensure a non-None return to indicate successful execution to the workflow engine

@@ -707,7 +707,7 @@ class NodeOperations:
             dialog.model_combo.setCurrentText(node.get_property('model') or 'llama3.2:latest')
             dialog.api_url_entry.setText(node.get_property('api_url') or '')
             dialog.temperature_spin.setValue(float(node.get_property('temperature') or 0.7))
-            dialog.max_tokens_spin.setValue(int(node.get_property('max_tokens') or 500))
+            dialog.max_tokens_spin.setValue(int(node.get_property('max_tokens') or 4096))
             dialog.output_variable_entry.setText(node.get_property('output_variable') or 'llm_output')
             
             # Prompt tab

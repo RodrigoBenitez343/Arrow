@@ -95,7 +95,39 @@ class OllamaEngine:
         
         self._initialized = True
         logger.info("Ollama engine initialized successfully")
-    
+        
+    async def _cleanup_runners(self):
+        try:
+            async with self._session.get(f"{self.base_url}/api/ps") as r:
+                if r.status != 200:
+                    return
+                data = await r.json()
+                items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                if isinstance(items, list):
+                    for m in items:
+                        pid = None
+                        name = None
+                        try:
+                            pid = m.get("id") if isinstance(m, dict) else None
+                        except Exception:
+                            pid = None
+                        try:
+                            name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                        except Exception:
+                            name = None
+                        payload: Dict[str, Any] = {}
+                        if pid:
+                            payload["id"] = pid
+                        if name:
+                            payload["model"] = name
+                        if not payload:
+                            continue
+                        try:
+                            await self._session.post(f"{self.base_url}/api/stop", json=payload, headers={"Connection": "close"})
+                        except Exception:
+                            pass
+        except Exception:
+            pass
     async def _check_ollama_status(self):
         """Check if Ollama is running and accessible"""
         async with self._session.get(f"{self.base_url}/api/tags") as response:
@@ -223,6 +255,7 @@ class OllamaEngine:
         """Generate embeddings using Ollama"""
         if not self._initialized:
             raise RuntimeError("Ollama engine not initialized")
+        await self._cleanup_runners()
         
         # Ensure model is present/loaded
         # We try to load it if we track it, otherwise we assume Ollama handles it
@@ -297,6 +330,14 @@ class OllamaEngine:
                         await self.unload_model(model)
                     except Exception:
                         pass
+                try:
+                    await self._session.post(
+                        f"{self.base_url}/api/stop",
+                        json={"model": model},
+                        headers={"Connection": "close"}
+                    )
+                except Exception:
+                    pass
                 return embeddings
                 
         except Exception as e:
@@ -448,6 +489,7 @@ class OllamaEngine:
     
     async def _generate_single(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate single response"""
+        await self._cleanup_runners()
         async with self._session.post(
             f"{self.base_url}/api/generate",
             json=payload,
@@ -457,6 +499,14 @@ class OllamaEngine:
                 raise RuntimeError(f"Generation failed with status {response.status}")
             
             result = await response.json()
+            try:
+                await self._session.post(
+                    f"{self.base_url}/api/stop",
+                    json={"model": payload.get("model")},
+                    headers={"Connection": "close"}
+                )
+            except Exception:
+                pass
             
             # Convert to vLLM-compatible format
             return {
@@ -469,6 +519,7 @@ class OllamaEngine:
     
     async def _generate_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         """Generate streaming response"""
+        await self._cleanup_runners()
         async with self._session.post(
             f"{self.base_url}/api/generate",
             json=payload,
@@ -484,6 +535,15 @@ class OllamaEngine:
                         chunk = json.loads(line.decode())
                         if "response" in chunk:
                             accumulated_text += chunk["response"]
+                            if chunk.get("done", False):
+                                try:
+                                    await self._session.post(
+                                        f"{self.base_url}/api/stop",
+                                        json={"model": payload.get("model")},
+                                        headers={"Connection": "close"}
+                                    )
+                                except Exception:
+                                    pass
                             yield {
                                 "text": accumulated_text,
                                 "finish_reason": "stop" if chunk.get("done", False) else None,

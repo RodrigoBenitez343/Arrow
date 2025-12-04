@@ -110,11 +110,50 @@ class MainWindow(QMainWindow):
     def create_menu_bar(self):
         """Create the application menu bar"""
         menu_bar = self.menuBar()
+        try:
+            from .constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_HOVER
+            menu_bar.setStyleSheet(f"""
+                QMenuBar {{
+                    background-color: {DARK_GREY};
+                    color: {TEXT_COLOR};
+                }}
+                QMenuBar::item {{
+                    background: transparent;
+                    padding: 4px 10px;
+                    border-radius: 8px;
+                }}
+                QMenuBar::item:selected {{
+                    background: {BLOCK_HOVER};
+                }}
+                QMenuBar::item:pressed {{
+                    background: {BLOCK_HOVER};
+                }}
+                QMenu {{
+                    background-color: {MEDIUM_GREY};
+                    color: {TEXT_COLOR};
+                    border: 1px solid {LIGHT_GREY};
+                    border-radius: 8px;
+                }}
+                QMenu::item {{
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                }}
+                QMenu::item:selected {{
+                    background-color: {BLOCK_HOVER};
+                }}
+            """)
+        except Exception:
+            pass
         
         # File menu
         file_menu = menu_bar.addMenu(_("&File"))
         # Keep only Exit in File menu
         exit_action = QAction(_("&Exit"), self)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            exit_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.SQUARE_X, size=16, color=TEXT_COLOR).toqpixmap()))
+        except Exception:
+            pass
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
@@ -122,6 +161,11 @@ class MainWindow(QMainWindow):
         settings_menu = menu_bar.addMenu(_("&Settings"))
         
         ai_settings_action = QAction(_("&AI Configuration"), self)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            ai_settings_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.SETTINGS, size=16, color=TEXT_COLOR).toqpixmap()))
+        except Exception:
+            pass
         ai_settings_action.triggered.connect(self.open_ai_settings)
         settings_menu.addAction(ai_settings_action)
         
@@ -130,6 +174,11 @@ class MainWindow(QMainWindow):
         toggle_toolbar_action = QAction(_("Show Toolbar"), self)
         toggle_toolbar_action.setCheckable(True)
         toggle_toolbar_action.setChecked(True)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            toggle_toolbar_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.LAYOUT_SIDEBAR_RIGHT, size=16, color=TEXT_COLOR).toqpixmap()))
+        except Exception:
+            pass
         def _toggle_toolbar(checked):
             try:
                 self.graph_view.set_toolbar_visible(checked)
@@ -141,6 +190,11 @@ class MainWindow(QMainWindow):
         # Scheduler menu
         scheduler_menu = menu_bar.addMenu(_("&Scheduler"))
         manage_sched_action = QAction(_("&Manage Schedules"), self)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            manage_sched_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.CALENDAR, size=16, color=TEXT_COLOR).toqpixmap()))
+        except Exception:
+            pass
         manage_sched_action.triggered.connect(self.open_scheduler_manager)
         scheduler_menu.addAction(manage_sched_action)
     

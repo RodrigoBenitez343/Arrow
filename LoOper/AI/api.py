@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import requests
@@ -8,6 +9,8 @@ import os
 import sys
 from typing import List, Optional, Dict, Any, Union
 import uvicorn
+import subprocess
+import time
 sys.path.append(os.path.dirname(__file__))
 from comorag_engine import ComoRAGEngine
 import asyncio
@@ -267,6 +270,216 @@ def process_images(images: List[str]) -> List[str]:
     print(f"[DEBUG] Successfully processed {len(processed_images)} images for Ollama")
     return processed_images
 
+def _cleanup_ollama_runners():
+    try:
+        r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+        if r.status_code != 200:
+            try:
+                _cleanup_ollama_runners_cli()
+            except Exception:
+                pass
+            return
+        data = r.json()
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        for m in items if isinstance(items, list) else []:
+            pid = m.get("id") if isinstance(m, dict) else None
+            name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+            payload: Dict[str, Any] = {}
+            if pid:
+                payload["id"] = pid
+            if name:
+                payload["model"] = name
+            if not payload:
+                continue
+            try:
+                requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+            except Exception:
+                pass
+        try:
+            _cleanup_ollama_runners_cli()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def _cleanup_ollama_runners_cli() -> bool:
+    try:
+        def _find_ollama_bin() -> List[str]:
+            cands: List[str] = []
+            for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
+                v = os.getenv(k)
+                if v:
+                    cands.append(v)
+            try:
+                la = os.getenv("LOCALAPPDATA")
+                if la:
+                    p = os.path.join(la, "Programs", "Ollama", "ollama.exe")
+                    cands.append(p)
+            except Exception:
+                pass
+            cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
+            cands.append("ollama")
+            return cands
+        env = os.environ.copy()
+        data = None
+        for cmd in _find_ollama_bin():
+            try:
+                p = subprocess.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+                if p.returncode != 0:
+                    continue
+                out = (p.stdout or "").strip()
+                if not out:
+                    data = {"models": []}
+                    break
+                data = json.loads(out)
+                break
+            except Exception:
+                continue
+        if data is None:
+            return False
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        if not isinstance(items, list):
+            return True
+        for m in items:
+            name = None
+            if isinstance(m, dict):
+                name = (m.get("model") or m.get("name"))
+            if not name:
+                continue
+            for cmd in _find_ollama_bin():
+                try:
+                    subprocess.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env)
+                    break
+                except Exception:
+                    continue
+        return True
+    except Exception:
+        return False
+
+def _list_http():
+    try:
+        r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        out = []
+        for m in items if isinstance(items, list) else []:
+            name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+            mid = m.get("id") if isinstance(m, dict) else None
+            if name or mid:
+                out.append({"name": name, "id": mid})
+        return out
+    except Exception:
+        return []
+
+def _stop_http(name=None, mid=None):
+    try:
+        payload = {}
+        if name:
+            payload["model"] = name
+        if mid:
+            payload["id"] = mid
+        if not payload:
+            return False
+        requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+        return True
+    except Exception:
+        return False
+
+def _list_cli():
+    try:
+        env = os.environ.copy()
+        p = subprocess.run(["ollama", "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+        if p.returncode != 0:
+            return []
+        s = (p.stdout or "").strip()
+        if not s:
+            return []
+        data = json.loads(s)
+        items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        res = []
+        if isinstance(items, list):
+            for m in items:
+                name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                if name:
+                    res.append({"name": name})
+        return res
+    except Exception:
+        return []
+
+def _stop_cli(name):
+    try:
+        if not name:
+            return False
+        env = os.environ.copy()
+        subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=4, env=env)
+        return True
+    except Exception:
+        return False
+
+def _list_tags():
+    try:
+        r = requests.get(f"{get_ollama_base_url()}/api/tags", headers={"Connection": "close"}, timeout=4)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        models = data.get("models") if isinstance(data, dict) else []
+        names = []
+        for m in models if isinstance(models, list) else []:
+            n = m.get("name") if isinstance(m, dict) else None
+            if n:
+                names.append(n)
+        return names
+    except Exception:
+        return []
+
+def _candidate_names():
+    names = set()
+    for x in _list_http():
+        if x.get("name"):
+            names.add(x.get("name"))
+    for x in _list_cli():
+        if x.get("name"):
+            names.add(x.get("name"))
+    for n in _list_tags():
+        names.add(n)
+    return list(names)
+
+def _cleanup_all_exact(max_passes=3, wait_s=0.5):
+    ok = False
+    for _ in range(max_passes):
+        for r in _list_http():
+            _stop_http(r.get("name"), r.get("id"))
+        for r in _list_cli():
+            _stop_cli(r.get("name"))
+        for name in _candidate_names():
+            _stop_http(name, None)
+            _stop_cli(name)
+        time.sleep(wait_s)
+        if not _list_http() and not _list_cli():
+            ok = True
+            break
+    return ok
+
+def _cleanup_model_exact(name, max_passes=2, wait_s=0.3):
+    ok = False
+    for _ in range(max_passes):
+        _stop_http(name, None)
+        _stop_cli(name)
+        time.sleep(wait_s)
+        names = [x.get("name") for x in _list_http()] + [x.get("name") for x in _list_cli()]
+        if name not in names:
+            ok = True
+            break
+    return ok
+
+def _background_cleanup_model(name: str):
+    try:
+        _cleanup_model_exact(name, max_passes=3, wait_s=0.5)
+    except Exception:
+        pass
+
 # Pydantic models for request/response
 class ChatRequest(BaseModel):
     model: str
@@ -276,6 +489,7 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = None
     system: Optional[str] = None
     images: Optional[List[str]] = None  # List of base64 encoded images or file paths
+    cleanup_after: Optional[bool] = True
 
 class ChatResponse(BaseModel):
     response: str
@@ -289,6 +503,7 @@ class EmbeddingsRequest(BaseModel):
     # Optional request tuning, kept simple for now
     normalize: Optional[bool] = None
     pooling: Optional[str] = None  # e.g., "mean"
+    cleanup_after: Optional[bool] = True
 
 class EmbeddingsResponse(BaseModel):
     embeddings: List[List[float]]
@@ -408,9 +623,13 @@ async def list_models():
         )
 
 @app.post("/chat")
-async def chat_with_model(request: ChatRequest):
+async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTasks):
     """Chat with an Ollama model"""
     try:
+        try:
+            _cleanup_ollama_runners()
+        except Exception:
+            pass
         # Ensure requested model is available
         try:
             ensure_model_present(request.model)
@@ -428,7 +647,7 @@ async def chat_with_model(request: ChatRequest):
                 payload = {"model": request.model, "messages": messages, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
                 if request.temperature is not None:
                     payload["options"]["temperature"] = request.temperature
-                response = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload)
+                response = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload, headers={"Connection": "close"})
                 used_chat = True
             else:
                 payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
@@ -436,14 +655,14 @@ async def chat_with_model(request: ChatRequest):
                     payload["options"]["temperature"] = request.temperature
                 if request.system is not None:
                     payload["system"] = request.system
-                response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
+                response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
         else:
             payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
             if request.temperature is not None:
                 payload["options"]["temperature"] = request.temperature
             if request.system is not None:
                 payload["system"] = request.system
-            response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
+            response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
         
         response.raise_for_status()
         
@@ -461,7 +680,7 @@ async def chat_with_model(request: ChatRequest):
                         gp["options"]["temperature"] = request.temperature
                     if request.system is not None:
                         gp["system"] = request.system
-                    fr = requests.post(f"{get_ollama_base_url()}/api/generate", json=gp)
+                    fr = requests.post(f"{get_ollama_base_url()}/api/generate", json=gp, headers={"Connection": "close"})
                     fr.raise_for_status()
                     fres = fr.json()
                     response_text = fres.get("response") or fres.get("text") or ""
@@ -472,14 +691,15 @@ async def chat_with_model(request: ChatRequest):
                     cp = {"model": request.model, "messages": msg, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
                     if request.temperature is not None:
                         cp["options"]["temperature"] = request.temperature
-                    fr = requests.post(f"{get_ollama_base_url()}/api/chat", json=cp)
+                    fr = requests.post(f"{get_ollama_base_url()}/api/chat", json=cp, headers={"Connection": "close"})
                     fr.raise_for_status()
                     fres = fr.json()
                     response_text = (fres.get("message", {}) or {}).get("content") or fres.get("response") or fres.get("text") or ""
             except Exception:
                 response_text = response_text
         
-        return {
+        try:
+            resp_obj = {
             "response": response_text,
             "model": result.get("model", request.model),
             "created_at": result.get("created_at", ""),
@@ -489,6 +709,14 @@ async def chat_with_model(request: ChatRequest):
             "prompt_eval_count": result.get("prompt_eval_count"),
             "eval_count": result.get("eval_count")
         }
+            if request.cleanup_after:
+                background_tasks.add_task(_background_cleanup_model, request.model)
+            return resp_obj
+        finally:
+            try:
+                requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": request.model}, headers={"Connection": "close"}, timeout=3)
+            except Exception:
+                pass
     except HTTPException as e:
         # Preserve explicit HTTP errors raised above (e.g., 400 for unsupported vision)
         raise e
@@ -509,17 +737,54 @@ async def chat_with_model(request: ChatRequest):
         )
 
 @app.post("/generate")
-async def generate_text(request: ChatRequest):
+async def generate_text(request: ChatRequest, background_tasks: BackgroundTasks):
     """Generate text with an Ollama model (alias for chat endpoint)"""
-    return await chat_with_model(request)
+    return await chat_with_model(request, background_tasks)
+
+@app.post("/generate_stream")
+async def generate_stream(request: ChatRequest):
+    try:
+        payload = {"model": request.model, "prompt": request.prompt, "stream": True, "keep_alive": 0, "options": {"num_predict": -1}}
+        if request.temperature is not None:
+            payload["options"]["temperature"] = request.temperature
+        if request.system is not None:
+            payload["system"] = request.system
+        r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"}, stream=True)
+        r.raise_for_status()
+        def _iter():
+            try:
+                accumulated = ""
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                        chunk = obj.get("response") or obj.get("text") or (obj.get("message", {}) or {}).get("content")
+                        if chunk:
+                            accumulated += chunk
+                            yield json.dumps({"text": accumulated}) + "\n"
+                    except Exception:
+                        continue
+            finally:
+                try:
+                    requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": request.model}, headers={"Connection": "close"}, timeout=3)
+                except Exception:
+                    pass
+        return StreamingResponse(_iter(), media_type="application/x-ndjson")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/embeddings", response_model=EmbeddingsResponse)
-async def get_embeddings(request: EmbeddingsRequest):
+async def get_embeddings(request: EmbeddingsRequest, background_tasks: BackgroundTasks):
     """Return embeddings using Ollama's embeddings endpoint.
 
     Accepts a list of input strings and returns a list of embedding vectors.
     """
     try:
+        try:
+            _cleanup_ollama_runners()
+        except Exception:
+            pass
         # Ensure embedding model is available
         try:
             ensure_model_present(request.model)
@@ -565,18 +830,18 @@ async def get_embeddings(request: EmbeddingsRequest):
         # Try /api/embed first (newer endpoint)
         url = f"{get_ollama_base_url()}/api/embed"
         try:
-            response = requests.post(url, json=ollama_payload)
+            response = requests.post(url, json=ollama_payload, headers={"Connection": "close"})
             if response.status_code == 404:
                  # Fallback to /api/embeddings (legacy)
                  # Some older/custom Ollama versions require "prompt" instead of "input"
                  ollama_payload["prompt"] = val
                  url = f"{get_ollama_base_url()}/api/embeddings"
-                 response = requests.post(url, json=ollama_payload)
+                 response = requests.post(url, json=ollama_payload, headers={"Connection": "close"})
         except requests.exceptions.RequestException:
             # If /api/embed fails completely (e.g. connection error), try /api/embeddings
              ollama_payload["prompt"] = val
              url = f"{get_ollama_base_url()}/api/embeddings"
-             response = requests.post(url, json=ollama_payload)
+             response = requests.post(url, json=ollama_payload, headers={"Connection": "close"})
 
         print(f"[DEBUG] Embeddings: Request to {url} returned status {response.status_code}")
         try:
@@ -626,13 +891,13 @@ async def get_embeddings(request: EmbeddingsRequest):
                 # Try /api/embed first
                 sub_payload = {"model": model_name, "input": t, "keep_alive": 0}
                 sub_url = f"{get_ollama_base_url()}/api/embed"
-                sub_resp = requests.post(sub_url, json=sub_payload)
+                sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"})
                 
                 if sub_resp.status_code == 404 or sub_resp.status_code != 200:
                      # Fallback
                      sub_payload["prompt"] = t
                      sub_url = f"{get_ollama_base_url()}/api/embeddings"
-                     sub_resp = requests.post(sub_url, json=sub_payload)
+                     sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"})
                 
                 if sub_resp.status_code != 200:
                     print(f"[ERROR] Embeddings: Per-input request {i} failed: {sub_resp.status_code}")
@@ -671,12 +936,31 @@ async def get_embeddings(request: EmbeddingsRequest):
                 print(f"[ERROR] Embeddings: Valid vectors: {valid_count}")
                 raise HTTPException(status_code=500, detail="Embeddings endpoint returned empty vectors")
 
+        if request.cleanup_after:
+            background_tasks.add_task(_background_cleanup_model, request.model)
         return {"embeddings": embeddings}
+    except HTTPException as e:
+        raise e
     except requests.exceptions.RequestException as e:
-        # Propagate server/network errors directly; do not use local fallback
         raise HTTPException(status_code=503, detail=f"Failed to fetch embeddings from Ollama: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/cleanup")
+async def cleanup_endpoint(body: Dict[str, Any]):
+    try:
+        all_flag = bool(body.get("all", False))
+        model = body.get("model")
+        retries = int(body.get("retries", 3))
+        wait_s = float(body.get("wait", 0.5))
+        if all_flag or not model:
+            ok = _cleanup_all_exact(max_passes=retries, wait_s=wait_s)
+            return {"ok": ok}
+        else:
+            ok = _cleanup_model_exact(model, max_passes=retries, wait_s=wait_s)
+            return {"ok": ok, "model": model}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/vision-models")
 async def list_vision_models():

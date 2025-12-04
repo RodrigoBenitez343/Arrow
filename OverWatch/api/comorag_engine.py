@@ -475,7 +475,7 @@ Consolidated Context:"""
                 prompt=prompt,
                 model=model,
                 temperature=0.3,
-                max_tokens=500
+                max_tokens=4096
             )
             
             consolidated = response["text"].strip()
@@ -515,7 +515,7 @@ Reasoned Response:"""
                 prompt=prompt,
                 model=model,
                 temperature=0.5,
-                max_tokens=800
+                max_tokens=4096
             )
             
             return response["text"].strip()
