@@ -871,6 +871,7 @@ class ConfigManager:
             logger.debug(f"Found {len(form_filler_nodes)} form filler nodes to create")
             
             for ff_data in form_filler_nodes:
+                logger.warning("Form Filler node is deprecated; loading as read-only for compatibility")
                 instruction = ff_data.get('instruction', 'Fill the form on the screen.')
                 model = ff_data.get('model', 'llama3.2:latest')
                 confidence_threshold = ff_data.get('confidence_threshold', 0.8)
@@ -878,7 +879,7 @@ class ConfigManager:
                 logger.debug(f"Creating form filler node with instruction: {instruction[:30]}...")
                 node = self.parent_widget.graph_manager.create_node(
                     'form_filler.FormFillerNode',
-                    name='Form Filler'
+                    name='Form Filler (Deprecated)'
                 )
                 
                 if node:

@@ -36,6 +36,29 @@ if not hasattr(BaseNode, 'create_property'):
             pass
     BaseNode.create_property = _create_property_fallback
 
+def _add_multi_input(node, name, color, display_name):
+    try:
+        return node.add_input(name, color=color, display_name=display_name, multi_connection=True)
+    except Exception:
+        pass
+    try:
+        return node.add_input(name, color=color, display_name=display_name, multi_input=True)
+    except Exception:
+        pass
+    p = node.add_input(name, color=color, display_name=display_name)
+    try:
+        if hasattr(p, 'set_multi_connection'):
+            p.set_multi_connection(True)
+        else:
+            port_item = getattr(p, '_port', None) or getattr(p, 'port', None)
+            if port_item and hasattr(port_item, 'set_multi_connection'):
+                port_item.set_multi_connection(True)
+            else:
+                setattr(p, '_multi_connection', True)
+    except Exception:
+        pass
+    return p
+
 class ConditionalNode(BaseNode):
     """Node representing a conditional check that can control sequence execution flow with comprehensive condition types"""
     
@@ -70,11 +93,25 @@ class ConditionalNode(BaseNode):
         out_false_rgb = tuple(int(PORT_FALSE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
         # Add single input for conditional evaluation (blue)
-        self.add_input('input', color=in_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
 
-        # Add true/false outputs with distinct colors for clarity
-        self.add_output('true', color=out_true_rgb, display_name=False)   # green
-        self.add_output('false', color=out_false_rgb, display_name=False) # red
+        true_port = self.add_output('true', color=out_true_rgb, display_name=False)
+        false_port = self.add_output('false', color=out_false_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        for p in (true_port, false_port):
+            try:
+                p.set_multi_connection(True)
+            except Exception:
+                try:
+                    setattr(p, '_multi_connection', True)
+                except Exception:
+                    pass
         
         # Register properties without rendering inline input widgets
         self.create_property('condition_type', 'presence')
@@ -189,10 +226,22 @@ class SequenceNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add 5 inputs and 5 outputs with visual color coding
-        for i in range(5):
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
+        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
         
         # Register properties without rendering inline input widgets
         self.create_property('sequence_file', '')
@@ -283,10 +332,22 @@ class ActionNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add 5 inputs and 5 outputs with visual color coding
-        for i in range(5):
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
+        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
         
         # Register properties without rendering inline input widgets
         self.create_property('action_type', '')
@@ -392,10 +453,22 @@ class LLMNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add 5 inputs and 5 outputs with visual color coding
-        for i in range(5):
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
+        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
         
         # Add text inputs for LLM configuration
         # Register properties without rendering inline input widgets
@@ -702,10 +775,22 @@ class TTSNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add 5 inputs and 5 outputs with visual color coding
-        for i in range(5):
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
+        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
         
         # Add text inputs for TTS configuration
         # Register properties without rendering inline input widgets
@@ -878,11 +963,22 @@ class ChainImportNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add multiple inputs and outputs with visual color coding
-        for i in range(5):
-            # Hide display names like other nodes; keep names for backend logic
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, False)
+        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        try:
+            in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
         
         # Add configuration inputs
         # Register properties without rendering inline input widgets
@@ -988,6 +1084,7 @@ class FormFillerNode(BaseNode):
     
     def __init__(self):
         super(FormFillerNode, self).__init__()
+        self.set_name('Form Filler (Deprecated)')
         
         self.set_color(*[int(FORM_FILLER_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
         
@@ -1005,10 +1102,8 @@ class FormFillerNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        # Add 5 inputs and 5 outputs with visual color coding
-        for i in range(5):
-            self.add_input(f'input_{i+1}', color=in_rgb, display_name=False)
-            self.add_output(f'output_{i+1}', color=out_rgb, display_name=False)
+        self.add_input('input', color=in_rgb, display_name=False)
+        self.add_output('output', color=out_rgb, display_name=False)
             
         # Register properties
         self.create_property('instruction', 'Fill the form on the screen.')

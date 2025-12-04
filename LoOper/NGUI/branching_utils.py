@@ -244,7 +244,7 @@ class AutoBranchingManager:
                             new_start_id = self.node_id_mapping[start_node_id]
                             cond['outputs']['false'] = [{
                                 'node_id': new_start_id,
-                                'input_name': 'input_1'
+                                'input_name': 'input'
                             }]
                         break
                 

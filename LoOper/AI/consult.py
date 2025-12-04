@@ -17,6 +17,7 @@ import threading
 from typing import Optional, List, Dict, Any, Tuple, Callable
 from urllib.parse import urljoin
 from typing import cast
+from requests.adapters import HTTPAdapter
 
 try:
     from PIL import Image, ImageGrab
@@ -44,20 +45,29 @@ class OllamaClient:
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'Connection': 'close'
         })
+        try:
+            adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
+            self.session.mount('http://', adapter)
+            self.session.mount('https://', adapter)
+        except Exception:
+            pass
         self.context_data = []  # Store context for ComoRAG
         self.comorag_config = {
             'max_cycles': 5,
             'memory_size': 1000
         }
         
-        # Queue system for ComoRAG requests
         self.request_queue = queue.Queue(maxsize=max_queue_size)
         self.queue_processing = False
         self.queue_lock = threading.Lock()
         self.queue_thread = None
-        self.active_requests = {}  # Track active requests by ID
+        self.active_requests = {}
+        self._shutdown_event = threading.Event()
+        self._fail_counts = 0
+        self._breaker_until = None
     
     def health_check(self) -> Dict[str, Any]:
         """Check if the API server and Ollama are healthy"""
@@ -105,7 +115,8 @@ class OllamaClient:
         payload = {
             "model": model,
             "prompt": prompt,
-            "stream": False
+            "stream": False,
+            "ephemeral": True
         }
         
         if temperature is not None:
@@ -115,29 +126,11 @@ class OllamaClient:
         if images is not None:
             payload["images"] = self._process_images(images)
         
-        attempt = 0
-        last_error: Optional[Exception] = None
-        while attempt < 3:
-            try:
-                response = self.session.post(
-                    f"{self.base_url}/generate",
-                    json=payload
-                )
-                response.raise_for_status()
-                result = response.json()
-                if 'text' in result and 'response' not in result:
-                    result['response'] = result['text']
-                return result
-            except requests.exceptions.RequestException as e:
-                last_error = e
-                attempt += 1
-                if self.debug:
-                    print(f"Generate request failed (attempt {attempt}): {e}")
-                try:
-                    time.sleep(min(1.0, 0.5 * attempt))
-                except Exception:
-                    pass
-        return {"error": str(last_error) if last_error else "Generate request failed"}
+        result = self._post_json('/generate', payload)
+        if isinstance(result, dict):
+            if 'text' in result and 'response' not in result:
+                result['response'] = result['text']
+        return result if isinstance(result, dict) else {"error": "request_failed"}
     
     def generate(self, model: str, prompt: str, 
                 temperature: Optional[float] = None,
@@ -179,7 +172,7 @@ class OllamaClient:
     def embeddings(self, model: str, inputs: List[str],
                    normalize: Optional[bool] = None,
                    pooling: Optional[str] = None) -> List[List[float]]:
-        payload: Dict[str, Any] = {"model": model, "inputs": inputs}
+        payload: Dict[str, Any] = {"model": model, "inputs": inputs, "ephemeral": True}
         if normalize is not None:
             payload["normalize"] = normalize
         if pooling is not None:
@@ -200,12 +193,9 @@ class OllamaClient:
         last_error: Optional[Exception] = None
         while attempt_count < 2:
             try:
-                response = self.session.post(
-                    f"{self.base_url}/embeddings",
-                    json=payload
-                )
-                response.raise_for_status()
-                data = response.json()
+                data = self._post_json('/embeddings', payload)
+                if not isinstance(data, dict) and not isinstance(data, list):
+                    raise ValueError("Invalid embeddings response")
 
                 if self.debug:
                     print(f"Embeddings response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
@@ -243,12 +233,7 @@ class OllamaClient:
                         try:
                             # Add prompt for legacy endpoint compatibility
                             payload_single = {"model": model, "inputs": [t], "prompt": t}
-                            r2 = self.session.post(
-                                f"{self.base_url}/embeddings",
-                                json=payload_single
-                            )
-                            r2.raise_for_status()
-                            d2 = r2.json()
+                            d2 = self._post_json('/embeddings', payload_single)
                             
                             v = []
                             if isinstance(d2, dict):
@@ -359,7 +344,7 @@ class OllamaClient:
     def _ensure_queue_processing(self):
         """Ensure the queue processing thread is running"""
         with self.queue_lock:
-            if not self.queue_processing:
+            if not self.queue_processing and not self._shutdown_event.is_set():
                 self.queue_processing = True
                 self.queue_thread = threading.Thread(target=self._process_queue, daemon=True)
                 self.queue_thread.start()
@@ -367,7 +352,6 @@ class OllamaClient:
                     print("Started ComoRAG queue processing thread")
     
     def _process_queue(self):
-        """Process queued ComoRAG requests"""
         while True:
             try:
                 # Get next request from queue with timeout
@@ -376,7 +360,7 @@ class OllamaClient:
                 except queue.Empty:
                     # Check if we should continue processing
                     with self.queue_lock:
-                        if self.request_queue.empty():
+                        if self._shutdown_event.is_set() or self.request_queue.empty():
                             self.queue_processing = False
                             if self.debug:
                                 print("ComoRAG queue empty, stopping processing thread")
@@ -438,6 +422,47 @@ class OllamaClient:
                 if self.debug:
                     print(f"Error in ComoRAG queue processing: {e}")
                 time.sleep(1)  # Prevent tight loop on persistent errors
+
+    def shutdown(self, wait: float = 2.0):
+        try:
+            self._shutdown_event.set()
+            with self.queue_lock:
+                thread = self.queue_thread
+                self.queue_processing = False
+            try:
+                while True:
+                    req = self.request_queue.get_nowait()
+                    rid = req.get("id")
+                    if rid:
+                        self.active_requests[rid] = {"status": "cancelled", "timestamp": time.time()}
+                    self.request_queue.task_done()
+            except queue.Empty:
+                pass
+            if thread and thread.is_alive():
+                try:
+                    thread.join(timeout=max(0.0, wait))
+                except Exception:
+                    pass
+            try:
+                if hasattr(self, "session") and self.session:
+                    self.session.close()
+            except Exception:
+                pass
+            try:
+                self.active_requests.clear()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def close(self):
+        self.shutdown()
+
+    def __del__(self):
+        try:
+            self.shutdown(wait=0.5)
+        except Exception:
+            pass
     
     def get_request_status(self, request_id: str) -> Dict[str, Any]:
         """Get the status of a queued or processing request
@@ -557,12 +582,7 @@ class OllamaClient:
             print(f"ComoRAG request payload: {json.dumps(payload, indent=2)}")
         
         try:
-            response = self.session.post(
-                f"{self.base_url}/comorag/reason",
-                json=payload
-            )
-            response.raise_for_status()
-            result = response.json()
+            result = self._post_json('/comorag/reason', payload)
             
             if self.debug:
                 print(f"ComoRAG response: {json.dumps(result, indent=2)}")
@@ -600,6 +620,58 @@ class OllamaClient:
                 print("Falling back to regular chat endpoint")
             # Fall back to regular chat if ComoRAG fails
             return self.chat(model, prompt, temperature, max_tokens, system, images)
+
+    def _post_json(self, path: str, payload: Dict[str, Any]) -> Any:
+        if self._shutdown_event.is_set():
+            return {"error": "client_shutdown"}
+        url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
+        attempts = 0
+        last_error: Optional[Exception] = None
+        while attempts < 4:
+            if self._breaker_until and time.time() < float(self._breaker_until):
+                try:
+                    time.sleep(0.3)
+                except Exception:
+                    pass
+                attempts += 1
+                continue
+            try:
+                response = self.session.post(url, json=payload)
+                response.raise_for_status()
+                self._fail_counts = 0
+                self._breaker_until = None
+                return response.json()
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                attempts += 1
+                self._fail_counts += 1
+                if self.debug:
+                    print(f"Connection error (attempt {attempts}): {e}")
+                if self._fail_counts >= 3:
+                    self._breaker_until = time.time() + 2.0
+                try:
+                    time.sleep(min(1.5, 0.4 * attempts))
+                except Exception:
+                    pass
+                try:
+                    self.session.close()
+                    self.session = requests.Session()
+                    self.session.headers.update({'Content-Type': 'application/json', 'Accept': 'application/json'})
+                    adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10)
+                    self.session.mount('http://', adapter)
+                    self.session.mount('https://', adapter)
+                except Exception:
+                    pass
+            except requests.exceptions.RequestException as e:
+                last_error = e
+                attempts += 1
+                if self.debug:
+                    print(f"Request error (attempt {attempts}): {e}")
+                try:
+                    time.sleep(min(1.0, 0.3 * attempts))
+                except Exception:
+                    pass
+        return {"error": str(last_error) if last_error else "request_failed"}
     
     def add_context(self, context_item: Dict[str, Any]) -> None:
         """Add a context item to the ComoRAG context data"""

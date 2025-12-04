@@ -165,6 +165,17 @@ class LLMExecutor:
         rag_context_text = None
         rag_docs_context = None
         if use_direct_rag and input_source in ('previous', 'previous_node') and input_text and input_text.strip():
+            pre_chunks = None
+            pre_embs = None
+            try:
+                if connected_ids:
+                    prev_id = connected_ids[0]
+                    store = self.variables.get(f"node_{prev_id}_vectorstore")
+                    if isinstance(store, dict):
+                        pre_chunks = store.get('chunks')
+                        pre_embs = store.get('embeddings')
+            except Exception:
+                pass
             rag_context_text, updated_prompt = build_rag_context(
                 client,
                 prompt,
@@ -177,6 +188,8 @@ class LLMExecutor:
                 rag_max_chars,
                 input_source,
                 use_input_text_in_prompt,
+                pre_chunks,
+                pre_embs,
             )
             if updated_prompt:
                 prompt = updated_prompt
@@ -204,11 +217,12 @@ class LLMExecutor:
         should_use_vision = use_vision or is_vision_model
         images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
 
-        # Combine RAG context if available
         if rag_context_text:
             prompt = f"{rag_context_text}\n\n{prompt}"
         if rag_docs_context:
             prompt = f"{rag_docs_context}\n\n{prompt}"
+        if use_direct_rag and not rag_context_text and input_source in ('previous', 'previous_node') and input_text:
+            prompt = assemble_enhanced_prompt(prompt, input_source, input_text, include_raw=True)
 
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before API call")
@@ -240,6 +254,12 @@ class LLMExecutor:
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
             return None
+        finally:
+            try:
+                if client:
+                    client.close()
+            except Exception:
+                pass
 
         # Normalize response
         response_text = None

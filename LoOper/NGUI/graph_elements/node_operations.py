@@ -423,37 +423,11 @@ class NodeOperations:
         return None
 
     def add_form_filler_node(self, pos=None):
-        """Add a new Form Filler node."""
-        logger.info(f"Adding Form Filler node at position: {pos}")
+        from PyQt5.QtWidgets import QMessageBox
         try:
-            # Create the node
-            logger.debug("Creating Form Filler node")
-            node = self.parent_widget.graph_manager.create_node(
-                'form_filler.FormFillerNode', 
-                name='Form Filler', 
-                pos=pos
-            )
-            
-            if node:
-                logger.debug(f"Setting default properties for Form Filler node {node.id}")
-                # Set default properties
-                node.set_property('instruction', 'Fill the form on the screen.')
-                node.set_property('model', 'llama3.2:latest')
-                node.set_property('confidence_threshold', '0.8')
-                
-                logger.info(f"Successfully added Form Filler node {node.id}")
-                return node
-            else:
-                logger.error("Failed to create Form Filler node")
-                
-        except Exception as e:
-            logger.error(f"Error adding Form Filler node: {e}")
-            QMessageBox.critical(
-                self.parent_widget, 
-                "Error", 
-                f"Failed to add Form Filler node: {str(e)}"
-            )
-            
+            QMessageBox.information(self.parent_widget, "Deprecated", "Form Filler node is deprecated and cannot be added.")
+        except Exception:
+            pass
         return None
         
     def delete_node(self, node):
@@ -948,49 +922,11 @@ class NodeOperations:
             )
 
     def edit_form_filler_node(self, node):
-        """Edit a Form Filler node's properties."""
-        logger.info(f"Editing Form Filler node: {node.id}")
+        from PyQt5.QtWidgets import QMessageBox
         try:
-            logger.debug("Creating Form Filler dialog")
-            from ..dialogs import FormFillerDialog
-            
-            # Get current Form Filler configuration
-            current_config = {
-                'instruction': node.get_property('instruction') or 'Fill the form on the screen.',
-                'model': node.get_property('model') or 'llama3.2:latest',
-                'confidence_threshold': node.get_property('confidence_threshold') or '0.8'
-            }
-            
-            dialog = FormFillerDialog(self.parent_widget, current_config)
-            
-            if dialog.exec_() == dialog.Accepted:
-                logger.debug("Dialog accepted, updating node properties")
-                config = dialog.get_config()
-                
-                # Update node properties
-                # For now, since the dialog is empty/placeholder, we might not get updated config back
-                # But we should prepare for it. 
-                # The dialog implementation returns self.current_config
-                
-                if config:
-                    if 'instruction' in config:
-                        node.set_property('instruction', config['instruction'])
-                    if 'model' in config:
-                        node.set_property('model', config['model'])
-                    if 'confidence_threshold' in config:
-                        node.set_property('confidence_threshold', config['confidence_threshold'])
-                
-                logger.info(f"Successfully edited Form Filler node: {node.id}")
-            else:
-                logger.debug("Dialog cancelled")
-                
-        except Exception as e:
-            logger.error(f"Error editing Form Filler node: {e}")
-            QMessageBox.critical(
-                self.parent_widget, 
-                "Error", 
-                f"Failed to edit Form Filler node: {str(e)}"
-            )
+            QMessageBox.information(self.parent_widget, "Deprecated", "Form Filler node is deprecated and cannot be edited.")
+        except Exception:
+            pass
             
     # DEPRECATED: Context Builder - edit function disabled
     # def edit_context_builder_node(self, node):

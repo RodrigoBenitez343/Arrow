@@ -158,7 +158,7 @@ class WorkflowGraphBuilder:
                                     'output_type': output_type
                                 })
         
-        # Build connections from LLM outputs to other nodes (use normalized graph connections)
+        # Build connections from LLM outputs to other nodes (normalize to inputs for dependency tracking)
         for llm_node in self.llm_nodes:
             llm_id = llm_node.get('id') or llm_node.get('node_id')
             if llm_id in graph:
@@ -499,15 +499,13 @@ class WorkflowExecutor:
         logger.debug(f"Workflow graph has {len(self.workflow_graph)} nodes: {list(self.workflow_graph.keys())}")
         ready_nodes.update(starting_nodes)
         
-        # Execute nodes in dependency order
         while ready_nodes:
             # Check stop flag
             if stop_flag and stop_flag():
                 logger.info("Workflow execution stopped by user request")
                 return True
             
-            # Get next ready node to execute
-            current_node_id = ready_nodes.pop()
+            current_node_id = self._select_next_node(ready_nodes)
             
             if current_node_id in completed_nodes:
                 continue  # Skip already completed nodes
@@ -568,24 +566,56 @@ class WorkflowExecutor:
                         # Mark nodes in the unchosen branch as skipped
                         unchosen_branch = 'false' if conditional_result else 'true'
                         self._mark_skipped(current_node_id, unchosen_branch)
+                elif node['type'] == 'llm':
+                    # LLM-specific chaining rules: only auto-chain to an LLM if directly concatenated
+                    # and neither node has multiple outputs/inputs. Otherwise, let sequences drive order.
+                    next_nodes = self._get_output_connected_nodes(current_node_id)
+                    logger.debug(f"Output connected nodes from {current_node_id}: {next_nodes}")
+                    has_pending_non_llm_outputs = False
+                    for nn in next_nodes:
+                        tn = self.workflow_graph.get(nn, {})
+                        if tn.get('type') != 'llm' and nn not in completed_nodes:
+                            has_pending_non_llm_outputs = True
+                            break
+                    for next_node_id in next_nodes:
+                        if next_node_id in completed_nodes:
+                            continue
+                        # If next node is an LLM, enforce direct concatenation rule
+                        next_node = self.workflow_graph.get(next_node_id, {})
+                        if next_node.get('type') == 'llm':
+                            if has_pending_non_llm_outputs:
+                                logger.info(f"Deferring LLM {next_node_id} because non-LLM outputs remain after {current_node_id}")
+                                continue
+                            if self._is_direct_llm_concatenation(current_node_id, next_node_id):
+                                if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
+                                    ready_nodes.add(next_node_id)
+                                    logger.info(f"Chained LLM {next_node_id} is now ready (direct concatenation)")
+                            else:
+                                logger.info(f"Skipping auto-chain to LLM {next_node_id} due to branching or multiple inputs/outputs")
+                        else:
+                            # Non-LLM nodes proceed normally when deps satisfied
+                            if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
+                                ready_nodes.add(next_node_id)
+                                logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
+                    # Also check nodes that become ready due to satisfied dependencies
+                    newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
+                    ready_nodes.update(newly_ready)
+                    if newly_ready:
+                        logger.info(f"Additional nodes now ready for execution: {newly_ready}")
+                    logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
                 else:
-                    # For non-conditional nodes, find all output connected nodes
+                    # Standard handling for non-conditional, non-LLM nodes
                     next_nodes = self._get_output_connected_nodes(current_node_id)
                     logger.debug(f"Output connected nodes from {current_node_id}: {next_nodes}")
                     for next_node_id in next_nodes:
                         if next_node_id not in completed_nodes:
-                            # Check if all dependencies for this node are satisfied
                             if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
                                 ready_nodes.add(next_node_id)
                                 logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
-                    
-                    # Also check for nodes that might be ready due to dependency satisfaction
                     newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
                     ready_nodes.update(newly_ready)
-                    
                     if newly_ready:
                         logger.info(f"Additional nodes now ready for execution: {newly_ready}")
-                    
                     logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
             else:
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
@@ -620,6 +650,29 @@ class WorkflowExecutor:
                 logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
         
         return starting_nodes
+
+    def _select_next_node(self, ready_nodes):
+        priority_map = {
+            'sequence': 0,
+            'conditional': 1,
+            'tts': 2,
+            'chain_import': 3,
+            'llm': 4,
+        }
+        candidates = list(ready_nodes)
+        def _key(nid):
+            nd = self.workflow_graph.get(nid, {})
+            t = nd.get('type')
+            p = priority_map.get(t, 5)
+            idx = nd.get('index', 0)
+            return (p, idx, str(nid))
+        candidates.sort(key=_key)
+        chosen = candidates[0]
+        try:
+            ready_nodes.remove(chosen)
+        except Exception:
+            pass
+        return chosen
     
     def _find_newly_ready_nodes(self, completed_node_id, completed_nodes):
         """
@@ -634,31 +687,43 @@ class WorkflowExecutor:
         """
         newly_ready = []
         
-        # First, check for direct output connections from the completed node
         if completed_node_id in self.workflow_graph:
             completed_node = self.workflow_graph[completed_node_id]
             connections = completed_node.get('connections', {})
-            
-            # Check all output connections
+            completed_is_llm = completed_node.get('type') == 'llm'
+            has_pending_non_llm_outputs = False
+            for output_type, output_connections in connections.items():
+                for connection in output_connections:
+                    tid = connection.get('node_id')
+                    if not tid:
+                        continue
+                    tnode = self.workflow_graph.get(tid, {})
+                    if tnode.get('type') != 'llm' and tid not in completed_nodes:
+                        has_pending_non_llm_outputs = True
+                        break
+                if has_pending_non_llm_outputs:
+                    break
             for output_type, output_connections in connections.items():
                 for connection in output_connections:
                     target_node_id = connection.get('node_id')
-                    if target_node_id and target_node_id not in completed_nodes:
-                        # Check if this target node's dependencies are satisfied
-                        if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
-                            if target_node_id not in newly_ready:
-                                newly_ready.append(target_node_id)
-                                logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
+                    if not target_node_id or target_node_id in completed_nodes:
+                        continue
+                    target_node = self.workflow_graph.get(target_node_id, {})
+                    if completed_is_llm and has_pending_non_llm_outputs and target_node.get('type') == 'llm':
+                        continue
+                    if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
+                        if target_node_id not in newly_ready:
+                            newly_ready.append(target_node_id)
+                            logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
         
         # Then check all nodes to see if any are now ready based on input dependencies
         for node_id, node_data in self.workflow_graph.items():
             if node_id in completed_nodes or node_id in newly_ready:
                 continue  # Skip already completed or already identified nodes
             
-            # Check if this node has the completed node as an input
             node_inputs = node_data.get('inputs', [])
             if not node_inputs:
-                continue  # No inputs, should already be in ready set or handled by output connections
+                continue
             
             # Skip nodes that are handled by conditional branching logic
             # Only skip if ALL inputs are from conditional nodes that haven't chosen this path
@@ -688,20 +753,42 @@ class WorkflowExecutor:
             if should_skip_conditional_handling:
                 continue  # Skip nodes that haven't been chosen by conditional branching
             
-            # Check if all input dependencies are satisfied
             all_inputs_satisfied = True
             for input_connection in node_inputs:
                 input_node_id = input_connection['from_node']
                 if input_node_id not in completed_nodes:
                     all_inputs_satisfied = False
                     break
-            
-            if all_inputs_satisfied:
-                newly_ready.append(node_id)
-                logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
-        
+            if not all_inputs_satisfied:
+                continue
+            if node_data.get('type') == 'llm' and self._llm_inputs_have_pending_non_llm_outputs(node_id, completed_nodes):
+                logger.info(f"Deferring LLM {node_id} due to pending non-LLM outputs from its LLM inputs")
+                continue
+            newly_ready.append(node_id)
+            logger.debug(f"Node {node_id} is now ready (all inputs satisfied)")
         return newly_ready
-    
+
+    def _llm_inputs_have_pending_non_llm_outputs(self, node_id, completed_nodes):
+        try:
+            node = self.workflow_graph.get(node_id, {})
+            inputs = node.get('inputs', [])
+            for inp in inputs:
+                from_node = inp.get('from_node')
+                src = self.workflow_graph.get(from_node, {})
+                if src.get('type') != 'llm':
+                    continue
+                outputs = src.get('connections', {}).get('output', [])
+                for conn in outputs:
+                    tid = conn.get('node_id')
+                    if not tid:
+                        continue
+                    tnode = self.workflow_graph.get(tid, {})
+                    if tnode.get('type') != 'llm' and tid not in completed_nodes:
+                        return True
+            return False
+        except Exception:
+            return False
+        
     def _get_output_connected_nodes(self, node_id):
         """
         Get all nodes that are connected to the outputs of the given node.
@@ -750,21 +837,71 @@ class WorkflowExecutor:
         inputs = node.get('inputs', [])
         logger.debug(f"Node {node_id} inputs: {inputs}")
         
-        # If no inputs, node is ready
         if not inputs:
             logger.debug(f"Node {node_id} has no inputs, marking as ready")
             return True
-            
-        # For conditional branching: if ANY input dependency is satisfied, node is ready
-        # This allows dynamic workflow execution based on conditions
-        for input_connection in inputs:
-            input_node_id = input_connection.get('from_node')
-            if input_node_id in completed_nodes:
-                logger.debug(f"Node {node_id} dependency {input_node_id} satisfied - node is ready")
-                return True
-                
-        logger.debug(f"No dependencies satisfied for node {node_id}")
-        return False
+
+        node_type = self.workflow_graph.get(node_id, {}).get('type')
+        if node_type == 'conditional':
+            for input_connection in inputs:
+                input_node_id = input_connection.get('from_node')
+                if input_node_id in completed_nodes:
+                    logger.debug(f"Node {node_id} dependency {input_node_id} satisfied - node is ready")
+                    return True
+            logger.debug(f"No dependencies satisfied for conditional node {node_id}")
+            return False
+        else:
+            # If node has conditional inputs, only require chosen conditional branch
+            conditional_required = []
+            non_conditional_required = []
+            for input_connection in inputs:
+                input_node_id = input_connection.get('from_node')
+                input_node = self.workflow_graph.get(input_node_id, {})
+                if input_node.get('type') == 'conditional':
+                    chosen = input_node.get('chosen_branch_node')
+                    if chosen == node_id:
+                        conditional_required.append(input_node_id)
+                else:
+                    non_conditional_required.append(input_node_id)
+
+            if conditional_required:
+                # Require that at least one chosen conditional input is completed; ignore non-conditional inputs
+                for cid in conditional_required:
+                    if cid in completed_nodes:
+                        logger.debug(f"Node {node_id} chosen conditional {cid} satisfied - node is ready")
+                        return True
+                logger.debug(f"No chosen conditional inputs satisfied for node {node_id}")
+                return False
+
+            # No conditional inputs: require all inputs completed
+            for input_connection in inputs:
+                input_node_id = input_connection.get('from_node')
+                if input_node_id not in completed_nodes:
+                    logger.debug(f"Dependency {input_node_id} not satisfied for node {node_id}")
+                    return False
+            logger.debug(f"All dependencies satisfied for node {node_id}")
+            return True
+
+    def _is_direct_llm_concatenation(self, current_llm_id, next_llm_id):
+        """
+        Check if two LLM nodes are directly concatenated with single output/input
+        and no branching.
+        """
+        if current_llm_id not in self.workflow_graph or next_llm_id not in self.workflow_graph:
+            return False
+        current_node = self.workflow_graph[current_llm_id]
+        next_node = self.workflow_graph[next_llm_id]
+        if current_node.get('type') != 'llm' or next_node.get('type') != 'llm':
+            return False
+        # Current LLM must have exactly one output connection to next LLM
+        outputs = current_node.get('connections', {}).get('output', [])
+        if len(outputs) != 1 or outputs[0].get('node_id') != next_llm_id:
+            return False
+        # Next LLM must have exactly one input and it must be from current
+        inputs = next_node.get('inputs', [])
+        if len(inputs) != 1 or inputs[0].get('from_node') != current_llm_id:
+            return False
+        return True
 
     def _apply_extra_delay(self, node, stop_flag):
         try:

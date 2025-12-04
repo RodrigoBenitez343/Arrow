@@ -5,6 +5,7 @@ Action execution handlers for different types of automation actions.
 
 import os
 import time
+import math
 import pyautogui
 import pyperclip
 from numpy import random
@@ -81,6 +82,12 @@ class ActionHandlers:
             logger.error(f"Screenshot file for action {idx} does not exist: {cand_paths[0]}")
             raise Exception(f"Screenshot file not found: {cand_paths[0]}")
         screenshot_path = resolved_path
+        element_key = os.path.abspath(screenshot_path)
+        stop_on_all = bool(action.get('stop_when_all_clicked', True))
+        state = self.bot.selection_memory.get(element_key, {})
+        if stop_on_all and state.get('all_clicked'):
+            action['all_clicked'] = True
+            return True
 
         target_coords = None
         screenshot_found = False
@@ -173,7 +180,6 @@ class ActionHandlers:
                             boxes = []
 
                         if boxes:
-                            # Convert to centers and sort deterministically (row-major: top, then left)
                             centers = []
                             for b in boxes:
                                 try:
@@ -185,63 +191,143 @@ class ActionHandlers:
                                     continue
                                 cx = int(left + width / 2)
                                 cy = int(top + height / 2)
-                                centers.append((cx, cy, int(top), int(left)))
+                                centers.append((cx, cy))
 
                             if centers:
-                                centers.sort(key=lambda c: (c[2], c[3]))  # sort by top, then left
-
-                                # Enhanced selection memory that tracks element instances properly
-                                element_key = os.path.abspath(screenshot_path)
-                                
-                                # Get current state for this element type
                                 element_state = self.bot.selection_memory.get(element_key, {})
                                 last_instance_count = element_state.get('instance_count', 0)
                                 last_clicked_index = element_state.get('last_index', -1)
-                                
+                                last_coords = element_state.get('last_coords')
+                                clicked_coords = element_state.get('clicked_coords', [])
+                                clicked_indices = element_state.get('clicked_indices', [])
+                                prev_radius = element_state.get('cluster_radius')
                                 current_instance_count = len(centers)
-                                
-                                logger.info(f"Element selection for {os.path.basename(screenshot_path)}: "
-                                           f"found {current_instance_count} instances, "
-                                           f"last clicked index was {last_clicked_index}, "
-                                           f"last instance count was {last_instance_count}")
-                                
-                                # Check if this is a fresh set of instances (count changed)
-                                if last_instance_count != current_instance_count:
-                                    # Reset to start from beginning for new instance set
-                                    chosen_index = 0
-                                    logger.info(f"New instance set detected for {os.path.basename(screenshot_path)}: "
-                                               f"{current_instance_count} instances (was {last_instance_count})")
-                                else:
-                                    # Continue cycling through existing instances
-                                    chosen_index = (last_clicked_index + 1) % current_instance_count
-                                    logger.info(f"Continuing cycle for {os.path.basename(screenshot_path)}: "
-                                               f"instance {chosen_index + 1}/{current_instance_count}")
 
-                                # If first time seeing this element, prefer nearest to original hint if available
+                                # Compute relative spacing to derive a dynamic cluster radius
+                                def dist(a, b):
+                                    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+                                nn_dists = []
+                                try:
+                                    for i, c in enumerate(centers):
+                                        dlist = [dist(c, centers[j]) for j in range(len(centers)) if j != i]
+                                        if dlist:
+                                            nn_dists.append(min(dlist))
+                                except Exception:
+                                    nn_dists = []
+
+                                spacing = sorted(nn_dists)[len(nn_dists)//2] if nn_dists else 12.0
+                                cluster_radius = max(5.0, spacing * 0.35)
+
+                                # If instance count changed significantly, prune clicked history to avoid mismatch
+                                if last_instance_count != current_instance_count:
+                                    if prev_radius:
+                                        filtered = []
+                                        for pc in clicked_coords:
+                                            for c in centers:
+                                                if dist(pc, c) <= prev_radius:
+                                                    filtered.append(pc)
+                                                    break
+                                        clicked_coords = filtered
+                                        # rebuild clicked_indices by matching filtered coords to nearest centers
+                                        new_clicked_indices = []
+                                        for pc in clicked_coords:
+                                            dists = [dist(pc, c) for c in centers]
+                                            if dists:
+                                                new_clicked_indices.append(int(dists.index(min(dists))))
+                                        clicked_indices = new_clicked_indices
+                                    else:
+                                        clicked_coords = []
+                                        clicked_indices = []
+
                                 hint_x = action.get('x')
                                 hint_y = action.get('y')
-                                if last_clicked_index == -1 and isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
+
+                                # Build list of unclicked centers based on dynamic radius
+                                def is_clicked(c):
+                                    for pc in clicked_coords:
+                                        if dist(c, pc) <= cluster_radius:
+                                            return True
+                                    return False
+
+                                unclicked = [(i, centers[i]) for i in range(len(centers)) if not is_clicked(centers[i])]
+                                if stop_on_all and not unclicked and clicked_coords:
+                                    total_instances = current_instance_count
+                                    visited_count = len(clicked_coords)
+                                    self.bot.selection_memory[element_key] = {
+                                        'instance_count': current_instance_count,
+                                        'last_index': last_clicked_index,
+                                        'last_coords': last_coords,
+                                        'clicked_coords': clicked_coords,
+                                        'clicked_indices': clicked_indices,
+                                        'cluster_radius': cluster_radius,
+                                        'total_instances': total_instances,
+                                        'visited_count': visited_count,
+                                        'all_clicked': visited_count >= total_instances
+                                    }
+                                    action['all_clicked'] = True
+                                    return True
+
+                                # Choose next by nearest neighbor relative to last click or hint
+                                chosen_index = 0
+                                if last_coords and isinstance(last_coords, (list, tuple)) and len(last_coords) == 2:
+                                    if unclicked:
+                                        chosen_index = min(
+                                            [ (i, dist(c, (last_coords[0], last_coords[1]))) for (i, c) in unclicked ],
+                                            key=lambda x: x[1]
+                                        )[0]
+                                    else:
+                                        # All seen; pick overall nearest to last_coords
+                                        dists = [dist(centers[i], (last_coords[0], last_coords[1])) for i in range(len(centers))]
+                                        chosen_index = int(dists.index(min(dists)))
+                                elif isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
                                     try:
                                         hx = int(hint_x)
                                         hy = int(hint_y)
-                                        dists = [((c[0] - hx) ** 2 + (c[1] - hy) ** 2) for c in centers]
-                                        chosen_index = int(dists.index(min(dists)))
-                                        logger.info(f"First time - selected nearest to hint: "
-                                                   f"instance {chosen_index + 1}/{current_instance_count}")
+                                        base = (hx, hy)
+                                        if unclicked:
+                                            chosen_index = min(
+                                                [ (i, dist(c, base)) for (i, c) in unclicked ],
+                                                key=lambda x: x[1]
+                                            )[0]
+                                        else:
+                                            dists = [dist(centers[i], base) for i in range(len(centers))]
+                                            chosen_index = int(dists.index(min(dists)))
                                     except Exception:
                                         chosen_index = 0
+                                else:
+                                    # Fallback to previous index bounds if available
+                                    chosen_index = max(0, min(last_clicked_index, current_instance_count - 1))
 
-                                # Update memory with current state
+                                # Update memory with dynamic radius and visited path
+                                chosen_coords = (centers[chosen_index][0], centers[chosen_index][1])
+                                # Deduplicate if within radius of existing clicked points
+                                new_clicked = clicked_coords[:]
+                                already = False
+                                for pc in new_clicked:
+                                    if dist(chosen_coords, pc) <= cluster_radius:
+                                        already = True
+                                        break
+                                if not already:
+                                    new_clicked.append(chosen_coords)
+
+                                visited_count = len(new_clicked)
+                                total_instances = current_instance_count
+                                new_clicked_indices = list(set(clicked_indices + [chosen_index]))
                                 self.bot.selection_memory[element_key] = {
                                     'instance_count': current_instance_count,
-                                    'last_index': chosen_index
+                                    'last_index': chosen_index,
+                                    'last_coords': chosen_coords,
+                                    'clicked_coords': new_clicked,
+                                    'clicked_indices': new_clicked_indices,
+                                    'cluster_radius': cluster_radius,
+                                    'total_instances': total_instances,
+                                    'visited_count': visited_count,
+                                    'all_clicked': visited_count >= total_instances
                                 }
-                                
-                                logger.info(f"Selected element {chosen_index} at position {centers[chosen_index]} "
-                                           f"for {os.path.basename(screenshot_path)}")
-                                
-                                location = (centers[chosen_index][0], centers[chosen_index][1])
-                                logger.info(f"Selected instance {chosen_index + 1}/{current_instance_count} for element {os.path.basename(screenshot_path)}")
+                                action['all_clicked'] = visited_count >= total_instances
+
+                                location = chosen_coords
                             else:
                                 location = None
                         else:
@@ -309,36 +395,51 @@ class ActionHandlers:
 
         if target_coords:
             self.bot.human_mouse_move(target_coords[0], target_coords[1])
-            time.sleep(0.01)  # Reduced from 0.05
-            
-            # Get button type from action, default to left
+            time.sleep(0.01)
             button = action.get('button', 'left')
-            
-            # Handle different click types
             if action.get('type') == 'double_click':
-                # Perform double-click
-                if button == 'right':
-                    pyautogui.rightClick()
-                    time.sleep(0.005)  # Reduced from 0.02
-                    pyautogui.rightClick()
-                elif button == 'middle':
-                    pyautogui.middleClick()
-                    time.sleep(0.005)  # Reduced from 0.02
-                    pyautogui.middleClick()
-                else:  # left or default
-                    pyautogui.doubleClick()
+                self.bot.human_click(button=button, double=True)
                 logger.info(f"Double-clicked ({button}) at {target_coords}")
             else:
-                # Perform single click
-                if button == 'right':
-                    pyautogui.rightClick()
-                elif button == 'middle':
-                    pyautogui.middleClick()
-                else:  # left or default
-                    pyautogui.click()
+                self.bot.human_click(button=button, double=False)
                 logger.info(f"Clicked ({button}) at {target_coords}")
             
             self.bot.last_click_time = time.time()
+            try:
+                state = self.bot.selection_memory.get(element_key, {})
+                clicked = state.get('clicked_coords', [])
+                radius = state.get('cluster_radius', 12.0)
+                total_instances = state.get('total_instances', None)
+
+                def dist(a, b):
+                    return math.hypot(a[0] - b[0], a[1] - b[1])
+
+                new_clicked = clicked[:]
+                already = False
+                for pc in new_clicked:
+                    if dist((target_coords[0], target_coords[1]), pc) <= radius:
+                        already = True
+                        break
+                if not already:
+                    new_clicked.append((target_coords[0], target_coords[1]))
+
+                visited_count = len(new_clicked)
+                all_clicked = False
+                if isinstance(total_instances, int) and total_instances > 0:
+                    all_clicked = visited_count >= total_instances
+
+                self.bot.selection_memory[element_key] = {
+                    'instance_count': state.get('instance_count', 0),
+                    'last_index': state.get('last_index', -1),
+                    'last_coords': (target_coords[0], target_coords[1]),
+                    'clicked_coords': new_clicked,
+                    'cluster_radius': radius,
+                    'total_instances': total_instances,
+                    'visited_count': visited_count,
+                    'all_clicked': all_clicked
+                }
+            except Exception:
+                pass
             return True
         else:
             logger.warning(f"Visual match failed for action {idx} after all attempts.")

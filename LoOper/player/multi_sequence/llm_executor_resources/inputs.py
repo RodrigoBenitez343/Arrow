@@ -49,23 +49,31 @@ def _ocr_input(ocr_confidence: int, stop_flag) -> str:
 
 def _previous_input(node: Dict, variables: Dict[str, object]) -> str:
     inputs_list = node.get("inputs", [])
-    if inputs_list:
-        first_input = inputs_list[0]
-        connected_node_id = first_input.get("from_node")
-        if connected_node_id:
+    if not inputs_list:
+        logger.warning("No workflow inputs found for node or missing connection")
+        return ""
+    collected = []
+    for inp in inputs_list:
+        try:
+            connected_node_id = inp.get("from_node")
+            if not connected_node_id:
+                continue
             key = f"node_{connected_node_id}_output"
             if key in variables:
                 val = str(variables.get(key, ""))
-                logger.info(f"Retrieved previous node output from {key}: {val[:200]}...")
-                return val
-            # Fallback
-            val = str(variables.get("llm_output", ""))
-            if val:
-                logger.warning("Node-specific output not found; using fallback 'llm_output'")
-            else:
-                logger.warning(f"No previous output available from connected node {connected_node_id}")
-            return val
-    logger.warning("No workflow inputs found for node or missing connection")
+                if val:
+                    collected.append(val)
+        except Exception:
+            continue
+    if collected:
+        joined = "\n\n".join(collected)
+        logger.info(f"Retrieved previous node output: {joined[:200]}...")
+        return joined
+    val = str(variables.get("llm_output", ""))
+    if val:
+        logger.warning("Node-specific output not found; using fallback 'llm_output'")
+        return val
+    logger.warning("No previous output available from connected inputs")
     return ""
 
 
