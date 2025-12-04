@@ -2,7 +2,7 @@ import logging
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QSplitter
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-from ..constants import (DARK_GREY, LIGHT_GREY, TEXT_COLOR)
+from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR)
 from ..widgets.collapsible_toolbar import CollapsibleToolbar
 
 # Configure logger
@@ -51,57 +51,70 @@ class UIComponents:
                     color: {TEXT_COLOR};
                     border: none;
                 }}
+                QToolButton {{
+                    background: transparent;
+                    border: none;
+                    color: {TEXT_COLOR};
+                }}
+                QScrollBar:vertical {{
+                    background: {MEDIUM_GREY};
+                    width: 8px;
+                    margin: 0px;
+                    border: none;
+                }}
+                QScrollBar::handle:vertical {{
+                    background: {LIGHT_GREY};
+                    min-height: 20px;
+                    border-radius: 4px;
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             """)
             
-            # Main layout contains a horizontal splitter so the toolbar can be resized by dragging
-            logger.debug("Creating main horizontal layout with splitter")
-            main_layout = QHBoxLayout(self.parent_widget)
+            # Main layout is now a vertical layout (overlay toolbar sits on top)
+            logger.debug("Creating main vertical layout")
+            main_layout = QVBoxLayout(self.parent_widget)
             main_layout.setContentsMargins(5, 5, 5, 5)
             main_layout.setSpacing(5)
-            splitter = QSplitter(Qt.Horizontal)
-            splitter.setChildrenCollapsible(True)
-            splitter.setHandleWidth(6)
             
             # Node graph widget (placeholder - will be set by graph manager)
             logger.debug("Creating node graph widget placeholder")
             self.parent_widget.node_graph_widget = QWidget()
             self.parent_widget.node_graph_widget.setStyleSheet(f"""
                 QWidget {{
-                    background-color: {DARK_GREY};
+                    background-color: {MEDIUM_GREY};
                     border: 1px solid {LIGHT_GREY};
-                    border-radius: 5px;
+                    border-radius: 8px;
                 }}
             """)
-            splitter.addWidget(self.parent_widget.node_graph_widget)
-            splitter.setStretchFactor(0, 1)
-            logger.debug("Node graph widget added to splitter (stretchFactor=1)")
-
+            
+            # Actions toolbar at top
+            from ..widgets.actions_toolbar import ActionsToolbar
+            actions_toolbar = ActionsToolbar(self.parent_widget)
+            try:
+                actions_toolbar.setMaximumHeight(72)
+            except Exception:
+                pass
+            
+            main_layout.addWidget(actions_toolbar)
+            
+            # Horizontal layout for graph and right toolbar
+            content_layout = QHBoxLayout()
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.setSpacing(0)
+            
+            content_layout.addWidget(self.parent_widget.node_graph_widget, 1)
+            
             # Right-side collapsible toolbar
             logger.debug("Creating right-side collapsible toolbar")
             control_panel = self.create_control_panel()
             if control_panel is not None:
-                splitter.addWidget(control_panel)
-                splitter.setStretchFactor(1, 0)
-                # Allow collapsing the right pane completely now that it exists
-                try:
-                    splitter.setCollapsible(1, True)
-                except Exception:
-                    pass
-                logger.debug("Toolbar added to splitter")
-            else:
-                logger.debug("Toolbar skipped (None returned)")
-
-            # Add splitter to the main layout
-            main_layout.addWidget(splitter)
-            # Provide sensible initial sizes; left expands, right starts around its preferred width
-            try:
-                splitter.setSizes([900, 240])
-            except Exception:
-                pass
-
-            # Store references for programmatic show/hide control
-            self.parent_widget._splitter = splitter
-            self.parent_widget._toolbar_widget = control_panel
+                content_layout.addWidget(control_panel, 0)
+                self.parent_widget._toolbar_widget = control_panel
+            
+            main_layout.addLayout(content_layout, 1)
+            
+            # Store references
+            self.parent_widget._splitter = None
             
             logger.info("UI setup completed successfully")
         except Exception as e:
@@ -118,3 +131,16 @@ class UIComponents:
         except Exception as e:
             logger.error(f"Error creating control panel: {e}")
             raise
+
+    def _enforce_toolbar_width(self):
+        try:
+            splitter = getattr(self.parent_widget, '_splitter', None)
+            toolbar = getattr(self.parent_widget, '_toolbar_widget', None)
+            if splitter is None or toolbar is None:
+                return
+            sizes = splitter.sizes()
+            total = sum(sizes) if sizes else splitter.width()
+            desired = max(1, toolbar.sizeHint().width())
+            splitter.setSizes([max(1, total - desired), desired])
+        except Exception:
+            pass

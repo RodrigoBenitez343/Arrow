@@ -157,23 +157,71 @@ class ComoRAGEngine:
             return None
 
     def _ollama_generate(self, model: str, prompt: str, temperature: Optional[float] = None) -> str:
+        try:
+            r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                for m in items if isinstance(items, list) else []:
+                    pid = m.get("id") if isinstance(m, dict) else None
+                    name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                    payload = {}
+                    if pid:
+                        payload["id"] = pid
+                    if name:
+                        payload["model"] = name
+                    if payload:
+                        try:
+                            requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         payload = {"model": model, "prompt": prompt, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
         if temperature is not None:
             payload["options"]["temperature"] = temperature
-        r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
+        r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
         r.raise_for_status()
         data = r.json()
+        try:
+            requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+        except Exception:
+            pass
         return data.get("response") or data.get("text") or ""
 
     def _ollama_chat(self, model: str, prompt: str, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> str:
+        try:
+            r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+            if r.status_code == 200:
+                data = r.json()
+                items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                for m in items if isinstance(items, list) else []:
+                    pid = m.get("id") if isinstance(m, dict) else None
+                    name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                    payload = {}
+                    if pid:
+                        payload["id"] = pid
+                    if name:
+                        payload["model"] = name
+                    if payload:
+                        try:
+                            requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         messages = [{"role": "user", "content": prompt}] if not images else [{"role": "user", "content": prompt, "images": images}]
         payload = {"model": model, "messages": messages, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
         if temperature is not None:
             payload["options"]["temperature"] = temperature
-        r = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload)
+        r = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload, headers={"Connection": "close"})
         r.raise_for_status()
         data = r.json()
         msg = data.get("message", {})
+        try:
+            requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+        except Exception:
+            pass
         return msg.get("content") or data.get("response") or data.get("text") or ""
 
     async def _generate_text(self, model: str, prompt: str, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> str:
