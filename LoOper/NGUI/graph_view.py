@@ -274,9 +274,6 @@ class GraphViewWidget(QWidget):
                         elif node_type == 'chain_import':
                             logger.debug(f"Creating Chain Import node at position: {drop_pos}")
                             self.node_operations.add_chain_import_node(pos=drop_pos)
-                        elif node_type == 'form_filler':
-                            logger.debug(f"Creating Form Filler node at position: {drop_pos}")
-                            self.node_operations.add_form_filler_node(pos=drop_pos)
                         elif node_type == 'sequence':
                             try:
                                 if mime.hasFormat('application/x-looper-sequence-file'):
@@ -292,6 +289,19 @@ class GraphViewWidget(QWidget):
                         logger.error(f"Error handling drop for {node_type}: {e}")
                     event.acceptProposedAction()
                     return True
+            elif event.type() == QEvent.MouseButtonRelease:
+                try:
+                    selected = self.node_graph.selected_nodes() if hasattr(self, 'node_graph') else []
+                    for n in selected:
+                        try:
+                            x, y = n.pos()
+                            sx, sy = self._snap_point(x, y)
+                            if sx != x or sy != y:
+                                n.set_pos(sx, sy)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f"Event filter non-critical error: {e}")
         return super().eventFilter(obj, event)
@@ -477,7 +487,9 @@ class GraphViewWidget(QWidget):
             original_id = node_data["node_id"]
             rel_x = node_data.get("position", [0, 0])[0] - min_x
             rel_y = node_data.get("position", [0, 0])[1] - min_y
-            new_pos = [paste_pos[0] + rel_x + (idx * 10), paste_pos[1] + rel_y + (idx * 10)]
+            np_x = paste_pos[0] + rel_x + (idx * 10)
+            np_y = paste_pos[1] + rel_y + (idx * 10)
+            new_pos = self._snap_point(np_x, np_y)
 
             new_node = None
             try:
@@ -493,7 +505,7 @@ class GraphViewWidget(QWidget):
                 elif node_type.endswith("ChainImportNode") or node_type == "chain_import":
                     new_node = self.graph_manager.create_node("chain_import.ChainImportNode", pos=new_pos)
                 elif node_type.endswith("FormFillerNode") or node_type == "form_filler":
-                    new_node = self.graph_manager.create_node("form_filler.FormFillerNode", pos=new_pos)
+                    new_node = None
                 else:
                     # Fallback: attempt using the identifier directly
                     new_node = self.graph_manager.create_node(node_type, pos=new_pos)
@@ -646,7 +658,14 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error showing context menu: {str(e)}", exc_info=True)
 
 
-    
+
+    def _snap_point(self, x, y, grid=20):
+        try:
+            sx = int(round(x / float(grid)) * grid)
+            sy = int(round(y / float(grid)) * grid)
+            return [sx, sy]
+        except Exception:
+            return [x, y]
     def add_conditional_node(self, position=None):
         """Add a new conditional node to the graph with comprehensive condition types"""
         logger.debug(f"Adding conditional node at position: {position}")
@@ -684,16 +703,12 @@ class GraphViewWidget(QWidget):
             return None
 
     def add_form_filler_node(self, position=None):
-        """Add a new Form Filler node to the graph"""
-        logger.debug(f"Adding Form Filler node at position: {position}")
+        from PyQt5.QtWidgets import QMessageBox
         try:
-            resolved_pos = self._resolve_creation_pos(position)
-            result = self.node_operations.add_form_filler_node(resolved_pos)
-            logger.info(f"Form Filler node added successfully: {result.name() if result else 'None'}")
-            return result
-        except Exception as e:
-            logger.error(f"Error adding Form Filler node: {str(e)}", exc_info=True)
-            return None
+            QMessageBox.information(self, "Deprecated", "Form Filler node is deprecated and cannot be added.")
+        except Exception:
+            pass
+        return None
             
     # DEPRECATED: Context Builder - remove add function
     # def add_context_builder_node(self, position=None):

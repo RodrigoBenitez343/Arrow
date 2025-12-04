@@ -425,20 +425,20 @@ async def chat_with_model(request: ChatRequest):
                 if request.system:
                     messages.append({"role": "system", "content": request.system})
                 messages.append(message)
-                payload = {"model": request.model, "messages": messages, "stream": request.stream, "options": {"num_predict": -1}}
+                payload = {"model": request.model, "messages": messages, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
                 if request.temperature is not None:
                     payload["options"]["temperature"] = request.temperature
                 response = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload)
                 used_chat = True
             else:
-                payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "options": {"num_predict": -1}}
+                payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
                 if request.temperature is not None:
                     payload["options"]["temperature"] = request.temperature
                 if request.system is not None:
                     payload["system"] = request.system
                 response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
         else:
-            payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "options": {"num_predict": -1}}
+            payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
             if request.temperature is not None:
                 payload["options"]["temperature"] = request.temperature
             if request.system is not None:
@@ -456,7 +456,7 @@ async def chat_with_model(request: ChatRequest):
         if not response_text:
             try:
                 if used_chat:
-                    gp = {"model": request.model, "prompt": request.prompt, "stream": False, "options": {"num_predict": -1}}
+                    gp = {"model": request.model, "prompt": request.prompt, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
                     if request.temperature is not None:
                         gp["options"]["temperature"] = request.temperature
                     if request.system is not None:
@@ -469,7 +469,7 @@ async def chat_with_model(request: ChatRequest):
                     msg = [{"role": "user", "content": request.prompt}]
                     if request.system:
                         msg.insert(0, {"role": "system", "content": request.system})
-                    cp = {"model": request.model, "messages": msg, "stream": False, "options": {"num_predict": -1}}
+                    cp = {"model": request.model, "messages": msg, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
                     if request.temperature is not None:
                         cp["options"]["temperature"] = request.temperature
                     fr = requests.post(f"{get_ollama_base_url()}/api/chat", json=cp)
@@ -552,6 +552,7 @@ async def get_embeddings(request: EmbeddingsRequest):
         ollama_payload: Dict[str, Any] = {
             "model": request.model,
             "input": val,
+            "keep_alive": 0,
         }
         # Optional fields if needed in future
         if request.normalize is not None:
@@ -623,7 +624,7 @@ async def get_embeddings(request: EmbeddingsRequest):
             out: List[List[float]] = []
             for i, t in enumerate(texts):
                 # Try /api/embed first
-                sub_payload = {"model": model_name, "input": t}
+                sub_payload = {"model": model_name, "input": t, "keep_alive": 0}
                 sub_url = f"{get_ollama_base_url()}/api/embed"
                 sub_resp = requests.post(sub_url, json=sub_payload)
                 

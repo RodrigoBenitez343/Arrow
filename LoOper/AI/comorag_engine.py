@@ -157,7 +157,7 @@ class ComoRAGEngine:
             return None
 
     def _ollama_generate(self, model: str, prompt: str, temperature: Optional[float] = None) -> str:
-        payload = {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": -1}}
+        payload = {"model": model, "prompt": prompt, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
         if temperature is not None:
             payload["options"]["temperature"] = temperature
         r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload)
@@ -167,7 +167,7 @@ class ComoRAGEngine:
 
     def _ollama_chat(self, model: str, prompt: str, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> str:
         messages = [{"role": "user", "content": prompt}] if not images else [{"role": "user", "content": prompt, "images": images}]
-        payload = {"model": model, "messages": messages, "stream": False, "options": {"num_predict": -1}}
+        payload = {"model": model, "messages": messages, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
         if temperature is not None:
             payload["options"]["temperature"] = temperature
         r = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload)

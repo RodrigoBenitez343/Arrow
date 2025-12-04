@@ -7,10 +7,12 @@ import os
 import time
 import pyautogui
 import functools
+import math
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
-from numpy import random
+from numpy import random as np_random
+import random as py_random
 from datetime import datetime
 from .config import logger
 from .action_handlers import ActionHandlers
@@ -40,6 +42,10 @@ class SeleniumBot:
         # Maps a stable element key (e.g., screenshot path) to selection state dict.
         self.selection_memory = {}
         self.action_handlers = ActionHandlers(self)  # Initialize action handlers
+        self._noise_seed = int(np_random.randint(0, 1e9))
+        self._perlin_perm = self._build_perm_table(self._noise_seed)
+        self.noise_amplitude_px = 3.0
+        self.noise_frequency = 1.5
 
     def random_delay(self, min_seconds=2.5, max_seconds=5.5):
         """
@@ -50,9 +56,9 @@ class SeleniumBot:
             min_seconds (float): The minimum delay time.
             max_seconds (float): The maximum delay time.
         """
-        mu = (min_seconds + max_seconds) / 2      # Calculate the mean (center) of the distribution.
-        sigma = (max_seconds - min_seconds) / 6   # Calculate the standard deviation.
-        delay = random.normal(mu, sigma)          # Generate a delay from the normal distribution.
+        mu = (min_seconds + max_seconds) / 2
+        sigma = (max_seconds - min_seconds) / 6
+        delay = np_random.normal(mu, sigma)
         delay = max(min_seconds, min(max_seconds, delay)) # Ensure the delay is within the specified bounds.
         time.sleep(delay)                         # Pause the script execution.
         logger.debug(f"Random delay: {delay:.2f}s")
@@ -99,7 +105,7 @@ class SeleniumBot:
                     return f(self, *args, **kwargs)
                 except Exception as e:
                     # Calculate wait time with exponential backoff plus some randomness.
-                    wait_time = 2 ** attempt + random.uniform(0, 1)
+                    wait_time = 2 ** attempt + np_random.uniform(0, 1)
                     if attempt == self.retry_attempts - 1:
                         # If this was the last attempt, log the final failure and re-raise the exception.
                         logger.error(f"Final attempt failed: {str(e)}")
@@ -121,30 +127,74 @@ class SeleniumBot:
             y (int): The target y-coordinate.
         """
         logger.debug(f"Moving mouse to ({x}, {y})")
-        start_x, start_y = pyautogui.position() # Get the current mouse position.
-        distance = ((x - start_x)**2 + (y - start_y)**2)**0.5 # Calculate the distance to the target.
-
-        # Calculate a random control point for the Bézier curve.
-        # This point pulls the curve away from a straight line.
-        ctrl_x = (start_x + x) / 2 + random.uniform(-distance/3, distance/3)
-        ctrl_y = (start_y + y) / 2 + random.uniform(-distance/3, distance/3)
-
+        start_x, start_y = pyautogui.position()
+        distance = math.hypot(x - start_x, y - start_y)
+        ctrl_x = (start_x + x) / 2 + np_random.uniform(-distance/3, distance/3)
+        ctrl_y = (start_y + y) / 2 + np_random.uniform(-distance/3, distance/3)
         points = []
-        # Generate points along the Bézier curve.
-        for t in [i/10 for i in range(1, 11)]: # t goes from 0.1 to 1.0.
-            # Quadratic Bézier formula: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
-            bx = (1-t)**2*start_x + 2*(1-t)*t*ctrl_x + t**2*x
-            by = (1-t)**2*start_y + 2*(1-t)*t*ctrl_y + t**2*y
+        for i in range(1, 11):
+            t = i / 10.0
+            bx = (1 - t) ** 2 * start_x + 2 * (1 - t) * t * ctrl_x + t ** 2 * x
+            by = (1 - t) ** 2 * start_y + 2 * (1 - t) * t * ctrl_y + t ** 2 * y
+            amp = min(self.noise_amplitude_px, max(1.0, distance * 0.03))
+            nfx = self._perlin2(t * self.noise_frequency, 0.0)
+            nfy = self._perlin2(t * self.noise_frequency, 100.0)
+            bx += nfx * amp
+            by += nfy * amp
             points.append((bx, by))
-
-        # Move the mouse through the generated points with minimal delay
         for point in points:
-            pyautogui.moveTo(point[0], point[1], duration=0.0001)  # Reduced from 0.001
-            # Removed sleep for faster movement
-
-        # Final move to the exact target coordinate with minimal duration
-        pyautogui.moveTo(x, y, duration=0.001)  # Reduced from 0.01
+            pyautogui.moveTo(point[0], point[1], duration=0.0001)
+        pyautogui.moveTo(x, y, duration=0.001)
         self.mouse_movement_history.append((start_x, start_y, x, y))
+
+    def human_click(self, button='left', double=False):
+        count = 2 if bool(double) else 1
+        for i in range(count):
+            dx = np_random.uniform(-1.5, 1.5)
+            dy = np_random.uniform(-1.5, 1.5)
+            pyautogui.moveRel(dx, dy, duration=np_random.uniform(0.001, 0.01))
+            pyautogui.mouseDown(button=button)
+            time.sleep(np_random.uniform(0.035, 0.12))
+            pyautogui.mouseUp(button=button)
+            if i < count - 1:
+                time.sleep(np_random.uniform(0.08, 0.22))
+
+    def _build_perm_table(self, seed):
+        rng = py_random.Random(seed)
+        base = list(range(256))
+        rng.shuffle(base)
+        return base * 2
+
+    def _fade(self, t):
+        return t * t * t * (t * (t * 6 - 15) + 10)
+
+    def _lerp(self, a, b, t):
+        return a + t * (b - a)
+
+    def _grad2(self, h, x, y):
+        v = h & 3
+        if v == 0:
+            return x + y
+        if v == 1:
+            return -x + y
+        if v == 2:
+            return x - y
+        return -x - y
+
+    def _perlin2(self, x, y):
+        xi = int(math.floor(x)) & 255
+        yi = int(math.floor(y)) & 255
+        xf = x - math.floor(x)
+        yf = y - math.floor(y)
+        u = self._fade(xf)
+        v = self._fade(yf)
+        aa = self._perlin_perm[self._perlin_perm[xi] + yi]
+        ab = self._perlin_perm[self._perlin_perm[xi] + yi + 1]
+        ba = self._perlin_perm[self._perlin_perm[xi + 1] + yi]
+        bb = self._perlin_perm[self._perlin_perm[xi + 1] + yi + 1]
+        x1 = self._lerp(self._grad2(aa, xf, yf), self._grad2(ba, xf - 1, yf), u)
+        x2 = self._lerp(self._grad2(ab, xf, yf - 1), self._grad2(bb, xf - 1, yf - 1), u)
+        return self._lerp(x1, x2, v)
 
     def clear_selection_memory(self):
         """
@@ -174,7 +224,7 @@ class SeleniumBot:
             return True
             
         # Get the delay before the action, or use a default random delay.
-        delay = action.get('delay_before', random.uniform(0.001, 0.01))  # Reduced from 0.01-0.05
+        delay = action.get('delay_before', np_random.uniform(0.001, 0.01))  # Reduced from 0.01-0.05
         logger.debug(f"Action {idx}: Waiting {delay:.2f}s before action")
         # Ensure the delay is within a reasonable range (0.001 to 1.0 seconds).
         delay = max(0.001, min(delay, 1.0))  # Reduced minimum from 0.01

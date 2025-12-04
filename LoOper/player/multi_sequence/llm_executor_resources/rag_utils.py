@@ -53,6 +53,8 @@ def build_rag_context(
     max_chars: int,
     input_source: str,
     use_input_text_in_prompt: bool,
+    precomputed_chunks: Optional[List[str]] = None,
+    precomputed_embeddings: Optional[List[List[float]]] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Compute direct RAG context from input_text using embeddings.
 
@@ -84,6 +86,10 @@ def build_rag_context(
                 logger.warning(f"LangChain embedding failed: {e}. Falling back to manual implementation.")
                 valid_chunks = [] # Reset to trigger fallback
         
+        # Use precomputed store if provided
+        if precomputed_chunks and precomputed_embeddings and len(precomputed_chunks) == len(precomputed_embeddings):
+            valid_chunks = precomputed_chunks
+            chunk_embs = precomputed_embeddings
         # Fallback to manual if LangChain failed or not available
         if not valid_chunks:
             chunks = _chunk_text_chars(input_text, chunk_size, overlap)

@@ -165,8 +165,16 @@ class GraphManager:
         """Configure graph properties and connections."""
         logger.debug("Configuring graph properties")
         try:
-            # Context menu is now handled directly in setup_graph_widget
-            logger.debug("Graph configuration completed (context menu handled in setup_graph_widget)")
+            from NodeGraphQt.constants import PipeLayoutEnum, ViewerEnum
+            try:
+                self.node_graph.set_pipe_style(PipeLayoutEnum.ANGLE.value)
+            except Exception:
+                pass
+            try:
+                self.node_graph.set_grid_mode(ViewerEnum.GRID_DISPLAY_SQUARES.value)
+            except Exception:
+                pass
+            logger.debug("Graph configuration completed (pipes/style and grid mode applied)")
         except Exception as e:
             logger.error(f"Error configuring graph: {e}")
             raise
@@ -251,9 +259,43 @@ class GraphManager:
             except Exception as debug_e:
                 logger.debug(f"Could not get registered nodes list: {debug_e}")
                 
-            node = self.node_graph.create_node(node_type, name=name, pos=pos)
+            snap_pos = None
+            if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                snap_pos = self._snap_point(int(pos[0]), int(pos[1]))
+            node = self.node_graph.create_node(node_type, name=name, pos=snap_pos or pos)
             if node:
                 logger.info(f"Successfully created {node_type} node with ID: {node.id}")
+                try:
+                    if snap_pos:
+                        node.set_pos(*snap_pos)
+                except Exception:
+                    pass
+                try:
+                    for p in node.input_ports():
+                        try:
+                            # Prefer underlying PortItem setter if available
+                            port_item = getattr(p, '_port', None) or getattr(p, 'port', None)
+                            if port_item and hasattr(port_item, 'set_multi_connection'):
+                                port_item.set_multi_connection(True)
+                            elif hasattr(p, 'set_multi_connection'):
+                                p.set_multi_connection(True)
+                            else:
+                                setattr(p, '_multi_connection', True)
+                        except Exception:
+                            pass
+                    for p in node.output_ports():
+                        try:
+                            port_item = getattr(p, '_port', None) or getattr(p, 'port', None)
+                            if port_item and hasattr(port_item, 'set_multi_connection'):
+                                port_item.set_multi_connection(True)
+                            elif hasattr(p, 'set_multi_connection'):
+                                p.set_multi_connection(True)
+                            else:
+                                setattr(p, '_multi_connection', True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
             else:
                 logger.warning(f"Failed to create {node_type} node")
             return node
@@ -322,7 +364,10 @@ class GraphManager:
                         break
                 if not output_port:
                     logger.warning(f"Output port '{port_name}' not found on node {output_node.id}")
-                    return False
+                    ports = output_node.output_ports()
+                    output_port = ports[0] if ports else None
+                    if not output_port:
+                        return False
                     
             # Get input port
             if input_port is None:
@@ -346,14 +391,25 @@ class GraphManager:
                         break
                 if not input_port:
                     logger.warning(f"Input port '{port_name}' not found on node {input_node.id}")
-                    return False
+                    ports = input_node.input_ports()
+                    input_port = ports[0] if ports else None
+                    if not input_port:
+                        return False
                     
             # Create connection
             logger.debug(f"Creating connection: {output_port.name()} -> {input_port.name()}")
             output_port.connect_to(input_port)
             logger.info(f"Successfully connected nodes: {output_node.id} -> {input_node.id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error connecting nodes: {e}")
             return False
+
+    def _snap_point(self, x, y, grid=20):
+        try:
+            sx = int(round(x / float(grid)) * grid)
+            sy = int(round(y / float(grid)) * grid)
+            return [sx, sy]
+        except Exception:
+            return [x, y]

@@ -102,10 +102,9 @@ class NodeContextMenuManager:
         menu.addAction(expand_action)
 
     def add_form_filler_node_actions(self, menu, node):
-        """Add actions for a Form Filler node to the context menu"""
-        edit_action = QAction(_("Edit Form Filler Configuration"), menu)
-        edit_action.triggered.connect(lambda: self.graph_view.edit_form_filler_node(node))
-        menu.addAction(edit_action)
+        deprecated_action = QAction(_("Form Filler is deprecated"), menu)
+        deprecated_action.setEnabled(False)
+        menu.addAction(deprecated_action)
     
 
 

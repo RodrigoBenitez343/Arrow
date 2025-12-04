@@ -115,6 +115,7 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = Field(512, ge=1, le=4096)
     stream: Optional[bool] = Field(False, description="Enable streaming response")
     use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
+    ephemeral: Optional[bool] = Field(False, description="Unload model after request")
 
 
 class GenerateRequest(BaseModel):
@@ -124,6 +125,7 @@ class GenerateRequest(BaseModel):
     max_tokens: Optional[int] = Field(512, ge=1, le=4096)
     stream: Optional[bool] = Field(False, description="Enable streaming response")
     use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
+    ephemeral: Optional[bool] = Field(False, description="Unload model after request")
 
 
 class ComoRAGRequest(BaseModel):
@@ -140,6 +142,7 @@ class EmbeddingsRequest(BaseModel):
     inputs: List[str] = Field(..., description="List of input texts")
     normalize: Optional[bool] = None
     pooling: Optional[str] = None
+    ephemeral: Optional[bool] = Field(False, description="Unload model after request")
 
 
 class EmbeddingsResponse(BaseModel):
@@ -263,9 +266,14 @@ async def chat_completion(request: ChatRequest):
                 model=request.model,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-                stream=request.stream
+                stream=request.stream,
+                ephemeral=bool(request.ephemeral)
             )
-        
+        if request.ephemeral:
+            try:
+                await ollama_engine.unload_model(request.model)
+            except Exception:
+                pass
         return response
     except Exception as e:
         logger.error(f"Chat completion failed: {e}")
@@ -285,7 +293,11 @@ async def get_embeddings(request: EmbeddingsRequest):
             normalize=request.normalize,
             pooling=request.pooling
         )
-        
+        if request.ephemeral:
+            try:
+                await ollama_engine.unload_model(request.model)
+            except Exception:
+                pass
         return {"embeddings": embeddings}
     except Exception as e:
         logger.error(f"Embeddings generation failed: {e}")
@@ -315,9 +327,14 @@ async def generate_text(request: GenerateRequest):
                 model=request.model,
                 temperature=request.temperature,
                 max_tokens=request.max_tokens,
-                stream=request.stream
+                stream=request.stream,
+                ephemeral=bool(request.ephemeral)
             )
-        
+        if request.ephemeral:
+            try:
+                await ollama_engine.unload_model(request.model)
+            except Exception:
+                pass
         return response
     except Exception as e:
         logger.error(f"Text generation failed: {e}")

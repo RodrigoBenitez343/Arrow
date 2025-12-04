@@ -219,7 +219,7 @@ class OllamaEngine:
             logger.error(f"Test generation failed: {e}")
             return False
     
-    async def embeddings(self, model: str, inputs: List[str], normalize: Optional[bool] = None, pooling: Optional[str] = None) -> List[List[float]]:
+    async def embeddings(self, model: str, inputs: List[str], normalize: Optional[bool] = None, pooling: Optional[str] = None, ephemeral: bool = False) -> List[List[float]]:
         """Generate embeddings using Ollama"""
         if not self._initialized:
             raise RuntimeError("Ollama engine not initialized")
@@ -247,6 +247,7 @@ class OllamaEngine:
         payload = {
             "model": model,
             "input": val,
+            "keep_alive": 0,
         }
         if normalize is not None:
             payload["normalize"] = normalize
@@ -256,13 +257,13 @@ class OllamaEngine:
         logger.info(f"Sending embeddings request to Ollama: {json.dumps(payload)[:500]}...")
             
         try:
-            async with self._session.post(f"{self.base_url}/api/embed", json=payload) as response:
+            async with self._session.post(f"{self.base_url}/api/embed", json=payload, headers={"Connection": "close"}) as response:
                 if response.status == 404:
                      # Fallback to old /api/embeddings endpoint if /api/embed doesn't exist
-                     logger.info("Endpoint /api/embed not found, falling back to /api/embeddings")
+                    logger.info("Endpoint /api/embed not found, falling back to /api/embeddings")
                      # Legacy endpoint might need 'prompt'
-                     payload["prompt"] = val
-                     async with self._session.post(f"{self.base_url}/api/embeddings", json=payload) as response_old:
+                    payload["prompt"] = val
+                    async with self._session.post(f"{self.base_url}/api/embeddings", json=payload, headers={"Connection": "close"}) as response_old:
                          response = response_old
                          if response.status != 200:
                             text = await response.text()
@@ -291,6 +292,11 @@ class OllamaEngine:
                     # Fallback to per-input
                     embeddings = await self._query_embeddings_per_input(clean_inputs, model)
                     
+                if ephemeral:
+                    try:
+                        await self.unload_model(model)
+                    except Exception:
+                        pass
                 return embeddings
                 
         except Exception as e:
@@ -332,7 +338,7 @@ class OllamaEngine:
         out: List[List[float]] = []
         for t in texts:
             # Fix: Do not send 'prompt' parameter as it breaks newer Ollama versions
-            payload = {"model": model, "input": t}
+            payload = {"model": model, "input": t, "keep_alive": 0}
             
             # Try /api/embed first
             try:
@@ -399,7 +405,8 @@ class OllamaEngine:
         top_k: int = 40,
         repeat_penalty: float = 1.1,
         stop: Optional[List[str]] = None,
-        stream: bool = False
+        stream: bool = False,
+        ephemeral: bool = False
     ) -> Dict[str, Any]:
         """Generate text using Ollama"""
         if not self._initialized:
@@ -415,6 +422,7 @@ class OllamaEngine:
             "model": model,
             "prompt": prompt,
             "stream": stream,
+            "keep_alive": 0,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -428,15 +436,22 @@ class OllamaEngine:
             payload["options"]["stop"] = stop
         
         if stream:
-            return await self._generate_stream(payload)
+            result = await self._generate_stream(payload)
         else:
-            return await self._generate_single(payload)
+            result = await self._generate_single(payload)
+        if ephemeral:
+            try:
+                await self.unload_model(model)
+            except Exception:
+                pass
+        return result
     
     async def _generate_single(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate single response"""
         async with self._session.post(
             f"{self.base_url}/api/generate",
-            json=payload
+            json=payload,
+            headers={"Connection": "close"}
         ) as response:
             if response.status != 200:
                 raise RuntimeError(f"Generation failed with status {response.status}")
@@ -456,7 +471,8 @@ class OllamaEngine:
         """Generate streaming response"""
         async with self._session.post(
             f"{self.base_url}/api/generate",
-            json=payload
+            json=payload,
+            headers={"Connection": "close"}
         ) as response:
             if response.status != 200:
                 raise RuntimeError(f"Generation failed with status {response.status}")
@@ -485,7 +501,8 @@ class OllamaEngine:
         temperature: float = 0.7,
         max_tokens: int = 512,
         top_p: float = 0.9,
-        stream: bool = False
+        stream: bool = False,
+        ephemeral: bool = False
     ) -> Dict[str, Any]:
         """OpenAI-compatible chat completions endpoint"""
         # Convert messages to a single prompt
@@ -498,7 +515,8 @@ class OllamaEngine:
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
-            stream=stream
+            stream=stream,
+            ephemeral=ephemeral
         )
         
         # Convert to OpenAI format

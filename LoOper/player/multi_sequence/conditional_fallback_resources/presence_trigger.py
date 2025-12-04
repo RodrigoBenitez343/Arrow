@@ -51,7 +51,7 @@ class PresenceTrigger:
             # Resolve image path relative to the chain file directory for nested imports
             image_path = self.path_resolver.resolve_path(image_path, add_json=False)
             confidence = trigger_config.get('confidence', 0.8)
-            scales = [1.0, 0.9, 1.1]  # Default scales for template matching
+            scales = trigger_config.get('scales') or [0.7, 0.85, 1.0, 1.15, 1.3]
             
             if not image_path or not os.path.exists(image_path):
                 logger.warning(f"Presence trigger image not found: {image_path}")
@@ -79,6 +79,25 @@ class PresenceTrigger:
                 logger.info(f"Presence trigger satisfied - element found: {image_path}")
                 return True
             else:
+                logger.info(f"Presence trigger not satisfied on grayscale match - retrying with color")
+                # Retry with color matching as a fallback
+                try:
+                    result_color = self.template_matcher.multiscale_template_match(
+                        image_path,
+                        confidence=confidence,
+                        scales=scales,
+                        screen_cv=current_screen_cv,
+                        grayscale=False,
+                    )
+                    if result_color is not None:
+                        logger.info(f"Presence trigger satisfied with color matching: {image_path}")
+                        # Cache and return True
+                        self.validation_cache.cache_validation_result(
+                            trigger_config, True, current_screen_cv, self.template_matcher, self.path_resolver
+                        )
+                        return True
+                except Exception:
+                    pass
                 logger.info(f"Presence trigger not satisfied - element not found: {image_path}")
                 return False
             
