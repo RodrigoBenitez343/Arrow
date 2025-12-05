@@ -266,11 +266,6 @@ class GraphManager:
             if node:
                 logger.info(f"Successfully created {node_type} node with ID: {node.id}")
                 try:
-                    if snap_pos:
-                        node.set_pos(*snap_pos)
-                except Exception:
-                    pass
-                try:
                     for p in node.input_ports():
                         try:
                             # Prefer underlying PortItem setter if available
