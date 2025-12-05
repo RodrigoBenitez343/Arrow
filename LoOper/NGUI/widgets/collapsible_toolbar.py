@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
     QGraphicsDropShadowEffect
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer
-from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF
+from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon, QPainterPath, QFont, QPolygonF
 from PyQt5.QtCore import QMimeData
 try:
     from pytablericons import TablerIcons, OutlineIcon
@@ -53,7 +53,15 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     except Exception:
         pass
     # Fallback: draw minimal chevrons
-    pix = QPixmap(size, size)
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
@@ -61,7 +69,7 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     pen.setColor(QColor(TEXT_COLOR))
     pen.setWidth(2)
     p.setPen(pen)
-    s = size
+    s = float(size) * dpr
     if name == 'CHEVRON_RIGHT':
         p.drawPolyline(QPoint(int(0.35*s), int(0.25*s)), QPoint(int(0.65*s), int(0.5*s)), QPoint(int(0.35*s), int(0.75*s)))
     elif name == 'CHEVRON_LEFT':
@@ -71,7 +79,344 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     else:  # CHEVRON_DOWN
         p.drawPolyline(QPoint(int(0.25*s), int(0.35*s)), QPoint(int(0.5*s), int(0.65*s)), QPoint(int(0.75*s), int(0.35*s)))
     p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
     return QIcon(pix)
+
+def _load_tabler_square(icon_enum, size: int, pad: int = 3) -> QIcon:
+    try:
+        if TablerIcons and icon_enum is not None:
+            img = TablerIcons.load(icon_enum, size=int(size), color=TEXT_COLOR, stroke_width=2.0)
+            try:
+                src = img.toqpixmap()
+            except Exception:
+                qimg = ImageQt(img) if ImageQt else None
+                if qimg:
+                    src = QPixmap.fromImage(qimg)
+                else:
+                    src = None
+            if src is not None:
+                dpr = 1.0
+                try:
+                    scr = QApplication.primaryScreen()
+                    dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+                except Exception:
+                    dpr = 1.0
+                w = int(size * dpr)
+                h = int(size * dpr)
+                target = QPixmap(w, h)
+                target.fill(Qt.transparent)
+                p = QPainter(target)
+                p.setRenderHint(QPainter.Antialiasing)
+                p.setRenderHint(QPainter.SmoothPixmapTransform)
+                inner_w = max(1, int((size - 2*pad) * dpr))
+                inner_h = inner_w
+                scaled = src.scaled(inner_w, inner_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                x = (int(size * dpr) - scaled.width()) // 2
+                y = (int(size * dpr) - scaled.height()) // 2
+                p.drawPixmap(x, y, scaled)
+                p.end()
+                try:
+                    target.setDevicePixelRatio(dpr)
+                except Exception:
+                    pass
+                return QIcon(target)
+    except Exception:
+        pass
+    return QIcon()
+
+
+def _fallback_node_icon(node_type: str, size: int, pad: int = 3) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    pen.setWidth(2)
+    p.setPen(pen)
+    s = float(size) * dpr - 2*pad*dpr
+    ox = int(pad * dpr)
+    oy = int(pad * dpr)
+    if node_type == 'conditional':
+        p.drawEllipse(ox + int(0.15*s), oy + int(0.15*s), int(0.7*s), int(0.7*s))
+        p.drawPoint(ox + int(0.5*s), oy + int(0.75*s))
+        p.drawLine(ox + int(0.45*s), oy + int(0.43*s), ox + int(0.55*s), oy + int(0.43*s))
+        p.drawLine(ox + int(0.5*s), oy + int(0.43*s), ox + int(0.5*s), oy + int(0.58*s))
+    elif node_type == 'llm':
+        p.drawRoundedRect(ox + int(0.2*s), oy + int(0.25*s), int(0.6*s), int(0.5*s), 3, 3)
+        p.drawEllipse(ox + int(0.32*s), oy + int(0.38*s), int(0.08*s), int(0.08*s))
+        p.drawEllipse(ox + int(0.6*s), oy + int(0.38*s), int(0.08*s), int(0.08*s))
+        p.drawLine(ox + int(0.4*s), oy + int(0.6*s), ox + int(0.6*s), oy + int(0.6*s))
+        p.drawRect(ox + int(0.45*s), oy + int(0.17*s), int(0.1*s), int(0.08*s))
+    elif node_type == 'tts':
+        try:
+            try:
+                pen = p.pen()
+                pen.setWidthF(2.0)
+                pen.setCapStyle(Qt.RoundCap)
+                pen.setJoinStyle(Qt.RoundJoin)
+                p.setPen(pen)
+            except Exception:
+                pass
+            fs = float(size) * dpr - 2*pad*dpr
+            fx = float(ox)
+            fy = float(oy)
+            bw = fs * 0.22
+            bh = fs * 0.42
+            bx = fx + fs * 0.08
+            by = fy + fs * 0.29
+            p.drawRect(QRectF(bx, by, bw, bh))
+            cone_x = bx + bw
+            cone_t = by - fs * 0.06
+            cone_b = by + bh + fs * 0.06
+            cone_out = fs * 0.18
+            p.drawPolygon(QPolygonF([
+                QPointF(cone_x, cone_t),
+                QPointF(cone_x + cone_out, by + bh * 0.28),
+                QPointF(cone_x, cone_b)
+            ]))
+            aw1 = fs * 0.28
+            aw2 = fs * 0.40
+            p.drawArc(QRectF(cone_x + fs*0.04, by + bh*0.10 - aw1*0.5, aw1, aw1), 90*16, -180*16)
+            p.drawArc(QRectF(cone_x + fs*0.04, by + bh*0.10 - aw2*0.5, aw2, aw2), 90*16, -180*16)
+        except Exception:
+            p.drawPolygon(QPoint(ox + int(0.25*s), oy + int(0.35*s)), QPoint(ox + int(0.45*s), oy + int(0.5*s)), QPoint(ox + int(0.25*s), oy + int(0.65*s)))
+            p.drawLine(ox + int(0.55*s), oy + int(0.38*s), ox + int(0.55*s), oy + int(0.62*s))
+            p.drawLine(ox + int(0.62*s), oy + int(0.34*s), ox + int(0.62*s), oy + int(0.66*s))
+    elif node_type == 'chain_import':
+        p.drawRoundedRect(ox + int(0.18*s), oy + int(0.18*s), int(0.64*s), int(0.64*s), 4, 4)
+        p.drawRoundedRect(ox + int(0.26*s), oy + int(0.26*s), int(0.48*s), int(0.48*s), 4, 4)
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+def _painter_icon_conditional(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+    r = s * 0.36
+    p.drawEllipse(QRectF(cx - r, cy - r, 2*r, 2*r))
+    f = QFont()
+    f.setBold(True)
+    f.setPixelSize(int(s * 0.44))
+    p.setFont(f)
+    p.drawText(0, 0, int(s), int(s), Qt.AlignCenter, "?")
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+def _painter_icon_llm(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+    w = s * 0.6
+    h = s * 0.5
+    p.drawRoundedRect(QRectF(cx - w*0.5, cy - h*0.5, w, h), 4, 4)
+    eye_r = s * 0.04
+    p.drawEllipse(QRectF(cx - s*0.14 - eye_r, cy - s*0.08 - eye_r, 2*eye_r, 2*eye_r))
+    p.drawEllipse(QRectF(cx + s*0.14 - eye_r, cy - s*0.08 - eye_r, 2*eye_r, 2*eye_r))
+    p.drawLine(QPointF(cx - s*0.12, cy + s*0.12), QPointF(cx + s*0.12, cy + s*0.12))
+    p.drawRect(QRectF(cx - s*0.06, cy - h*0.5 - s*0.06, s*0.12, s*0.06))
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+def _painter_icon_tts(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    p.setBrush(Qt.NoBrush)
+    lh = s * 0.28
+    bh = s * 0.44
+    lx = cx - s * 0.38
+    rx = cx - s * 0.06
+    p.drawPolygon(QPolygonF([
+        QPointF(lx, cy - lh * 0.5),
+        QPointF(rx, cy - bh * 0.5),
+        QPointF(rx, cy + bh * 0.5),
+        QPointF(lx, cy + lh * 0.5)
+    ]))
+
+    gap = s * 0.06
+    wx = rx + gap + s * 0.02
+    r1 = s * 0.18
+    r2 = s * 0.28
+    r3 = s * 0.38
+    p.drawArc(QRectF(wx - r1, cy - r1, 2*r1, 2*r1), int(-40*16), int(80*16))
+    p.drawArc(QRectF(wx - r2, cy - r2, 2*r2, 2*r2), int(-40*16), int(80*16))
+    p.drawArc(QRectF(wx - r3, cy - r3, 2*r3, 2*r3), int(-40*16), int(80*16))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+def _painter_icon_chain(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+    w1 = s * 0.62
+    h1 = w1
+    w2 = s * 0.46
+    h2 = w2
+    rr = int(s * 0.08)
+    p.drawRoundedRect(QRectF(cx - w1*0.5, cy - h1*0.5, w1, h1), rr, rr)
+    p.drawRoundedRect(QRectF(cx - w2*0.5, cy - h2*0.5, w2, h2), rr, rr)
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+_ICON_CACHE = {}
+
+def get_node_icon(node_type: str, size: int) -> QIcon:
+    key = (node_type, size)
+    cached = _ICON_CACHE.get(key)
+    if cached and not cached.isNull():
+        return cached
+    icon = None
+    if TablerIcons and OutlineIcon and node_type != 'tts':
+        try:
+            icon_map = {
+                'conditional': ['HELP_CIRCLE'],
+                'llm': ['ROBOT'],
+                'chain_import': ['BOX_MULTIPLE'],
+            }
+            names = icon_map.get(node_type)
+            if names:
+                for nm in names:
+                    icon_enum = getattr(OutlineIcon, nm, None)
+                    if icon_enum is not None:
+                        candidate = _load_tabler_square(icon_enum, size, pad=2)
+                        if candidate and not candidate.isNull():
+                            icon = candidate
+                            break
+        except Exception:
+            icon = None
+    if icon is None:
+        painter_map = {
+            'conditional': _painter_icon_conditional,
+            'llm': _painter_icon_llm,
+            'tts': _painter_icon_tts,
+            'chain_import': _painter_icon_chain,
+        }
+        maker = painter_map.get(node_type)
+        icon = maker(size) if maker else _fallback_node_icon(node_type, size, pad=2)
+    _ICON_CACHE[key] = icon
+    return icon
 
 
 class DraggableButton(QPushButton):
@@ -105,6 +450,8 @@ class DraggableButton(QPushButton):
             }}
             """
         )
+
+    # compound rendering removed; rely on QPushButton icon+text to avoid layered backgrounds
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -261,11 +608,11 @@ class CollapsibleToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("toolbarContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#toolbarContent {{ background-color: {DARK_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 6px; }}"
+            f"QFrame#toolbarContent {{ background-color: {DARK_GREY}; border: 2px solid {LIGHT_GREY}; border-radius: 10px; }}"
         )
         content_layout = QVBoxLayout(self._content_frame)
-        content_layout.setContentsMargins(2, 2, 2, 2)
-        content_layout.setSpacing(4)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(6)
 
         top_cluster = QFrame(self._content_frame)
         top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -466,27 +813,13 @@ class CollapsibleToolbar(QWidget):
         return scroll
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
-        # Use icon-only modern button when tabler is available
-        if TablerIcons and OutlineIcon:
-            icon_map = {
-                'llm': OutlineIcon.BRAIN,
-                'chain_import': OutlineIcon.LINK,
-                'tts': OutlineIcon.MICROPHONE,
-                'conditional': OutlineIcon.CIRCUIT_SWITCH_CLOSED,
-            }
-            icon_key = icon_map.get(node_type)
-            if icon_key:
-                btn = DraggableButton("", node_type, color, click_handler, self)
-                try:
-                    img = TablerIcons.load(icon_key, size=20, color=TEXT_COLOR, stroke_width=2.0)
-                    btn.setIcon(QIcon(img.toqpixmap()))
-                    btn.setIconSize(QSize(20, 20))
-                except Exception:
-                    pass
-            else:
-                btn = DraggableButton(label, node_type, color, click_handler, self)
-        else:
-            btn = DraggableButton(label, node_type, color, click_handler, self)
+        btn = DraggableButton(label, node_type, color, click_handler, self)
+        icon = get_node_icon(node_type, 26)
+        try:
+            btn.setIcon(icon)
+            btn.setIconSize(QSize(26, 26))
+        except Exception:
+            pass
         if tooltip:
             btn.setToolTip(tooltip)
         return btn

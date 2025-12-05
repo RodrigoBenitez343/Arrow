@@ -38,16 +38,29 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
                         return QIcon(QPixmap.fromImage(qimg))
     except Exception:
         pass
-    # Fallback: draw minimal chevrons
-    pix = QPixmap(size, size)
+    # Fallback: draw minimal chevrons with DPR-aware pixmap
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
     pen = p.pen()
     pen.setColor(QColor(TEXT_COLOR))
-    pen.setWidth(2)
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
     p.setPen(pen)
-    s = size
+    s = float(size) * dpr
     if name == 'CHEVRON_RIGHT':
         p.drawPolyline(QPoint(int(0.35*s), int(0.25*s)), QPoint(int(0.65*s), int(0.5*s)), QPoint(int(0.35*s), int(0.75*s)))
     elif name == 'CHEVRON_LEFT':
@@ -57,6 +70,10 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     else:  # CHEVRON_DOWN
         p.drawPolyline(QPoint(int(0.25*s), int(0.35*s)), QPoint(int(0.5*s), int(0.65*s)), QPoint(int(0.75*s), int(0.35*s)))
     p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
     return QIcon(pix)
 
 class ActionsToolbar(QWidget):
@@ -75,16 +92,24 @@ class ActionsToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("actionsContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#actionsContent {{ border: 1px solid {LIGHT_GREY}; border-radius: 6px; }}"
+            f"QFrame#actionsContent {{ background-color: {DARK_GREY}; border: 2px solid {LIGHT_GREY}; border-radius: 10px; }}"
         )
+        try:
+            self._content_frame.setMinimumHeight(40)
+        except Exception:
+            pass
         layout = QHBoxLayout(self._content_frame)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(8, 3, 8, 9)
         layout.setSpacing(6)
 
-        layout.addWidget(self._make_record_icon_button())
-        layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip="Load Chain"))
-        layout.addWidget(self._make_custom_icon_button(self._icon_save(), self._save_chain, tooltip="Save Chain"))
-        layout.addWidget(self._make_custom_icon_button(self._icon_play(), self._run_chain, tooltip="Run Chain"))
+        layout.setAlignment(Qt.AlignVCenter)
+        layout.addWidget(self._make_record_icon_button(), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip="Load Chain", label_text="Load"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_save(), self._save_chain, tooltip="Save Chain", label_text="Save"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_play(), self._run_chain, tooltip="Run Chain", label_text="Run"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_delete(), self._delete_selected, tooltip="Delete Selected", label_text="Delete"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_copy(), self._copy_selected, tooltip="Copy Selected", label_text="Copy"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip="Paste", label_text="Paste"), alignment=Qt.AlignVCenter)
         outer.addWidget(self._content_frame)
 
         # Floating toggle button (modern chevron) centered under the actions frame
@@ -150,14 +175,18 @@ class ActionsToolbar(QWidget):
         except Exception:
             pass
 
-    def _make_custom_icon_button(self, icon: QIcon, handler, tooltip=None):
-        btn = QPushButton("", self)
+    def _make_custom_icon_button(self, icon: QIcon, handler, tooltip=None, label_text=None):
+        btn = QPushButton(label_text or "", self)
         btn.clicked.connect(handler)
         if tooltip:
             btn.setToolTip(tooltip)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        try:
+            btn.setFixedHeight(26)
+        except Exception:
+            pass
         btn.setIcon(icon)
-        btn.setIconSize(QSize(24, 24))
+        btn.setIconSize(QSize(22, 22))
         btn.setStyleSheet(
             f"""
             QPushButton {{
@@ -165,9 +194,9 @@ class ActionsToolbar(QWidget):
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
                 border-radius: 14px;
-                padding: 6px;
+                padding: 2px 8px;
                 min-width: 96px;
-                min-height: 44px;
+                min-height: 24px;
             }}
             QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
             QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
@@ -176,33 +205,37 @@ class ActionsToolbar(QWidget):
         return btn
 
     def _make_record_icon_button(self):
-        btn = QPushButton("", self)
+        btn = QPushButton("Record", self)
         btn.clicked.connect(lambda: self.graph_view.record_new_sequence())
         btn.setToolTip("Record Sequence")
-        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        pix = QPixmap(28, 28)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        try:
+            btn.setFixedHeight(26)
+        except Exception:
+            pass
+        pix = QPixmap(22, 22)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.Antialiasing)
         p.setBrush(QColor(220, 0, 0))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(4, 4, 20, 20)
+        p.drawEllipse(3, 3, 16, 16)
         p.end()
         btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(28, 28))
+        btn.setIconSize(QSize(22, 22))
         btn.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {MEDIUM_GREY};
+                background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 6px;
-                min-width: 90px;
-                min-height: 52px;
+                border-radius: 14px;
+                padding: 2px 8px;
+                min-width: 96px;
+                min-height: 24px;
             }}
-            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
-            QPushButton:pressed {{ background-color: {DARK_GREY}; }}
+            QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
+            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
             """
         )
         return btn
@@ -216,6 +249,27 @@ class ActionsToolbar(QWidget):
                 logger.warning('MainWindow.run_chain not found')
         except Exception as e:
             logger.error(f"Run chain error: {e}")
+
+    def _delete_selected(self):
+        try:
+            if hasattr(self.graph_view, 'delete_selected_nodes'):
+                self.graph_view.delete_selected_nodes()
+        except Exception as e:
+            logger.error(f"Delete selected error: {e}")
+
+    def _copy_selected(self):
+        try:
+            if hasattr(self.graph_view, 'copy_selected_nodes'):
+                self.graph_view.copy_selected_nodes()
+        except Exception as e:
+            logger.error(f"Copy selected error: {e}")
+
+    def _paste_selected(self):
+        try:
+            if hasattr(self.graph_view, 'paste_copied_nodes'):
+                self.graph_view.paste_copied_nodes()
+        except Exception as e:
+            logger.error(f"Paste error: {e}")
 
     def _open_chain(self):
         try:
@@ -307,5 +361,72 @@ class ActionsToolbar(QWidget):
         p.drawLine(12, 6, 12, 13)
         p.drawLine(12, 13, 9, 10)
         p.drawLine(12, 13, 15, 10)
+        p.end()
+        return QIcon(pix)
+
+    def _icon_delete(self) -> QIcon:
+        if TablerIcons and OutlineIcon:
+            try:
+                img = TablerIcons.load(OutlineIcon.TRASH, size=24, color=TEXT_COLOR, stroke_width=2.0)
+                return QIcon(img.toqpixmap())
+            except Exception:
+                pass
+        pix = QPixmap(24, 24)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.drawRect(6, 9, 12, 12)
+        p.drawLine(9, 12, 9, 18)
+        p.drawLine(15, 12, 15, 18)
+        p.drawLine(7, 9, 17, 9)
+        p.drawLine(10, 6, 14, 6)
+        p.drawLine(10, 6, 8, 9)
+        p.drawLine(14, 6, 16, 9)
+        p.end()
+        return QIcon(pix)
+
+    def _icon_copy(self) -> QIcon:
+        if TablerIcons and OutlineIcon:
+            try:
+                img = TablerIcons.load(OutlineIcon.COPY, size=24, color=TEXT_COLOR, stroke_width=2.0)
+                return QIcon(img.toqpixmap())
+            except Exception:
+                pass
+        pix = QPixmap(24, 24)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.drawRect(6, 6, 10, 10)
+        p.drawRect(10, 10, 10, 10)
+        p.end()
+        return QIcon(pix)
+
+    def _icon_paste(self) -> QIcon:
+        if TablerIcons and OutlineIcon:
+            try:
+                img = TablerIcons.load(OutlineIcon.CLIPBOARD_TEXT, size=24, color=TEXT_COLOR, stroke_width=2.0)
+                return QIcon(img.toqpixmap())
+            except Exception:
+                pass
+        pix = QPixmap(24, 24)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        pen.setWidth(2)
+        p.setPen(pen)
+        p.drawRoundedRect(6, 8, 12, 12, 2, 2)
+        p.drawLine(8, 12, 16, 12)
+        p.drawLine(8, 15, 16, 15)
+        p.drawLine(8, 18, 14, 18)
         p.end()
         return QIcon(pix)
