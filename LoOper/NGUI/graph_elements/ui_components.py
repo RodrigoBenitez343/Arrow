@@ -70,9 +70,9 @@ class UIComponents:
                 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             """)
             
-            # Main layout is now a vertical layout (overlay toolbar sits on top)
-            logger.debug("Creating main vertical layout")
-            main_layout = QVBoxLayout(self.parent_widget)
+            # Main layout: horizontal, so right bar spans full height to the top
+            logger.debug("Creating main horizontal layout with right sidebar")
+            main_layout = QHBoxLayout(self.parent_widget)
             main_layout.setContentsMargins(5, 5, 5, 5)
             main_layout.setSpacing(5)
             
@@ -87,31 +87,28 @@ class UIComponents:
                 }}
             """)
             
-            # Actions toolbar at top
+            # Left column holds actions toolbar on top and the graph below
+            left_column = QVBoxLayout()
+            left_column.setContentsMargins(0, 0, 0, 0)
+            left_column.setSpacing(5)
+
             from ..widgets.actions_toolbar import ActionsToolbar
             actions_toolbar = ActionsToolbar(self.parent_widget)
             try:
-                actions_toolbar.setMaximumHeight(72)
+                actions_toolbar.setMaximumHeight(42)
             except Exception:
                 pass
-            
-            main_layout.addWidget(actions_toolbar)
-            
-            # Horizontal layout for graph and right toolbar
-            content_layout = QHBoxLayout()
-            content_layout.setContentsMargins(0, 0, 0, 0)
-            content_layout.setSpacing(0)
-            
-            content_layout.addWidget(self.parent_widget.node_graph_widget, 1)
-            
-            # Right-side collapsible toolbar
+            left_column.addWidget(actions_toolbar)
+
+            left_column.addWidget(self.parent_widget.node_graph_widget, 1)
+            main_layout.addLayout(left_column, 1)
+
+            # Right-side collapsible toolbar (spans full height to the top)
             logger.debug("Creating right-side collapsible toolbar")
             control_panel = self.create_control_panel()
             if control_panel is not None:
-                content_layout.addWidget(control_panel, 0)
+                main_layout.addWidget(control_panel, 0)
                 self.parent_widget._toolbar_widget = control_panel
-            
-            main_layout.addLayout(content_layout, 1)
             
             # Store references
             self.parent_widget._splitter = None

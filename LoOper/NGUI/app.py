@@ -1,13 +1,40 @@
 # graphui/app.py
 
 import sys
+import os
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
 from .main_window import MainWindow
 from .constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, RED_PRIMARY, RED_DARK
 from .i18n import set_language_from_os
 
 def main():
     """Main function to run the application"""
+    try:
+        os.environ.setdefault('QT_ENABLE_HIGHDPI_SCALING', '1')
+        os.environ.setdefault('QT_AUTO_SCREEN_SCALE_FACTOR', '1')
+        os.environ.setdefault('QT_SCALE_FACTOR_ROUNDING_POLICY', 'PassThrough')
+    except Exception:
+        pass
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
+    except Exception:
+        pass
+    try:
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     # Detect and set UI language from OS
     set_language_from_os()
