@@ -40,7 +40,7 @@ def launch_api_server(args):
         from config.settings import load_settings, setup_logging as setup_app_logging
         
         settings = load_settings()
-        setup_app_logging(settings.logging)
+        setup_app_logging(settings)
         
         # Override settings with command line arguments
         if args.host:

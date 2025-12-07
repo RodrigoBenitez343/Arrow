@@ -157,72 +157,125 @@ class ComoRAGEngine:
             return None
 
     def _ollama_generate(self, model: str, prompt: str, temperature: Optional[float] = None) -> str:
+        """Generate text using Ollama API with robust model unloading"""
         try:
-            r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
-            if r.status_code == 200:
-                data = r.json()
-                items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
-                for m in items if isinstance(items, list) else []:
-                    pid = m.get("id") if isinstance(m, dict) else None
-                    name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
-                    payload = {}
-                    if pid:
-                        payload["id"] = pid
-                    if name:
-                        payload["model"] = name
-                    if payload:
-                        try:
-                            requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        payload = {"model": model, "prompt": prompt, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
-        if temperature is not None:
-            payload["options"]["temperature"] = temperature
-        r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
-        r.raise_for_status()
-        data = r.json()
-        try:
-            requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
-        except Exception:
-            pass
-        return data.get("response") or data.get("text") or ""
+            # Stop OTHER running models first to free VRAM
+            try:
+                logger.info(f"Checking for running models before loading {model}...")
+                r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                    
+                    for m in items if isinstance(items, list) else []:
+                        pid = m.get("id") if isinstance(m, dict) else None
+                        name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                        
+                        # Don't stop the model we want to use if it's already loaded
+                        # improved matching to handle tags
+                        if name == model or (name and model and (name.startswith(model + ":") or model.startswith(name + ":"))):
+                            continue
+                            
+                        payload = {}
+                        if pid: payload["id"] = pid
+                        if name: payload["model"] = name
+                        
+                        if payload:
+                            try:
+                                logger.info(f"Stopping competing model: {name}")
+                                requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+                            except Exception as e:
+                                logger.warning(f"Failed to stop model {name}: {e}")
+            except Exception as e:
+                logger.warning(f"Error checking running models: {e}")
+
+            # Generate
+            payload = {
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": 60,  # Keep model alive for 60s to prevent thrashing
+                "options": {
+                    "num_predict": -1 
+                }
+            }
+            if temperature is not None:
+                payload["options"]["temperature"] = temperature
+
+            logger.info(f"Generating with model: {model}")
+            r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
+            r.raise_for_status()
+            data = r.json()
+
+            return data.get("response") or data.get("text") or ""
+            
+        except Exception as e:
+            logger.error(f"Ollama generation failed: {e}")
+            # Fallback or re-raise
+            return ""
 
     def _ollama_chat(self, model: str, prompt: str, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> str:
+        """Chat using Ollama API with robust model unloading"""
         try:
-            r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
-            if r.status_code == 200:
-                data = r.json()
-                items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
-                for m in items if isinstance(items, list) else []:
-                    pid = m.get("id") if isinstance(m, dict) else None
-                    name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
-                    payload = {}
-                    if pid:
-                        payload["id"] = pid
-                    if name:
-                        payload["model"] = name
-                    if payload:
-                        try:
-                            requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        messages = [{"role": "user", "content": prompt}] if not images else [{"role": "user", "content": prompt, "images": images}]
-        payload = {"model": model, "messages": messages, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
-        if temperature is not None:
-            payload["options"]["temperature"] = temperature
-        r = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload, headers={"Connection": "close"})
-        r.raise_for_status()
-        data = r.json()
-        msg = data.get("message", {})
-        try:
-            requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
-        except Exception:
-            pass
-        return msg.get("content") or data.get("response") or data.get("text") or ""
+             # Stop OTHER running models first
+            try:
+                logger.info(f"Checking for running models before loading {model}...")
+                r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
+                if r.status_code == 200:
+                    data = r.json()
+                    items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                    
+                    for m in items if isinstance(items, list) else []:
+                        pid = m.get("id") if isinstance(m, dict) else None
+                        name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                        
+                        # Don't stop the model we want to use if it's already loaded
+                        # improved matching to handle tags
+                        if name == model or (name and model and (name.startswith(model + ":") or model.startswith(name + ":"))):
+                            continue
+                            
+                        payload = {}
+                        if pid: payload["id"] = pid
+                        if name: payload["model"] = name
+                        
+                        if payload:
+                            try:
+                                logger.info(f"Stopping competing model: {name}")
+                                requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+                            except Exception as e:
+                                logger.warning(f"Failed to stop model {name}: {e}")
+            except Exception as e:
+                logger.warning(f"Error checking running models: {e}")
+
+            # Chat
+            messages = [{"role": "user", "content": prompt}]
+            if images:
+                messages[0]["images"] = images
+                
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "keep_alive": 60,
+                "options": {
+                    "num_predict": -1 
+                }
+            }
+            if temperature is not None:
+                payload["options"]["temperature"] = temperature
+
+            logger.info(f"Chatting with model: {model}")
+            r = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload, headers={"Connection": "close"})
+            r.raise_for_status()
+            data = r.json()
+
+            if "message" in data:
+                return data["message"].get("content", "")
+            return data.get("response") or ""
+            
+        except Exception as e:
+            logger.error(f"Ollama chat failed: {e}")
+            return ""
 
     async def _generate_text(self, model: str, prompt: str, images: Optional[List[str]] = None, temperature: Optional[float] = None) -> str:
         if images and is_vision_model(model):
