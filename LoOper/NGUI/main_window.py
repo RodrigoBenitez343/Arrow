@@ -228,41 +228,9 @@ class MainWindow(QMainWindow):
             logger.error(f"Traceback: {traceback.format_exc()}")
             QMessageBox.critical(self, _("Recording Error"), f"Failed to start recording: {str(e)}")
 
-    def run_chain(self):
-        """Runs the current automation chain by saving it to a temporary file and passing it to the player."""
-        logger.info("Run chain requested")
+    def execute_chain_config(self, chain_config):
+        """Execute a specific chain configuration."""
         try:
-            # Clear the JSON cache to ensure we have the most updated version of all chains
-            logger.info("Clearing JSON cache before chain execution")
-            try:
-                from player.json_cache import clear_cache
-                clear_cache()
-                logger.info("JSON cache cleared successfully")
-            except ImportError as e:
-                logger.warning(f"Failed to import cache clearing function: {e}")
-            except Exception as e:
-                logger.warning(f"Failed to clear cache: {e}")
-            
-            logger.debug("Getting chain configuration from graph view")
-            chain_config = self.graph_view.get_chain_config()
-            if not chain_config:
-                logger.warning("No chain configuration available")
-                QMessageBox.warning(self, _("No Chain"), _("No chain configuration available to run."))
-                return
-
-            # Check if there are any nodes to run (sequences, conditionals, LLM, TTS, or chain imports)
-            sequences = chain_config.get('sequences', [])
-            conditional_nodes = chain_config.get('conditional_nodes', [])
-            llm_nodes = chain_config.get('llm_nodes', [])
-            tts_nodes = chain_config.get('tts_nodes', [])
-            chain_import_nodes = chain_config.get('chain_import_nodes', [])
-            
-            total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes)
-            if total_nodes == 0:
-                logger.warning("No nodes in chain configuration")
-                QMessageBox.warning(self, _("Empty Chain"), _("No nodes found in the current chain."))
-                return
-
             # Create a temporary file for the chain configuration
             import tempfile
             temp_dir = tempfile.gettempdir()
@@ -369,6 +337,48 @@ class MainWindow(QMainWindow):
             # Use QTimer to start playback after window minimizes
             QTimer.singleShot(500, start_playback_delayed)  # 500ms delay
                     
+        except Exception as e:
+            logger.error(f"Error in execute_chain_config: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            QMessageBox.critical(self, _("Chain Error"), f"Failed to run chain: {str(e)}")
+
+    def run_chain(self):
+        """Runs the current automation chain by saving it to a temporary file and passing it to the player."""
+        logger.info("Run chain requested")
+        try:
+            # Clear the JSON cache to ensure we have the most updated version of all chains
+            logger.info("Clearing JSON cache before chain execution")
+            try:
+                from player.json_cache import clear_cache
+                clear_cache()
+                logger.info("JSON cache cleared successfully")
+            except ImportError as e:
+                logger.warning(f"Failed to import cache clearing function: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to clear cache: {e}")
+            
+            logger.debug("Getting chain configuration from graph view")
+            chain_config = self.graph_view.get_chain_config()
+            if not chain_config:
+                logger.warning("No chain configuration available")
+                QMessageBox.warning(self, _("No Chain"), _("No chain configuration available to run."))
+                return
+
+            # Check if there are any nodes to run (sequences, conditionals, LLM, TTS, or chain imports)
+            sequences = chain_config.get('sequences', [])
+            conditional_nodes = chain_config.get('conditional_nodes', [])
+            llm_nodes = chain_config.get('llm_nodes', [])
+            tts_nodes = chain_config.get('tts_nodes', [])
+            chain_import_nodes = chain_config.get('chain_import_nodes', [])
+            
+            total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes)
+            if total_nodes == 0:
+                logger.warning("No nodes in chain configuration")
+                QMessageBox.warning(self, _("Empty Chain"), _("No nodes found in the current chain."))
+                return
+
+            self.execute_chain_config(chain_config)
+
         except Exception as e:
             logger.error(f"Error in run_chain: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")

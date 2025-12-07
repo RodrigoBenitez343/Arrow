@@ -14,6 +14,7 @@ import os
 import threading
 import subprocess
 import time
+import atexit
 
 # Normalize working directory and import path for frozen builds
 if getattr(sys, 'frozen', False):
@@ -119,6 +120,19 @@ def start_api_server():
             time.sleep(3)
             if process.poll() is None:
                 print("✅ LLM API server started successfully")
+                
+                def cleanup_api():
+                    try:
+                        print("Stopping LLM API server...")
+                        process.terminate()
+                        process.wait(timeout=2)
+                    except Exception:
+                        try:
+                            process.kill()
+                        except Exception:
+                            pass
+                            
+                atexit.register(cleanup_api)
                 return process
             else:
                 stdout, stderr = process.communicate()

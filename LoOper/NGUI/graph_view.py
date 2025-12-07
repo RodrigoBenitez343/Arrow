@@ -166,6 +166,12 @@ class GraphViewWidget(QWidget):
                 self._setup_drag_drop_dnd()
             except Exception as e:
                 logger.warning(f"Drag-and-drop setup failed (non-critical): {e}")
+            try:
+                from .graph_elements.node_button_bar import NodeButtonBarManager
+                self.node_button_manager = NodeButtonBarManager(self)
+                self.node_button_manager.install()
+            except Exception as e:
+                logger.debug(f"Non-critical: node button manager init failed: {e}")
             logger.debug("Node graph setup completed successfully")
         except Exception as e:
             logger.error(f"Error setting up node graph: {str(e)}", exc_info=True)
@@ -295,6 +301,7 @@ class GraphViewWidget(QWidget):
 
 
 
+
     def _snap_point(self, x, y, grid=20):
         try:
             sx = int(round(x / float(grid)) * grid)
@@ -309,6 +316,11 @@ class GraphViewWidget(QWidget):
             resolved_pos = self._resolve_creation_pos(position)
             result = self.node_operations.add_conditional_node(resolved_pos)
             logger.info(f"Conditional node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
             return result
         except Exception as e:
             logger.error(f"Error adding conditional node: {str(e)}", exc_info=True)
@@ -321,6 +333,11 @@ class GraphViewWidget(QWidget):
             resolved_pos = self._resolve_creation_pos(position)
             result = self.node_operations.add_llm_node(resolved_pos)
             logger.info(f"LLM node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
             return result
         except Exception as e:
             logger.error(f"Error adding LLM node: {str(e)}", exc_info=True)
@@ -333,6 +350,11 @@ class GraphViewWidget(QWidget):
             resolved_pos = self._resolve_creation_pos(position)
             result = self.node_operations.add_tts_node(resolved_pos)
             logger.info(f"TTS node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
             return result
         except Exception as e:
             logger.error(f"Error adding TTS node: {str(e)}", exc_info=True)
@@ -365,6 +387,11 @@ class GraphViewWidget(QWidget):
             resolved_pos = self._resolve_creation_pos(position)
             result = self.node_operations.add_chain_import_node(resolved_pos)
             logger.info(f"Chain Import node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
             return result
         except Exception as e:
             logger.error(f"Error adding Chain Import node: {str(e)}", exc_info=True)
@@ -413,7 +440,12 @@ class GraphViewWidget(QWidget):
         """Add a new sequence node to the graph"""
         logger.debug("Adding sequence node")
         try:
-            self.node_operations.add_sequence()
+            node = self.node_operations.add_sequence()
+            try:
+                if node and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(node)
+            except Exception:
+                pass
             logger.info("Sequence node added successfully")
         except Exception as e:
             logger.error(f"Error adding sequence node: {str(e)}", exc_info=True)
@@ -539,6 +571,11 @@ class GraphViewWidget(QWidget):
         try:
             self.config_manager.build_graph_from_config(config)
             logger.info("Graph built successfully")
+            try:
+                if hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.install()
+            except Exception as e:
+                logger.debug(f"Non-critical: failed to attach buttons after build: {e}")
         except Exception as e:
             logger.error(f"Error building graph from config: {str(e)}", exc_info=True)
             raise
@@ -632,6 +669,11 @@ class GraphViewWidget(QWidget):
         """Delete a node from the graph"""
         logger.debug(f"Deleting node: {node.name() if node else 'None'}")
         try:
+            try:
+                if node and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.detach(node)
+            except Exception:
+                pass
             self.node_operations.delete_node(node)
             logger.info("Node deleted successfully")
         except Exception as e:
@@ -654,6 +696,8 @@ class GraphViewWidget(QWidget):
             logger.info("New sequence recorded successfully")
         except Exception as e:
             logger.error(f"Error recording new sequence: {str(e)}", exc_info=True)
+
+    
 
     def refresh_sequences_toolbar(self):
         try:

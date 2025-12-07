@@ -743,19 +743,13 @@ class OllamaClient:
                 for delta in self._post_stream_iter('/generate_stream', payload):
                     accumulated += delta
                     if on_delta:
-                        try:
-                            on_delta(delta)
-                        except Exception:
-                            pass
+                        on_delta(delta)
             except requests.exceptions.RequestException:
                 try:
                     for delta in self._post_stream_iter('/api/generate', payload):
                         accumulated += delta
                         if on_delta:
-                            try:
-                                on_delta(delta)
-                            except Exception:
-                                pass
+                            on_delta(delta)
                 except requests.exceptions.RequestException:
                     host = os.getenv('OLLAMA_HOST', 'localhost')
                     port = os.getenv('OLLAMA_PORT', '11434')
@@ -772,10 +766,7 @@ class OllamaClient:
                                 if delta:
                                     accumulated += delta
                                     if on_delta:
-                                        try:
-                                            on_delta(delta)
-                                        except Exception:
-                                            pass
+                                        on_delta(delta)
                             except Exception:
                                 continue
         except requests.exceptions.RequestException as e:

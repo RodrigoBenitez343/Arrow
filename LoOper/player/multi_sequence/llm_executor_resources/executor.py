@@ -68,6 +68,7 @@ class LLMExecutor:
         logger.info(f"LLM configuration: {llm_config}")
 
         model = llm_config.get('model', 'llama3.2')
+        logger.info(f"Resolved model for execution: '{model}' (Default: 'llama3.2')")
         api_url = llm_config.get('api_url', get_default_api_url())
         system_message = llm_config.get('system_message', '')
         prompt = llm_config.get('prompt', '')
@@ -153,27 +154,47 @@ class LLMExecutor:
             prompt = f"{input_text}\n\n{prompt}"
 
         logger.info(f"Preparing Ollama request thread for base_url: {api_url}")
+        # Always attempt to stop running models to ensure clean state for the new one
+        # unless explicitly disabled via OLLAMA_PRE_STOP=false
         try:
-            _pre_stop = str(os.getenv('OLLAMA_PRE_STOP','false')).lower() in ('true','1','yes','on')
+            _pre_stop = str(os.getenv('OLLAMA_PRE_STOP','true')).lower() not in ('false','0','no','off')
             if _pre_stop:
+                logger.info("Checking for running Ollama models to unload...")
                 _base = f"http://{os.getenv('OLLAMA_HOST','localhost')}:{os.getenv('OLLAMA_PORT','11434')}"
-                _ps = _rq.get(f"{_base}/api/ps", headers={"Connection": "close"}, timeout=4)
-                if _ps.status_code == 200:
-                    _data = _ps.json() if hasattr(_ps, 'json') else {}
-                    _items = _data.get("models") if isinstance(_data, dict) else (_data if isinstance(_data, list) else [])
-                    for _m in _items if isinstance(_items, list) else []:
-                        _pid = _m.get("id") if isinstance(_m, dict) else None
-                        _name = (_m.get("model") or _m.get("name")) if isinstance(_m, dict) else None
-                        _payload = {}
-                        if _pid:
-                            _payload["id"] = _pid
-                        if _name:
-                            _payload["model"] = _name
-                        if _payload:
-                            try:
-                                _rq.post(f"{_base}/api/stop", json=_payload, headers={"Connection": "close"}, timeout=3)
-                            except Exception:
-                                pass
+                try:
+                    _ps = _rq.get(f"{_base}/api/ps", headers={"Connection": "close"}, timeout=4)
+                    if _ps.status_code == 200:
+                        _data = _ps.json() if hasattr(_ps, 'json') else {}
+                        _items = _data.get("models") if isinstance(_data, dict) else (_data if isinstance(_data, list) else [])
+                        
+                        if isinstance(_items, list) and _items:
+                            logger.info(f"Found {len(_items)} running models.")
+                            for _m in _items:
+                                _pid = _m.get("id") if isinstance(_m, dict) else None
+                                _name = (_m.get("model") or _m.get("name")) if isinstance(_m, dict) else None
+                                
+                                # Optimization: Don't stop the model we are about to use
+                                # improved matching to handle tags (e.g. llama3.2 vs llama3.2:latest)
+                                if _name == model or (_name and model and (_name.startswith(model + ":") or model.startswith(_name + ":"))):
+                                    logger.info(f"Model {_name} matches target {model}. Keeping it.")
+                                    continue
+
+                                _payload = {}
+                                if _pid:
+                                    _payload["id"] = _pid
+                                if _name:
+                                    _payload["model"] = _name
+                                
+                                if _payload:
+                                    try:
+                                        logger.info(f"Stopping competing model: {_name or _pid}")
+                                        _rq.post(f"{_base}/api/stop", json=_payload, headers={"Connection": "close"}, timeout=3)
+                                    except Exception as e:
+                                        logger.warning(f"Failed to stop model {_name}: {e}")
+                        else:
+                             logger.debug("No running models found.")
+                except Exception as e:
+                    logger.warning(f"Failed to query/stop Ollama models: {e}")
         except Exception:
             pass
 
@@ -260,6 +281,8 @@ class LLMExecutor:
             return None
 
         def _task_runner(out_dict: Dict[str, Any]):
+            if stop_flag and stop_flag():
+                return
             try:
                 from AI.consult import OllamaClient as _Client
                 cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag)
@@ -302,10 +325,13 @@ class LLMExecutor:
                             )
                         else:
                             _buf = []
+                            _full_text_tracker = ""
                             _last_flush = time.time()
                             _FLUSH_CHARS = int(llm_config.get('stream_flush_chars', 120) or 120)
                             _FLUSH_MS = float(llm_config.get('stream_flush_ms', 0.25) or 0.25)
                             def _flush_buffer():
+                                if stop_flag and stop_flag():
+                                    return
                                 if not _buf:
                                     return
                                 try:
@@ -322,13 +348,32 @@ class LLMExecutor:
                                 except Exception:
                                     pass
                             def _on_delta(s: str):
+                                nonlocal _full_text_tracker
+                                if stop_flag and stop_flag():
+                                    raise Exception("Stopped by user")
                                 try:
-                                    _accum.append(s)
-                                    _buf.append(s)
+                                    # Handle case where backend sends full text instead of deltas
+                                    real_delta = s
+                                    if len(_full_text_tracker) > 0 and len(s) > len(_full_text_tracker) and s.startswith(_full_text_tracker):
+                                        real_delta = s[len(_full_text_tracker):]
+                                        _full_text_tracker = s
+                                    elif len(s) == len(_full_text_tracker) and s == _full_text_tracker:
+                                        # Duplicate full text frame
+                                        real_delta = ""
+                                    else:
+                                        # Standard delta behavior
+                                        real_delta = s
+                                        _full_text_tracker += s
+                                    
+                                    if not real_delta:
+                                        return
+
+                                    _accum.append(real_delta)
+                                    _buf.append(real_delta)
                                     try:
                                         if _node_id:
                                             _cur = out_dict.get("_accum_text") or ""
-                                            _cur += s
+                                            _cur += real_delta
                                             out_dict["_accum_text"] = _cur
                                             self.variables[f"node_{_node_id}_output"] = _cur
                                             self.variables[output_variable] = _cur
@@ -386,6 +431,7 @@ class LLMExecutor:
                         )
                         out_dict["result"] = res
             except Exception as _e:
+                logger.error(f"LLM task runner exception: {_e}", exc_info=True)
                 out_dict["error"] = str(_e)
             finally:
                 # Clear typing-active signal
@@ -433,8 +479,11 @@ class LLMExecutor:
         start_t = time.time()
         while th.is_alive():
             if stop_flag and stop_flag():
+                logger.info("Stop flag detected. Attempting to stop LLM generation...")
                 try:
-                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+                    for _ in range(2):
+                        _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=2)
+                        time.sleep(0.1)
                 except Exception:
                     pass
                 break
@@ -498,31 +547,48 @@ class LLMExecutor:
         try:
             if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not bool(llm_config.get('stream', True)) or bool(shared.get('stream_failed'))):
                 logger.info("Writing LLM output via action handlers")
-                write_mode = str(llm_config.get('write_mode') or 'type').lower()
-                if write_mode == 'paste':
+                
+                # Prevent repetition if streaming partially succeeded but failed at the end
+                text_to_write = response_text
+                if bool(shared.get('stream_failed')) and bool(llm_config.get('stream', True)):
+                    accumulated = shared.get("_accum_text", "")
+                    if accumulated and text_to_write.startswith(accumulated):
+                        text_to_write = text_to_write[len(accumulated):]
+                        logger.info(f"Skipping {len(accumulated)} chars already typed during partial stream")
+                    elif accumulated:
+                        # Fallback: if not a clean prefix, we might have a conflict.
+                        # For now, we write the full text to ensure correctness, 
+                        # or we could try to find overlap.
+                        # Given the user complaint about repetition, let's try to be smart.
+                        # If the new text is just a continuation, we might see it.
+                        pass
+
+                if text_to_write:
+                    write_mode = str(llm_config.get('write_mode') or 'type').lower()
+                    if write_mode == 'paste':
+                        try:
+                            node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+                            if node_id:
+                                self.variables[f"node_{node_id}_writing"] = True
+                        except Exception:
+                            pass
+                        action = {"text": text_to_write, "use_clipboard": True}
+                    else:
+                        action = {
+                            "text": text_to_write,
+                            "force_typing": True,
+                            "batch_size": int(llm_config.get('typing_batch_size', 5) or 5),
+                            "batch_delay": float(llm_config.get('typing_batch_delay', 0.01) or 0.01),
+                            "char_by_char": bool(llm_config.get('char_by_char', False)),
+                            "keystroke_delay": float(llm_config.get('keystroke_delay', 0.001) or 0.001),
+                        }
+                    action_handlers.handle_type_string_action(0, action, stop_flag)
                     try:
                         node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
                         if node_id:
-                            self.variables[f"node_{node_id}_writing"] = True
+                            self.variables.pop(f"node_{node_id}_writing", None)
                     except Exception:
                         pass
-                    action = {"text": response_text, "use_clipboard": True}
-                else:
-                    action = {
-                        "text": response_text,
-                        "force_typing": True,
-                        "batch_size": int(llm_config.get('typing_batch_size', 5) or 5),
-                        "batch_delay": float(llm_config.get('typing_batch_delay', 0.01) or 0.01),
-                        "char_by_char": bool(llm_config.get('char_by_char', False)),
-                        "keystroke_delay": float(llm_config.get('keystroke_delay', 0.001) or 0.001),
-                    }
-                action_handlers.handle_type_string_action(0, action, stop_flag)
-                try:
-                    node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
-                    if node_id:
-                        self.variables.pop(f"node_{node_id}_writing", None)
-                except Exception:
-                    pass
         except Exception as e:
             logger.warning(f"Failed to write text via action handlers: {e}")
 

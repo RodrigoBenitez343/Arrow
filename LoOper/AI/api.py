@@ -270,12 +270,12 @@ def process_images(images: List[str]) -> List[str]:
     print(f"[DEBUG] Successfully processed {len(processed_images)} images for Ollama")
     return processed_images
 
-def _cleanup_ollama_runners():
+def _cleanup_ollama_runners(target_model: Optional[str] = None):
     try:
         r = requests.get(f"{get_ollama_base_url()}/api/ps", headers={"Connection": "close"}, timeout=4)
         if r.status_code != 200:
             try:
-                _cleanup_ollama_runners_cli()
+                _cleanup_ollama_runners_cli(target_model)
             except Exception:
                 pass
             return
@@ -284,6 +284,12 @@ def _cleanup_ollama_runners():
         for m in items if isinstance(items, list) else []:
             pid = m.get("id") if isinstance(m, dict) else None
             name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+            
+            # Skip target model
+            if target_model and name:
+                if name == target_model or name.startswith(target_model + ":") or target_model.startswith(name + ":"):
+                    continue
+            
             payload: Dict[str, Any] = {}
             if pid:
                 payload["id"] = pid
@@ -296,13 +302,13 @@ def _cleanup_ollama_runners():
             except Exception:
                 pass
         try:
-            _cleanup_ollama_runners_cli()
+            _cleanup_ollama_runners_cli(target_model)
         except Exception:
             pass
     except Exception:
         pass
 
-def _cleanup_ollama_runners_cli() -> bool:
+def _cleanup_ollama_runners_cli(target_model: Optional[str] = None) -> bool:
     try:
         def _find_ollama_bin() -> List[str]:
             cands: List[str] = []
@@ -346,6 +352,12 @@ def _cleanup_ollama_runners_cli() -> bool:
                 name = (m.get("model") or m.get("name"))
             if not name:
                 continue
+                
+            # Skip target model
+            if target_model:
+                if name == target_model or name.startswith(target_model + ":") or target_model.startswith(name + ":"):
+                    continue
+
             for cmd in _find_ollama_bin():
                 try:
                     subprocess.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env)
@@ -483,7 +495,8 @@ def _background_cleanup_model(name: str):
 # Pydantic models for request/response
 class ChatRequest(BaseModel):
     model: str
-    prompt: str
+    prompt: Optional[str] = None
+    messages: Optional[List[Dict[str, str]]] = None
     stream: bool = False
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
@@ -627,7 +640,7 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
     """Chat with an Ollama model"""
     try:
         try:
-            _cleanup_ollama_runners()
+            _cleanup_ollama_runners(request.model)
         except Exception:
             pass
         # Ensure requested model is available
@@ -644,20 +657,20 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                 if request.system:
                     messages.append({"role": "system", "content": request.system})
                 messages.append(message)
-                payload = {"model": request.model, "messages": messages, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
+                payload = {"model": request.model, "messages": messages, "stream": request.stream, "keep_alive": 60, "options": {"num_predict": -1}}
                 if request.temperature is not None:
                     payload["options"]["temperature"] = request.temperature
                 response = requests.post(f"{get_ollama_base_url()}/api/chat", json=payload, headers={"Connection": "close"})
                 used_chat = True
             else:
-                payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
+                payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 60, "options": {"num_predict": -1}}
                 if request.temperature is not None:
                     payload["options"]["temperature"] = request.temperature
                 if request.system is not None:
                     payload["system"] = request.system
                 response = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"})
         else:
-            payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 0, "options": {"num_predict": -1}}
+            payload = {"model": request.model, "prompt": request.prompt, "stream": request.stream, "keep_alive": 60, "options": {"num_predict": -1}}
             if request.temperature is not None:
                 payload["options"]["temperature"] = request.temperature
             if request.system is not None:
@@ -675,7 +688,7 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
         if not response_text:
             try:
                 if used_chat:
-                    gp = {"model": request.model, "prompt": request.prompt, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
+                    gp = {"model": request.model, "prompt": request.prompt, "stream": False, "keep_alive": 60, "options": {"num_predict": -1}}
                     if request.temperature is not None:
                         gp["options"]["temperature"] = request.temperature
                     if request.system is not None:
@@ -688,7 +701,7 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                     msg = [{"role": "user", "content": request.prompt}]
                     if request.system:
                         msg.insert(0, {"role": "system", "content": request.system})
-                    cp = {"model": request.model, "messages": msg, "stream": False, "keep_alive": 0, "options": {"num_predict": -1}}
+                    cp = {"model": request.model, "messages": msg, "stream": False, "keep_alive": 60, "options": {"num_predict": -1}}
                     if request.temperature is not None:
                         cp["options"]["temperature"] = request.temperature
                     fr = requests.post(f"{get_ollama_base_url()}/api/chat", json=cp, headers={"Connection": "close"})
@@ -698,8 +711,7 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
             except Exception:
                 response_text = response_text
         
-        try:
-            resp_obj = {
+        resp_obj = {
             "response": response_text,
             "model": result.get("model", request.model),
             "created_at": result.get("created_at", ""),
@@ -709,14 +721,9 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
             "prompt_eval_count": result.get("prompt_eval_count"),
             "eval_count": result.get("eval_count")
         }
-            if request.cleanup_after:
-                background_tasks.add_task(_background_cleanup_model, request.model)
-            return resp_obj
-        finally:
-            try:
-                requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": request.model}, headers={"Connection": "close"}, timeout=3)
-            except Exception:
-                pass
+        if request.cleanup_after:
+            background_tasks.add_task(_background_cleanup_model, request.model)
+        return resp_obj
     except HTTPException as e:
         # Preserve explicit HTTP errors raised above (e.g., 400 for unsupported vision)
         raise e
@@ -744,7 +751,7 @@ async def generate_text(request: ChatRequest, background_tasks: BackgroundTasks)
 @app.post("/generate_stream")
 async def generate_stream(request: ChatRequest):
     try:
-        payload = {"model": request.model, "prompt": request.prompt, "stream": True, "keep_alive": 0, "options": {"num_predict": -1}}
+        payload = {"model": request.model, "prompt": request.prompt, "stream": True, "keep_alive": 60, "options": {"num_predict": -1}}
         if request.temperature is not None:
             payload["options"]["temperature"] = request.temperature
         if request.system is not None:
@@ -752,24 +759,18 @@ async def generate_stream(request: ChatRequest):
         r = requests.post(f"{get_ollama_base_url()}/api/generate", json=payload, headers={"Connection": "close"}, stream=True)
         r.raise_for_status()
         def _iter():
-            try:
-                accumulated = ""
-                for line in r.iter_lines(decode_unicode=True):
-                    if not line:
-                        continue
-                    try:
-                        obj = json.loads(line)
-                        chunk = obj.get("response") or obj.get("text") or (obj.get("message", {}) or {}).get("content")
-                        if chunk:
-                            accumulated += chunk
-                            yield json.dumps({"text": accumulated}) + "\n"
-                    except Exception:
-                        continue
-            finally:
+            accumulated = ""
+            for line in r.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
                 try:
-                    requests.post(f"{get_ollama_base_url()}/api/stop", json={"model": request.model}, headers={"Connection": "close"}, timeout=3)
+                    obj = json.loads(line)
+                    chunk = obj.get("response") or obj.get("text") or (obj.get("message", {}) or {}).get("content")
+                    if chunk:
+                        accumulated += chunk
+                        yield json.dumps({"text": accumulated}) + "\n"
                 except Exception:
-                    pass
+                    continue
         return StreamingResponse(_iter(), media_type="application/x-ndjson")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -782,7 +783,7 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
     """
     try:
         try:
-            _cleanup_ollama_runners()
+            _cleanup_ollama_runners(request.model)
         except Exception:
             pass
         # Ensure embedding model is available
@@ -817,7 +818,7 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
         ollama_payload: Dict[str, Any] = {
             "model": request.model,
             "input": val,
-            "keep_alive": 0,
+            "keep_alive": 60,
         }
         # Optional fields if needed in future
         if request.normalize is not None:
@@ -1011,27 +1012,6 @@ async def bootstrap_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    # Get Tailscale IP from environment variable, fallback to all interfaces
-    tailscale_ip = os.getenv("TAILSCALE_IP", "0.0.0.0")
-    port = int(os.getenv("API_PORT", "8000"))
-    
-    print(f"Starting Ollama API Gateway on {tailscale_ip}:{port}")
-    print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
-    # Start model bootstrap in background so API binds immediately
-    def _run_bootstrap_async():
-        try:
-            print("[BOOTSTRAP] Starting background model bootstrap...")
-            bootstrap_required_models()
-            print("[BOOTSTRAP] Background model bootstrap completed.")
-        except Exception as e:
-            print(f"[BOOTSTRAP] Background bootstrap error: {e}")
-    try:
-        threading.Thread(target=_run_bootstrap_async, daemon=True).start()
-    except Exception as e:
-        print(f"[BOOTSTRAP] Failed to start background bootstrap thread: {e}")
-    
-    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info")
 class ComoRAGReasonRequest(BaseModel):
     query: str
     model: str
@@ -1105,3 +1085,25 @@ async def clear_comorag_memory():
         return {"status": "memory_cleared"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    # Get Tailscale IP from environment variable, fallback to all interfaces
+    tailscale_ip = os.getenv("TAILSCALE_IP", "0.0.0.0")
+    port = int(os.getenv("API_PORT", "8000"))
+    
+    print(f"Starting Ollama API Gateway on {tailscale_ip}:{port}")
+    print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
+    # Start model bootstrap in background so API binds immediately
+    def _run_bootstrap_async():
+        try:
+            print("[BOOTSTRAP] Starting background model bootstrap...")
+            bootstrap_required_models()
+            print("[BOOTSTRAP] Background model bootstrap completed.")
+        except Exception as e:
+            print(f"[BOOTSTRAP] Background bootstrap error: {e}")
+    try:
+        threading.Thread(target=_run_bootstrap_async, daemon=True).start()
+    except Exception as e:
+        print(f"[BOOTSTRAP] Failed to start background bootstrap thread: {e}")
+    
+    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info")

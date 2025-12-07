@@ -97,6 +97,43 @@ class ConfigManager:
                 "Error", 
                 f"Failed to save current state: {str(e)}"
             )
+
+    def get_single_node_config(self, node):
+        """Get configuration for a single node."""
+        logger.debug(f"Getting configuration for single node: {node.id}")
+        # Backup current config
+        backup_config = self.chain_config
+        
+        try:
+            # Initialize temporary empty config
+            self.chain_config = {
+                "sequences": [], 
+                "conditional_nodes": [], 
+                "llm_nodes": [], 
+                "tts_nodes": [], 
+                "chain_import_nodes": [], 
+                "form_filler_nodes": []
+            }
+            
+            # Save the single node
+            if isinstance(node, SequenceNode):
+                self._save_sequence_node(node)
+            elif isinstance(node, ConditionalNode):
+                self._save_conditional_node(node)
+            elif isinstance(node, LLMNode):
+                self._save_llm_node(node)
+            elif isinstance(node, TTSNode):
+                self._save_tts_node(node)
+            elif isinstance(node, ChainImportNode):
+                self._save_chain_import_node(node)
+            elif isinstance(node, FormFillerNode):
+                self._save_form_filler_node(node)
+                
+            return self.chain_config.copy()
+            
+        finally:
+            # Restore original config
+            self.chain_config = backup_config
             
     def load_chain(self, file_path=None):
         """Load a chain configuration from file."""
