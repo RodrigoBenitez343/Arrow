@@ -140,6 +140,25 @@ def launch():
         except Exception:
             creationflags = 0
 
+    # --- Vision Model Launch Logic ---
+    vision_proc = None
+    if "--apply_mask" in sys.argv or "-m" in sys.argv:
+        try:
+            vision_script = os.path.join(base, "LoOper", "player", "Computer_vision", "model_vision.py")
+            if os.path.exists(vision_script):
+                print(f"Launching Vision Model: {vision_script}")
+                vision_cwd = os.path.dirname(vision_script)
+                vision_proc = subprocess.Popen(
+                    [sys.executable, vision_script],
+                    cwd=vision_cwd,
+                    creationflags=creationflags
+                )
+            else:
+                print(f"Vision model script not found at: {vision_script}")
+        except Exception as e:
+            print(f"Failed to launch vision model: {e}")
+    # -------------------------------
+
     proc = subprocess.Popen(
         [sys.executable, main_path],
         cwd=os.path.dirname(main_path),
@@ -150,6 +169,7 @@ def launch():
 
     ready_seen = False
     def _kill_process_tree():
+        # Kill Main Process
         try:
             import psutil
             try:
@@ -184,6 +204,38 @@ def launch():
                 proc.kill()
             except Exception:
                 pass
+        
+        # Kill Vision Process if it exists
+        if vision_proc:
+            try:
+                import psutil
+                try:
+                    p = psutil.Process(vision_proc.pid)
+                    for child in p.children(recursive=True):
+                        try:
+                            child.terminate()
+                        except Exception:
+                            pass
+                    _, _ = psutil.wait_procs(p.children(recursive=True), timeout=3)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            try:
+                if os.name == "nt":
+                    try:
+                        subprocess.run(["taskkill", "/T", "/F", "/PID", str(vision_proc.pid)], check=False, capture_output=True)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                vision_proc.terminate()
+            except Exception:
+                try:
+                    vision_proc.kill()
+                except Exception:
+                    pass
 
     def check_state():
         nonlocal ready_seen
@@ -215,6 +267,12 @@ def launch():
             except Exception:
                 pass
             QTimer.singleShot(100, app.quit)
+        
+        # Check if vision process died unexpectedly (optional, mostly for debugging)
+        if vision_proc and vision_proc.poll() is not None:
+             # Vision process died, we could restart it or just log it.
+             # For now, we do nothing.
+             pass
 
     poll = QTimer(splash)
     poll.timeout.connect(check_state)

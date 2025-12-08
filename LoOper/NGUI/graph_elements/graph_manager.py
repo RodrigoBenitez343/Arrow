@@ -16,6 +16,38 @@ if not logger.handlers:
     logger.setLevel(logging.DEBUG)
 
 
+# --- Monkey Patch for NodeGraphQt KeyError ---
+def _patch_nodegraph_moved_error():
+    """
+    Monkey patch for NodeGraphQt.base.graph.NodeGraph._on_nodes_moved
+    to prevent KeyError when node view exists but model node is missing.
+    """
+    try:
+        # Check if method exists and hasn't been patched
+        if hasattr(NodeGraph, '_on_nodes_moved') and not hasattr(NodeGraph, '_original_on_nodes_moved'):
+            NodeGraph._original_on_nodes_moved = NodeGraph._on_nodes_moved
+            
+            def safe_on_nodes_moved(self, node_view):
+                try:
+                    return self._original_on_nodes_moved(node_view)
+                except KeyError:
+                    # Log warning but don't crash. 
+                    # This happens when a node view exists but the node is not in the model.
+                    node_id = getattr(node_view, 'id', 'unknown')
+                    logger.warning(f"Ignored KeyError in _on_nodes_moved for node view ID: {node_id}")
+                except Exception as e:
+                    # Re-raise other exceptions
+                    raise e
+            
+            NodeGraph._on_nodes_moved = safe_on_nodes_moved
+            logger.info("Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError")
+    except Exception as e:
+        logger.error(f"Failed to apply monkey patch to NodeGraphQt: {e}")
+
+_patch_nodegraph_moved_error()
+# ---------------------------------------------
+
+
 class GraphManager:
     """Manages the node graph setup and basic operations."""
     

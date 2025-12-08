@@ -4,6 +4,7 @@ This module contains the FormFillerDialog class for configuring
 Form Filler node properties.
 """
 
+from .base_dialog import ModernDialog
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox, QLineEdit, QComboBox, QDoubleSpinBox, QFormLayout
 from ..constants import TEXT_COLOR
 from ..i18n import _
@@ -13,29 +14,21 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from AI.model_cache import get_real_cached_models
 
-class FormFillerDialog(QDialog):
+class FormFillerDialog(ModernDialog):
     """Dialog for configuring Form Filler node properties"""
     
     def __init__(self, parent, current_config=None):
-        super().__init__(parent)
+        super().__init__(parent, title=_("Form Filler Configuration"))
         self.current_config = current_config or {}
         
-        self.setWindowTitle(_("Form Filler Configuration"))
         self.setModal(True)
         self.resize(400, 300)
-        
-        # Apply styling consistent with other dialogs
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #2b2b2b;
-                color: {TEXT_COLOR};
-            }}
-        """)
         
         self.setup_ui()
     
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         form = QFormLayout()
         
         self.instruction_edit = QLineEdit()

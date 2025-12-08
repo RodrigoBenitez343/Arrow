@@ -55,6 +55,14 @@ class NodeButtonBarItem(QGraphicsObject):
                 'tooltip': 'Options',
                 'visible': True,
                 'hover': False
+            },
+            {
+                'id': 'expand',
+                'rect': QRectF(0, 0, 0, 0),
+                'icon': self._draw_expand_icon,
+                'tooltip': 'Expand Chain',
+                'visible': False,
+                'hover': False
             }
         ]
         
@@ -87,6 +95,9 @@ class NodeButtonBarItem(QGraphicsObject):
         
         # Left Slot
         self.buttons[0]['rect'] = QRectF(margin + 10, y_pos, btn_size, btn_size)
+        
+        # Expand Button (Left Slot, mutually exclusive with Record usually)
+        self.buttons[3]['rect'] = QRectF(margin + 10, y_pos, btn_size, btn_size)
         
         # Center Slot
         center_x = self._width / 2
@@ -145,6 +156,27 @@ class NodeButtonBarItem(QGraphicsObject):
         painter.drawLine(-7, -6, 7, -6)
         painter.drawLine(-7, 0, 7, 0)
         painter.drawLine(-7, 6, 7, 6)
+
+    def _draw_expand_icon(self, painter):
+        # Expand / Fullscreen style icon
+        pen = QPen(QColor(220, 220, 220))
+        pen.setWidth(2)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        s = 6
+        # Top-left
+        painter.drawLine(-s, -s, -s+4, -s)
+        painter.drawLine(-s, -s, -s, -s+4)
+        # Top-right
+        painter.drawLine(s, -s, s-4, -s)
+        painter.drawLine(s, -s, s, -s+4)
+        # Bottom-left
+        painter.drawLine(-s, s, -s+4, s)
+        painter.drawLine(-s, s, -s, s-4)
+        # Bottom-right
+        painter.drawLine(s, s, s-4, s)
+        painter.drawLine(s, s, s, s-4)
 
     # --- Events ---
     def hoverMoveEvent(self, event):
@@ -335,12 +367,17 @@ class NodeButtonBarManager(QObject):
         bar_item.set_button_visible('record', False)
         bar_item.set_button_visible('play', True)
         bar_item.set_button_visible('options', True)
+        bar_item.set_button_visible('expand', False)
 
         if 'sequence' in ntype or 'SequenceNode' in ntype:
             bar_item.set_button_visible('record', True)
             
         elif 'conditional' in ntype or 'ConditionalNode' in ntype:
-            bar_item.set_button_visible('play', False)
+            # User requested Play button to be visible for Conditional nodes
+            bar_item.set_button_visible('play', True)
+            
+        elif 'chain_import' in ntype or 'ChainImportNode' in ntype:
+            bar_item.set_button_visible('expand', True)
 
     def _handle_click(self, node, btn_id):
         ntype = getattr(node, '__identifier__', node.type_)
@@ -349,6 +386,8 @@ class NodeButtonBarManager(QObject):
             self._on_options(node)
         elif btn_id == 'record':
             self._on_record(node)
+        elif btn_id == 'expand':
+            self._on_expand_chain(node)
         elif btn_id == 'play':
             if 'sequence' in ntype:
                 self._on_play_sequence(node)
@@ -358,6 +397,8 @@ class NodeButtonBarManager(QObject):
                 self._on_exec_tts(node)
             elif 'chain_import' in ntype:
                 self._on_exec_chain_import(node)
+            elif 'conditional' in ntype:
+                self._on_exec_conditional(node)
 
     def _get_main_window(self):
         """Traverse up the widget hierarchy to find the MainWindow."""
@@ -423,6 +464,22 @@ class NodeButtonBarManager(QObject):
     def _on_exec_chain_import(self, node):
         self._execute_node(node)
 
+    def _on_exec_conditional(self, node):
+        main_window = self._get_main_window()
+        if main_window:
+            if hasattr(main_window, 'test_conditional_node'):
+                main_window.test_conditional_node(node)
+            else:
+                logger.warning("MainWindow missing test_conditional_node method")
+        else:
+            logger.warning("Could not find MainWindow")
+
+    def _on_expand_chain(self, node):
+        if hasattr(self.parent, 'expand_chain_import'):
+            self.parent.expand_chain_import(node)
+        elif hasattr(self.parent, 'node_operations') and hasattr(self.parent.node_operations, 'expand_chain_import'):
+            self.parent.node_operations.expand_chain_import(node)
+
     def _on_options(self, node):
         if hasattr(self.parent, 'open_node_settings'):
             self.parent.open_node_settings(node)
@@ -434,11 +491,17 @@ class NodeButtonBarManager(QObject):
                 if hasattr(self.parent, 'edit_sequence'):
                     self.parent.edit_sequence(node)
             elif 'conditional' in ntype:
-                if hasattr(self.parent, 'edit_conditional_node'):
-                    self.parent.edit_conditional_node(node)
+                # Correct method name is edit_conditional, not edit_conditional_node
+                if hasattr(self.parent, 'edit_conditional'):
+                    self.parent.edit_conditional(node)
+                elif hasattr(self.parent, 'edit_conditional_node'):
+                     self.parent.edit_conditional_node(node)
             elif 'llm' in ntype:
                 if hasattr(self.parent, 'edit_llm_node'):
                     self.parent.edit_llm_node(node)
             elif 'tts' in ntype:
                 if hasattr(self.parent, 'edit_tts_node'):
                     self.parent.edit_tts_node(node)
+            elif 'chain_import' in ntype:
+                if hasattr(self.parent, 'edit_chain_import_node'):
+                    self.parent.edit_chain_import_node(node)

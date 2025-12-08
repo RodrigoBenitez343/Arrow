@@ -1,7 +1,8 @@
 # dialogs/chain_import_dialogs.py
 
+from .base_dialog import ModernDialog
 import os
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QDialogButtonBox, QPushButton, QFileDialog, QComboBox, 
                              QCheckBox, QTextEdit, QGroupBox, QMessageBox)
 from PyQt5.QtCore import Qt
@@ -9,69 +10,16 @@ from ..constants import TEXT_COLOR
 from ..i18n import _
 
 
-class ChainImportDialog(QDialog):
+class ChainImportDialog(ModernDialog):
     """Dialog for configuring chain import settings"""
     
     def __init__(self, chain_import_config=None, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(_("Chain Import Configuration"))
+        super().__init__(parent, title=_("Chain Import Configuration"))
         self.setModal(True)
         self.resize(600, 450)
         self.setMinimumSize(600, 450)
         
-        # Apply styling consistent with other dialogs
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #2b2b2b;
-                color: {TEXT_COLOR};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }}
-            QLineEdit {{
-                background-color: #3c3c3c;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 5px;
-                color: {TEXT_COLOR};
-            }}
-            QComboBox {{
-                background-color: #3c3c3c;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 5px;
-                color: {TEXT_COLOR};
-            }}
-            QTextEdit {{
-                background-color: #3c3c3c;
-                border: 1px solid #555;
-                border-radius: 3px;
-                padding: 5px;
-                color: {TEXT_COLOR};
-            }}
-            QPushButton {{
-                background-color: #4a4a4a;
-                border: 1px solid #666;
-                border-radius: 3px;
-                padding: 5px 10px;
-                color: {TEXT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: #5a5a5a;
-            }}
-            QCheckBox {{
-                color: {TEXT_COLOR};
-            }}
-        """)
+        # Style logic moved to ModernDialog
         
         # Initialize with default or provided config
         self.config = chain_import_config or {
@@ -88,7 +36,8 @@ class ChainImportDialog(QDialog):
         
     def setup_ui(self):
         """Setup the user interface"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
         

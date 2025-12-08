@@ -1,17 +1,18 @@
 # dialogs/sequence_dialogs.py
 
-from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+from .base_dialog import ModernDialog
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
 from ..i18n import _
 
 
-class SequencePropertiesDialog(QDialog):
+class SequencePropertiesDialog(ModernDialog):
     """Dialog for editing sequence properties"""
     
     def __init__(self, sequence_config, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(_("Sequence Properties"))
+        super().__init__(parent, title=_("Sequence Properties"))
         
-        self.layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        self.layout = self.content_layout
         
         self.loop_count_label = QLabel(_("Loop Count:"))
         self.loop_count_input = QLineEdit(str(sequence_config.get('loop_count', 1)))

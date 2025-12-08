@@ -1,7 +1,6 @@
-2025-12-04 12:47:53,190 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 12:57:48,593 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 13:06:16,242 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 13:16:18,051 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 13:19:09,484 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 13:22:20,230 - DEBUG - mss library available for fast screenshot capture
-2025-12-04 13:29:23,586 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 09:11:35,176 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 09:11:40,146 - INFO - Built workflow graph with 1 nodes
+2025-12-08 09:11:40,147 - INFO - Built workflow graph with 2 nodes
+2025-12-08 09:11:40,147 - INFO - LLM node unknown connected to TTS node tts1. Redirecting output to TTS.
+2025-12-08 09:11:40,148 - INFO - Updated TTS node tts1 text to use variable {my_output}
+2025-12-08 09:11:40,148 - INFO - Built workflow graph with 2 nodes

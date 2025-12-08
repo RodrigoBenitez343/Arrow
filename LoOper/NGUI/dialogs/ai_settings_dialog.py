@@ -3,8 +3,9 @@
 import os
 import subprocess
 import sys
+from .base_dialog import ModernDialog
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, 
+    QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, 
     QPushButton, QLabel, QGroupBox, QCheckBox, QSpinBox,
     QMessageBox, QTextEdit, QTabWidget, QWidget, QDialogButtonBox,
     QScrollArea
@@ -54,118 +55,16 @@ class APIServerThread(QThread):
         except Exception:
             pass
 
-class AISettingsDialog(QDialog):
+class AISettingsDialog(ModernDialog):
     """Dialog for configuring AI settings"""
     
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("AI Settings")
+        super().__init__(parent, title="AI Settings")
         self.setModal(True)
         self.resize(700, 700)
         self.setMinimumSize(650, 600)
         
-        # Apply styling consistent with other dialogs
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {DARK_GREY};
-                color: {TEXT_COLOR};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid {LIGHT_GREY};
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: {MEDIUM_GREY};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: {TEXT_COLOR};
-            }}
-            QLineEdit, QSpinBox {{
-                background-color: {MEDIUM_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 3px;
-                padding: 5px;
-                color: {TEXT_COLOR};
-            }}
-            QLineEdit:focus, QSpinBox:focus {{
-                border: 2px solid #4A90E2;
-            }}
-            QPushButton {{
-                background-color: {MEDIUM_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 3px;
-                padding: 8px 16px;
-                color: {TEXT_COLOR};
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: {LIGHT_GREY};
-            }}
-            QPushButton:pressed {{
-                background-color: #666666;
-            }}
-            QPushButton:disabled {{
-                background-color: #404040;
-                color: #808080;
-            }}
-            QTextEdit {{
-                background-color: {MEDIUM_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 3px;
-                color: {TEXT_COLOR};
-                padding: 5px;
-            }}
-            QTabWidget::pane {{
-                border: 1px solid {LIGHT_GREY};
-                background-color: {MEDIUM_GREY};
-            }}
-            QTabBar::tab {{
-                background-color: {DARK_GREY};
-                color: {TEXT_COLOR};
-                padding: 8px 16px;
-                margin-right: 2px;
-                border: 1px solid {LIGHT_GREY};
-                border-bottom: none;
-            }}
-            QTabBar::tab:selected {{
-                background-color: {MEDIUM_GREY};
-                border-bottom: 1px solid {MEDIUM_GREY};
-            }}
-            QTabBar::tab:hover {{
-                background-color: {LIGHT_GREY};
-            }}
-            QLabel {{
-                color: {TEXT_COLOR};
-            }}
-            QCheckBox {{
-                color: {TEXT_COLOR};
-            }}
-            QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-            }}
-            QCheckBox::indicator:unchecked {{
-                background-color: {MEDIUM_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 3px;
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: #4A90E2;
-                border: 1px solid #4A90E2;
-                border-radius: 3px;
-            }}
-            QDialogButtonBox {{
-                background-color: {DARK_GREY};
-            }}
-            QDialogButtonBox QPushButton {{
-                min-width: 80px;
-                padding: 8px 16px;
-            }}
-        """)
+        # Style logic moved to ModernDialog
         
         # Server thread
         self.server_thread = None
@@ -173,13 +72,15 @@ class AISettingsDialog(QDialog):
         self.status_timer = QTimer()
         self.status_timer.timeout.connect(self.check_api_status)
         
-        
         self.setup_ui()
         self.load_settings()
-        # Do not automatically ping the API on dialog open
+        
+        # Check API status
+        QTimer.singleShot(100, self.check_api_status)
     
     def setup_ui(self):
-        layout = QVBoxLayout()
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Create tab widget
         tab_widget = QTabWidget()
@@ -306,7 +207,7 @@ class AISettingsDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         
         layout.addWidget(self.button_box)
-        self.setLayout(layout)
+        # self.setLayout(layout) # Removed as we use ModernDialog's layout logic
     
     def load_settings(self):
         """Load settings from config file via config_loader"""

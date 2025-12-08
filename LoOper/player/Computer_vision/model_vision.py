@@ -15,12 +15,28 @@ import pytesseract
 import re
 import object
 from shapely.geometry import Polygon
+from huggingface_hub import hf_hub_download
 
 class Vision:
     
-    def __init__(self, model):
-        self.model = model = YOLO(model, task="detect")
-        print(self.model.names)
+    def __init__(self, structure_model_path):
+        # Load Structure/Text Model
+        print(f"Loading Structure Model: {structure_model_path}")
+        self.structure_model = YOLO(structure_model_path, task="detect")
+        
+        # Load Icon Model
+        print("Loading Icon Model...")
+        try:
+            icon_model_path = hf_hub_download(
+                repo_id="macpaw-research/yolov11l-ui-elements-detection",
+                filename="ui-elements-detection.pt"
+            )
+            self.icon_model = YOLO(icon_model_path)
+        except Exception as e:
+            print(f"Error loading icon model: {e}")
+            self.icon_model = None
+
+        print("Models loaded.")
         
     def start_vision(self, num):
 
@@ -30,23 +46,32 @@ class Vision:
         monitors = sct.monitors
         monitor = monitors[num]
 
-        labels = self.model.names
-        labels = list(labels.values())
+        # Combine labels from both models
+        structure_labels = list(self.structure_model.names.values())
+        icon_labels = list(self.icon_model.names.values()) if self.icon_model else []
+        
+        all_labels = list(set(structure_labels + icon_labels))
 
-        label_objects = {label: "" for label in labels}
+        label_objects = {label: "Interaction" for label in all_labels} # Default to Interaction
 
         try:
             with open("label_description.json", "r") as f:
                 json_data = json.load(f)
             
-            for label in labels:
+            for label in all_labels:
                 if label in json_data:
                     label_objects[label] = json_data[label]
                 else:
-                    print(f"Warning: Label '{label}' not found in label_description.json")
+                    # If not in json, we keep the default "Interaction" (or whatever logic we want)
+                    # For icons from the new model, they are likely interactions.
+                    if label in icon_labels and label not in structure_labels:
+                         label_objects[label] = "Interaction"
+                    elif label not in json_data:
+                         print(f"Warning: Label '{label}' not found in label_description.json. Defaulting to Interaction.")
+                         
         except Exception as e:
             print(f"Error loading label description: {e}")
-            print(f"Valid labels from model: {labels}")
+            print(f"Valid labels: {all_labels}")
 
 
         # Setup OpenCV window
@@ -98,17 +123,42 @@ class Vision:
 
             screen = np.array(sct.grab(monitor))
             screen = screen[:, :, :3]
-            results = self.model(screen, conf=0.25)
+            
+            # Initialize data dictionary for all labels
+            data = {label: [] for label in all_labels}
 
-            data = {label: [] for label in self.model.names.values()}
+            # --- Step 1: Structure Detection ---
+            results_structure = self.structure_model(screen, conf=0.25)
 
-            for result in results:
+            for result in results_structure:
                 for box in result.boxes:
-
-                    label = self.model.names[int(box.cls)]
-
+                    label = self.structure_model.names[int(box.cls)]
                     data[label].append(box.xyxy.tolist()[0])
 
+            # --- Step 2: Masking ---
+            # Create a mask for text regions to hide them from the icon model
+            masked_screen = screen.copy()
+            if "text" in data:
+                for coords in data["text"]:
+                    x1, y1, x2, y2 = map(int, coords)
+                    # Draw grey rectangle over text
+                    cv2.rectangle(masked_screen, (x1, y1), (x2, y2), (128, 128, 128), -1)
+            
+            # --- Step 3: Icon Detection ---
+            if self.icon_model:
+                results_icons = self.icon_model(masked_screen, conf=0.25)
+                
+                for result in results_icons:
+                    for box in result.boxes:
+                        label = self.icon_model.names[int(box.cls)]
+                        # Add icon detections to data
+                        # Note: If label exists in both models, we append. 
+                        # Ideally, icon model labels are distinct or we want them merged.
+                        if label not in data:
+                            data[label] = [] # Should be covered by all_labels init, but just in case
+                        data[label].append(box.xyxy.tolist()[0])
+
+            # --- Processing Objects ---
             obj_label = []
 
             for key in label_objects:
@@ -121,10 +171,11 @@ class Vision:
 
             for label in obj_label:
 
-                for coords in data[label]:
-
-                    obj = object.Object(label=label, coords=coords)
-                    objects.append(obj)
+                if label in data: # Check if label exists in data
+                    for coords in data[label]:
+    
+                        obj = object.Object(label=label, coords=coords)
+                        objects.append(obj)
 
             property_labels = []
 
@@ -137,14 +188,15 @@ class Vision:
             intersections = {}
 
             for property in property_labels:
-
-                property_coords = data[property]
-
-                for coords in property_coords:
-
-                    for obj in objects:
-
-                        intersections[self.calculate_intersection(coords, obj.get_coords())] = [property, obj]
+                
+                if property in data:
+                    property_coords = data[property]
+    
+                    for coords in property_coords:
+    
+                        for obj in objects:
+    
+                            intersections[self.calculate_intersection(coords, obj.get_coords())] = [property, obj]
             
             sorted_keys = sorted(intersections, reverse=True)
 
@@ -167,7 +219,7 @@ class Vision:
 
                     for key in data:
 
-                        if label_objects[key] == "Interaction":
+                        if key in label_objects and label_objects[key] == "Interaction":
 
                             for coords in data[key]:
 
@@ -176,40 +228,18 @@ class Vision:
                                     interaction = object.Interaction(label=key, coords=coords, object=obj, interaction_type=1)
 
                                     obj.add_interaction(interaction)
+                                    
+                                    # Note: We are iterating over a list we are removing from? 
+                                    # Original code: data[key].remove(coords)
+                                    # It's better to not modify list while iterating, but following original logic for now 
+                                    # assuming simple loop. Actually, iterating over data[key] and removing is dangerous.
+                                    # The original code did: for coords in data[key]: ... data[key].remove(coords)
+                                    # This will skip elements. However, since we re-loop every frame, maybe it's "okay" visually, 
+                                    # but logically flawed. I'll leave it as is to minimize refactor risk unless it breaks.
+                                    # Wait, I should probably fix it or use a copy.
+                                    pass
 
-                                    data[key].remove(coords)
-
-                        if label_objects[key] == "Text":
-
-                            for coords in data[key]:
-
-                                if self.is_box_inside_box(coords, obj.get_coords()):
-
-                                    text = object.Text(coords=coords, object=obj)
-
-                                    obj.add_text(text)
-
-                                    data[key].remove(coords)
-
-            for obj in objects:
-
-                if obj.get_property() == "bottomlayer":
-
-                    for key in data:
-
-                        if label_objects[key] == "Interaction":
-
-                            for coords in data[key]:
-
-                                if self.is_box_inside_box(coords, obj.get_coords()):
-
-                                    interaction = object.Interaction(label=key, coords=coords, object=obj, interaction_type=1)
-
-                                    obj.add_interaction(interaction)
-
-                                    data[key].remove(coords)
-
-                        if label_objects[key] == "Text":
+                        if key in label_objects and label_objects[key] == "Text":
 
                             for coords in data[key]:
 
@@ -218,8 +248,53 @@ class Vision:
                                     text = object.Text(coords=coords, object=obj)
 
                                     obj.add_text(text)
+                                    
+                                    pass
 
-                                    data[key].remove(coords)
+            # Fix for removing items while iterating:
+            # Re-implementing the removal logic properly or just ignoring removal since we rebuild 'objects' every frame.
+            # The original code removed them probably to avoid double assignment? 
+            # Or maybe just to clear them.
+            # Given the original code had this bug (or feature), I will just iterate normally and not remove, 
+            # or if removal is critical (to avoid assigning to multiple objects), I'll handle it.
+            # In original code:
+            # for coords in data[key]:
+            #    if inside: add; remove
+            # This means an item is assigned to the FIRST "toplayer" object it fits in? 
+            # But the loop `for obj in objects` is outer. So it tries to assign all items to obj1, removes them. 
+            # Then obj2 only sees remaining items. Yes, that's the logic.
+            
+            # Let's preserve that logic but safely.
+            
+            # Helper to process assignments
+            def assign_items_to_objects(layer_name):
+                 for obj in objects:
+                    if obj.get_property() == layer_name:
+                        for key in list(data.keys()): # keys are strings
+                            if key not in label_objects: continue
+                            
+                            type_ = label_objects[key]
+                            
+                            if type_ == "Interaction":
+                                # Iterate over a copy of the list
+                                for coords in list(data[key]):
+                                    if self.is_box_inside_box(coords, obj.get_coords()):
+                                        interaction = object.Interaction(label=key, coords=coords, object=obj, interaction_type=1)
+                                        obj.add_interaction(interaction)
+                                        if coords in data[key]:
+                                            data[key].remove(coords)
+                                            
+                            elif type_ == "Text":
+                                for coords in list(data[key]):
+                                    if self.is_box_inside_box(coords, obj.get_coords()):
+                                        text = object.Text(coords=coords, object=obj)
+                                        obj.add_text(text)
+                                        if coords in data[key]:
+                                            data[key].remove(coords)
+
+            assign_items_to_objects("toplayer")
+            assign_items_to_objects("bottomlayer")
+
 
             del json_data
 
@@ -254,6 +329,14 @@ class Vision:
             
             # Only draw on the overlay, do not blend with screen capture
             # This prevents the "darkening" effect since we only show the overlay window
+            
+            # Draw remaining items (not assigned to objects? or all items? Original drew all in 'data')
+            # Original code: for label, boxes in data.items(): ...
+            # Note: 'data' has items removed if they were assigned! 
+            # So the original code only drew UNASSIGNED items in the first loop?
+            # Let's check original code:
+            # It drew `data` items (green) -> then drew `objects` (blue) -> then drew `obj.interactions` (orange).
+            # So yes, unassigned items are green. Assigned interactions are orange.
             
             for label, boxes in data.items():
                 for coords in boxes:
@@ -392,5 +475,3 @@ class Api:
 
 vision = Vision("Computer_Vision_1.5.3.onnx")
 vision.start_vision(1)
-    
-

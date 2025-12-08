@@ -1,8 +1,9 @@
 # dialogs/chain_expansion_dialog.py
 
+from .base_dialog import ModernDialog
 import os
 import json
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, 
                              QDialogButtonBox, QPushButton, QMessageBox)
 from PyQt5.QtCore import Qt
 from ..i18n import _
@@ -19,16 +20,15 @@ except ImportError:
     def clear_cache():
         pass
 
-class ChainExpansionDialog(QDialog):
+class ChainExpansionDialog(ModernDialog):
     """Dialog for expanding and editing imported chains in a separate graph view"""
     
     def __init__(self, chain_import_node, parent_graph_view, parent=None):
-        super().__init__(parent)
+        super().__init__(parent, title=_("Edit Imported Chain"))
         self.chain_import_node = chain_import_node
         self.parent_graph_view = parent_graph_view
         self.config_manager = None  # Will be initialized after graph_view is created
         
-        self.setWindowTitle(_("Edit Imported Chain"))
         self.setModal(True)
         self.resize(1000, 700)
         
@@ -64,7 +64,8 @@ class ChainExpansionDialog(QDialog):
     
     def setup_ui(self):
         """Setup the dialog UI"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Header
         header_layout = QHBoxLayout()

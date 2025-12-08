@@ -1,23 +1,24 @@
 # dialogs/fallback_dialogs.py
 
+from .base_dialog import ModernDialog
 import json
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
+from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
                              QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog)
 from ..constants import TEXT_COLOR
 from ..i18n import _
 
 
-class ActionFallbackConfigDialog(QDialog):
+class ActionFallbackConfigDialog(ModernDialog):
     """Dialog for configuring action fallbacks"""
     
     def __init__(self, parent, sequence_idx, action_idx, chain_config, current_fallback=None):
-        super().__init__(parent)
+        title = _("Configure Fallback - Sequence {seq}, Action {action}").format(seq=sequence_idx + 1, action=action_idx + 1)
+        super().__init__(parent, title=title)
         self.sequence_idx = sequence_idx
         self.action_idx = action_idx
         self.chain_config = chain_config
         self.current_fallback = current_fallback
         
-        self.setWindowTitle(_("Configure Fallback - Sequence {seq}, Action {action}").format(seq=sequence_idx + 1, action=action_idx + 1))
         self.setModal(True)
         self.resize(400, 300)
         
@@ -25,7 +26,8 @@ class ActionFallbackConfigDialog(QDialog):
     
     def setup_ui(self):
         """Setup the UI for the dialog"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Action info
         info_group = QGroupBox(_("Action Information"))
