@@ -18,6 +18,7 @@ from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from .utils import get_default_api_url
 from ..i18n import _
+from .base_dialog import ModernDialog
 
 # Add the parent directory to sys.path to import AI modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -25,37 +26,19 @@ from AI.consult import OllamaClient
 from AI.model_cache import get_cached_models, get_model_cache, get_real_cached_models
 
 
-class LLMPropertiesDialog(QDialog):
+class LLMPropertiesDialog(ModernDialog):
     """Dialog for configuring LLM node properties"""
     
     def __init__(self, parent, current_config=None):
-        super().__init__(parent)
+        super().__init__(parent, title=_("LLM Node Configuration"))
         self.current_config = current_config or {}
         
-        self.setWindowTitle(_("LLM Node Configuration"))
         self.setModal(True)
         self.resize(600, 500)  # Increased height for tabbed interface
         self.setMinimumSize(600, 500)
         
-        # Apply styling consistent with other dialogs
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #2b2b2b;
-                color: {TEXT_COLOR};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }}
-        """)
+        # Style logic moved to ModernDialog, but we can keep specific overrides if needed
+        # or rely on ModernDialog's theme.
         
         self.setup_ui()
         self.load_current_config()
@@ -79,10 +62,13 @@ class LLMPropertiesDialog(QDialog):
             self.model_combo.setCurrentText(current_model)
     
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog instead of creating a new layout on self
+        layout = self.content_layout
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         self.tab_widget = QTabWidget()
+        # Stylesheet removed as ModernDialog handles it, or keep specific overrides?
+        # Keeping overrides for tab widget as ModernDialog might not cover everything specifically enough
         self.tab_widget.setStyleSheet("""
             QTabWidget::pane {
                 border: 1px solid #555;

@@ -6,6 +6,7 @@ Handles building workflow graphs from sequences and conditional nodes for naviga
 
 from ..config import logger
 import time
+import copy
 from ..json_cache import get_chain
 
 
@@ -1019,8 +1020,46 @@ class WorkflowExecutor:
         Returns:
             str: Next node ID to execute, or None if workflow should end
         """
+        # Check for LLM -> TTS connection with "write automatically" enabled
+        # If found, disable typing and redirect output to TTS node
+        llm_data = node.get('data', {})
+        llm_config = llm_data.get('llm_configuration', {}) or llm_data
+        write_text = llm_config.get('write_text', True)
+        
+        node_to_execute = node
+        
+        if write_text:
+            connections = node.get('connections', {}).get('output', [])
+            for connection in connections:
+                target_node_id = connection.get('node_id')
+                if target_node_id and target_node_id in self.workflow_graph:
+                    target_node = self.workflow_graph[target_node_id]
+                    if target_node.get('type') == 'tts':
+                        logger.info(f"LLM node {node.get('id', 'unknown')} connected to TTS node {target_node_id}. Redirecting output to TTS.")
+                        
+                        # Create a copy of the node to modify write_text without affecting the graph permanently
+                        node_to_execute = copy.deepcopy(node)
+                        
+                        # Disable write_text in the copy
+                        node_data_copy = node_to_execute.get('data', {})
+                        if 'llm_configuration' in node_data_copy:
+                            node_data_copy['llm_configuration']['write_text'] = False
+                        else:
+                            node_data_copy['write_text'] = False
+                        
+                        # Configure TTS node to use the LLM output variable
+                        output_variable = llm_config.get('output_variable', 'llm_output')
+                        
+                        # Update the TTS node in the graph to use the variable
+                        # This modifies the graph for the rest of this execution
+                        target_node['data']['text'] = f"{{{output_variable}}}"
+                        logger.info(f"Updated TTS node {target_node_id} text to use variable {{{output_variable}}}")
+                        
+                        # Only handle the first TTS connection found
+                        break
+
         # Use the LLMExecutor to handle LLM execution and return its decision on next node
-        next_node_id = self.llm_executor.execute_llm_node(node, stop_flag, action_handlers)
+        next_node_id = self.llm_executor.execute_llm_node(node_to_execute, stop_flag, action_handlers)
         return next_node_id
     
     def _execute_tts_node(self, node, stop_flag):
@@ -1054,7 +1093,7 @@ class WorkflowExecutor:
                     return next_connection['node_id']
                 else:
                     logger.info("No output connections found for TTS node, ending workflow")
-                    return None
+                    return "__done__"
             else:
                 error_msg = result.get('error', 'Unknown TTS error')
                 logger.error(f"TTS node execution failed: {error_msg}")
@@ -1143,7 +1182,7 @@ class WorkflowExecutor:
             if 'output' in connections and connections['output']:
                 next_connection = connections['output'][0]
                 return next_connection['node_id']
-            return None
+            return "__done__"
             
         if not os.path.exists(resolved_chain_path):
             logger.error(f"Chain import file not found: {resolved_chain_path}")
@@ -1152,7 +1191,7 @@ class WorkflowExecutor:
             if 'output' in connections and connections['output']:
                 next_connection = connections['output'][0]
                 return next_connection['node_id']
-            return None
+            return "__done__"
         
         # Execute the imported chain for the specified number of loops using direct execution
         for i in range(loop_count):

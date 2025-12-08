@@ -4,20 +4,20 @@ This module contains the TTSPropertiesDialog class for configuring
 TTS (Text-to-Speech) node properties including text content and language.
 """
 
+from .base_dialog import ModernDialog
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, 
+    QVBoxLayout, QHBoxLayout, QLabel, QTextEdit, 
     QComboBox, QDialogButtonBox
 )
 from PyQt5.QtCore import Qt
 from ..i18n import _
 
 
-class TTSPropertiesDialog(QDialog):
+class TTSPropertiesDialog(ModernDialog):
     """Dialog for configuring TTS node properties"""
     
     def __init__(self, parent=None, config=None):
-        super().__init__(parent)
-        self.setWindowTitle(_("TTS Properties"))
+        super().__init__(parent, title=_("TTS Properties"))
         self.setModal(True)
         self.resize(400, 250)
         
@@ -32,7 +32,8 @@ class TTSPropertiesDialog(QDialog):
     
     def setup_ui(self):
         """Set up the user interface"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Text input
         text_label = QLabel(_("Text to Speak:"))

@@ -1,6 +1,7 @@
 # dialogs/__init__.py
 
 # Import all dialog classes to maintain backward compatibility
+from .base_dialog import ModernDialog
 from .fallback_dialogs import ActionFallbackConfigDialog
 from .sequence_dialogs import SequencePropertiesDialog
 from .conditional_dialogs import AdvancedConditionalDialog
@@ -13,6 +14,7 @@ from .form_filler_dialog import FormFillerDialog
 from .utils import get_default_api_url
 
 __all__ = [
+    'ModernDialog',
     'ActionFallbackConfigDialog',
     'SequencePropertiesDialog', 
     'AdvancedConditionalDialog',

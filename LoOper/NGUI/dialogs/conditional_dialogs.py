@@ -5,8 +5,9 @@ complex conditional logic including pre-conditions, post-conditions, and
 conditional loops.
 """
 
+from .base_dialog import ModernDialog
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
+    QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog,
     QListWidgetItem, QTextEdit, QGroupBox, QListWidget
 )
@@ -15,81 +16,28 @@ from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, Condit
 from ..i18n import _
 
 
-class AdvancedConditionalDialog(QDialog):
+class AdvancedConditionalDialog(ModernDialog):
     """Dialog for configuring advanced conditional fallbacks and automation logic"""
     
     def __init__(self, parent, sequence_idx, chain_config, current_config=None):
-        super().__init__(parent)
+        title = _("Advanced Conditions - Sequence {num}").format(num=sequence_idx + 1)
+        super().__init__(parent, title=title)
         self.sequence_idx = sequence_idx
         self.chain_config = chain_config
         self.current_config = current_config or {}
         
-        self.setWindowTitle(_("Advanced Conditions - Sequence {num}").format(num=sequence_idx + 1))
         self.setModal(True)
         self.resize(800, 700)  # Increased size for better visibility
         self.setMinimumSize(750, 650)  # Set minimum size to prevent content clipping
         
-        # Apply styling for better visibility
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #2b2b2b;
-                color: {TEXT_COLOR};
-            }}
-            QTabWidget::pane {{
-                border: 1px solid #555;
-                background-color: #2b2b2b;
-            }}
-            QTabBar::tab {{
-                background-color: #3c3c3c;
-                color: {TEXT_COLOR};
-                padding: 8px 16px;
-                margin-right: 2px;
-                border: 1px solid #555;
-                border-bottom: none;
-            }}
-            QTabBar::tab:selected {{
-                background-color: #4a4a4a;
-                border-bottom: 1px solid #4a4a4a;
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid #555;
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                color: {TEXT_COLOR};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-            }}
-            QListWidget {{
-                background-color: #3c3c3c;
-                border: 1px solid #555;
-                color: {TEXT_COLOR};
-                min-height: 120px;
-            }}
-            QPushButton {{
-                background-color: #4a4a4a;
-                border: 1px solid #666;
-                color: {TEXT_COLOR};
-                padding: 6px 12px;
-                border-radius: 3px;
-            }}
-            QPushButton:hover {{
-                background-color: #5a5a5a;
-            }}
-            QPushButton:pressed {{
-                background-color: #3a3a3a;
-            }}
-        """)
+        # Style logic moved to ModernDialog
         
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the UI for the advanced conditional dialog"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         layout.setContentsMargins(15, 15, 15, 15)  # Add proper margins
         layout.setSpacing(10)  # Add spacing between elements
         

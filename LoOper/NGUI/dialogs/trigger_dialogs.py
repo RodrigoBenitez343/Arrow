@@ -7,29 +7,30 @@ This module contains dialog classes for configuring various types of triggers:
 - ConditionalLoopDialog: Conditional loop configuration
 """
 
+from .base_dialog import ModernDialog
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
+    QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
     QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QGridLayout, QWidget
 )
 from ..constants import TEXT_COLOR
 from ..i18n import _
 
 
-class TriggerConfigDialog(QDialog):
+class TriggerConfigDialog(ModernDialog):
     """Dialog for configuring image-based triggers"""
     
     def __init__(self, parent, is_absence_trigger=False):
-        super().__init__(parent)
-        self.is_absence_trigger = is_absence_trigger
         title = _("Absence Trigger Configuration") if is_absence_trigger else _("Trigger Configuration")
-        self.setWindowTitle(title)
+        super().__init__(parent, title=title)
+        self.is_absence_trigger = is_absence_trigger
         self.setModal(True)
         self.resize(400, 200)
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the UI"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Image path
         image_layout = QHBoxLayout()
@@ -124,19 +125,19 @@ class TriggerConfigDialog(QDialog):
         return config
 
 
-class OCRTriggerConfigDialog(QDialog):
+class OCRTriggerConfigDialog(ModernDialog):
     """Dialog for configuring OCR-based triggers"""
     
     def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle(_("OCR Trigger Configuration"))
+        super().__init__(parent, title=_("OCR Trigger Configuration"))
         self.setModal(True)
         self.resize(450, 350)
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the UI"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
         # Target text
         text_layout = QHBoxLayout()
@@ -190,21 +191,21 @@ class OCRTriggerConfigDialog(QDialog):
         return config
 
 
-class WaitConditionDialog(QDialog):
+class WaitConditionDialog(ModernDialog):
     """Dialog for configuring wait conditions"""
     
     def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle(_("Wait Condition"))
+        super().__init__(parent, title=_("Wait Condition"))
         self.setModal(True)
         self.resize(400, 250)
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the UI"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
-        # Condition type
+        # Wait type selection
         type_layout = QHBoxLayout()
         type_layout.addWidget(QLabel(_("Wait Type:")))
         self.type_combo = QComboBox()
@@ -334,21 +335,21 @@ class WaitConditionDialog(QDialog):
             }
 
 
-class ConditionalLoopDialog(QDialog):
+class ConditionalLoopDialog(ModernDialog):
     """Dialog for configuring conditional loops"""
     
     def __init__(self, parent):
-        super().__init__(parent)
-        self.setWindowTitle(_("Conditional Loop"))
+        super().__init__(parent, title=_("Conditional Loop"))
         self.setModal(True)
         self.resize(500, 350)
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the UI"""
-        layout = QVBoxLayout(self)
+        # Use content_layout from ModernDialog
+        layout = self.content_layout
         
-        # Loop type
+        # Condition type selection
         type_layout = QHBoxLayout()
         type_layout.addWidget(QLabel(_("Loop Type:")))
         self.type_combo = QComboBox()

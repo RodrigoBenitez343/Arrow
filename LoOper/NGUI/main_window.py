@@ -554,6 +554,49 @@ class MainWindow(QMainWindow):
         # Use QTimer to start recording after window minimizes
         QTimer.singleShot(500, start_recording_delayed)  # 500ms delay
     
+    def test_conditional_node(self, node):
+        """Test a conditional node by evaluating it and showing the result"""
+        logger.info(f"Testing conditional node: {node.name()}")
+        
+        try:
+            # Extract configuration
+            conditional_data = {
+                "condition_type": node.get_property('condition_type') or 'presence',
+                "image_path": node.get_property('image_path') or '',
+                "threshold": float(node.get_property('threshold') or 0.8),
+                "wait_time": float(node.get_property('wait_time') or 5),
+                "max_loops": int(node.get_property('max_loops') or 10),
+                "ocr_text": node.get_property('ocr_text') or '',
+                "timeout": float(node.get_property('timeout') or 5.0),
+                "max_attempts": int(node.get_property('max_attempts') or 3),
+                "delay_between_attempts": float(node.get_property('delay_between_attempts') or 1.0),
+                "case_sensitive": node.get_property('case_sensitive') or 'true',
+                "node_id": node.id
+            }
+            
+            # Minimize window to allow seeing the screen
+            self.showMinimized()
+            QApplication.processEvents()
+            time.sleep(0.5)  # Wait for minimize animation
+            
+            # Evaluate
+            from player.multi_sequence.conditional_fallback_handler import ConditionalFallbackHandler
+            handler = ConditionalFallbackHandler()
+            
+            result = handler.evaluate_conditional_from_node(conditional_data)
+            
+            # Restore window
+            self._restore_window()
+            
+            # Show result
+            msg = "TRUE" if result else "FALSE"
+            QMessageBox.information(self, "Condition Result", f"Evaluation Result: {msg}")
+            
+        except Exception as e:
+            logger.error(f"Error testing conditional node: {e}", exc_info=True)
+            self._restore_window()
+            QMessageBox.critical(self, "Error", f"Failed to test condition: {str(e)}")
+
     def _restore_window(self):
         """Restore window from minimized state (thread-safe)"""
         self.showNormal()
