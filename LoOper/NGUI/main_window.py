@@ -48,7 +48,7 @@ class MainWindow(QMainWindow):
         logger.info("Initializing MainWindow")
         try:
             super().__init__()
-            self.setWindowTitle(_("LoOper BETA:1.8.0"))
+            self.setWindowTitle(_("LoOper BETA:1.9.0"))
             self.setGeometry(100, 100, 1200, 800)
             
             # Set window icon
