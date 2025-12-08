@@ -77,7 +77,7 @@ def _find_main_window():
     except Exception:
         return False
     try:
-        hwnd = win32gui.FindWindow(None, "LoOper BETA:1.8.0")
+        hwnd = win32gui.FindWindow(None, "LoOper BETA:1.9.0")
         return bool(hwnd)
     except Exception:
         return False
@@ -97,7 +97,7 @@ def _find_main_window_for_pid(pid: int):
             title = win32gui.GetWindowText(hwnd)
             if not title:
                 return
-            if title != "LoOper BETA:1.8.0":
+            if title != "LoOper BETA:1.9.0":
                 return
             _, wpid = win32process.GetWindowThreadProcessId(hwnd)
             if int(wpid) != int(pid):
