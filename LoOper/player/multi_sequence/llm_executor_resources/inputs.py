@@ -58,6 +58,9 @@ def _previous_input(node: Dict, variables: Dict[str, object]) -> str:
             connected_node_id = inp.get("from_node")
             if not connected_node_id:
                 continue
+            port = str(inp.get("input_port"))
+            if port in ("tools", "context"):
+                continue
             key = f"node_{connected_node_id}_output"
             if key in variables:
                 val = str(variables.get(key, ""))

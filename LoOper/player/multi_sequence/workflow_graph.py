@@ -92,19 +92,24 @@ class WorkflowGraphBuilder:
         # Add LLM nodes to graph
         for llm_node in self.llm_nodes:
             node_id = llm_node.get('id') or llm_node.get('node_id')
-            # Support both 'outputs' and legacy 'connections' formats
-            # Normalize to connections['output'] = [{ 'node_id': ... }]
-            output_connections = []
+            connections_by_port = {}
             if isinstance(llm_node.get('outputs'), dict):
-                output_connections = llm_node.get('outputs', {}).get('output', []) or []
+                for port_name, conns in (llm_node.get('outputs') or {}).items():
+                    try:
+                        connections_by_port[port_name] = list(conns or [])
+                    except Exception:
+                        connections_by_port[port_name] = []
             elif isinstance(llm_node.get('connections'), list):
-                output_connections = [{ 'node_id': conn.get('target_node_id'), 'input_port': conn.get('input_port') } for conn in llm_node.get('connections', []) if conn.get('target_node_id')]
+                for conn in llm_node.get('connections', []):
+                    port = conn.get('output_port') or 'output'
+                    lst = connections_by_port.setdefault(port, [])
+                    lst.append({'node_id': conn.get('target_node_id'), 'input_port': conn.get('input_port')})
+            else:
+                connections_by_port = {'output': []}
             graph[node_id] = {
                 'type': 'llm',
                 'data': llm_node,
-                'connections': {
-                    'output': output_connections
-                }
+                'connections': connections_by_port
             }
         
         # Add TTS nodes to graph
@@ -742,18 +747,19 @@ class WorkflowExecutor:
                 inputs = node_data.get('inputs', []) or []
                 if not inputs:
                     continue
-                all_tools = True
+                all_nonblocking = True
                 for inp in inputs:
-                    if str(inp.get('input_port')) != 'tools':
-                        all_tools = False
+                    port = str(inp.get('input_port'))
+                    if port not in ('tools', 'context'):
+                        all_nonblocking = False
                         break
                     src = self.workflow_graph.get(inp.get('from_node'), {})
-                    if src.get('type') != 'chain_import' or not src.get('tool_provider'):
-                        all_tools = False
+                    if port == 'tools' and (src.get('type') != 'chain_import' or not src.get('tool_provider')):
+                        all_nonblocking = False
                         break
-                if all_tools:
+                if all_nonblocking:
                     starting_nodes.append(node_id)
-                    logger.info(f"Treating LLM {node_id} as starting node due to tool-only inputs")
+                    logger.info(f"Treating LLM {node_id} as starting node due to non-blocking inputs")
         
         return starting_nodes
 
@@ -814,7 +820,7 @@ class WorkflowExecutor:
                     if not tid:
                         continue
                     tnode = self.workflow_graph.get(tid, {})
-                    if tnode.get('type') != 'llm' and tid not in completed_nodes:
+                    if output_type == 'output' and tnode.get('type') != 'llm' and tid not in completed_nodes:
                         has_pending_non_llm_outputs = True
                         break
                 if has_pending_non_llm_outputs:
@@ -827,6 +833,8 @@ class WorkflowExecutor:
                             continue
                         target_node = self.workflow_graph.get(target_node_id, {})
                         if completed_is_llm and has_pending_non_llm_outputs and target_node.get('type') == 'llm':
+                            continue
+                        if output_type != 'output':
                             continue
                         if self._are_all_dependencies_satisfied(target_node_id, completed_nodes):
                             if target_node_id not in newly_ready:
@@ -892,6 +900,8 @@ class WorkflowExecutor:
                     if not tid:
                         continue
                     tnode = self.workflow_graph.get(tid, {})
+                    if str(inp.get('input_port')) in ('tools', 'context'):
+                        continue
                     if tnode.get('type') != 'llm' and tid not in completed_nodes:
                         return True
             return False
@@ -918,12 +928,18 @@ class WorkflowExecutor:
         
         # For most nodes, check 'output' connections
         # For conditional nodes, this method shouldn't be called (they use branch logic)
+        if 'output' in connections and isinstance(connections.get('output'), list):
+            for connection in connections.get('output'):
+                target_node_id = connection.get('node_id')
+                if target_node_id:
+                    connected_nodes.append(target_node_id)
+            return connected_nodes
         for output_type, output_connections in connections.items():
             for connection in output_connections:
                 target_node_id = connection.get('node_id')
                 if target_node_id:
                     connected_nodes.append(target_node_id)
-                    
+        
         return connected_nodes
     
     def _are_all_dependencies_satisfied(self, node_id, completed_nodes):
@@ -964,10 +980,15 @@ class WorkflowExecutor:
             logger.debug(f"No dependencies satisfied for conditional node {node_id}")
             return False
         else:
-            # If node has conditional inputs, only require chosen conditional branch
+            filtered_inputs = []
+            for _inp in inputs:
+                ip = str(_inp.get('input_port'))
+                if ip in ('tools', 'context'):
+                    continue
+                filtered_inputs.append(_inp)
             conditional_required = []
             non_conditional_required = []
-            for input_connection in inputs:
+            for input_connection in filtered_inputs:
                 input_node_id = input_connection.get('from_node')
                 input_node = self.workflow_graph.get(input_node_id, {})
                 if input_node.get('type') == 'conditional':
@@ -991,7 +1012,7 @@ class WorkflowExecutor:
                 vars_snapshot = self.llm_executor.get_all_variables()
             except Exception:
                 vars_snapshot = {}
-            for input_connection in inputs:
+            for input_connection in filtered_inputs:
                 upstream_id = input_connection.get('from_node')
                 upstream_node = self.workflow_graph.get(upstream_id, {})
                 if upstream_node.get('type') == 'llm':
@@ -1009,7 +1030,7 @@ class WorkflowExecutor:
                 pass
 
             # No conditional inputs: require all inputs completed
-            for input_connection in inputs:
+            for input_connection in filtered_inputs:
                 input_node_id = input_connection.get('from_node')
                 if input_node_id not in completed_nodes:
                     logger.debug(f"Dependency {input_node_id} not satisfied for node {node_id}")

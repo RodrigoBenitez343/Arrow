@@ -456,7 +456,9 @@ class LLMNode(BaseNode):
 
         in_port = _add_multi_input(self, 'input', in_rgb, False)
         tools_port = _add_multi_input(self, 'tools', in_rgb, False)
+        context_in_port = _add_multi_input(self, 'context', in_rgb, False)
         out_port = self.add_output('output', color=out_rgb, display_name=False)
+        context_out_port = self.add_output('context', color=out_rgb, display_name=False)
         try:
             in_port.set_multi_connection(True)
         except Exception:
@@ -472,10 +474,24 @@ class LLMNode(BaseNode):
             except Exception:
                 pass
         try:
+            context_in_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(context_in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
             out_port.set_multi_connection(True)
         except Exception:
             try:
                 setattr(out_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            context_out_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(context_out_port, '_multi_connection', True)
             except Exception:
                 pass
         
