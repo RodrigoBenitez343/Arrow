@@ -1,9 +1,10 @@
 # dialogs/fallback_dialogs.py
 
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 import json
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
-                             QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog)
+                             QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QWidget, QFileDialog)
 from ..constants import TEXT_COLOR
 from ..i18n import _
 
@@ -61,9 +62,9 @@ class ActionFallbackConfigDialog(ModernDialog):
         config_group = QGroupBox(_("Fallback Configuration"))
         config_layout = QVBoxLayout(config_group)
         
-        self.enable_fallback = QCheckBox(_("Enable fallback for this action"))
+        self.enable_fallback = ModernToggle(text=_("Enable fallback for this action"))
         self.enable_fallback.setChecked(self.current_fallback is not None)
-        self.enable_fallback.toggled.connect(self.on_fallback_enabled)
+        self.enable_fallback.stateChanged.connect(self.on_fallback_enabled)
         config_layout.addWidget(self.enable_fallback)
         
         # Fallback sequence selection

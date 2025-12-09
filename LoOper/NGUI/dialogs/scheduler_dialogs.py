@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
-    QWidget, QComboBox, QSpinBox, QCheckBox, QTimeEdit, QDateTimeEdit, QFileDialog, QMessageBox, QLineEdit,
+    QWidget, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit, QFileDialog, QMessageBox, QLineEdit,
     QGroupBox, QFrame
 )
 from PyQt5.QtCore import QTime, QDateTime, Qt
@@ -8,22 +8,43 @@ from ..constants import (
     DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, RED_PRIMARY
 )
 from ..i18n import _
+from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 
 
-class SchedulerManagerDialog(QDialog):
+class SchedulerManagerDialog(ModernDialog):
     def __init__(self, parent, scheduler_service):
-        super().__init__(parent)
-        self.setWindowTitle(_("Manage Schedules"))
+        super().__init__(parent, title=_("Manage Schedules"))
         self.scheduler = scheduler_service
-        self.resize(720, 420)
+        self.resize(800, 500)  # Slightly larger default
         self.setMinimumSize(600, 400)
         
-        # Apply consistent dark theme styling
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {DARK_GREY};
-                color: {TEXT_COLOR};
-            }}
+        layout = self.content_layout
+        # layout.setContentsMargins(15, 15, 15, 15) # ModernDialog handles this
+        # layout.setSpacing(15)
+
+        # Table
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Actions")
+        ])
+        # Set column widths for better visibility
+        self.table.setColumnWidth(0, 60)   # Enabled
+        self.table.setColumnWidth(1, 120)  # Name
+        self.table.setColumnWidth(2, 80)   # Type
+        self.table.setColumnWidth(3, 140)  # When
+        self.table.setColumnWidth(4, 130)  # Next Run
+        self.table.setColumnWidth(5, 180)  # Chain
+        self.table.setColumnWidth(6, 180)  # Actions
+        
+        # Enable alternating row colors for better readability
+        self.table.setAlternatingRowColors(True)
+        # Selection behavior
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        
+        # Restore specific table styling for headers and items
+        self.table.setStyleSheet(f"""
             QTableWidget {{
                 background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
@@ -46,59 +67,8 @@ class SchedulerManagerDialog(QDialog):
                 border: 1px solid {LIGHT_GREY};
                 font-weight: bold;
             }}
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {BLOCK_HOVER};
-                border-color: {TEXT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background-color: {LIGHT_GREY};
-            }}
-            QCheckBox {{
-                color: {TEXT_COLOR};
-                spacing: 5px;
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 2px solid {LIGHT_GREY};
-                border-radius: 3px;
-                background-color: {MEDIUM_GREY};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {RED_PRIMARY};
-                border-color: {RED_PRIMARY};
-            }}
         """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
-
-        # Table
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels([
-            _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Actions")
-        ])
-        # Set column widths for better visibility
-        self.table.setColumnWidth(0, 80)   # Enabled
-        self.table.setColumnWidth(1, 120)  # Name
-        self.table.setColumnWidth(2, 80)   # Type
-        self.table.setColumnWidth(3, 150)  # When
-        self.table.setColumnWidth(4, 130)  # Next Run
-        self.table.setColumnWidth(5, 200)  # Chain
-        self.table.setColumnWidth(6, 200)  # Actions
         
-        # Enable alternating row colors for better readability
-        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table)
 
         # Buttons
@@ -145,10 +115,16 @@ class SchedulerManagerDialog(QDialog):
         self.table.insertRow(row)
 
         # Enabled checkbox
-        enabled_cb = QCheckBox()
+        # Center the checkbox
+        cell_widget = QWidget()
+        chk_layout = QHBoxLayout(cell_widget)
+        chk_layout.setContentsMargins(0,0,0,0)
+        chk_layout.setAlignment(Qt.AlignCenter)
+        enabled_cb = ModernToggle()
         enabled_cb.setChecked(s.get('enabled', True))
         enabled_cb.stateChanged.connect(lambda state, sid=s['id']: self._toggle_enabled(sid, state == 2))
-        self.table.setCellWidget(row, 0, enabled_cb)
+        chk_layout.addWidget(enabled_cb)
+        self.table.setCellWidget(row, 0, cell_widget)
 
         # Name
         name_item = QTableWidgetItem(s.get('name') or s.get('id')[:8])
@@ -277,88 +253,14 @@ class SchedulerManagerDialog(QDialog):
         return '—'
 
 
-class EditScheduleDialog(QDialog):
+class EditScheduleDialog(ModernDialog):
     def __init__(self, parent, schedule=None):
-        super().__init__(parent)
-        self.setWindowTitle(_("Schedule Configuration"))
-        self.resize(580, 450)
-        self.setMinimumSize(500, 400)
+        super().__init__(parent, title=_("Schedule Configuration"))
+        self.resize(580, 500)
+        self.setMinimumSize(500, 450)
         self._schedule = schedule or {}
         
-        # Apply consistent dark theme styling
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {DARK_GREY};
-                color: {TEXT_COLOR};
-            }}
-            QGroupBox {{
-                font-weight: bold;
-                border: 2px solid {LIGHT_GREY};
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
-                background-color: {MEDIUM_GREY};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: {TEXT_COLOR};
-            }}
-            QLabel {{
-                color: {TEXT_COLOR};
-                font-weight: normal;
-                padding: 2px;
-            }}
-            QLineEdit, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 4px;
-                padding: 6px;
-                min-height: 20px;
-            }}
-            QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QTimeEdit:focus, QDateTimeEdit:focus {{
-                border-color: {RED_PRIMARY};
-                background-color: {BLOCK_HOVER};
-            }}
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {BLOCK_HOVER};
-                border-color: {TEXT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background-color: {LIGHT_GREY};
-            }}
-            QCheckBox {{
-                color: {TEXT_COLOR};
-                spacing: 5px;
-                padding: 2px;
-            }}
-            QCheckBox::indicator {{
-                width: 16px;
-                height: 16px;
-                border: 2px solid {LIGHT_GREY};
-                border-radius: 3px;
-                background-color: {MEDIUM_GREY};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {RED_PRIMARY};
-                border-color: {RED_PRIMARY};
-            }}
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
+        layout = self.content_layout
 
         # Basic Configuration Group
         basic_group = QGroupBox(_("📋 Basic Configuration"))
@@ -454,7 +356,7 @@ class EditScheduleDialog(QDialog):
         days_label = QLabel(_("Days of week:"))
         weekly_layout.addWidget(days_label)
         days_row = QHBoxLayout()
-        self.weekly_days = [QCheckBox(_(d)) for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]]
+        self.weekly_days = [ModernToggle(_(d)) for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]]
         for cb in self.weekly_days:
             days_row.addWidget(cb)
         days_row.addStretch()
@@ -571,7 +473,7 @@ class EditScheduleDialog(QDialog):
         self.interval_row_w.setVisible(t == 'interval')
 
     def _select_chain(self):
-        path, _ = QFileDialog.getOpenFileName(
+        path, _filter = QFileDialog.getOpenFileName(
             self, 
             _("Select Chain JSON File"), 
             "", 

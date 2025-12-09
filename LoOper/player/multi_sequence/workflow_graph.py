@@ -41,7 +41,8 @@ class WorkflowGraphBuilder:
                 elif 'connections' in sequence:
                     # Convert connections format to outputs format
                     output_connections = [{
-                        'node_id': conn['target_node_id']
+                        'node_id': conn['target_node_id'],
+                        'input_port': conn.get('input_port')
                     } for conn in sequence.get('connections', [])]
                 else:
                     output_connections = []
@@ -72,9 +73,9 @@ class WorkflowGraphBuilder:
                 false_connections = []
                 for conn in conditional.get('connections', []):
                     if conn.get('output_port') == 'true':
-                        true_connections.append({'node_id': conn['target_node_id']})
+                        true_connections.append({'node_id': conn['target_node_id'], 'input_port': conn.get('input_port')})
                     elif conn.get('output_port') == 'false':
-                        false_connections.append({'node_id': conn['target_node_id']})
+                        false_connections.append({'node_id': conn['target_node_id'], 'input_port': conn.get('input_port')})
             else:
                 true_connections = []
                 false_connections = []
@@ -97,7 +98,7 @@ class WorkflowGraphBuilder:
             if isinstance(llm_node.get('outputs'), dict):
                 output_connections = llm_node.get('outputs', {}).get('output', []) or []
             elif isinstance(llm_node.get('connections'), list):
-                output_connections = [{ 'node_id': conn.get('target_node_id') } for conn in llm_node.get('connections', []) if conn.get('target_node_id')]
+                output_connections = [{ 'node_id': conn.get('target_node_id'), 'input_port': conn.get('input_port') } for conn in llm_node.get('connections', []) if conn.get('target_node_id')]
             graph[node_id] = {
                 'type': 'llm',
                 'data': llm_node,
@@ -111,7 +112,8 @@ class WorkflowGraphBuilder:
             node_id = tts_node.get('id') or tts_node.get('node_id')
             # Convert connections format to outputs format for TTS nodes
             output_connections = [{
-                'node_id': conn['target_node_id']
+                'node_id': conn['target_node_id'],
+                'input_port': conn.get('input_port')
             } for conn in tts_node.get('connections', [])]
             
             graph[node_id] = {
@@ -127,15 +129,34 @@ class WorkflowGraphBuilder:
             node_id = chain_import_node.get('id') or chain_import_node.get('node_id')
             # Convert connections format to outputs format for chain import nodes
             output_connections = [{
-                'node_id': conn['target_node_id']
+                'node_id': conn['target_node_id'],
+                'input_port': conn.get('input_port')
             } for conn in chain_import_node.get('connections', [])]
-            
+            # Detect if this chain import acts purely as a tool provider to an LLM
+            tool_provider = False
+            try:
+                if output_connections:
+                    all_tools = True
+                    for conn in output_connections:
+                        tid = conn.get('node_id')
+                        if not tid:
+                            all_tools = False
+                            break
+                        target = graph.get(tid, {})
+                        if target.get('type') != 'llm' or str(conn.get('input_port')) != 'tools':
+                            all_tools = False
+                            break
+                    tool_provider = all_tools
+            except Exception:
+                tool_provider = False
             graph[node_id] = {
                 'type': 'chain_import',
                 'data': chain_import_node,
                 'connections': {
                     'output': output_connections
-                }
+                },
+                'tool_provider': tool_provider,
+                'selected_by_llm': False
             }
         
         # Build connections from conditional outputs to other nodes
@@ -173,7 +194,8 @@ class WorkflowGraphBuilder:
                                 graph[target_node_id]['inputs'] = []
                             graph[target_node_id]['inputs'].append({
                                 'from_node': llm_id,
-                                'output_type': output_name
+                                'output_type': output_name,
+                                'input_port': connection.get('input_port')
                             })
         
         # Build connections from TTS node outputs to other nodes
@@ -193,7 +215,8 @@ class WorkflowGraphBuilder:
                                 graph[target_node_id]['inputs'] = []
                             graph[target_node_id]['inputs'].append({
                                 'from_node': tts_id,
-                                'output_type': output_name
+                                'output_type': output_name,
+                                'input_port': connection.get('input_port')
                             })
         
         # Build connections from chain import node outputs to other nodes
@@ -213,7 +236,8 @@ class WorkflowGraphBuilder:
                                 graph[target_node_id]['inputs'] = []
                             graph[target_node_id]['inputs'].append({
                                 'from_node': chain_import_id,
-                                'output_type': output_name
+                                'output_type': output_name,
+                                'input_port': connection.get('input_port')
                             })
 
         # Build connections from sequence node outputs to other nodes
@@ -226,7 +250,6 @@ class WorkflowGraphBuilder:
                 if sequence_id in graph:
                     sequence_graph_node = graph[sequence_id]
                     connections = sequence_graph_node['connections']
-                    
                     for output_name, output_connections in connections.items():
                         for connection in output_connections:
                             target_node_id = connection['node_id']
@@ -234,9 +257,10 @@ class WorkflowGraphBuilder:
                                 if 'inputs' not in graph[target_node_id]:
                                     graph[target_node_id]['inputs'] = []
                                 graph[target_node_id]['inputs'].append({
-                                     'from_node': sequence_id,
-                                     'output_type': output_name
-                                 })
+                                    'from_node': sequence_id,
+                                    'output_type': output_name,
+                                    'input_port': connection.get('input_port')
+                                })
         
         # Process input connections for all node types
         # Handle sequence node inputs
@@ -651,6 +675,16 @@ class WorkflowExecutor:
                     if newly_ready:
                         logger.info(f"Additional nodes now ready for execution: {newly_ready}")
                     logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
+                    # If LLM selected a specific tool node, prioritize scheduling it
+                    try:
+                        sel = getattr(self, '_llm_selected_next', None)
+                        self._llm_selected_next = None
+                        if sel and sel in self.workflow_graph and sel not in completed_nodes:
+                            if self._are_all_dependencies_satisfied(sel, completed_nodes):
+                                ready_nodes.add(sel)
+                                logger.info(f"Selected tool node {sel} is now ready for execution")
+                    except Exception:
+                        pass
                 else:
                     # Standard handling for non-conditional, non-LLM nodes
                     next_nodes = self._get_output_connected_nodes(current_node_id)
@@ -694,8 +728,32 @@ class WorkflowExecutor:
         
         for node_id, node_data in self.workflow_graph.items():
             if 'inputs' not in node_data or not node_data['inputs']:
+                # Skip chain import nodes that act as tool providers
+                if node_data.get('type') == 'chain_import' and node_data.get('tool_provider') and not node_data.get('selected_by_llm'):
+                    logger.debug(f"Skipping tool-provider chain import from starting nodes: {node_id}")
+                    continue
                 starting_nodes.append(node_id)
                 logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
+
+        if not starting_nodes:
+            for node_id, node_data in self.workflow_graph.items():
+                if node_data.get('type') != 'llm':
+                    continue
+                inputs = node_data.get('inputs', []) or []
+                if not inputs:
+                    continue
+                all_tools = True
+                for inp in inputs:
+                    if str(inp.get('input_port')) != 'tools':
+                        all_tools = False
+                        break
+                    src = self.workflow_graph.get(inp.get('from_node'), {})
+                    if src.get('type') != 'chain_import' or not src.get('tool_provider'):
+                        all_tools = False
+                        break
+                if all_tools:
+                    starting_nodes.append(node_id)
+                    logger.info(f"Treating LLM {node_id} as starting node due to tool-only inputs")
         
         return starting_nodes
 
@@ -889,6 +947,10 @@ class WorkflowExecutor:
         logger.debug(f"Node {node_id} inputs: {inputs}")
         
         if not inputs:
+            # Tool-provider chain imports must be explicitly selected by an LLM before ready
+            if node.get('type') == 'chain_import' and node.get('tool_provider') and not node.get('selected_by_llm'):
+                logger.debug(f"Node {node_id} is a tool-provider and not selected; not ready")
+                return False
             logger.debug(f"Node {node_id} has no inputs, marking as ready")
             return True
 
@@ -1060,6 +1122,17 @@ class WorkflowExecutor:
 
         # Use the LLMExecutor to handle LLM execution and return its decision on next node
         next_node_id = self.llm_executor.execute_llm_node(node_to_execute, stop_flag, action_handlers)
+        try:
+            self._llm_selected_next = None
+            if next_node_id and next_node_id in self.workflow_graph:
+                # Mark selected tool node to allow scheduling
+                target_node = self.workflow_graph.get(next_node_id, {})
+                if target_node.get('type') == 'chain_import' and target_node.get('tool_provider'):
+                    target_node['selected_by_llm'] = True
+                self._llm_selected_next = next_node_id
+                logger.info(f"LLM selected next node: {next_node_id}")
+        except Exception:
+            pass
         return next_node_id
     
     def _execute_tts_node(self, node, stop_flag):

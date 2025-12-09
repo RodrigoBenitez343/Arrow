@@ -10,15 +10,16 @@ import os
 import json
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
-    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog,
+    QComboBox, QSpinBox, QDoubleSpinBox, QWidget, QFileDialog,
     QTabWidget, QListWidgetItem, QTextEdit, QGroupBox, QListWidget,
-    QDialogButtonBox, QGridLayout, QRadioButton, QButtonGroup
+    QDialogButtonBox, QGridLayout, QRadioButton, QButtonGroup, QInputDialog
 )
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from .utils import get_default_api_url
 from ..i18n import _
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 
 # Add the parent directory to sys.path to import AI modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -67,34 +68,13 @@ class LLMPropertiesDialog(ModernDialog):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
         self.tab_widget = QTabWidget()
-        # Stylesheet removed as ModernDialog handles it, or keep specific overrides?
-        # Keeping overrides for tab widget as ModernDialog might not cover everything specifically enough
-        self.tab_widget.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #555;
-                background-color: #2b2b2b;
-            }
-            QTabBar::tab {
-                background-color: #3c3c3c;
-                color: #ffffff;
-                padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected {
-                background-color: #4a4a4a;
-                border-bottom: 2px solid #0078d4;
-            }
-            QTabBar::tab:hover {
-                background-color: #404040;
-            }
-        """)
+        # Stylesheet removed as ModernDialog handles it
         self.create_basic_tab()
         self.create_prompt_tab()
         self.create_advanced_tab()
         self.create_features_tab()
         self.create_rag_tab()
+        self.create_tools_tab()
         layout.addWidget(self.tab_widget)
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_btn = button_box.button(QDialogButtonBox.Ok)
@@ -193,7 +173,8 @@ class LLMPropertiesDialog(ModernDialog):
             "ComoRAG Analysis",
             "Data Processing Chain",
             "Text Analysis",
-            "Content Summarization"
+            "Content Summarization",
+            "Tool Selection (LLM Tools)"
         ])
         self.template_combo.currentTextChanged.connect(self.apply_template)
         template_layout.addWidget(self.template_combo)
@@ -322,7 +303,7 @@ class LLMPropertiesDialog(ModernDialog):
         
         # Write text option
         output_layout.addWidget(QLabel(_("Write Text:")), 0, 0)
-        self.write_text_checkbox = QCheckBox(_("Automatically write generated text"))
+        self.write_text_checkbox = ModernToggle(text=_("Automatically write generated text"))
         self.write_text_checkbox.setChecked(True)
         output_layout.addWidget(self.write_text_checkbox, 0, 1)
         
@@ -356,7 +337,7 @@ class LLMPropertiesDialog(ModernDialog):
         
         # Use async checkbox
         async_layout.addWidget(QLabel(_("Enable Async:")), 0, 0)
-        self.use_async_checkbox = QCheckBox(_("Process requests asynchronously"))
+        self.use_async_checkbox = ModernToggle(text=_("Process requests asynchronously"))
         self.use_async_checkbox.setChecked(True)
         self.use_async_checkbox.setToolTip(_("Enable asynchronous processing for better performance"))
         async_layout.addWidget(self.use_async_checkbox, 0, 1)
@@ -387,21 +368,27 @@ class LLMPropertiesDialog(ModernDialog):
         
         # Use vision checkbox
         vision_layout.addWidget(QLabel(_("Use Vision:")), 0, 0)
-        self.use_vision_checkbox = QCheckBox(_("Enable vision capabilities for this model"))
+        self.use_vision_checkbox = ModernToggle(text=_("Enable vision capabilities for this model"))
         self.use_vision_checkbox.setChecked(False)
         vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
         
         # Screenshot enabled checkbox
         vision_layout.addWidget(QLabel(_("Screenshot:")), 1, 0)
-        self.screenshot_enabled_checkbox = QCheckBox(_("Take screenshot automatically for vision models"))
+        self.screenshot_enabled_checkbox = ModernToggle(text=_("Take screenshot automatically for vision models"))
         self.screenshot_enabled_checkbox.setChecked(True)
         vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
+
+        # Use advanced vision checkbox
+        vision_layout.addWidget(QLabel(_("Use Advanced Vision:")), 2, 0)
+        self.use_advanced_vision_checkbox = ModernToggle(text=_("Enable YOLO object detection + OCR"))
+        self.use_advanced_vision_checkbox.setChecked(False)
+        vision_layout.addWidget(self.use_advanced_vision_checkbox, 2, 1)
         
         # Add help text
-        help_label = QLabel(_("Note: Vision models can analyze screenshots along with text prompts."))
+        help_label = QLabel(_("Note: Vision models can analyze screenshots. Advanced vision uses YOLO+OCR."))
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        vision_layout.addWidget(help_label, 2, 0, 1, 2)
+        vision_layout.addWidget(help_label, 3, 0, 1, 2)
         
         layout.addWidget(vision_group)
         
@@ -413,7 +400,7 @@ class LLMPropertiesDialog(ModernDialog):
         
         # Enable ComoRAG checkbox
         comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
-        self.use_comorag_checkbox = QCheckBox("Use context-aware reasoning with OverWatch")
+        self.use_comorag_checkbox = ModernToggle(text="Use context-aware reasoning with OverWatch")
         self.use_comorag_checkbox.setChecked(True)
         comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
         
@@ -483,7 +470,8 @@ class LLMPropertiesDialog(ModernDialog):
             "ComoRAG Analysis",
             "Data Processing Chain",
             "Text Analysis",
-            "Content Summarization"
+            "Content Summarization",
+            "Tool Selection (LLM Tools)"
         ])
         self.template_combo.currentTextChanged.connect(self.apply_template)
         template_layout.addWidget(self.template_combo)
@@ -550,6 +538,7 @@ class LLMPropertiesDialog(ModernDialog):
             
             # Features tab settings
             self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
+            self.use_advanced_vision_checkbox.setChecked(self.current_config.get('use_advanced_vision', False))
             self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
@@ -642,6 +631,14 @@ class LLMPropertiesDialog(ModernDialog):
                 "input_source": 1,  # OCR
                 "ocr_confidence": 0.7,
                 "output_variable": "summary"
+            },
+            "Tool Selection (LLM Tools)": {
+                "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions. When a tool is needed, respond ONLY with 'USE_TOOL:<id>' and nothing else.",
+                "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
+                "temperature": 0.1,
+                "max_tokens": 150,
+                "input_source": 0,
+                "output_variable": "llm_output"
             }
         }
         
@@ -689,10 +686,7 @@ class LLMPropertiesDialog(ModernDialog):
         
         # Show/hide OCR configuration
         ocr_visible = (input_source == 1)  # OCR
-        self.ocr_confidence_label.setVisible(ocr_visible)
-        self.ocr_confidence_spin.setVisible(ocr_visible)
-        self.ocr_preprocessing_label.setVisible(ocr_visible)
-        self.ocr_preprocessing_combo.setVisible(ocr_visible)
+        self.ocr_config_widget.setVisible(ocr_visible)
         # Show/hide previous input mode controls
         self.previous_mode_widget.setVisible(input_source == 2)
         
@@ -722,7 +716,8 @@ class LLMPropertiesDialog(ModernDialog):
             "ComoRAG Analysis": "Use ComoRAG for context-aware analysis with memory and reasoning.",
             "Data Processing Chain": "Process data from previous nodes in a multi-step workflow.",
             "Text Analysis": "Analyze text content from clipboard with detailed insights.",
-            "Content Summarization": "Summarize content extracted from screen using OCR."
+            "Content Summarization": "Summarize content extracted from screen using OCR.",
+            "Tool Selection (LLM Tools)": "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'."
         }
         self.template_description.setText(descriptions.get(template_name, ""))
       
@@ -739,6 +734,7 @@ class LLMPropertiesDialog(ModernDialog):
             'write_text': self.write_text_checkbox.isChecked(),
             'use_async': self.use_async_checkbox.isChecked(),
             'use_vision': self.use_vision_checkbox.isChecked(),
+            'use_advanced_vision': self.use_advanced_vision_checkbox.isChecked(),
             'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
             
             # Typing speed parameters
@@ -780,6 +776,16 @@ class LLMPropertiesDialog(ModernDialog):
             'rag_max_chars': self.rag_max_chars_spin.value(),
             'rag_documents': [self.rag_documents_list.item(i).text() for i in range(self.rag_documents_list.count())]
         })
+        td = {}
+        try:
+            for i in range(self.tools_list.count()):
+                txt = self.tools_list.item(i).text()
+                if ':' in txt:
+                    k, v = txt.split(':', 1)
+                    td[k.strip()] = v.strip()
+        except Exception:
+            td = {}
+        config['tool_descriptions'] = td
         return config
 
     def create_rag_tab(self):
@@ -792,7 +798,7 @@ class LLMPropertiesDialog(ModernDialog):
         params_layout.setContentsMargins(8, 12, 8, 8)
         params_layout.setSpacing(6)
         params_layout.addWidget(QLabel("Enable RAG:"), 0, 0)
-        self.use_direct_rag_checkbox = QCheckBox("Use embeddings to add context")
+        self.use_direct_rag_checkbox = ModernToggle(text="Use embeddings to add context")
         self.use_direct_rag_checkbox.setChecked(True)
         params_layout.addWidget(self.use_direct_rag_checkbox, 0, 1)
         params_layout.addWidget(QLabel("Embedding Model:"), 1, 0)
@@ -815,7 +821,7 @@ class LLMPropertiesDialog(ModernDialog):
         self.rag_top_k_spin.setValue(3)
         params_layout.addWidget(self.rag_top_k_spin, 4, 1)
         params_layout.addWidget(QLabel("Include Raw Input:"), 5, 0)
-        self.rag_include_raw_input_checkbox = QCheckBox("Also include raw previous input")
+        self.rag_include_raw_input_checkbox = ModernToggle(text="Also include raw previous input")
         params_layout.addWidget(self.rag_include_raw_input_checkbox, 5, 1)
         params_layout.addWidget(QLabel("Max Context Chars:"), 6, 0)
         self.rag_max_chars_spin = QSpinBox()
@@ -838,6 +844,109 @@ class LLMPropertiesDialog(ModernDialog):
         layout.addWidget(docs_group)
         layout.addStretch()
         self.tab_widget.addTab(rag_tab, "RAG")
+
+    def create_tools_tab(self):
+        tools_tab = QWidget()
+        layout = QVBoxLayout(tools_tab)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        group = QGroupBox(_("Tools Configuration"))
+        gl = QGridLayout(group)
+        gl.setContentsMargins(8, 12, 8, 8)
+        gl.setSpacing(6)
+        self.tools_list = QListWidget()
+        gl.addWidget(QLabel(_("Connected Tools (id: description)")), 0, 0, 1, 2)
+        gl.addWidget(self.tools_list, 1, 0, 1, 2)
+        gl.addWidget(QLabel(_("Tool ID")), 2, 0)
+        self.tool_id_entry = QLineEdit()
+        gl.addWidget(self.tool_id_entry, 2, 1)
+        gl.addWidget(QLabel(_("Description")), 3, 0)
+        self.tool_desc_entry = QLineEdit()
+        gl.addWidget(self.tool_desc_entry, 3, 1)
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton(_("Add/Update"))
+        rem_btn = QPushButton(_("Remove Selected"))
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(rem_btn)
+        gl.addLayout(btn_row, 4, 0, 1, 2)
+        layout.addWidget(group)
+        layout.addStretch()
+        self.tab_widget.addTab(tools_tab, _("Tools"))
+        def on_add():
+            try:
+                tid = self.tool_id_entry.text().strip()
+                desc = self.tool_desc_entry.text().strip()
+                if not tid:
+                    return
+                row_text = f"{tid}: {desc}" if desc else tid
+                found = None
+                for i in range(self.tools_list.count()):
+                    if self.tools_list.item(i).text().startswith(tid+":") or self.tools_list.item(i).text() == tid:
+                        found = i
+                        break
+                if found is not None:
+                    self.tools_list.item(found).setText(row_text)
+                else:
+                    self.tools_list.addItem(row_text)
+            except Exception:
+                pass
+        def on_remove():
+            try:
+                row = self.tools_list.currentRow()
+                if row >= 0:
+                    self.tools_list.takeItem(row)
+            except Exception:
+                pass
+        def on_select():
+            try:
+                row = self.tools_list.currentRow()
+                if row >= 0:
+                    txt = self.tools_list.item(row).text()
+                    if ':' in txt:
+                        tid, desc = txt.split(':', 1)
+                        self.tool_id_entry.setText(tid.strip())
+                        self.tool_desc_entry.setText(desc.strip())
+                    else:
+                        self.tool_id_entry.setText(txt.strip())
+                        self.tool_desc_entry.setText("")
+            except Exception:
+                pass
+        def on_double_click(item):
+            try:
+                txt = item.text()
+                if ':' in txt:
+                    tid, desc = txt.split(':', 1)
+                else:
+                    tid, desc = txt, ''
+                new_desc, ok = QInputDialog.getText(self, _("Edit Description"), _("Description for {id}").format(id=tid.strip()), text=desc.strip())
+                if ok:
+                    new_txt = f"{tid.strip()}: {new_desc.strip()}"
+                    item.setText(new_txt)
+                    self.tool_id_entry.setText(tid.strip())
+                    self.tool_desc_entry.setText(new_desc.strip())
+            except Exception:
+                pass
+        try:
+            self.tool_id_entry.setReadOnly(True)
+        except Exception:
+            pass
+        try:
+            self.tools_list.setSelectionMode(QListWidget.SingleSelection)
+        except Exception:
+            pass
+        add_btn.clicked.connect(on_add)
+        rem_btn.clicked.connect(on_remove)
+        self.tools_list.itemSelectionChanged.connect(on_select)
+        self.tools_list.itemDoubleClicked.connect(on_double_click)
+
+    def load_tool_descriptions(self, mapping):
+        try:
+            self.tools_list.clear()
+            if isinstance(mapping, dict):
+                for k, v in mapping.items():
+                    self.tools_list.addItem(f"{k}: {v}")
+        except Exception:
+            pass
 
     def add_document(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -928,6 +1037,15 @@ class LLMPropertiesDialog(ModernDialog):
                 "use_comorag": False,
                 "ocr_confidence": 0.6,
                 "ocr_preprocessing": "Clean formatting"
+            },
+            "Tool Selection (LLM Tools)": {
+                "description": "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'.",
+                "input_source": 0,
+                "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions. When a tool is needed, respond ONLY with 'USE_TOOL:<id>' and nothing else.",
+                "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
+                "temperature": 0.1,
+                "max_tokens": 150,
+                "use_comorag": False
             }
         }
         

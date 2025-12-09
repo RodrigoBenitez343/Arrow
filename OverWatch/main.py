@@ -139,6 +139,13 @@ class ComoRAGRequest(BaseModel):
     images: Optional[List[str]] = Field(None, description="Base64 encoded images for vision analysis")
 
 
+class ComoRAGAddMemoryRequest(BaseModel):
+    content: str = Field(..., description="Memory content")
+    source: str = Field("external", description="Source of memory")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    image_data: Optional[str] = Field(None, description="Base64 encoded image data")
+
+
 class EmbeddingsRequest(BaseModel):
     model: str = Field(..., description="Model name")
     inputs: List[str] = Field(..., description="List of input texts")
@@ -557,28 +564,29 @@ async def generate_stream(request: GenerateRequest):
 async def cleanup_endpoint(body: Dict[str, Any]):
     try:
         all_flag = bool(body.get("all", False))
-        model = body.get("model")
-        retries = int(body.get("retries", 3))
-        wait_s = float(body.get("wait", 0.5))
-        if all_flag or not model:
-            ok = _ow_cleanup_all(max_passes=retries, wait_s=wait_s)
-            return {"ok": ok}
+        if all_flag:
+            success = _ow_cleanup_all()
         else:
-            ok = _ow_cleanup_model(model, max_passes=retries, wait_s=wait_s)
-            return {"ok": ok, "model": model}
+            model = body.get("model")
+            if model:
+                success = _ow_cleanup_model(model)
+            else:
+                success = False
+        return {"status": "success" if success else "failed"}
     except Exception as e:
         logger.error(f"Cleanup failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ComoRAG Specific Endpoints
 @app.post("/comorag/reason")
-async def comorag_reasoning(request: ComoRAGRequest):
-    """ComoRAG reasoning endpoint"""
+async def comorag_reason(request: ComoRAGRequest):
+    """Perform ComoRAG reasoning"""
     try:
         if not comorag_engine:
             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
         
-        response = await comorag_engine.reason(
+        result = await comorag_engine.reason(
             query=request.query,
             context=request.context,
             model=request.model,
@@ -586,38 +594,55 @@ async def comorag_reasoning(request: ComoRAGRequest):
             memory_size=request.memory_size,
             images=request.images
         )
-        
-        return response
+        return result
     except Exception as e:
         logger.error(f"ComoRAG reasoning failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/comorag/memory")
-async def get_comorag_memory():
+@app.post("/comorag/memory")
+async def comorag_add_memory(request: ComoRAGAddMemoryRequest):
+    """Add memory to ComoRAG"""
+    try:
+        if not comorag_engine:
+            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+        
+        await comorag_engine.add_memory(
+            content=request.content,
+            source=request.source,
+            metadata=request.metadata,
+            image_data=request.image_data
+        )
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Failed to add memory to ComoRAG: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/comorag/memory/state")
+async def comorag_memory_state():
     """Get ComoRAG memory state"""
     try:
         if not comorag_engine:
             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
         
-        memory_state = await comorag_engine.get_memory_state()
-        return memory_state
+        return await comorag_engine.get_memory_state()
     except Exception as e:
-        logger.error(f"Failed to get ComoRAG memory: {e}")
+        logger.error(f"Failed to get memory state: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/comorag/memory")
-async def clear_comorag_memory():
+async def comorag_clear_memory():
     """Clear ComoRAG memory"""
     try:
         if not comorag_engine:
             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
         
         await comorag_engine.clear_memory()
-        return {"status": "memory_cleared"}
+        return {"status": "success", "message": "Memory cleared"}
     except Exception as e:
-        logger.error(f"Failed to clear ComoRAG memory: {e}")
+        logger.error(f"Failed to clear memory: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

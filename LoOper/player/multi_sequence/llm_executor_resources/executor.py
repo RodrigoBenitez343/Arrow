@@ -23,10 +23,16 @@ class LLMExecutor:
         self.context_db = None
         self._initialize_context_collector()
         self._initialize_context_database()
+        self._rich_console = None
+        try:
+            from rich.console import Console
+            self._rich_console = Console()
+        except Exception:
+            self._rich_console = None
 
     def _initialize_context_collector(self) -> None:
         try:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             if project_root not in sys.path:
                 sys.path.append(project_root)
             from AI.context_collector import ContextCollector  # noqa: F401
@@ -36,7 +42,7 @@ class LLMExecutor:
 
     def _initialize_context_database(self) -> None:
         try:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             if project_root not in sys.path:
                 sys.path.append(project_root)
             from AI.context_database import ContextDatabase  # noqa: F401
@@ -56,7 +62,7 @@ class LLMExecutor:
             return None
 
         try:
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
             if project_root not in sys.path:
                 sys.path.append(project_root)
             from AI.consult import OllamaClient
@@ -77,6 +83,7 @@ class LLMExecutor:
         output_variable = llm_config.get('output_variable', 'llm_output')
         write_text = llm_config.get('write_text', True)
         use_vision = llm_config.get('use_vision', False)
+        use_advanced_vision = str(llm_config.get('use_advanced_vision', 'false')).lower() in ('true', '1', 'yes', 'on')
         screenshot_enabled = llm_config.get('screenshot_enabled', True)
 
         # Auto-detect concatenation: if this node has any inputs in the workflow graph,
@@ -89,6 +96,44 @@ class LLMExecutor:
         except Exception:
             connected_ids = []
         has_previous_llm_output = any(f"node_{cid}_output" in self.variables for cid in connected_ids)
+
+        tool_inputs = []
+        try:
+            tool_inputs = [inp for inp in node_inputs if isinstance(inp, dict) and str(inp.get('input_port','')) == 'tools']
+        except Exception:
+            tool_inputs = []
+        tool_ids = []
+        try:
+            tool_ids = [inp.get('from_node') for inp in tool_inputs if inp.get('from_node')]
+        except Exception:
+            tool_ids = []
+        tool_desc_map = {}
+        try:
+            import json as _json
+            raw_td = llm_config.get('tool_descriptions') or {}
+            if isinstance(raw_td, str):
+                raw_td = _json.loads(raw_td)
+            if isinstance(raw_td, dict):
+                tool_desc_map = raw_td
+        except Exception:
+            tool_desc_map = {}
+        if tool_ids:
+            try:
+                lines = ["Available Tools:"]
+                for tid in tool_ids:
+                    desc = tool_desc_map.get(tid, '')
+                    if desc:
+                        lines.append(f"- {tid}: {desc}")
+                    else:
+                        lines.append(f"- {tid}")
+                lines.append("Tool Usage Guide:")
+                lines.append("- Choose exactly one tool id.")
+                lines.append("- Respond ONLY with 'USE_TOOL:<id>' with no other text.")
+                lines.append("- Do not explain or add anything else.")
+                extra = "\n".join(lines)
+                system_message = (system_message + "\n\n" + extra).strip()
+            except Exception:
+                pass
 
         configured_input_source = (llm_config.get('input_source', 'none') or 'none')
         input_source = configured_input_source
@@ -123,6 +168,20 @@ class LLMExecutor:
         logger.info(f"  Write Text: {write_text}")
         logger.info(f"  Use Vision: {use_vision}")
         logger.info(f"  Screenshot Enabled: {screenshot_enabled}")
+        try:
+            if self._rich_console:
+                self._rich_console.rule("[bold yellow]LLM Request")
+                self._rich_console.print(f"[bold]Model:[/] {model}  [bold]API:[/] {api_url}")
+                self._rich_console.print("[bold cyan]System Message:[/]\n" + (system_message or ""))
+                self._rich_console.print("[bold cyan]Prompt:[/]\n" + prompt)
+                if tool_ids:
+                    tool_lines = []
+                    for tid in tool_ids:
+                        d = tool_desc_map.get(tid, '')
+                        tool_lines.append(f"- {tid}: {d}" if d else f"- {tid}")
+                    self._rich_console.print("[bold cyan]Tools:[/]\n" + "\n".join(tool_lines))
+        except Exception:
+            pass
 
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request during configuration")
@@ -254,6 +313,83 @@ class LLMExecutor:
                 rag_max_chars,
             )
 
+        if use_advanced_vision:
+            logger.info("Advanced Vision enabled. Starting analysis...")
+            try:
+                # Pre-check for torch to avoid WinError 1114 hard crash
+                try:
+                    import torch
+                except ImportError:
+                    logger.warning("Torch not found. Skipping Advanced Vision to avoid crash.")
+                    raise Exception("Torch not found")
+                except Exception as e:
+                    logger.warning(f"Torch import failed ({e}). Skipping Advanced Vision to avoid crash.")
+                    raise e
+
+                # Calculate path to Computer_vision module
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                # executor.py is in LoOper/player/multi_sequence/llm_executor_resources/
+                # We need LoOper/player/Computer_vision/
+                # Up 3 levels to LoOper/player
+                looper_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+                cv_dir = os.path.join(looper_root, "player", "Computer_vision")
+                
+                if cv_dir not in sys.path:
+                    sys.path.append(cv_dir)
+                
+                import model_vision
+                import json as _json
+                
+                model_path = os.path.join(cv_dir, "Computer_Vision_1.5.3.onnx")
+                if not os.path.exists(model_path):
+                    logger.warning(f"Vision model not found at {model_path}")
+                else:
+                    # Initialize vision
+                    vision_instance = model_vision.Vision(model_path)
+                    
+                    # Analyze screen (using monitor 1 as default)
+                    vision_data = vision_instance.analyze_single_frame(1)
+                    
+                    # Serialize to JSON
+                    vision_text = _json.dumps(vision_data, indent=2)
+                    
+                    # Integrate with ComoRAG if enabled
+                    vision_integrated = False
+                    if use_comorag and emb_client:
+                        logger.info("Injecting Advanced Vision data into ComoRAG memory...")
+                        try:
+                            # Create a descriptive content string
+                            memory_content = f"Real-time Screen Analysis (YOLO+OCR):\n{vision_text}"
+                            
+                            # Add to memory
+                            success = emb_client.add_memory(
+                                content=memory_content,
+                                source="advanced_vision",
+                                metadata={
+                                    "timestamp": time.time(), 
+                                    "type": "yolo_ocr_analysis",
+                                    "monitor": 1
+                                }
+                            )
+                            
+                            if success:
+                                logger.info("Successfully added vision data to ComoRAG memory.")
+                                vision_integrated = True
+                            else:
+                                logger.warning("Failed to add vision data to ComoRAG memory.")
+                        except Exception as mem_err:
+                            logger.error(f"Error adding to ComoRAG memory: {mem_err}")
+                    
+                    if not vision_integrated:
+                        # Fallback to prompt injection
+                        prompt = f"Screen Analysis Data (Objects, Text, Interactions):\n{vision_text}\n\n{prompt}"
+                        logger.info("Advanced Vision data injected into prompt.")
+                    
+            except Exception as e:
+                logger.error(f"Advanced Vision execution failed: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
         def _is_vision_model_name(name: str) -> bool:
             ml = str(name or "").lower()
             for v in ('llava', 'bakllava', 'moondream', 'llava-llama3', 'llava-phi3', 'minicpm-v'):
@@ -285,7 +421,11 @@ class LLMExecutor:
                 return
             try:
                 from AI.consult import OllamaClient as _Client
-                cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag)
+                # Set client timeout based on config or defaults (0/infinite for ComoRAG, 300s otherwise)
+                _req_timeout_val = float(llm_config.get('request_timeout', 0 if use_comorag else 300))
+                # Pass None to client if timeout is <= 0 (infinite)
+                _client_timeout = None if _req_timeout_val <= 0 else int(_req_timeout_val)
+                cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag, timeout=_client_timeout)
                 if use_comorag and hasattr(cli, 'set_comorag_config'):
                     cli.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
                 # Mark writing active for streaming typing paths
@@ -301,6 +441,17 @@ class LLMExecutor:
                         context=None,
                         async_request=False,
                     )
+                    # Check for fallback
+                    if isinstance(res, dict) and res.get('comorag_fallback'):
+                        logger.warning(f"ComoRAG execution failed and fell back to standard generation: {res.get('comorag_error')}")
+                    elif isinstance(res, dict) and isinstance(res.get('comorag_metadata'), dict):
+                        # Log success stats
+                        meta = res.get('comorag_metadata')
+                        cycles = meta.get('reasoning_cycles', 0)
+                        logger.info(f"ComoRAG execution completed with {cycles} reasoning cycles.")
+                        if cycles == 0:
+                            logger.warning("ComoRAG returned 0 reasoning cycles. Check OverWatch logs for details.")
+                    out_dict["result"] = res
                 else:
                     stream_flag = bool(llm_config.get('stream', True))
                     out_dict["stream_used"] = stream_flag
@@ -475,7 +626,12 @@ class LLMExecutor:
         shared: Dict[str, Any] = {}
         th = threading.Thread(target=_task_runner, args=(shared,), daemon=True)
         th.start()
-        timeout_s = float(llm_config.get('request_timeout', 120))
+        
+        # Increase default timeout for ComoRAG requests to avoid truncation of long reasoning tasks
+        # Use 0 for infinite/no timeout
+        default_timeout = 0 if use_comorag else 120
+        timeout_s = float(llm_config.get('request_timeout', default_timeout))
+        
         start_t = time.time()
         while th.is_alive():
             if stop_flag and stop_flag():
@@ -487,7 +643,9 @@ class LLMExecutor:
                 except Exception:
                     pass
                 break
-            if time.time() - start_t > timeout_s:
+            # Only apply timeout if timeout_s is positive
+            if timeout_s > 0 and (time.time() - start_t > timeout_s):
+                logger.warning(f"LLM request timed out after {timeout_s}s. Stopping model...")
                 try:
                     _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
                 except Exception:
@@ -533,6 +691,12 @@ class LLMExecutor:
             logger.error(f"LLM returned unexpected format or empty response: {result}")
             # Proceed with empty text to allow chaining
             response_text = ""
+        try:
+            if self._rich_console:
+                self._rich_console.rule("[bold green]LLM Response")
+                self._rich_console.print(response_text or "", style="green")
+        except Exception:
+            pass
 
         # Store outputs
         try:
@@ -606,6 +770,32 @@ class LLMExecutor:
                     next_node = connections[0].get('target_node_id') or connections[0].get('node_id')
             except Exception:
                 pass
+        try:
+            if tool_ids and isinstance(response_text, str):
+                sel = None
+                for marker in ("USE_TOOL:", "CALL_TOOL:", "TOOL:"):
+                    idx = response_text.find(marker)
+                    if idx >= 0:
+                        val = response_text[idx+len(marker):].strip()
+                        val = val.split()[0].strip()
+                        sel = val
+                        break
+                if sel and (sel in tool_ids):
+                    next_node = sel
+                    logger.info(f"Tool selected by LLM: {sel}")
+                    try:
+                        if self._rich_console:
+                            self._rich_console.print(f"[bold magenta]Selected Tool:[/] {sel}")
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        if self._rich_console:
+                            self._rich_console.print("[bold red]No tool selection marker found in response")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         # Ensure a non-None return to indicate successful execution to the workflow engine
         if not next_node:
             next_node = "__done__"

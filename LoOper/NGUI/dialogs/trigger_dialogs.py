@@ -8,9 +8,10 @@ This module contains dialog classes for configuring various types of triggers:
 """
 
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
-    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QFileDialog, QGridLayout, QWidget
+    QComboBox, QSpinBox, QDoubleSpinBox, QFileDialog, QGridLayout, QWidget
 )
 from ..constants import TEXT_COLOR
 from ..i18n import _
@@ -159,7 +160,7 @@ class OCRTriggerConfigDialog(ModernDialog):
         
         # Case sensitive
         case_layout = QHBoxLayout()
-        self.case_sensitive_check = QCheckBox(_("Case Sensitive:"))
+        self.case_sensitive_check = ModernToggle(text=_("Case Sensitive:"))
         case_layout.addWidget(self.case_sensitive_check)
         case_layout.addStretch()
         layout.addLayout(case_layout)
@@ -241,7 +242,7 @@ class WaitConditionDialog(ModernDialog):
         
         ocr_params_layout = QHBoxLayout()
         ocr_params_layout.addWidget(QLabel(_("Case Sensitive:")))
-        self.case_sensitive_check = QCheckBox()
+        self.case_sensitive_check = ModernToggle()
         self.case_sensitive_check.setChecked(True)
         ocr_params_layout.addWidget(self.case_sensitive_check)
         
@@ -406,7 +407,7 @@ class ConditionalLoopDialog(ModernDialog):
         
         ocr_params_layout = QHBoxLayout()
         ocr_params_layout.addWidget(QLabel(_("Case Sensitive:")))
-        self.case_sensitive_check = QCheckBox()
+        self.case_sensitive_check = ModernToggle()
         self.case_sensitive_check.setChecked(True)
         ocr_params_layout.addWidget(self.case_sensitive_check)
         

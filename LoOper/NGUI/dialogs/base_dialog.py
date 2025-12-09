@@ -1,5 +1,6 @@
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QWidget, QLabel, QPushButton, 
-                             QHBoxLayout, QGraphicsDropShadowEffect, QSizeGrip)
+                             QHBoxLayout, QGraphicsDropShadowEffect, QSizeGrip,
+                             QScrollArea, QFrame)
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QColor, QFont
 from ..constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, ACCENT_COLOR
@@ -86,7 +87,47 @@ class ModernDialog(QDialog):
         
         self.container_layout.addWidget(self.title_bar)
         
-        # Content area
+        # Content area (Scrollable)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {DARK_GREY};
+                border: none;
+            }}
+            QScrollBar:vertical {{
+                border: none;
+                background: {DARK_GREY};
+                width: 10px;
+                margin: 0px 0px 0px 0px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {LIGHT_GREY};
+                min-height: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar:horizontal {{
+                border: none;
+                background: {DARK_GREY};
+                height: 10px;
+                margin: 0px 0px 0px 0px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background: {LIGHT_GREY};
+                min-width: 20px;
+                border-radius: 5px;
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+        """)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
         self.content_widget = QWidget()
         self.content_widget.setStyleSheet(f"""
             QWidget {{
@@ -125,17 +166,19 @@ class ModernDialog(QDialog):
                 background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
-                padding: 6px 12px;
+                border-radius: 6px;
+                padding: 8px 16px;
                 font-weight: bold;
+                font-size: 13px;
             }}
             QPushButton:hover {{
-                background-color: {LIGHT_GREY};
+                background-color: #4a4a4a;
                 border: 1px solid {ACCENT_COLOR};
             }}
             QPushButton:pressed {{
                 background-color: {ACCENT_COLOR};
                 color: {DARK_GREY};
+                border: none;
             }}
             /* Primary/Action Button Style */
             QPushButton[class="primary"] {{
@@ -144,7 +187,11 @@ class ModernDialog(QDialog):
                 border: none;
             }}
             QPushButton[class="primary"]:hover {{
-                background-color: #00C4A0;
+                background-color: #00E0B8;
+                border: 1px solid {ACCENT_COLOR};
+            }}
+            QPushButton[class="primary"]:pressed {{
+                background-color: #008F75;
             }}
             
             QTabWidget::pane {{
@@ -167,21 +214,6 @@ class ModernDialog(QDialog):
             QTabBar::tab:hover {{
                 background-color: {LIGHT_GREY};
             }}
-            
-            QScrollBar:vertical {{
-                border: none;
-                background: {DARK_GREY};
-                width: 10px;
-                margin: 0px 0px 0px 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: {LIGHT_GREY};
-                min-height: 20px;
-                border-radius: 5px;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
         """)
         
         # Child classes should add their layout to self.content_layout
@@ -189,7 +221,18 @@ class ModernDialog(QDialog):
         self.content_layout.setContentsMargins(20, 20, 20, 20)
         self.content_layout.setSpacing(10)
         
-        self.container_layout.addWidget(self.content_widget)
+        self.scroll_area.setWidget(self.content_widget)
+        self.container_layout.addWidget(self.scroll_area)
+        
+        # Resize grip
+        grip_layout = QHBoxLayout()
+        grip_layout.setContentsMargins(0, 0, 5, 5)
+        grip_layout.addStretch()
+        self.size_grip = QSizeGrip(self)
+        self.size_grip.setFixedSize(20, 20)
+        self.size_grip.setStyleSheet("background: transparent;")
+        grip_layout.addWidget(self.size_grip)
+        self.container_layout.addLayout(grip_layout)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

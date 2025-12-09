@@ -1,3 +1,5 @@
+from time import time
+
 class Object:
 
     def __init__(self, label = None, coords = None, text = [], interactions = [], property = None):
@@ -6,6 +8,20 @@ class Object:
         self.interactions = interactions
         self.label = label
         self.property = property
+        
+        # Debouncing attributes
+        self.last_seen = time()
+        self.is_visible = True
+
+    def update(self, coords):
+        self.coords = coords
+        self.last_seen = time()
+        self.is_visible = True
+
+    def check_visibility(self, debounce_time):
+        if self.is_visible and time() - self.last_seen > debounce_time:
+            self.is_visible = False
+        return self.is_visible
 
     def get_coords(self):
         return self.coords

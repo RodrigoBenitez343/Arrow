@@ -6,10 +6,11 @@ conditional loops.
 """
 
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
-    QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QWidget, QFileDialog,
-    QListWidgetItem, QTextEdit, QGroupBox, QListWidget
+    QComboBox, QSpinBox, QDoubleSpinBox, QWidget, QFileDialog,
+    QListWidgetItem, QTextEdit, QGroupBox, QListWidget, QDialog
 )
 from ..constants import TEXT_COLOR
 from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog
