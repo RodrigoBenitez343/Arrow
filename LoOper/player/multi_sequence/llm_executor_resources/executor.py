@@ -89,10 +89,18 @@ class LLMExecutor:
         # Auto-detect concatenation: if this node has any inputs in the workflow graph,
         # treat them as "previous" source and enable direct RAG unless explicitly disabled.
         node_inputs = node.get('inputs', []) or []
-        has_input_connection = bool(node_inputs)
+        main_inputs = []
+        try:
+            for _inp in node_inputs:
+                if isinstance(_inp, dict) and str(_inp.get('input_port')) in ('tools', 'context'):
+                    continue
+                main_inputs.append(_inp)
+        except Exception:
+            main_inputs = node_inputs
+        has_input_connection = bool(main_inputs)
         connected_ids = []
         try:
-            connected_ids = [inp.get('from_node') for inp in node_inputs if isinstance(inp, dict) and inp.get('from_node')]
+            connected_ids = [inp.get('from_node') for inp in main_inputs if isinstance(inp, dict) and inp.get('from_node')]
         except Exception:
             connected_ids = []
         has_previous_llm_output = any(f"node_{cid}_output" in self.variables for cid in connected_ids)
@@ -704,6 +712,7 @@ class LLMExecutor:
             node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
             if node_id:
                 self.variables[f"node_{node_id}_output"] = response_text
+                self.variables[f"node_{node_id}_context"] = response_text
         except Exception:
             pass
 
