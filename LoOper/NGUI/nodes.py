@@ -425,6 +425,7 @@ class LLMNode(BaseNode):
             'api_url': get_default_api_url(),
             'write_text': True,
             'use_vision': False,
+            'use_advanced_vision': False,
             'screenshot_enabled': True,
             'use_comorag': True,
             'max_cycles': 5,
@@ -454,12 +455,20 @@ class LLMNode(BaseNode):
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
         in_port = _add_multi_input(self, 'input', in_rgb, False)
+        tools_port = _add_multi_input(self, 'tools', in_rgb, False)
         out_port = self.add_output('output', color=out_rgb, display_name=False)
         try:
             in_port.set_multi_connection(True)
         except Exception:
             try:
                 setattr(in_port, '_multi_connection', True)
+            except Exception:
+                pass
+        try:
+            tools_port.set_multi_connection(True)
+        except Exception:
+            try:
+                setattr(tools_port, '_multi_connection', True)
             except Exception:
                 pass
         try:
@@ -481,6 +490,7 @@ class LLMNode(BaseNode):
         self.create_property('api_url', get_default_api_url())
         self.create_property('write_text', 'true')
         self.create_property('use_vision', 'false')
+        self.create_property('use_advanced_vision', 'false')
         self.create_property('screenshot_enabled', 'true')
         self.create_property('use_comorag', 'true')
         self.create_property('max_cycles', '5')
@@ -499,6 +509,7 @@ class LLMNode(BaseNode):
         self.create_property('rag_include_raw_input', 'false')
         self.create_property('rag_max_chars', '1500')
         self.create_property('rag_documents', '[]')
+        self.create_property('tool_descriptions', '{}')
 
         # Visual indicator for editable nodes (border accent)
         try:
@@ -526,6 +537,7 @@ class LLMNode(BaseNode):
         self.set_property('api_url', config.get('api_url', get_default_api_url()))
         self.set_property('write_text', str(config.get('write_text', True)).lower())
         self.set_property('use_vision', str(config.get('use_vision', False)).lower())
+        self.set_property('use_advanced_vision', str(config.get('use_advanced_vision', False)).lower())
         self.set_property('screenshot_enabled', str(config.get('screenshot_enabled', True)).lower())
         self.set_property('use_comorag', str(config.get('use_comorag', True)).lower())
         self.set_property('max_cycles', str(config.get('max_cycles', 5)))
@@ -576,6 +588,12 @@ class LLMNode(BaseNode):
                 rag_documents = [rag_documents]
         except Exception:
             rag_documents = []
+        tool_desc_raw = self.get_property('tool_descriptions') or '{}'
+        try:
+            import json as _json
+            tool_descriptions = _json.loads(tool_desc_raw) if isinstance(tool_desc_raw, str) else (tool_desc_raw or {})
+        except Exception:
+            tool_descriptions = {}
         return {
             'model': self.get_property('model'),
             'prompt': self.get_property('prompt'),
@@ -586,6 +604,7 @@ class LLMNode(BaseNode):
             'api_url': self.get_property('api_url'),
             'write_text': write_text,
             'use_vision': use_vision,
+            'use_advanced_vision': str(self.get_property('use_advanced_vision') or 'false').lower() in ('true', '1', 'yes', 'on'),
             'screenshot_enabled': screenshot_enabled,
             'use_comorag': use_comorag,
             'max_cycles': int(self.get_property('max_cycles') or 5),
@@ -603,7 +622,8 @@ class LLMNode(BaseNode):
             'rag_top_k': int(self.get_property('rag_top_k') or 3),
             'rag_include_raw_input': rag_include_raw_input,
             'rag_max_chars': int(self.get_property('rag_max_chars') or 1500),
-            'rag_documents': rag_documents
+            'rag_documents': rag_documents,
+            'tool_descriptions': tool_descriptions
         }
     
     def is_vision_model(self, model_name):

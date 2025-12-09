@@ -168,6 +168,23 @@ class DynamicMemoryWorkspace:
         
         return results
     
+    def get_recent_memories(self, source: str = None, item_type: str = None, limit: int = 5, seconds: float = 60.0) -> List[MemoryItem]:
+        """Get recent memory items matching criteria"""
+        now = time.time()
+        candidates = []
+        for item in self.memory_pool.values():
+            if now - item.timestamp > seconds:
+                continue
+            if source and item.source != source:
+                continue
+            if item_type and item.metadata.get('type') != item_type:
+                continue
+            candidates.append(item)
+        
+        # Sort by timestamp desc
+        candidates.sort(key=lambda x: x.timestamp, reverse=True)
+        return candidates[:limit]
+
     def get_memory_state(self) -> Dict[str, Any]:
         """Get current memory workspace state"""
         return {
@@ -253,6 +270,34 @@ class ComoRAGEngine:
             logger.error(f"Failed to get embedding: {e}")
             return None
     
+    async def add_memory(self, content: str, source: str = "external", metadata: Dict[str, Any] = None, image_data: str = None) -> None:
+        """Add a memory item to the workspace"""
+        if not self.memory_workspace:
+            return
+        
+        embedding = None
+        if self.embedding_model:
+            try:
+                # Run embedding in thread pool to avoid blocking
+                loop = asyncio.get_running_loop()
+                embedding = await loop.run_in_executor(
+                    None, 
+                    lambda: self.embedding_model.encode(content)
+                )
+            except Exception:
+                embedding = None
+                
+        memory_item = MemoryItem(
+            id=f"{source}_{int(time.time() * 1000)}",
+            content=content,
+            embedding=embedding,
+            timestamp=time.time(),
+            source=source,
+            metadata=metadata or {},
+            image_data=image_data
+        )
+        self.memory_workspace.add_memory(memory_item)
+
     async def reason(
         self,
         query: str,
@@ -263,131 +308,203 @@ class ComoRAGEngine:
         images: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Perform ComoRAG reasoning"""
-        if not self._initialized:
-            raise RuntimeError("ComoRAG engine not initialized")
+        logger.info(f"Starting ComoRAG reasoning for query: {query[:100]}... (max_cycles={max_cycles})")
         
-        logger.info(f"Starting ComoRAG reasoning for query: {query[:100]}...")
-        
-        # Use default model if not specified
-        if model is None:
-            available_models = self.ollama_engine.get_loaded_models()
-            if not available_models:
-                raise RuntimeError("No models loaded in Ollama engine")
-            model = available_models[0]
-        
-        # Adjust memory size if requested
-        if memory_size and memory_size != self.memory_workspace.max_size:
-            self.memory_workspace.max_size = memory_size
-        
-        # Initialize reasoning state
-        reasoning_cycles = []
-        current_query = query
-        global_context = context or ""
-        
-        # Process images if provided and vision is enabled
-        vision_context = ""
-        if images and getattr(self.settings.comorag, 'enable_vision_analysis', False):
-            vision_context = await self._analyze_images_with_vision(images, query, model)
-            if vision_context:
-                global_context = f"{global_context}\n\nVision Analysis:\n{vision_context}" if global_context else f"Vision Analysis:\n{vision_context}"
-        
-        # Add initial query to memory
-        query_embedding = self._get_embedding(query)
-        initial_memory = MemoryItem(
-            id=f"query_{int(time.time() * 1000)}",
-            content=query,
-            embedding=query_embedding,
-            timestamp=time.time(),
-            source="query",
-            image_data=images[0] if images else None,
-            image_description=vision_context if vision_context else None
-        )
-        self.memory_workspace.add_memory(initial_memory)
-        
-        # Reasoning loop
-        for cycle in range(max_cycles):
-            logger.info(f"ComoRAG reasoning cycle {cycle + 1}/{max_cycles}")
+        try:
+            if not self._initialized:
+                logger.error("ComoRAG engine not initialized")
+                raise RuntimeError("ComoRAG engine not initialized")
             
-            try:
-                # Generate probing queries
-                probing_queries = await self._generate_probing_queries(
-                    current_query, global_context, model, cycle
-                )
+            # Use default model if not specified
+            if model is None:
+                logger.info("Model not specified, checking loaded models...")
+                available_models = self.ollama_engine.get_loaded_models()
+                if not available_models:
+                    logger.error("No models loaded in Ollama engine")
+                    raise RuntimeError("No models loaded in Ollama engine")
+                model = available_models[0]
+                logger.info(f"Selected model: {model}")
+            
+            # Adjust memory size if requested
+            if memory_size and memory_size != self.memory_workspace.max_size:
+                self.memory_workspace.max_size = memory_size
+            
+            # Initialize reasoning state
+            reasoning_cycles = []
+            current_query = query
+            global_context = context or ""
+            
+            # Process images if provided and vision is enabled
+            vision_context = ""
+            if images and getattr(self.settings.comorag, 'enable_vision_analysis', False):
+                logger.info("Processing images with vision analysis...")
+                try:
+                    vision_context = await self._analyze_images_with_vision(images, query, model)
+                    if vision_context:
+                        global_context = f"{global_context}\n\nVision Analysis:\n{vision_context}" if global_context else f"Vision Analysis:\n{vision_context}"
+                        logger.info("Vision analysis completed successfully")
+                    else:
+                        logger.warning("Vision analysis returned empty result")
+                except Exception as e:
+                    logger.error(f"Vision analysis failed: {e}", exc_info=True)
+            
+            # Add initial query to memory
+            logger.info("Adding initial query to memory...")
+            query_embedding = self._get_embedding(query)
+            initial_memory = MemoryItem(
+                id=f"query_{int(time.time() * 1000)}",
+                content=query,
+                embedding=query_embedding,
+                timestamp=time.time(),
+                source="query",
+                image_data=images[0] if images else None,
+                image_description=vision_context if vision_context else None
+            )
+            self.memory_workspace.add_memory(initial_memory)
+            
+            # Reasoning loop
+            logger.info(f"Entering reasoning loop with max_cycles={max_cycles}")
+            for cycle in range(max_cycles):
+                logger.info(f"ComoRAG reasoning cycle {cycle + 1}/{max_cycles}")
                 
-                # Retrieve evidence for each probing query
-                retrieved_evidence = []
-                for probe_query in probing_queries:
-                    evidence = await self._retrieve_evidence(probe_query)
-                    retrieved_evidence.extend(evidence)
-                
-                # Consolidate evidence into global memory
-                consolidated_context = await self._consolidate_evidence(
-                    retrieved_evidence, global_context, model
-                )
-                
-                # Generate reasoning output
-                reasoning_output = await self._generate_reasoning_output(
-                    current_query, consolidated_context, model
-                )
-                
-                # Calculate confidence score
-                confidence_score = await self._calculate_confidence(
-                    reasoning_output, consolidated_context, model
-                )
-                
-                # Create reasoning cycle record
-                cycle_record = ReasoningCycle(
-                    cycle_id=cycle,
-                    query=current_query,
-                    probing_queries=probing_queries,
-                    retrieved_evidence=retrieved_evidence,
-                    reasoning_output=reasoning_output,
-                    confidence_score=confidence_score,
-                    timestamp=time.time()
-                )
-                reasoning_cycles.append(cycle_record)
-                
-                # Check if we have sufficient confidence
-                if confidence_score >= self.confidence_threshold:
-                    logger.info(f"Reasoning converged with confidence {confidence_score:.3f}")
-                    break
-                
-                # Update context for next cycle
-                global_context = consolidated_context
-                
-                # Generate new exploratory query if needed
-                if cycle < max_cycles - 1:
-                    current_query = await self._generate_exploratory_query(
-                        query, reasoning_output, model
+                try:
+                    # Generate probing queries
+                    logger.debug(f"Generating probing queries for cycle {cycle + 1}...")
+                    probing_queries = await self._generate_probing_queries(
+                        current_query, global_context, model, cycle
                     )
-                
-            except Exception as e:
-                logger.error(f"Error in reasoning cycle {cycle}: {e}")
-                break
-        
-        # Store reasoning history
-        self.reasoning_history.extend(reasoning_cycles)
-        
-        # Prepare final response
-        final_output = reasoning_cycles[-1].reasoning_output if reasoning_cycles else "No reasoning output generated"
-        final_confidence = reasoning_cycles[-1].confidence_score if reasoning_cycles else 0.0
-        
-        return {
-            "query": query,
-            "response": final_output,
-            "confidence": final_confidence,
-            "reasoning_cycles": len(reasoning_cycles),
-            "memory_items_used": len(set(item.id for cycle in reasoning_cycles for item in cycle.retrieved_evidence)),
-            "reasoning_history": [
-                {
-                    "cycle_id": cycle.cycle_id,
-                    "probing_queries": cycle.probing_queries,
-                    "confidence_score": cycle.confidence_score,
-                    "evidence_count": len(cycle.retrieved_evidence)
-                }
-                for cycle in reasoning_cycles
-            ]
-        }
+                    
+                    if not probing_queries:
+                        logger.warning(f"Cycle {cycle + 1}: No probing queries generated")
+                        # Fallback to current query if no probing queries
+                        probing_queries = [current_query]
+                    
+                    logger.debug(f"Generated {len(probing_queries)} probing queries")
+                    
+                    # Retrieve evidence for each probing query
+                    retrieved_evidence = []
+                    
+                    # Force include recent vision data in the first cycle
+                    if cycle == 0 and self.memory_workspace:
+                        vision_items = self.memory_workspace.get_recent_memories(source="advanced_vision", limit=1, seconds=120.0)
+                        if vision_items:
+                            logger.info(f"Found {len(vision_items)} recent vision items")
+                            retrieved_evidence.extend(vision_items)
+                            # Mark as accessed
+                            for item in vision_items:
+                                item.access_count += 1
+    
+                    for probe_query in probing_queries:
+                        evidence = await self._retrieve_evidence(probe_query)
+                        retrieved_evidence.extend(evidence)
+                    
+                    # Deduplicate evidence
+                    unique_evidence = {item.id: item for item in retrieved_evidence}.values()
+                    retrieved_evidence = list(unique_evidence)
+                    
+                    if not retrieved_evidence:
+                        logger.warning(f"Cycle {cycle + 1}: No evidence retrieved")
+                    
+                    logger.debug(f"Retrieved {len(retrieved_evidence)} total evidence items")
+                    
+                    # Consolidate evidence into global memory
+                    logger.debug("Consolidating evidence...")
+                    consolidated_context = await self._consolidate_evidence(
+                        retrieved_evidence, global_context, model
+                    )
+                    
+                    # Generate reasoning output
+                    logger.debug("Generating reasoning output...")
+                    reasoning_output = await self._generate_reasoning_output(
+                        current_query, consolidated_context, model
+                    )
+                    
+                    # Calculate confidence score
+                    logger.debug("Calculating confidence score...")
+                    confidence_score = await self._calculate_confidence(
+                        reasoning_output, consolidated_context, model
+                    )
+                    logger.info(f"Cycle {cycle + 1} confidence: {confidence_score}")
+                    
+                    # Create reasoning cycle record
+                    cycle_record = ReasoningCycle(
+                        cycle_id=cycle,
+                        query=current_query,
+                        probing_queries=probing_queries,
+                        retrieved_evidence=retrieved_evidence,
+                        reasoning_output=reasoning_output,
+                        confidence_score=confidence_score,
+                        timestamp=time.time()
+                    )
+                    reasoning_cycles.append(cycle_record)
+                    
+                    # Check if we have sufficient confidence
+                    if confidence_score >= self.confidence_threshold:
+                        logger.info(f"Reasoning converged with confidence {confidence_score:.3f}")
+                        break
+                    
+                    # Update context for next cycle
+                    global_context = consolidated_context
+                    
+                    # Generate new exploratory query if needed
+                    if cycle < max_cycles - 1:
+                        current_query = await self._generate_exploratory_query(
+                            query, reasoning_output, model
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error in reasoning cycle {cycle}: {e}", exc_info=True)
+                    # Don't break immediately, try to recover or at least save partial results
+                    if not reasoning_cycles:
+                        # If failed on first cycle, ensure we have something
+                        reasoning_cycles.append(ReasoningCycle(
+                            cycle_id=cycle,
+                            query=current_query,
+                            probing_queries=[current_query],
+                            retrieved_evidence=[],
+                            reasoning_output=f"Error in cycle {cycle}: {str(e)}",
+                            confidence_score=0.0,
+                            timestamp=time.time()
+                        ))
+                    break
+            
+            # Store reasoning history
+            self.reasoning_history.extend(reasoning_cycles)
+            
+            # Prepare final response
+            final_output = reasoning_cycles[-1].reasoning_output if reasoning_cycles else "No reasoning output generated"
+            final_confidence = reasoning_cycles[-1].confidence_score if reasoning_cycles else 0.0
+            
+            logger.info(f"ComoRAG reasoning completed. Cycles: {len(reasoning_cycles)}, Final Confidence: {final_confidence}")
+            
+            return {
+                "query": query,
+                "response": final_output,
+                "confidence": final_confidence,
+                "reasoning_cycles": len(reasoning_cycles),
+                "memory_items_used": len(set(item.id for cycle in reasoning_cycles for item in cycle.retrieved_evidence)),
+                "reasoning_history": [
+                    {
+                        "cycle_id": cycle.cycle_id,
+                        "probing_queries": cycle.probing_queries,
+                        "confidence_score": cycle.confidence_score,
+                        "evidence_count": len(cycle.retrieved_evidence)
+                    }
+                    for cycle in reasoning_cycles
+                ]
+            }
+            
+        except Exception as e:
+            logger.critical(f"Critical error in ComoRAG reasoning: {e}", exc_info=True)
+            # Return a fallback response so the client doesn't hang or crash
+            return {
+                "query": query,
+                "response": f"ComoRAG failed (Critical Error): {str(e)}",
+                "confidence": 0.0,
+                "reasoning_cycles": 0,
+                "memory_items_used": 0,
+                "reasoning_history": []
+            }
     
     async def _generate_probing_queries(
         self, query: str, context: str, model: str, cycle: int

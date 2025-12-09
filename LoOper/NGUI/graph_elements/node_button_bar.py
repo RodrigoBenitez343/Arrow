@@ -499,6 +499,8 @@ class NodeButtonBarManager(QObject):
             elif 'llm' in ntype:
                 if hasattr(self.parent, 'edit_llm_node'):
                     self.parent.edit_llm_node(node)
+                elif hasattr(self.parent, 'edit_llm'):
+                    self.parent.edit_llm(node)
             elif 'tts' in ntype:
                 if hasattr(self.parent, 'edit_tts_node'):
                     self.parent.edit_tts_node(node)

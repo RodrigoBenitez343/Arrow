@@ -106,6 +106,12 @@ class ChainExpansionDialog(ModernDialog):
         
         # Graph view widget (add directly without extra splitter pane)
         self.graph_view = GraphViewWidget(self)
+        # Hide actions toolbar in expansion dialog as it's not relevant here
+        if hasattr(self.graph_view, 'actions_toolbar'):
+            self.graph_view.actions_toolbar.hide()
+            # Also hide the floating toggle button
+            if hasattr(self.graph_view.actions_toolbar, '_toggle_btn_actions'):
+                self.graph_view.actions_toolbar._toggle_btn_actions.hide()
         layout.addWidget(self.graph_view)
         
         # Button box

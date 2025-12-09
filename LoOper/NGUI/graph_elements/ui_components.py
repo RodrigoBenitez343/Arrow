@@ -94,6 +94,7 @@ class UIComponents:
 
             from ..widgets.actions_toolbar import ActionsToolbar
             actions_toolbar = ActionsToolbar(self.parent_widget)
+            self.parent_widget.actions_toolbar = actions_toolbar
             try:
                 actions_toolbar.setMaximumHeight(42)
             except Exception:

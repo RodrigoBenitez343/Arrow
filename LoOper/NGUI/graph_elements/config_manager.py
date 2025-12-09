@@ -447,6 +447,7 @@ class ConfigManager:
                 "api_url": llm_config.get('api_url', ''),
                 "write_text": llm_config.get('write_text', True),
                 "use_vision": llm_config.get('use_vision', False),
+                "use_advanced_vision": llm_config.get('use_advanced_vision', False),
                 "screenshot_enabled": llm_config.get('screenshot_enabled', True),
                 "use_comorag": llm_config.get('use_comorag', True),
                 "max_cycles": llm_config.get('max_cycles', 5),
@@ -465,6 +466,7 @@ class ConfigManager:
                 "rag_include_raw_input": llm_config.get('rag_include_raw_input', False),
                 "rag_max_chars": llm_config.get('rag_max_chars', 1500),
                 "rag_documents": llm_config.get('rag_documents', []),
+                "tool_descriptions": llm_config.get('tool_descriptions', {}),
                 "node_id": node.id,
                 "position": node.pos(),
                 "connections": self._get_node_connections(node)
@@ -739,6 +741,7 @@ class ConfigManager:
                     node.set_property('api_url', llm_data.get('api_url', ''))
                     node.set_property('write_text', str(llm_data.get('write_text', 'true')))
                     node.set_property('use_vision', str(llm_data.get('use_vision', 'false')))
+                    node.set_property('use_advanced_vision', str(llm_data.get('use_advanced_vision', 'false')))
                     node.set_property('screenshot_enabled', str(llm_data.get('screenshot_enabled', 'true')))
                     node.set_property('use_comorag', str(llm_data.get('use_comorag', 'true')))
                     node.set_property('max_cycles', str(llm_data.get('max_cycles', 5)))
@@ -761,6 +764,11 @@ class ConfigManager:
                         node.set_property('rag_documents', _json.dumps(llm_data.get('rag_documents', [])))
                     except Exception:
                         node.set_property('rag_documents', '[]')
+                    try:
+                        import json as _json
+                        node.set_property('tool_descriptions', _json.dumps(llm_data.get('tool_descriptions', {})))
+                    except Exception:
+                        node.set_property('tool_descriptions', '{}')
                     position = llm_data.get("position", [0, 0])
                     node.set_pos(*position)
                     if hasattr(self.parent_widget, 'llm_nodes'):

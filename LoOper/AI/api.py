@@ -1022,6 +1022,12 @@ class ComoRAGReasonRequest(BaseModel):
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
 
+class ComoRAGAddMemoryRequest(BaseModel):
+    content: str
+    source: str = "external"
+    metadata: Optional[Dict[str, Any]] = None
+    image_data: Optional[str] = None
+
 COMORAG_ENGINE: Optional[ComoRAGEngine] = None
 
 @app.post("/comorag/reason")
@@ -1072,6 +1078,26 @@ async def comorag_memory():
             "max_memory_size": ws.max_size,
             "recent_access": list(ws.access_history)[-10:]
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/comorag/memory")
+async def add_comorag_memory(request: ComoRAGAddMemoryRequest):
+    try:
+        global COMORAG_ENGINE
+        if COMORAG_ENGINE is None:
+            COMORAG_ENGINE = ComoRAGEngine()
+            await COMORAG_ENGINE.initialize()
+        elif not COMORAG_ENGINE.is_ready():
+            await COMORAG_ENGINE.initialize()
+            
+        await COMORAG_ENGINE.add_memory(
+            content=request.content,
+            source=request.source,
+            metadata=request.metadata,
+            image_data=request.image_data
+        )
+        return {"status": "memory_added"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

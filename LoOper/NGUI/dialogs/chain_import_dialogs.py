@@ -1,10 +1,11 @@
 # dialogs/chain_import_dialogs.py
 
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 import os
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QDialogButtonBox, QPushButton, QFileDialog, QComboBox, 
-                             QCheckBox, QTextEdit, QGroupBox, QMessageBox)
+                             QTextEdit, QGroupBox, QMessageBox)
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from ..i18n import _
@@ -118,7 +119,7 @@ class ChainImportDialog(ModernDialog):
         config_layout.addLayout(delay_row)
         
         # Enabled checkbox
-        self.enabled_checkbox = QCheckBox(_("Enable this chain import"))
+        self.enabled_checkbox = ModernToggle(text=_("Enable this chain import"))
         self.enabled_checkbox.setChecked(True)
         config_layout.addWidget(self.enabled_checkbox)
         

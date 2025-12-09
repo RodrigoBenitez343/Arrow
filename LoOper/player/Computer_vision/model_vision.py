@@ -13,6 +13,7 @@ import logging
 import multiprocessing
 import pytesseract
 import re
+import os
 import object
 from shapely.geometry import Polygon
 from huggingface_hub import hf_hub_download
@@ -23,6 +24,9 @@ class Vision:
         # Load Structure/Text Model
         print(f"Loading Structure Model: {structure_model_path}")
         self.structure_model = YOLO(structure_model_path, task="detect")
+        
+        # Tracking state
+        self.tracked_objects = []
         
         # Load Icon Model
         print("Loading Icon Model...")
@@ -38,6 +42,170 @@ class Vision:
 
         print("Models loaded.")
         
+    def find_matching_object(self, coords, label):
+        """Find the closest matching object of the same class"""
+        min_distance = float('inf')
+        matching_object = None
+        
+        # Coords are [x1, y1, x2, y2]
+        center_x = (coords[0] + coords[2]) / 2
+        center_y = (coords[1] + coords[3]) / 2
+        center = np.array([center_x, center_y])
+        
+        for obj in self.tracked_objects:
+            if obj.get_label() == label:
+                obj_coords = obj.get_coords()
+                obj_center_x = (obj_coords[0] + obj_coords[2]) / 2
+                obj_center_y = (obj_coords[1] + obj_coords[3]) / 2
+                obj_center = np.array([obj_center_x, obj_center_y])
+                
+                distance = np.linalg.norm(center - obj_center)
+                
+                if distance < min_distance:
+                    min_distance = distance
+                    matching_object = obj
+                    
+        # Only match if the centers are reasonably close
+        if min_distance > 50: 
+            matching_object = None
+            
+        return matching_object
+
+    def analyze_single_frame(self, monitor_index=1):
+        """
+        Perform a single pass of vision analysis on the specified monitor.
+        Returns a dictionary containing detected objects, text, and interactions.
+        """
+        logging.getLogger('ultralytics').setLevel(logging.WARNING)
+        
+        sct = mss()
+        monitors = sct.monitors
+        if monitor_index >= len(monitors):
+            monitor_index = 0 # Fallback
+        monitor = monitors[monitor_index]
+        
+        # Capture screen
+        screen = np.array(sct.grab(monitor))
+        screen = screen[:, :, :3] # Remove alpha
+        
+        # Setup labels
+        structure_labels = list(self.structure_model.names.values())
+        icon_labels = list(self.icon_model.names.values()) if self.icon_model else []
+        all_labels = list(set(structure_labels + icon_labels))
+        
+        label_objects = {label: "Interaction" for label in all_labels}
+        
+        try:
+            json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "label_description.json")
+            if os.path.exists(json_path):
+                with open(json_path, "r") as f:
+                    json_data = json.load(f)
+                for label in all_labels:
+                    if label in json_data:
+                        label_objects[label] = json_data[label]
+        except Exception as e:
+            print(f"Error loading label description: {e}")
+            
+        # Initialize data
+        data = {label: [] for label in all_labels}
+        
+        # 1. Structure Detection
+        results_structure = self.structure_model(screen, conf=0.25)
+        for result in results_structure:
+            for box in result.boxes:
+                label = self.structure_model.names[int(box.cls)]
+                data[label].append(box.xyxy.tolist()[0])
+                
+        # 2. Masking
+        masked_screen = screen.copy()
+        if "text" in data:
+            for coords in data["text"]:
+                x1, y1, x2, y2 = map(int, coords)
+                cv2.rectangle(masked_screen, (x1, y1), (x2, y2), (128, 128, 128), -1)
+                
+        # 3. Icon Detection
+        if self.icon_model:
+            results_icons = self.icon_model(masked_screen, conf=0.25)
+            for result in results_icons:
+                for box in result.boxes:
+                    label = self.icon_model.names[int(box.cls)]
+                    if label not in data:
+                        data[label] = []
+                    data[label].append(box.xyxy.tolist()[0])
+                    
+        # 4. Create Objects
+        objects = []
+        
+        # Identify "Object" type labels
+        obj_labels = [key for key in label_objects if label_objects[key] == "Object"]
+        
+        for label in obj_labels:
+            if label in data:
+                for coords in data[label]:
+                    new_obj = object.Object(label=label, coords=coords)
+                    objects.append(new_obj)
+                    
+        # 5. Assign Properties
+        property_labels = [key for key in label_objects if label_objects[key] == "Property"]
+        
+        for obj in objects:
+            best_property = None
+            max_area = 0
+            
+            for prop_label in property_labels:
+                if prop_label in data:
+                    for prop_coords in data[prop_label]:
+                        area = self.calculate_intersection(prop_coords, obj.get_coords())
+                        if area > max_area:
+                            max_area = area
+                            best_property = prop_label
+            
+            if best_property:
+                obj.set_property(best_property)
+                
+        # 6. Assign Interactions and Text
+        for obj in objects:
+            obj_coords = obj.get_coords()
+            
+            # Check for interactions and text inside object
+            for key, coords_list in data.items():
+                if key not in label_objects: continue
+                type_ = label_objects[key]
+                
+                if type_ == "Interaction":
+                    for coords in coords_list:
+                        if self.is_box_inside_box(coords, obj_coords):
+                            interaction = object.Interaction(label=key, coords=coords, object=obj, interaction_type=1)
+                            obj.add_interaction(interaction)
+                            
+                elif type_ == "Text":
+                    for coords in coords_list:
+                        if self.is_box_inside_box(coords, obj_coords):
+                            # PERFORM OCR HERE
+                            try:
+                                text_content = self.read_image(screen, coords)
+                            except Exception:
+                                text_content = ""
+                            
+                            if text_content and text_content.strip():
+                                text_item = object.Text(content=text_content, coords=coords, object=obj)
+                                obj.add_text(text_item)
+                                
+        # 7. Format Output
+        output_data = {"Object": []}
+        for i, obj in enumerate(objects):
+            obj_dict = {
+                "index": f"{obj.get_label()}_{i}",
+                "label": obj.get_label(),
+                "property": obj.get_property(),
+                "coords": obj.get_coords(),
+                "text_content": [t.get_content() for t in obj.get_text() or []],
+                "interactions": obj.interactions_to_list()
+            }
+            output_data["Object"].append(obj_dict)
+            
+        return output_data
+
     def start_vision(self, num):
 
         logging.getLogger('ultralytics').setLevel(logging.WARNING)
@@ -167,15 +335,44 @@ class Vision:
 
                     obj_label.append(key)
 
-            objects = []
+            # --- Tracking Integration ---
+            
+            # 1. Reset state of tracked objects
+            for obj in self.tracked_objects:
+                obj.set_text([])
+                obj.set_interactions([])
+                obj.set_property(None)
 
+            # 2. Identify current frame detections
+            current_frame_detections = []
             for label in obj_label:
-
-                if label in data: # Check if label exists in data
+                if label in data:
                     for coords in data[label]:
-    
-                        obj = object.Object(label=label, coords=coords)
-                        objects.append(obj)
+                         current_frame_detections.append({'label': label, 'coords': coords})
+
+            # 3. Match with tracked objects
+            current_detections_set = set() 
+            
+            for det in current_frame_detections:
+                 matched_obj = self.find_matching_object(det['coords'], det['label'])
+                 if matched_obj:
+                     matched_obj.update(det['coords'])
+                     current_detections_set.add(matched_obj)
+                 else:
+                     new_obj = object.Object(label=det['label'], coords=det['coords'])
+                     self.tracked_objects.append(new_obj)
+                     current_detections_set.add(new_obj)
+            
+            # 4. Check visibility & Cleanup
+            debounce_time = 0.2 
+            for obj in self.tracked_objects:
+                if obj not in current_detections_set:
+                    obj.check_visibility(debounce_time)
+            
+            self.tracked_objects = [obj for obj in self.tracked_objects if time.time() - obj.last_seen < debounce_time * 5]
+            
+            # 5. Define 'objects' for downstream logic
+            objects = [obj for obj in self.tracked_objects if obj.is_visible]
 
             property_labels = []
 
@@ -473,5 +670,6 @@ class Api:
                 
             return new_data
 
-vision = Vision("Computer_Vision_1.5.3.onnx")
-vision.start_vision(1)
+if __name__ == "__main__":
+    vision = Vision("Computer_Vision_1.5.3.onnx")
+    vision.start_vision(1)

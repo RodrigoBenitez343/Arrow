@@ -92,7 +92,7 @@ class ActionsToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("actionsContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#actionsContent {{ background-color: {DARK_GREY}; border: 2px solid {LIGHT_GREY}; border-radius: 10px; }}"
+            f"QFrame#actionsContent {{ background-color: {DARK_GREY}; border: 1px solid rgba(80, 80, 80, 0.5); border-radius: 10px; }}"
         )
         try:
             self._content_frame.setMinimumHeight(40)

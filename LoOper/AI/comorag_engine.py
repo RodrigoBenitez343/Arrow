@@ -49,8 +49,13 @@ class MemoryItem:
     relevance_score: float = 0.0
     access_count: int = 0
     source: str = "unknown"
+    metadata: Dict[str, Any] = None
     image_data: Optional[str] = None
     image_description: Optional[str] = None
+
+    def __post_init__(self):
+        if self.metadata is None:
+            self.metadata = {}
 
 class DynamicMemoryWorkspace:
     def __init__(self, max_size: int = 1000, embedding_dim: int = 384):
@@ -118,6 +123,22 @@ class DynamicMemoryWorkspace:
             it.access_count += 1
             results.append(it)
         return results
+
+    def get_recent_memories(self, source: str = None, item_type: str = None, limit: int = 5, seconds: float = 60.0) -> List[MemoryItem]:
+        now = time.time()
+        candidates = []
+        for item in self.memory_pool.values():
+            if now - item.timestamp > seconds:
+                continue
+            if source and item.source != source:
+                continue
+            if item_type and item.metadata.get('type') != item_type:
+                continue
+            candidates.append(item)
+        
+        # Sort by timestamp desc
+        candidates.sort(key=lambda x: x.timestamp, reverse=True)
+        return candidates[:limit]
 
     def _search_with_embeddings(self, query_text: str, top_k: int) -> List[MemoryItem]:
         # This method expects the caller to convert text to embedding; used when engine has embeddings
@@ -324,7 +345,8 @@ class ComoRAGEngine:
             content=probe,
             embedding=self._get_embedding(probe),
             timestamp=time.time(),
-            source="retrieval"
+            source="retrieval",
+            metadata={"type": "probe"}
         )
         self.memory_workspace.add_memory(q_item)
         return sims
@@ -345,7 +367,8 @@ class ComoRAGEngine:
             content=consolidated.strip(),
             embedding=self._get_embedding(consolidated),
             timestamp=time.time(),
-            source="reasoning"
+            source="reasoning",
+            metadata={"type": "consolidation"}
         )
         self.memory_workspace.add_memory(mem)
         return consolidated.strip()
@@ -400,6 +423,7 @@ class ComoRAGEngine:
             embedding=query_embedding,
             timestamp=time.time(),
             source="query",
+            metadata={"type": "initial_query"},
             image_data=images[0] if images else None
         )
         self.memory_workspace.add_memory(initial_memory)
@@ -408,6 +432,16 @@ class ComoRAGEngine:
             try:
                 probing = await self._generate_probing_queries(current_query, global_context, model, cycle)
                 evidence: List[MemoryItem] = []
+                
+                # Force include recent vision data in the first cycle
+                if cycle == 0 and self.memory_workspace:
+                    vision_items = self.memory_workspace.get_recent_memories(source="advanced_vision", limit=1, seconds=120.0)
+                    if vision_items:
+                        evidence.extend(vision_items)
+                        # Mark as accessed
+                        for item in vision_items:
+                            item.access_count += 1
+
                 for pq in probing:
                     ev = await self._retrieve_evidence(pq)
                     evidence.extend(ev)
@@ -425,7 +459,9 @@ class ComoRAGEngine:
                 global_context = consolidated_context
                 if cycle < max_cycles - 1:
                     current_query = await self._generate_exploratory_query(query, output_text, model)
-            except Exception:
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error in reasoning cycle {cycle}: {e}", exc_info=True)
                 break
         final_text = output_text if cycles else ""
         final_conf = cycles[-1]["confidence_score"] if cycles else 0.0
@@ -437,6 +473,34 @@ class ComoRAGEngine:
             "memory_items_used": len(self.memory_workspace.memory_pool) if self.memory_workspace else 0,
             "reasoning_history": cycles
         }
+
+    async def add_memory(self, content: str, source: str = "external", metadata: Dict[str, Any] = None, image_data: str = None) -> None:
+        """Add a memory item to the workspace"""
+        if not self.memory_workspace:
+            return
+        
+        embedding = None
+        if self.embedding_model:
+            try:
+                # Run embedding in thread pool to avoid blocking
+                loop = asyncio.get_running_loop()
+                embedding = await loop.run_in_executor(
+                    None, 
+                    lambda: self.embedding_model.encode(content)
+                )
+            except Exception:
+                embedding = None
+                
+        memory_item = MemoryItem(
+            id=f"{source}_{int(time.time() * 1000)}",
+            content=content,
+            embedding=embedding,
+            timestamp=time.time(),
+            source=source,
+            metadata=metadata or {},
+            image_data=image_data
+        )
+        self.memory_workspace.add_memory(memory_item)
 
     async def clear_memory(self) -> None:
         if self.memory_workspace:

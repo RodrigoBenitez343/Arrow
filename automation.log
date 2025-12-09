@@ -4,3 +4,153 @@
 2025-12-08 09:11:40,147 - INFO - LLM node unknown connected to TTS node tts1. Redirecting output to TTS.
 2025-12-08 09:11:40,148 - INFO - Updated TTS node tts1 text to use variable {my_output}
 2025-12-08 09:11:40,148 - INFO - Built workflow graph with 2 nodes
+2025-12-08 19:31:57,145 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 19:32:03,049 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-08 19:32:03,050 - INFO - Executing LLM node: llm_plugin_test
+2025-12-08 19:32:03,050 - INFO - Full node data: {'id': 'llm_plugin_test', 'type': 'llm', 'data': {'id': 'llm_plugin_test', 'llm_configuration': {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}, 'connections': []}, 'connections': []}
+2025-12-08 19:32:03,050 - INFO - LLM configuration: {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}
+2025-12-08 19:32:03,051 - INFO - Resolved model for execution: 'llama3.2:latest' (Default: 'llama3.2')
+2025-12-08 19:32:03,051 - INFO - Input source: none, OCR confidence: 60
+2025-12-08 19:32:03,051 - INFO - LLM Parameters:
+2025-12-08 19:32:03,052 - INFO -   Model: llama3.2:latest
+2025-12-08 19:32:03,052 - INFO -   API URL: http://localhost:8000
+2025-12-08 19:32:03,052 - INFO -   System Message: Return only JSON
+2025-12-08 19:32:03,052 - INFO -   Original Prompt: Decide whether to run hello_plugin
+2025-12-08 19:32:03,052 - INFO -   Temperature: 0.1
+2025-12-08 19:32:03,052 - INFO -   Max Tokens: 64
+2025-12-08 19:32:03,053 - INFO -   Output Variable: llm_output
+2025-12-08 19:32:03,053 - INFO -   Write Text: False
+2025-12-08 19:32:03,053 - INFO -   Use Vision: False
+2025-12-08 19:32:03,053 - INFO -   Screenshot Enabled: True
+2025-12-08 19:32:03,053 - INFO - Prompt after variable substitution: Decide whether to run hello_plugin
+2025-12-08 19:32:03,053 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-08 19:32:03,054 - INFO - Checking for running Ollama models to unload...
+2025-12-08 19:32:03,056 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:32:05,088 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-08 19:32:05,088 - DEBUG - No running models found.
+2025-12-08 19:32:05,089 - INFO - Sending request to LLM API in thread
+2025-12-08 19:32:05,091 - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-12-08 19:32:07,125 - DEBUG - http://localhost:8000 "POST /comorag/reason HTTP/1.1" 200 143
+2025-12-08 19:32:07,126 - INFO - ComoRAG execution completed with 0 reasoning cycles.
+2025-12-08 19:32:07,126 - WARNING - ComoRAG returned 0 reasoning cycles. Check OverWatch logs for details.
+2025-12-08 19:32:07,127 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:32:09,153 - DEBUG - http://localhost:11434 "POST /api/stop HTTP/1.1" 404 18
+2025-12-08 19:32:09,280 - ERROR - LLM returned unexpected format or empty response: {'response': '', 'comorag_metadata': {'confidence': 0.0, 'reasoning_cycles': 0, 'memory_items_used': 2, 'reasoning_history': [], 'vision_analysis': None}}
+2025-12-08 19:32:09,281 - INFO - LLM node execution complete. Next node: __done__
+2025-12-08 19:32:34,050 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 19:32:39,004 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-08 19:32:39,005 - INFO - Executing LLM node: llm_plugin_test
+2025-12-08 19:32:39,005 - INFO - Full node data: {'id': 'llm_plugin_test', 'type': 'llm', 'data': {'id': 'llm_plugin_test', 'llm_configuration': {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}, 'connections': []}, 'connections': []}
+2025-12-08 19:32:39,006 - INFO - LLM configuration: {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}
+2025-12-08 19:32:39,006 - INFO - Resolved model for execution: 'llama3.2:latest' (Default: 'llama3.2')
+2025-12-08 19:32:39,006 - INFO - Input source: none, OCR confidence: 60
+2025-12-08 19:32:39,006 - INFO - LLM Parameters:
+2025-12-08 19:32:39,007 - INFO -   Model: llama3.2:latest
+2025-12-08 19:32:39,007 - INFO -   API URL: http://localhost:8000
+2025-12-08 19:32:39,007 - INFO -   System Message: Return only JSON
+2025-12-08 19:32:39,007 - INFO -   Original Prompt: Decide whether to run hello_plugin
+2025-12-08 19:32:39,007 - INFO -   Temperature: 0.1
+2025-12-08 19:32:39,008 - INFO -   Max Tokens: 64
+2025-12-08 19:32:39,008 - INFO -   Output Variable: llm_output
+2025-12-08 19:32:39,008 - INFO -   Write Text: False
+2025-12-08 19:32:39,008 - INFO -   Use Vision: False
+2025-12-08 19:32:39,008 - INFO -   Screenshot Enabled: True
+2025-12-08 19:32:39,009 - INFO - Prompt after variable substitution: Decide whether to run hello_plugin
+2025-12-08 19:32:39,009 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-08 19:32:39,009 - INFO - Checking for running Ollama models to unload...
+2025-12-08 19:32:39,011 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:32:41,047 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-08 19:32:41,047 - DEBUG - No running models found.
+2025-12-08 19:32:41,048 - INFO - Sending request to LLM API in thread
+2025-12-08 19:32:41,050 - DEBUG - Starting new HTTP connection (1): localhost:8000
+2025-12-08 19:32:43,075 - DEBUG - http://localhost:8000 "POST /comorag/reason HTTP/1.1" 200 143
+2025-12-08 19:32:43,076 - INFO - ComoRAG execution completed with 0 reasoning cycles.
+2025-12-08 19:32:43,077 - WARNING - ComoRAG returned 0 reasoning cycles. Check OverWatch logs for details.
+2025-12-08 19:32:43,077 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:32:45,247 - ERROR - LLM returned unexpected format or empty response: {'response': '', 'comorag_metadata': {'confidence': 0.0, 'reasoning_cycles': 0, 'memory_items_used': 3, 'reasoning_history': [], 'vision_analysis': None}}
+2025-12-08 19:32:45,248 - INFO - LLM node execution complete. Next node: __done__
+2025-12-08 19:33:32,563 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 19:33:37,446 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-08 19:33:37,446 - INFO - Executing LLM node: llm_plugin_test
+2025-12-08 19:33:37,446 - INFO - Full node data: {'id': 'llm_plugin_test', 'type': 'llm', 'data': {'id': 'llm_plugin_test', 'llm_configuration': {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}, 'connections': []}, 'connections': []}
+2025-12-08 19:33:37,447 - INFO - LLM configuration: {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}
+2025-12-08 19:33:37,447 - INFO - Resolved model for execution: 'llama3.2:latest' (Default: 'llama3.2')
+2025-12-08 19:33:37,448 - INFO - Input source: none, OCR confidence: 60
+2025-12-08 19:33:37,448 - INFO - LLM Parameters:
+2025-12-08 19:33:37,448 - INFO -   Model: llama3.2:latest
+2025-12-08 19:33:37,448 - INFO -   API URL: http://localhost:8000
+2025-12-08 19:33:37,448 - INFO -   System Message: Return only JSON
+2025-12-08 19:33:37,449 - INFO -   Original Prompt: Decide whether to run hello_plugin
+2025-12-08 19:33:37,449 - INFO -   Temperature: 0.1
+2025-12-08 19:33:37,449 - INFO -   Max Tokens: 64
+2025-12-08 19:33:37,449 - INFO -   Output Variable: llm_output
+2025-12-08 19:33:37,449 - INFO -   Write Text: False
+2025-12-08 19:33:37,449 - INFO -   Use Vision: False
+2025-12-08 19:33:37,450 - INFO -   Screenshot Enabled: True
+2025-12-08 19:33:37,450 - INFO - Prompt after variable substitution: Decide whether to run hello_plugin
+2025-12-08 19:33:37,450 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-08 19:33:37,450 - INFO - Checking for running Ollama models to unload...
+2025-12-08 19:33:37,452 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:33:39,488 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-08 19:33:39,489 - DEBUG - No running models found.
+2025-12-08 19:33:39,489 - INFO - Sending request to LLM API in thread
+2025-12-08 19:33:39,490 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:33:41,533 - DEBUG - http://localhost:11434 "POST /api/stop HTTP/1.1" 404 18
+2025-12-08 19:33:41,662 - INFO - MCP selected tool: hello_plugin from source: tool
+2025-12-08 19:34:19,258 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 19:34:24,226 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-08 19:34:24,227 - INFO - Executing LLM node: llm_plugin_test
+2025-12-08 19:34:24,227 - INFO - Full node data: {'id': 'llm_plugin_test', 'type': 'llm', 'data': {'id': 'llm_plugin_test', 'llm_configuration': {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}, 'connections': []}, 'connections': []}
+2025-12-08 19:34:24,228 - INFO - LLM configuration: {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}
+2025-12-08 19:34:24,228 - INFO - Resolved model for execution: 'llama3.2:latest' (Default: 'llama3.2')
+2025-12-08 19:34:24,228 - INFO - Input source: none, OCR confidence: 60
+2025-12-08 19:34:24,229 - INFO - LLM Parameters:
+2025-12-08 19:34:24,229 - INFO -   Model: llama3.2:latest
+2025-12-08 19:34:24,229 - INFO -   API URL: http://localhost:8000
+2025-12-08 19:34:24,229 - INFO -   System Message: Return only JSON
+2025-12-08 19:34:24,229 - INFO -   Original Prompt: Decide whether to run hello_plugin
+2025-12-08 19:34:24,230 - INFO -   Temperature: 0.1
+2025-12-08 19:34:24,230 - INFO -   Max Tokens: 64
+2025-12-08 19:34:24,230 - INFO -   Output Variable: llm_output
+2025-12-08 19:34:24,230 - INFO -   Write Text: False
+2025-12-08 19:34:24,230 - INFO -   Use Vision: False
+2025-12-08 19:34:24,231 - INFO -   Screenshot Enabled: True
+2025-12-08 19:34:24,231 - INFO - Prompt after variable substitution: Decide whether to run hello_plugin
+2025-12-08 19:34:24,231 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-08 19:34:24,231 - INFO - Checking for running Ollama models to unload...
+2025-12-08 19:34:24,233 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:34:26,298 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-08 19:34:26,298 - DEBUG - No running models found.
+2025-12-08 19:34:26,299 - INFO - Sending request to LLM API in thread
+2025-12-08 19:34:26,300 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:34:28,470 - INFO - MCP selected tool: hello_plugin from source: tool
+2025-12-08 19:34:28,471 - INFO - LLM node execution complete. Next node: __done__
+2025-12-08 19:35:08,540 - DEBUG - mss library available for fast screenshot capture
+2025-12-08 19:35:13,423 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-08 19:35:13,423 - INFO - Executing LLM node: llm_plugin_test
+2025-12-08 19:35:13,423 - INFO - Full node data: {'id': 'llm_plugin_test', 'type': 'llm', 'data': {'id': 'llm_plugin_test', 'llm_configuration': {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}, 'connections': []}, 'connections': []}
+2025-12-08 19:35:13,424 - INFO - LLM configuration: {'model': 'llama3.2:latest', 'api_url': 'http://localhost:8000', 'prompt': 'Decide whether to run hello_plugin', 'system_message': 'Return only JSON', 'temperature': 0.1, 'max_tokens': 64, 'write_text': False, 'use_comorag': False, 'mcp_enabled': True, 'mcp_continue_after_tool': True, 'mcp_allow_looper': False, 'mcp_allow_overwatch': False, 'mcp_tools': [{'name': 'hello_plugin', 'description': 'Simple greeting plugin', 'plugin': 'hello_plugin', 'message': 'Hello from plugin'}]}
+2025-12-08 19:35:13,424 - INFO - Resolved model for execution: 'llama3.2:latest' (Default: 'llama3.2')
+2025-12-08 19:35:13,424 - INFO - Input source: none, OCR confidence: 60
+2025-12-08 19:35:13,425 - INFO - LLM Parameters:
+2025-12-08 19:35:13,425 - INFO -   Model: llama3.2:latest
+2025-12-08 19:35:13,425 - INFO -   API URL: http://localhost:8000
+2025-12-08 19:35:13,425 - INFO -   System Message: Return only JSON
+2025-12-08 19:35:13,425 - INFO -   Original Prompt: Decide whether to run hello_plugin
+2025-12-08 19:35:13,425 - INFO -   Temperature: 0.1
+2025-12-08 19:35:13,426 - INFO -   Max Tokens: 64
+2025-12-08 19:35:13,426 - INFO -   Output Variable: llm_output
+2025-12-08 19:35:13,426 - INFO -   Write Text: False
+2025-12-08 19:35:13,426 - INFO -   Use Vision: False
+2025-12-08 19:35:13,426 - INFO -   Screenshot Enabled: True
+2025-12-08 19:35:13,426 - INFO - Prompt after variable substitution: Decide whether to run hello_plugin
+2025-12-08 19:35:13,427 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-08 19:35:13,427 - INFO - Checking for running Ollama models to unload...
+2025-12-08 19:35:13,429 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:35:15,457 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-08 19:35:15,457 - DEBUG - No running models found.
+2025-12-08 19:35:15,458 - INFO - Sending request to LLM API in thread
+2025-12-08 19:35:15,459 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-08 19:35:17,482 - DEBUG - http://localhost:11434 "POST /api/stop HTTP/1.1" 404 18
+2025-12-08 19:35:17,631 - INFO - MCP selected tool: hello_plugin from source: tool
+2025-12-08 19:35:17,632 - INFO - LLM node execution complete. Next node: __done__

@@ -713,6 +713,41 @@ class NodeOperations:
             # Prompt tab
             dialog.system_message_edit.setPlainText(node.get_property('system_message') or '')
             dialog.prompt_edit.setPlainText(node.get_property('prompt') or '')
+
+            try:
+                import json as _json
+                td_raw = node.get_property('tool_descriptions') or '{}'
+                td_map = _json.loads(td_raw) if isinstance(td_raw, str) else (td_raw or {})
+                # Auto-detect connected tools via 'tools' input port
+                try:
+                    tool_ids = []
+                    id_to_label = {}
+                    for p in node.input_ports():
+                        if p.name() == 'tools':
+                            for cp in p.connected_ports():
+                                src_node = getattr(cp, 'node')() if hasattr(cp, 'node') else None
+                                if src_node:
+                                    tid = getattr(src_node, 'id', None) or (src_node.id if hasattr(src_node, 'id') else None)
+                                    if tid:
+                                        tool_ids.append(tid)
+                                        label = ''
+                                        try:
+                                            label = src_node.name()
+                                        except Exception:
+                                            label = ''
+                                        id_to_label[tid] = label
+                    # Merge: ensure all detected tools appear in mapping
+                    for tid in tool_ids:
+                        if tid not in td_map:
+                            td_map[tid] = id_to_label.get(tid, '')
+                except Exception:
+                    pass
+                dialog.load_tool_descriptions(td_map)
+            except Exception:
+                try:
+                    dialog.load_tool_descriptions({})
+                except Exception:
+                    pass
             
             # Input source configuration
             input_source = node.get_property('input_source') or 'none'
@@ -746,6 +781,10 @@ class NodeOperations:
             use_vision_str = node.get_property('use_vision') or 'false'
             use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
             dialog.use_vision_checkbox.setChecked(use_vision)
+
+            use_advanced_vision_str = node.get_property('use_advanced_vision') or 'false'
+            use_advanced_vision = use_advanced_vision_str.lower() in ('true', '1', 'yes', 'on')
+            dialog.use_advanced_vision_checkbox.setChecked(use_advanced_vision)
             
             screenshot_enabled_str = node.get_property('screenshot_enabled') or 'true'
             screenshot_enabled = screenshot_enabled_str.lower() in ('true', '1', 'yes', 'on')
@@ -817,6 +856,7 @@ class NodeOperations:
                 
                 # Features tab properties
                 node.set_property('use_vision', str(dialog.use_vision_checkbox.isChecked()).lower())
+                node.set_property('use_advanced_vision', str(dialog.use_advanced_vision_checkbox.isChecked()).lower())
                 node.set_property('screenshot_enabled', str(dialog.screenshot_enabled_checkbox.isChecked()).lower())
                 node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())
                 node.set_property('max_cycles', str(dialog.max_cycles_spin.value()))
@@ -834,6 +874,13 @@ class NodeOperations:
                     node.set_property('rag_documents', _json.dumps(docs))
                 except Exception:
                     node.set_property('rag_documents', '[]')
+                try:
+                    cfg = dialog.get_config()
+                    td = cfg.get('tool_descriptions', {})
+                    import json as _json
+                    node.set_property('tool_descriptions', _json.dumps(td))
+                except Exception:
+                    node.set_property('tool_descriptions', '{}')
                 
                 logger.info(f"Successfully edited LLM node: {node.id}")
             else:

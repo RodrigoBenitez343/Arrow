@@ -30,7 +30,7 @@ except ImportError:
 class OllamaClient:
     """Client for interacting with Ollama API Gateway with queue system for ComoRAG requests"""
     
-    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: int = 300):
+    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: Optional[int] = 300):
         """Initialize the client with the API base URL"""
         # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
@@ -41,7 +41,8 @@ class OllamaClient:
         self.base_url = base_url.rstrip('/')
         self.debug = debug
         self.use_comorag = use_comorag
-        self.timeout = timeout  # Default timeout for requests (5 minutes for local models)
+        # If timeout is None or <= 0, we treat it as infinite (None for requests)
+        self.timeout = None if (timeout is None or timeout <= 0) else timeout
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
@@ -617,14 +618,22 @@ class OllamaClient:
                 if self.debug:
                     print(f"ComoRAG endpoint returned unexpected format: {result}")
                     print("Falling back to regular chat endpoint")
-                return self.chat(model, prompt, temperature, max_tokens, system, images)
+                res = self.chat(model, prompt, temperature, max_tokens, system, images)
+                if isinstance(res, dict):
+                    res['comorag_fallback'] = True
+                    res['comorag_error'] = f"Unexpected format: {result}"
+                return res
                 
         except requests.exceptions.RequestException as e:
             if self.debug:
                 print(f"ComoRAG request failed: {e}")
                 print("Falling back to regular chat endpoint")
             # Fall back to regular chat if ComoRAG fails
-            return self.chat(model, prompt, temperature, max_tokens, system, images)
+            res = self.chat(model, prompt, temperature, max_tokens, system, images)
+            if isinstance(res, dict):
+                res['comorag_fallback'] = True
+                res['comorag_error'] = str(e)
+            return res
 
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Any:
         if self._shutdown_event.is_set():
@@ -641,7 +650,7 @@ class OllamaClient:
                 attempts += 1
                 continue
             try:
-                response = self.session.post(url, json=payload)
+                response = self.session.post(url, json=payload, timeout=self.timeout)
                 response.raise_for_status()
                 self._fail_counts = 0
                 self._breaker_until = None
@@ -791,6 +800,59 @@ class OllamaClient:
             self.comorag_config['max_cycles'] = max_cycles
         if memory_size is not None:
             self.comorag_config['memory_size'] = memory_size
+
+    def add_memory(self, content: str, source: str = "external", metadata: Dict[str, Any] = None, image_data: str = None) -> bool:
+        """Add memory to ComoRAG engine
+        
+        Args:
+            content: Text content to add to memory
+            source: Source of the memory (e.g., "vision", "user", etc.)
+            metadata: Additional metadata
+            image_data: Base64 encoded image data
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.use_comorag:
+            if self.debug:
+                print("ComoRAG is disabled. Cannot add memory.")
+            return False
+            
+        try:
+            payload = {
+                "content": content,
+                "source": source,
+                "metadata": metadata,
+                "image_data": image_data
+            }
+            
+            # Ensure base_url doesn't end with slash if endpoint starts with slash, 
+            # but urljoin handles it usually. However, simplistic string concat is safer if we know base_url structure.
+            # consult.py seems to use simple requests calls in other methods? 
+            # I'll use the same pattern as other methods. 
+            # Assuming base_url is the root API URL.
+            
+            url = f"{self.base_url.rstrip('/')}/comorag/memory"
+            
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                if self.debug:
+                    print("Successfully added memory to ComoRAG")
+                return True
+            else:
+                if self.debug:
+                    print(f"Failed to add memory: {response.text}")
+                return False
+                
+        except Exception as e:
+            if self.debug:
+                print(f"Error adding memory to ComoRAG: {e}")
+            return False
     
     def _process_images(self, images: List[str]) -> List[str]:
         """Process images for API request

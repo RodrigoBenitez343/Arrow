@@ -618,6 +618,10 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error editing LLM node: {str(e)}", exc_info=True)
 
+    def edit_llm_node(self, node):
+        """Alias for edit_llm to support different call patterns"""
+        self.edit_llm(node)
+
     def edit_tts_node(self, node):
         """Open the dialog to edit a TTS node"""
         logger.debug(f"Editing TTS node: {node.name() if node else 'None'}")

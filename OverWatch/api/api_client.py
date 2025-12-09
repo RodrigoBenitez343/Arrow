@@ -175,6 +175,22 @@ class OverWatchAPIClient:
         """Clear ComoRAG memory"""
         return self._make_request('DELETE', '/comorag/memory')
     
+    def add_memory(
+        self, 
+        content: str, 
+        source: str = "external", 
+        metadata: Optional[Dict[str, Any]] = None, 
+        image_data: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Add memory to ComoRAG"""
+        data = {
+            'content': content,
+            'source': source,
+            'metadata': metadata,
+            'image_data': image_data
+        }
+        return self._make_request('POST', '/comorag/memory', data=data)
+    
     def load_model(self, model_name: str) -> Dict[str, Any]:
         """Load a model (if API supports dynamic loading)"""
         data = {'model_name': model_name}

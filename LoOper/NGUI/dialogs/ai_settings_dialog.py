@@ -4,9 +4,10 @@ import os
 import subprocess
 import sys
 from .base_dialog import ModernDialog
+from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, 
-    QPushButton, QLabel, QGroupBox, QCheckBox, QSpinBox,
+    QPushButton, QLabel, QGroupBox, QSpinBox,
     QMessageBox, QTextEdit, QTabWidget, QWidget, QDialogButtonBox,
     QScrollArea
 )
@@ -183,7 +184,7 @@ class AISettingsDialog(ModernDialog):
         advanced_group = QGroupBox("Advanced Settings")
         advanced_form = QFormLayout()
         
-        self.auto_start_checkbox = QCheckBox()
+        self.auto_start_checkbox = ModernToggle()
         advanced_form.addRow("Auto-start local server:", self.auto_start_checkbox)
         
         self.timeout_edit = QSpinBox()
