@@ -80,6 +80,35 @@ def _previous_input(node: Dict, variables: Dict[str, object]) -> str:
     return ""
 
 
+def _context_input(node: Dict, variables: Dict[str, object]) -> str:
+    inputs_list = node.get("inputs", [])
+    if not inputs_list:
+        logger.warning("No workflow inputs found for node or missing connection")
+        return ""
+    collected = []
+    for inp in inputs_list:
+        try:
+            connected_node_id = inp.get("from_node")
+            if not connected_node_id:
+                continue
+            port = str(inp.get("input_port"))
+            if port != "context":
+                continue
+            key = f"node_{connected_node_id}_context"
+            if key in variables:
+                val = str(variables.get(key, ""))
+                if val:
+                    collected.append(val)
+        except Exception:
+            continue
+    if collected:
+        joined = "\n\n".join(collected)
+        logger.info(f"Retrieved context input: {joined[:200]}...")
+        return joined
+    logger.warning("No context available from connected inputs")
+    return ""
+
+
 def _clipboard_input() -> str:
     try:
         import pyperclip
@@ -117,6 +146,10 @@ def get_input_text(
         input_text = _ocr_input(ocr_confidence, stop_flag)
     elif input_source in ("previous", "previous_node"):
         input_text = _previous_input(node, variables)
+        if use_direct_rag:
+            use_input_text_in_prompt = False
+    elif input_source == "context":
+        input_text = _context_input(node, variables)
         if use_direct_rag:
             use_input_text_in_prompt = False
     elif input_source == "clipboard":

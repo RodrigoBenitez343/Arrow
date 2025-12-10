@@ -2,6 +2,7 @@ import sys
 import os
 import threading
 import time
+import re
 from typing import Dict, Optional, Any
 import requests as _rq
 import subprocess as _sp
@@ -9,7 +10,7 @@ import subprocess as _sp
 from ...config import logger
 from .config_utils import get_default_api_url
 from .prompt_utils import substitute_variables, assemble_enhanced_prompt
-from .inputs import get_input_text
+from .inputs import get_input_text, _context_input
 from .rag_utils import build_rag_context, build_rag_context_from_docs
 from .vision_utils import prepare_vision_images
 
@@ -137,17 +138,37 @@ class LLMExecutor:
                 lines.append("Tool Usage Guide:")
                 lines.append("- Choose exactly one tool id.")
                 lines.append("- Respond ONLY with 'USE_TOOL:<id>' with no other text.")
-                lines.append("- Do not explain or add anything else.")
+                lines.append("- Output must be exactly one line: USE_TOOL:<id>.")
+                lines.append("- Do not include quotes, markdown, code blocks, punctuation, or extra lines.")
+                lines.append("- Do not explain, reason, or justify the choice.")
                 extra = "\n".join(lines)
                 system_message = (system_message + "\n\n" + extra).strip()
             except Exception:
                 pass
 
+        # Detect context connections and whether upstream context is available
+        context_inputs = []
+        try:
+            context_inputs = [inp for inp in node_inputs if isinstance(inp, dict) and str(inp.get('input_port','')) == 'context']
+        except Exception:
+            context_inputs = []
+        context_ids = []
+        try:
+            context_ids = [inp.get('from_node') for inp in context_inputs if inp.get('from_node')]
+        except Exception:
+            context_ids = []
+        has_context_connection = bool(context_ids)
+        has_upstream_context_value = any(f"node_{cid}_context" in self.variables for cid in context_ids)
+
         configured_input_source = (llm_config.get('input_source', 'none') or 'none')
         input_source = configured_input_source
-        if has_input_connection and has_previous_llm_output and configured_input_source.lower() in ('none', '', 'null'):
-            input_source = 'previous'
-            logger.info("Auto-enabled input_source='previous' due to detected input connection for concatenation")
+        if configured_input_source.lower() in ('none', '', 'null'):
+            if has_context_connection and has_upstream_context_value:
+                input_source = 'context'
+                logger.info("Auto-enabled input_source='context' due to detected context connection")
+            elif has_input_connection and has_previous_llm_output:
+                input_source = 'previous'
+                logger.info("Auto-enabled input_source='previous' due to detected input connection for concatenation")
 
         ocr_confidence = llm_config.get('ocr_confidence', 60)
         logger.info(f"Input source: {input_source}, OCR confidence: {ocr_confidence}")
@@ -158,6 +179,10 @@ class LLMExecutor:
 
         use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
         # Respect explicit user choice for RAG; do not auto-enable on concatenation.
+        # Allow explicit selection of previous/context input mode overriding use_direct_rag
+        prev_mode = (llm_config.get('previous_input_mode') or llm_config.get('context_input_mode') or '').strip().lower()
+        if input_source.lower() in ('previous', 'previous_node', 'context') and prev_mode in ('raw', 'embed'):
+            use_direct_rag = (prev_mode == 'embed')
         rag_embedding_model = llm_config.get('rag_embedding_model', 'nomic-embed-text')
         rag_chunk_size = int(llm_config.get('rag_chunk_size', 500))
         rag_overlap = int(llm_config.get('rag_overlap', 100))
@@ -178,16 +203,30 @@ class LLMExecutor:
         logger.info(f"  Screenshot Enabled: {screenshot_enabled}")
         try:
             if self._rich_console:
+                from rich.table import Table
+                from rich.panel import Panel
                 self._rich_console.rule("[bold yellow]LLM Request")
-                self._rich_console.print(f"[bold]Model:[/] {model}  [bold]API:[/] {api_url}")
-                self._rich_console.print("[bold cyan]System Message:[/]\n" + (system_message or ""))
-                self._rich_console.print("[bold cyan]Prompt:[/]\n" + prompt)
+                info = Table(title="LLM Node", show_header=True, header_style="bold magenta")
+                info.add_column("Field", style="bold")
+                info.add_column("Value")
+                info.add_row("Model", str(model))
+                info.add_row("API", str(api_url))
+                info.add_row("Input Source", str(input_source))
+                info.add_row("Prev/Context Mode", str(prev_mode or ""))
+                info.add_row("Direct RAG", "true" if use_direct_rag else "false")
+                info.add_row("RAG Model", str(rag_embedding_model))
+                info.add_row("Top K", str(rag_top_k))
+                self._rich_console.print(info)
+                self._rich_console.print(Panel((system_message or ""), title="System Message", border_style="cyan"))
+                self._rich_console.print(Panel(prompt, title="Prompt", border_style="cyan"))
                 if tool_ids:
-                    tool_lines = []
+                    tools_tbl = Table(title="Available Tools", show_header=True, header_style="bold cyan")
+                    tools_tbl.add_column("ID", style="bold")
+                    tools_tbl.add_column("Description")
                     for tid in tool_ids:
                         d = tool_desc_map.get(tid, '')
-                        tool_lines.append(f"- {tid}: {d}" if d else f"- {tid}")
-                    self._rich_console.print("[bold cyan]Tools:[/]\n" + "\n".join(tool_lines))
+                        tools_tbl.add_row(str(tid), str(d or ""))
+                    self._rich_console.print(tools_tbl)
         except Exception:
             pass
 
@@ -219,6 +258,18 @@ class LLMExecutor:
                 logger.info("Direct RAG enabled; skipping raw previous text injection into prompt")
         if use_comorag and input_text and not use_input_text_in_prompt:
             prompt = f"{input_text}\n\n{prompt}"
+        try:
+            if self._rich_console:
+                from rich.panel import Panel
+                ctx_text = _context_input(node, self.variables)
+                routes = []
+                for inp in (node.get('inputs', []) or []):
+                    if str(inp.get('input_port')) == 'context':
+                        routes.append(str(inp.get('from_node')))
+                ctx_info = f"Sources: {', '.join(routes) or 'None'}\n\n" + (ctx_text[:800] or "")
+                self._rich_console.print(Panel(ctx_info, title="Context Routing", border_style="green"))
+        except Exception:
+            pass
 
         logger.info(f"Preparing Ollama request thread for base_url: {api_url}")
         # Always attempt to stop running models to ensure clean state for the new one
@@ -429,11 +480,8 @@ class LLMExecutor:
                 return
             try:
                 from AI.consult import OllamaClient as _Client
-                # Set client timeout based on config or defaults (0/infinite for ComoRAG, 300s otherwise)
-                _req_timeout_val = float(llm_config.get('request_timeout', 0 if use_comorag else 300))
-                # Pass None to client if timeout is <= 0 (infinite)
-                _client_timeout = None if _req_timeout_val <= 0 else int(_req_timeout_val)
-                cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag, timeout=_client_timeout)
+                # Disable client request timeouts for local LLMs
+                cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag, timeout=None)
                 if use_comorag and hasattr(cli, 'set_comorag_config'):
                     cli.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
                 # Mark writing active for streaming typing paths
@@ -461,7 +509,7 @@ class LLMExecutor:
                             logger.warning("ComoRAG returned 0 reasoning cycles. Check OverWatch logs for details.")
                     out_dict["result"] = res
                 else:
-                    stream_flag = bool(llm_config.get('stream', True))
+                    stream_flag = bool(llm_config.get('stream', True)) and (not tool_ids)
                     out_dict["stream_used"] = stream_flag
                     if stream_flag and write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and hasattr(cli, 'chat_stream'):
                         write_mode = str(llm_config.get('write_mode') or 'type').lower()
@@ -635,10 +683,8 @@ class LLMExecutor:
         th = threading.Thread(target=_task_runner, args=(shared,), daemon=True)
         th.start()
         
-        # Increase default timeout for ComoRAG requests to avoid truncation of long reasoning tasks
-        # Use 0 for infinite/no timeout
-        default_timeout = 0 if use_comorag else 120
-        timeout_s = float(llm_config.get('request_timeout', default_timeout))
+        # Disable request timeouts for local LLMs
+        timeout_s = 0.0
         
         start_t = time.time()
         while th.is_alive():
@@ -651,14 +697,7 @@ class LLMExecutor:
                 except Exception:
                     pass
                 break
-            # Only apply timeout if timeout_s is positive
-            if timeout_s > 0 and (time.time() - start_t > timeout_s):
-                logger.warning(f"LLM request timed out after {timeout_s}s. Stopping model...")
-                try:
-                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
-                except Exception:
-                    pass
-                break
+            # No timeout: allow long-running local models to complete
             try:
                 time.sleep(0.05)
             except Exception:
@@ -695,14 +734,108 @@ class LLMExecutor:
                 or result.get('text')
                 or (result.get('message') or {}).get('content')
             )
+        # If tool selection is expected, extract and sanitize output to the marker only
+        selected_tool_id = None
+        if tool_ids and isinstance(response_text, str) and response_text:
+            try:
+                for marker in ("USE_TOOL:", "CALL_TOOL:", "TOOL:"):
+                    idx = response_text.find(marker)
+                    if idx >= 0:
+                        val = response_text[idx+len(marker):].strip()
+                        val = val.split()[0].strip()
+                        while val and val[-1] in (":", ",", ";", ".", ")", "]", "}"):
+                            val = val[:-1]
+                        if val:
+                            selected_tool_id = val
+                            break
+                # Accept bare tool id if model omitted marker
+                if (not selected_tool_id) and (response_text.strip() in tool_ids):
+                    selected_tool_id = response_text.strip()
+                # Scan for any known tool id present anywhere in text
+                if not selected_tool_id:
+                    for tid in tool_ids:
+                        if tid and (str(tid) in response_text):
+                            selected_tool_id = tid
+                            break
+                # Scan by tool description keywords (e.g., open_browser/close_browser)
+                if not selected_tool_id and isinstance(tool_desc_map, dict):
+                    rt_lower = response_text.lower()
+                    for tid, desc in tool_desc_map.items():
+                        if not tid:
+                            continue
+                        d = str(desc or '')
+                        if not d:
+                            continue
+                        d_lower = d.lower()
+                        if d_lower and d_lower in rt_lower:
+                            selected_tool_id = tid
+                            break
+                        tail = d.split(":")[-1].strip().lower()
+                        if tail and tail in rt_lower:
+                            selected_tool_id = tid
+                            break
+                if selected_tool_id and (selected_tool_id in tool_ids):
+                    response_text = f"USE_TOOL:{selected_tool_id}"
+            except Exception:
+                pass
+        # Semantic fallback based on previous/context input when no explicit selection detected
+        if (not selected_tool_id) and tool_ids:
+            try:
+                sctx = input_text or _context_input(node, self.variables) or ""
+                sl = str(sctx).lower()
+                want_open = False
+                want_close = False
+                neg_indicators = ("no browser", "not open", "closed", "no visible", "none open")
+                pos_indicators = ("browser is open", "is open", "open window", "visible browser")
+                for w in neg_indicators:
+                    if w in sl:
+                        want_open = True
+                        break
+                if not want_open:
+                    for w in pos_indicators:
+                        if w in sl:
+                            want_close = True
+                            break
+                # Prefer mapping via descriptions first
+                if want_open and isinstance(tool_desc_map, dict):
+                    for tid in tool_ids:
+                        desc = str(tool_desc_map.get(tid, '')).lower()
+                        if ("open_browser" in desc) or ("open browser" in desc) or (desc.endswith("open_browser")):
+                            selected_tool_id = tid
+                            break
+                if (not selected_tool_id) and want_close and isinstance(tool_desc_map, dict):
+                    for tid in tool_ids:
+                        desc = str(tool_desc_map.get(tid, '')).lower()
+                        if ("close_browser" in desc) or ("close browser" in desc) or (desc.endswith("close_browser")):
+                            selected_tool_id = tid
+                            break
+                # Fallback by simple name heuristics if descriptions are missing
+                if not selected_tool_id:
+                    if want_open:
+                        for tid in tool_ids:
+                            nm = str(tool_desc_map.get(tid, '')).lower()
+                            if "open" in nm and "close" not in nm:
+                                selected_tool_id = tid
+                                break
+                    elif want_close:
+                        for tid in tool_ids:
+                            nm = str(tool_desc_map.get(tid, '')).lower()
+                            if "close" in nm and "open" not in nm:
+                                selected_tool_id = tid
+                                break
+                if selected_tool_id and (selected_tool_id in tool_ids):
+                    response_text = f"USE_TOOL:{selected_tool_id}"
+            except Exception:
+                pass
         if not response_text:
             logger.error(f"LLM returned unexpected format or empty response: {result}")
             # Proceed with empty text to allow chaining
             response_text = ""
         try:
             if self._rich_console:
+                from rich.panel import Panel
                 self._rich_console.rule("[bold green]LLM Response")
-                self._rich_console.print(response_text or "", style="green")
+                self._rich_console.print(Panel(response_text or "", title="Model Output", border_style="green"))
         except Exception:
             pass
 
@@ -781,20 +914,20 @@ class LLMExecutor:
                 pass
         try:
             if tool_ids and isinstance(response_text, str):
-                sel = None
-                for marker in ("USE_TOOL:", "CALL_TOOL:", "TOOL:"):
-                    idx = response_text.find(marker)
-                    if idx >= 0:
-                        val = response_text[idx+len(marker):].strip()
-                        val = val.split()[0].strip()
-                        sel = val
-                        break
+                sel = selected_tool_id
                 if sel and (sel in tool_ids):
                     next_node = sel
                     logger.info(f"Tool selected by LLM: {sel}")
                     try:
                         if self._rich_console:
-                            self._rich_console.print(f"[bold magenta]Selected Tool:[/] {sel}")
+                            from rich.table import Table
+                            from rich.panel import Panel
+                            desc = tool_desc_map.get(sel, '')
+                            t = Table(show_header=True, header_style="bold magenta")
+                            t.add_column("Selected ID", style="bold")
+                            t.add_column("Description")
+                            t.add_row(str(sel), str(desc or ""))
+                            self._rich_console.print(Panel(t, title="Tool Selected", border_style="magenta"))
                     except Exception:
                         pass
                 else:
