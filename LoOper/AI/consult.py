@@ -30,7 +30,7 @@ except ImportError:
 class OllamaClient:
     """Client for interacting with Ollama API Gateway with queue system for ComoRAG requests"""
     
-    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: Optional[int] = 300):
+    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: Optional[int] = 0):
         """Initialize the client with the API base URL"""
         # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
@@ -42,7 +42,7 @@ class OllamaClient:
         self.debug = debug
         self.use_comorag = use_comorag
         # If timeout is None or <= 0, we treat it as infinite (None for requests)
-        self.timeout = None if (timeout is None or timeout <= 0) else timeout
+        self.timeout = None
         self.session = requests.Session()
         self.session.headers.update({
             'Content-Type': 'application/json',
@@ -133,6 +133,61 @@ class OllamaClient:
         if stream:
             return self._post_stream_text('/generate', payload)
         result = self._post_json('/generate', payload)
+        # Fallback to direct Ollama if gateway is unavailable or returned an error/invalid format
+        try:
+            if (not isinstance(result, dict)) or (isinstance(result, dict) and result.get('error')):
+                host = os.getenv('OLLAMA_HOST', 'localhost')
+                port = os.getenv('OLLAMA_PORT', '11434')
+                base = f"http://{host}:{port}"
+                headers = {'Connection': 'close', 'Content-Type': 'application/json', 'Accept': 'application/json'}
+                # Vision models require /api/chat with images; otherwise use /api/generate
+                use_chat = bool(images)
+                if use_chat:
+                    msg = {"role": "user", "content": prompt}
+                    proc_images = self._process_images(images)
+                    if proc_images:
+                        msg["images"] = proc_images
+                    msgs = []
+                    if system:
+                        msgs.append({"role": "system", "content": system})
+                    msgs.append(msg)
+                    payload2 = {
+                        "model": model,
+                        "messages": msgs,
+                        "stream": False,
+                        "keep_alive": 60,
+                        "options": {"num_predict": -1}
+                    }
+                    if temperature is not None:
+                        payload2["options"]["temperature"] = temperature
+                    r = self.session.post(f"{base}/api/chat", json=payload2, headers=headers)
+                else:
+                    payload2 = {
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "keep_alive": 60,
+                        "options": {"num_predict": -1}
+                    }
+                    if temperature is not None:
+                        payload2["options"]["temperature"] = temperature
+                    if system is not None:
+                        payload2["system"] = system
+                    r = self.session.post(f"{base}/api/generate", json=payload2, headers=headers)
+                r.raise_for_status()
+                data = r.json() if hasattr(r, 'json') else {}
+                if isinstance(data, dict):
+                    if 'response' in data:
+                        return {"response": data.get('response'), "model": data.get('model') or model}
+                    if 'message' in data and isinstance(data.get('message'), dict):
+                        return {"response": data['message'].get('content', ''), "model": data.get('model') or model}
+                # If still unusual, return raw text
+                try:
+                    return {"response": r.text}
+                except Exception:
+                    return {"error": "fallback_failed"}
+        except Exception:
+            pass
         if isinstance(result, dict):
             if 'text' in result and 'response' not in result:
                 result['response'] = result['text']
@@ -650,7 +705,7 @@ class OllamaClient:
                 attempts += 1
                 continue
             try:
-                response = self.session.post(url, json=payload, timeout=self.timeout)
+                response = self.session.post(url, json=payload)
                 response.raise_for_status()
                 self._fail_counts = 0
                 self._breaker_until = None

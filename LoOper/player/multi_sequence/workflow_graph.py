@@ -339,6 +339,63 @@ class WorkflowGraphBuilder:
                         'output_type': connection_info['output_name']
                     })
         
+        # Enrich LLM nodes with tool_descriptions derived from connected tool providers
+        try:
+            import os as _os
+            for _nid, _ndata in graph.items():
+                if _ndata.get('type') != 'llm':
+                    continue
+                _inputs = _ndata.get('inputs', []) or []
+                _tool_map = {}
+                for _inp in _inputs:
+                    try:
+                        if str(_inp.get('input_port')) != 'tools':
+                            continue
+                        _src_id = _inp.get('from_node')
+                        _src = graph.get(_src_id, {})
+                        _sdata = _src.get('data', {}) if isinstance(_src, dict) else {}
+                        _label = ''
+                        try:
+                            _label = _sdata.get('name') or ''
+                        except Exception:
+                            _label = ''
+                        if not _label:
+                            try:
+                                _cf = _sdata.get('chain_file_path') or _sdata.get('chain_file') or ''
+                                if _cf:
+                                    _label = _os.path.splitext(_os.path.basename(str(_cf)))[0]
+                            except Exception:
+                                _label = ''
+                        if not _label:
+                            try:
+                                _label = f"{_src.get('type','tool').replace('_',' ').title()}"
+                            except Exception:
+                                _label = 'Tool'
+                        if _src_id:
+                            _tool_map[_src_id] = _label
+                    except Exception:
+                        continue
+                if _tool_map:
+                    _ld = _ndata.get('data') if isinstance(_ndata, dict) else None
+                    if isinstance(_ld, dict):
+                        # Merge with existing tool_descriptions wherever they are stored
+                        _cfg = _ld.get('llm_configuration') if isinstance(_ld.get('llm_configuration'), dict) else None
+                        if _cfg is not None:
+                            _existing = _cfg.get('tool_descriptions') if isinstance(_cfg.get('tool_descriptions'), dict) else {}
+                            try:
+                                _existing.update(_tool_map)
+                            except Exception:
+                                _existing = _tool_map
+                            _cfg['tool_descriptions'] = _existing
+                        else:
+                            _existing = _ld.get('tool_descriptions') if isinstance(_ld.get('tool_descriptions'), dict) else {}
+                            try:
+                                _existing.update(_tool_map)
+                            except Exception:
+                                _existing = _tool_map
+                            _ld['tool_descriptions'] = _existing
+        except Exception:
+            pass
         logger.info(f"Built workflow graph with {len(graph)} nodes")
         return graph
 
@@ -592,6 +649,29 @@ class WorkflowExecutor:
             
             node = self.workflow_graph[current_node_id]
             logger.info(f"Executing node {current_node_id} (type: {node['type']})")
+            try:
+                from rich.table import Table
+                from rich.panel import Panel
+                con = getattr(self.llm_executor, '_rich_console', None)
+                if con:
+                    inf = Table(title="Node Execution", show_header=True, header_style="bold blue")
+                    inf.add_column("Field", style="bold")
+                    inf.add_column("Value")
+                    inf.add_row("Node ID", str(current_node_id))
+                    inf.add_row("Type", str(node.get('type')))
+                    ins = node.get('inputs', []) or []
+                    inf.add_row("Inputs", str(len(ins)))
+                    con.print(inf)
+                    if ins:
+                        tbl = Table(title="Inputs", show_header=True, header_style="bold cyan")
+                        tbl.add_column("From Node", style="bold")
+                        tbl.add_column("Port")
+                        tbl.add_column("Output Type")
+                        for i in ins:
+                            tbl.add_row(str(i.get('from_node')), str(i.get('input_port')), str(i.get('output_type')))
+                        con.print(tbl)
+            except Exception:
+                pass
             
             # Execute the node based on its type
             success = False
@@ -688,6 +768,23 @@ class WorkflowExecutor:
                             if self._are_all_dependencies_satisfied(sel, completed_nodes):
                                 ready_nodes.add(sel)
                                 logger.info(f"Selected tool node {sel} is now ready for execution")
+                                try:
+                                    from rich.table import Table
+                                    from rich.panel import Panel
+                                    con = getattr(self.llm_executor, '_rich_console', None)
+                                    if con:
+                                        dmap = {}
+                                        try:
+                                            dmap = node.get('data', {}).get('tool_descriptions', {})
+                                        except Exception:
+                                            dmap = {}
+                                        t = Table(title="Scheduled Tool", show_header=True, header_style="bold magenta")
+                                        t.add_column("ID", style="bold")
+                                        t.add_column("Description")
+                                        t.add_row(str(sel), str(dmap.get(sel, ''))) 
+                                        con.print(Panel(t, title="Tool Scheduling", border_style="magenta"))
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
                 else:
@@ -1145,13 +1242,104 @@ class WorkflowExecutor:
         next_node_id = self.llm_executor.execute_llm_node(node_to_execute, stop_flag, action_handlers)
         try:
             self._llm_selected_next = None
-            if next_node_id and next_node_id in self.workflow_graph:
-                # Mark selected tool node to allow scheduling
-                target_node = self.workflow_graph.get(next_node_id, {})
+            chosen_id = next_node_id if isinstance(next_node_id, str) else None
+            # Fallback: parse tool marker or scan for tool ids/descriptions
+            try:
+                if (not chosen_id) or (chosen_id not in self.workflow_graph):
+                    out_var = None
+                    llm_id = node.get('id') or node.get('data', {}).get('node_id') or node.get('data', {}).get('id')
+                    if llm_id:
+                        out_var = self.llm_executor.get_variable(f"node_{llm_id}_output") or ""
+                    s = str(out_var or "")
+                    if s:
+                        for mk in ("USE_TOOL:", "CALL_TOOL:", "TOOL:"):
+                            idx = s.find(mk)
+                            if idx >= 0:
+                                val = s[idx+len(mk):].strip()
+                                val = val.split()[0].strip()
+                                while val and val[-1] in (":", ",", ";", ".", ")", "]", "}"):
+                                    val = val[:-1]
+                                if val:
+                                    chosen_id = val
+                                    break
+                    if not chosen_id:
+                        tools = []
+                        for inp in (node.get('inputs', []) or []):
+                            if str(inp.get('input_port')) == 'tools':
+                                tools.append(str(inp.get('from_node')))
+                        for tid in tools:
+                            if tid and (tid in s):
+                                chosen_id = tid
+                                break
+                        if not chosen_id:
+                            try:
+                                dmap = node.get('data', {}).get('tool_descriptions', {})
+                            except Exception:
+                                dmap = {}
+                            sl = s.lower()
+                            for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
+                                d = str(desc or '').lower()
+                                if d and d in sl:
+                                    chosen_id = tid
+                                    break
+                                tail = str(desc or '').split(":")[-1].strip().lower()
+                                if tail and tail in sl:
+                                    chosen_id = tid
+                                    break
+                        # Semantic fallback based on previous/context values
+                        if not chosen_id:
+                            try:
+                                prev_text = ""
+                                # prefer context value
+                                for inp in (node.get('inputs', []) or []):
+                                    if str(inp.get('input_port')) == 'context':
+                                        pid = str(inp.get('from_node'))
+                                        v = self.llm_executor.get_variable(f"node_{pid}_context") or ""
+                                        if v:
+                                            prev_text = str(v)
+                                            break
+                                if not prev_text:
+                                    for inp in (node.get('inputs', []) or []):
+                                        if str(inp.get('input_port')) == 'input':
+                                            pid = str(inp.get('from_node'))
+                                            v = self.llm_executor.get_variable(f"node_{pid}_output") or ""
+                                            if v:
+                                                prev_text = str(v)
+                                                break
+                                pl = prev_text.lower()
+                                want_open = False
+                                want_close = False
+                                for w in ("no browser", "not open", "closed", "no visible", "none open"):
+                                    if w in pl:
+                                        want_open = True
+                                        break
+                                if not want_open:
+                                    for w in ("browser is open", "is open", "open window", "visible browser"):
+                                        if w in pl:
+                                            want_close = True
+                                            break
+                                if want_open:
+                                    for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
+                                        dl = str(desc or '').lower()
+                                        if ("open_browser" in dl) or ("open browser" in dl) or dl.endswith("open_browser"):
+                                            chosen_id = tid
+                                            break
+                                elif want_close:
+                                    for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
+                                        dl = str(desc or '').lower()
+                                        if ("close_browser" in dl) or ("close browser" in dl) or dl.endswith("close_browser"):
+                                            chosen_id = tid
+                                            break
+                            except Exception:
+                                pass
+            except Exception:
+                pass
+            if chosen_id and chosen_id in self.workflow_graph:
+                target_node = self.workflow_graph.get(chosen_id, {})
                 if target_node.get('type') == 'chain_import' and target_node.get('tool_provider'):
                     target_node['selected_by_llm'] = True
-                self._llm_selected_next = next_node_id
-                logger.info(f"LLM selected next node: {next_node_id}")
+                self._llm_selected_next = chosen_id
+                logger.info(f"LLM selected next node: {chosen_id}")
         except Exception:
             pass
         return next_node_id
