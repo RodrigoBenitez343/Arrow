@@ -65,26 +65,7 @@ def build_rag_context(
         chunk_embs = []
         query_emb = []
         
-        # Try LangChain first
-        if LANGCHAIN_AVAILABLE:
-            try:
-                logger.info("RAG: Attempting to use LangChain for embeddings")
-                base_url = getattr(client, 'base_url', 'http://localhost:11434')
-                
-                # Create documents using RecursiveCharacterTextSplitter
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
-                docs = text_splitter.create_documents([input_text])
-                
-                valid_chunks = [d.page_content for d in docs if d.page_content.strip()]
-                
-                if valid_chunks:
-                    embeddings = OllamaEmbeddings(base_url=base_url, model=embedding_model)
-                    logger.info(f"RAG: Requesting embeddings for {len(valid_chunks)} chunks using LangChain (model='{embedding_model}')")
-                    chunk_embs = embeddings.embed_documents(valid_chunks)
-                    query_emb = embeddings.embed_query(prompt)
-            except Exception as e:
-                logger.warning(f"LangChain embedding failed: {e}. Falling back to manual implementation.")
-                valid_chunks = [] # Reset to trigger fallback
+        
         
         # Use precomputed store if provided
         if precomputed_chunks and precomputed_embeddings and len(precomputed_chunks) == len(precomputed_embeddings):
@@ -256,23 +237,7 @@ def build_rag_context_from_docs(
         chunk_embs = []
         query_emb = []
 
-        # Try LangChain first
-        if LANGCHAIN_AVAILABLE:
-            try:
-                logger.info("RAG: Attempting to use LangChain for document embeddings")
-                base_url = getattr(client, 'base_url', 'http://localhost:11434')
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=overlap)
-                docs = text_splitter.create_documents(texts)
-                cleaned_chunks = [d.page_content for d in docs if d.page_content.strip()]
-                
-                if cleaned_chunks:
-                    embeddings = OllamaEmbeddings(base_url=base_url, model=embedding_model)
-                    logger.info(f"RAG: Requesting embeddings for {len(cleaned_chunks)} chunks using LangChain")
-                    chunk_embs = embeddings.embed_documents(cleaned_chunks)
-                    query_emb = embeddings.embed_query(prompt)
-            except Exception as e:
-                logger.warning(f"LangChain embedding failed: {e}. Falling back to manual.")
-                cleaned_chunks = []
+        
         
         # Fallback if LangChain didn't run
         if not cleaned_chunks:
