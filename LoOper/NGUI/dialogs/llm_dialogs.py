@@ -244,21 +244,7 @@ class LLMPropertiesDialog(ModernDialog):
         input_source_layout.addWidget(self.input_ocr_radio)
         input_source_layout.addWidget(self.input_previous_radio)
         input_source_layout.addWidget(self.input_clipboard_radio)
-        # Previous input mode controls
-        self.previous_mode_widget = QWidget()
-        prev_mode_layout = QGridLayout(self.previous_mode_widget)
-        prev_mode_layout.setContentsMargins(0, 8, 0, 0)
-        prev_mode_layout.setSpacing(6)
-        prev_mode_layout.addWidget(QLabel(_("Previous Input Mode:")), 0, 0)
-        self.previous_mode_embeddings_radio = QRadioButton(_("Use embeddings (RAG)"))
-        self.previous_mode_raw_radio = QRadioButton(_("Use raw previous output"))
-        self.previous_mode_embeddings_radio.setChecked(True)
-        self.previous_input_mode_group = QButtonGroup(self)
-        self.previous_input_mode_group.addButton(self.previous_mode_embeddings_radio, 1)
-        self.previous_input_mode_group.addButton(self.previous_mode_raw_radio, 0)
-        prev_mode_layout.addWidget(self.previous_mode_embeddings_radio, 0, 1)
-        prev_mode_layout.addWidget(self.previous_mode_raw_radio, 1, 1)
-        input_source_layout.addWidget(self.previous_mode_widget)
+        
         
         # OCR Configuration (visible when OCR is selected)
         self.ocr_config_widget = QWidget()
@@ -440,7 +426,6 @@ class LLMPropertiesDialog(ModernDialog):
         # Input source changes
         self.input_source_group.buttonClicked.connect(self.update_input_source_visibility)
         self.input_source_group.buttonClicked.connect(self.update_template_description)
-        self.input_source_group.buttonClicked.connect(self.update_previous_mode_visibility)
         
         # Template selection
         self.template_combo.currentTextChanged.connect(self.apply_template)
@@ -544,11 +529,6 @@ class LLMPropertiesDialog(ModernDialog):
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
             self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
             self.use_direct_rag_checkbox.setChecked(self.current_config.get('use_direct_rag', False))
-            if (self.current_config.get('input_source') in ('previous', 2)):
-                if self.current_config.get('use_direct_rag', False):
-                    self.previous_mode_embeddings_radio.setChecked(True)
-                else:
-                    self.previous_mode_raw_radio.setChecked(True)
             self.rag_embedding_model_entry.setText(self.current_config.get('rag_embedding_model', 'nomic-embed-text'))
             self.rag_chunk_size_spin.setValue(self.current_config.get('rag_chunk_size', 500))
             self.rag_overlap_spin.setValue(self.current_config.get('rag_overlap', 100))
@@ -573,7 +553,6 @@ class LLMPropertiesDialog(ModernDialog):
             
             # Update visibility based on input source
         self.update_input_source_visibility()
-        self.update_previous_mode_visibility()
     
     def apply_template(self, template_name):
         """Apply a predefined template configuration"""
@@ -700,10 +679,7 @@ class LLMPropertiesDialog(ModernDialog):
         elif input_source == 3:  # Clipboard
             self.prompt_edit.setPlaceholderText("Process the clipboard content...")
 
-    def update_previous_mode_visibility(self):
-        """Ensure previous input mode controls reflect current selection and stay visible appropriately"""
-        input_source_id = self.input_source_group.checkedId()
-        self.previous_mode_widget.setVisible(input_source_id == 2)
+    
     
     def update_template_description(self):
         """Update template description based on current selection"""
@@ -760,12 +736,8 @@ class LLMPropertiesDialog(ModernDialog):
         config['ocr_preprocessing'] = self.ocr_preprocessing_combo.currentText()
         config['template_applied'] = self.template_combo.currentText()
         
-        # Determine RAG usage based on input source and previous mode selection
+        # Determine RAG usage directly from RAG tab toggle
         use_direct_rag_value = self.use_direct_rag_checkbox.isChecked()
-        if config.get('input_source') == 'previous':
-            # Override with previous input mode selection
-            selected_prev_mode = self.previous_input_mode_group.checkedId()
-            use_direct_rag_value = (selected_prev_mode == 1)
         config.update({
             'use_direct_rag': use_direct_rag_value,
             'rag_embedding_model': self.rag_embedding_model_entry.text() or 'nomic-embed-text',

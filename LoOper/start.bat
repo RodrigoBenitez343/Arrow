@@ -219,6 +219,21 @@ if exist requirements.txt (
 )
 echo.
 
+for /f "tokens=2 delims=. " %%v in ('py -3.13 --version 2^>nul') do set "PY313=%%v"
+if defined PY313 (
+    "%VENV_PY%" -c "import pkgutil,sys;sys.exit(0 if pkgutil.find_loader('torch') else 1)" >nul 2>&1
+    if errorlevel 1 (
+        echo [⬇️] Installing PyTorch nightly CPU for Python 3.13...
+        "%VENV_PY%" -m pip install --pre --index-url https://download.pytorch.org/whl/nightly/cpu torch torchvision >nul 2>&1
+    )
+    for /f "usebackq delims=" %%P in (`"%VENV_PY%" -c "import site,sys;from pathlib import Path;d=[Path(p) for p in site.getsitepackages() if 'site-packages' in p];print(str(d[0]/'torch'/'lib'))"`) do set "TORCH_LIB_PATH=%%P"
+    if exist "%TORCH_LIB_PATH%" (
+        set "PATH=%TORCH_LIB_PATH%;%PATH%"
+        setx PATH "%TORCH_LIB_PATH%;%PATH%" /M >nul 2>&1
+        set KMP_DUPLICATE_LIB_OK=TRUE
+    )
+)
+
 :: ——————————————————————————————————————————————
 :: 6. Set Default Environment Variables (API now auto-starts from main.py)
 :: ——————————————————————————————————————————————

@@ -99,6 +99,15 @@ class LLMExecutor:
         except Exception:
             main_inputs = node_inputs
         has_input_connection = bool(main_inputs)
+        # Identify the immediate upstream LLM via the main 'output' connection
+        primary_upstream_id = None
+        try:
+            for _inp in main_inputs:
+                if str(_inp.get('output_type','')) == 'output' and _inp.get('from_node'):
+                    primary_upstream_id = _inp.get('from_node')
+                    break
+        except Exception:
+            primary_upstream_id = None
         connected_ids = []
         try:
             connected_ids = [inp.get('from_node') for inp in main_inputs if isinstance(inp, dict) and inp.get('from_node')]
@@ -327,8 +336,8 @@ class LLMExecutor:
             pre_chunks = None
             pre_embs = None
             try:
-                if connected_ids:
-                    prev_id = connected_ids[0]
+                prev_id = primary_upstream_id or (connected_ids[0] if connected_ids else None)
+                if prev_id:
                     store = self.variables.get(f"node_{prev_id}_vectorstore")
                     if isinstance(store, dict):
                         pre_chunks = store.get('chunks')

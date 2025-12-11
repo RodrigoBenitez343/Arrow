@@ -286,7 +286,7 @@ class OllamaEngine:
         payload = {
             "model": model,
             "input": val,
-            "keep_alive": 60,
+            "keep_alive": 0,
         }
         if normalize is not None:
             payload["normalize"] = normalize

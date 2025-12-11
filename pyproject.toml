@@ -119,7 +119,7 @@ dependencies = [
   "safetensors==0.6.2",
   "scikit-learn==1.7.2",
   "scipy==1.16.3",
-  "sentence-transformers==5.1.2",
+  "sentence-transformers==5.1.2; python_version < '3.13'",
   "setuptools==80.9.0",
   "shapely==2.1.2",
   "six==1.17.0",
@@ -131,8 +131,8 @@ dependencies = [
   "threadpoolctl==3.6.0",
   "tokenizers==0.22.1",
   "toml==0.10.2",
-  "torch==2.9.1",
-  "torchvision==0.24.1",
+  "torch==2.9.1; python_version < '3.13'",
+  "torchvision==0.24.1; python_version < '3.13'",
   "tqdm==4.67.1",
   "transformers==4.57.1",
   "trio==0.32.0",
@@ -141,8 +141,8 @@ dependencies = [
   "typing-inspection==0.4.2",
   "typing_extensions==4.15.0",
   "tzdata==2025.2",
-  "ultralytics==8.3.234",
-  "ultralytics-thop==2.0.18",
+  "ultralytics==8.3.234; python_version < '3.13'",
+  "ultralytics-thop==2.0.18; python_version < '3.13'",
   "urllib3==2.5.0",
   "uvicorn==0.38.0",
   "watchfiles==1.1.1",
@@ -154,6 +154,8 @@ dependencies = [
   "langchain>=0.1.0",
   "langchain-community>=0.0.10",
   "langchain-ollama>=0.0.1"
+  ,"langchain-text-splitters>=1.0.0"
+  ,"PyPDF2>=3.0.0"
 ]
 
 [project.optional-dependencies]
@@ -186,6 +188,18 @@ overwatch = [
   "pillow>=10.1.0",
   "aiofiles>=23.2.1",
   "cryptography>=41.0.0"
+]
+
+# Vision stacks packaged as extras to support Windows Python 3.13
+vision = [
+  "torch==2.9.1; python_version < '3.13'",
+  "torchvision==0.24.1; python_version < '3.13'",
+  "sentence-transformers==5.1.2; python_version < '3.13'",
+  "ultralytics==8.3.234; python_version < '3.13'",
+]
+vision313_win = [
+  "torch; python_version >= '3.13' and platform_system == 'Windows'",
+  "torchvision; python_version >= '3.13' and platform_system == 'Windows'",
 ]
 
 [tool.setuptools.packages.find]

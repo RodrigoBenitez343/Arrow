@@ -233,7 +233,7 @@ class OllamaClient:
     def embeddings(self, model: str, inputs: List[str],
                    normalize: Optional[bool] = None,
                    pooling: Optional[str] = None) -> List[List[float]]:
-        payload: Dict[str, Any] = {"model": model, "inputs": inputs, "ephemeral": True}
+        payload: Dict[str, Any] = {"model": model, "inputs": inputs, "ephemeral": True, "cleanup_after": True}
         if normalize is not None:
             payload["normalize"] = normalize
         if pooling is not None:
