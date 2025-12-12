@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QMessageBox, QDialog
 )
 from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon, QPainterPath, QFont, QPolygonF
@@ -23,6 +23,7 @@ from ..constants import (
     BLOCK_COLOR, BLOCK_HOVER,
     LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR
 )
+from ..dialogs.base_dialog import ModernDialog
 
 
 logger = logging.getLogger(__name__)
@@ -562,6 +563,294 @@ class DraggableSequenceButton(QPushButton):
         return super().mouseReleaseEvent(event)
 
 
+    def _icon_delete_large(self) -> QPixmap:
+        """Create a large delete icon pixmap."""
+        size = 64
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        # Use a soft red for the icon to match the theme
+        pen = p.pen()
+        pen.setColor(QColor("#FF6B6B"))
+        pen.setWidth(3)
+        p.setPen(pen)
+        
+        # Scale factor relative to 24px icon
+        # Adjusted drawing to be more square and less elongated
+        s = size / 24.0
+        
+        # Center the icon in the 64x64 area
+        # Original drawing was:
+        # p.drawRect(int(6*s), int(9*s), int(12*s), int(12*s)) -> 16x24 to 48x32
+        
+        # New dimensions for a more balanced look
+        w = int(14 * s)  # Width
+        h = int(14 * s)  # Height of the bin body
+        x = int((size - w) / 2)
+        y = int((size - h) / 2) + int(2*s) # Shift down slightly for lid
+        
+        # Draw trash can body
+        p.drawRect(x, y, w, h)
+        
+        # Draw vertical lines
+        line_spacing = w // 4
+        p.drawLine(x + line_spacing, y + int(2*s), x + line_spacing, y + h - int(2*s))
+        p.drawLine(x + 2*line_spacing, y + int(2*s), x + 2*line_spacing, y + h - int(2*s))
+        p.drawLine(x + 3*line_spacing, y + int(2*s), x + 3*line_spacing, y + h - int(2*s))
+        
+        # Draw lid line
+        lid_w = w + int(4*s)
+        lid_x = x - int(2*s)
+        lid_y = y
+        p.drawLine(lid_x, lid_y, lid_x + lid_w, lid_y)
+        
+        # Draw handle
+        handle_w = int(6*s)
+        handle_h = int(3*s)
+        handle_x = int((size - handle_w) / 2)
+        handle_y = lid_y - handle_h
+        p.drawPolyline(QPolygonF([
+            QPointF(handle_x, lid_y),
+            QPointF(handle_x, handle_y),
+            QPointF(handle_x + handle_w, handle_y),
+            QPointF(handle_x + handle_w, lid_y)
+        ]))
+        
+        p.end()
+        return pix
+
+class ModernDeleteDialog(ModernDialog):
+    """A custom modern dialog for delete confirmation."""
+    def __init__(self, parent, filename):
+        super().__init__(parent, title="Delete Sequence")
+        self.resize(400, 250)  # Increased height to fit content without scrollbar
+        
+        # Hide the default title bar close button if desired, but base_dialog has it.
+        # We can just use the content layout.
+        
+        # Override the scroll area from base_dialog if possible or just use it.
+        # ModernDialog puts everything in a scroll area. We want to avoid scrollbars.
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Ensure scroll widget is resizable
+        self.scroll_area.setWidgetResizable(True)
+
+        layout = self.content_layout
+        layout.setSpacing(10)  # Reduced spacing
+        layout.setContentsMargins(10, 10, 10, 10) # Add margin around content
+        
+        # Message Area
+        msg_widget = QWidget()
+        msg_layout = QHBoxLayout(msg_widget)
+        msg_layout.setContentsMargins(5, 10, 5, 10)
+        msg_layout.setSpacing(15)
+        
+        # Icon
+        icon_label = QLabel()
+        icon_label.setPixmap(self._icon_delete_large())
+        icon_label.setAlignment(Qt.AlignCenter)
+        icon_label.setFixedSize(64, 64)
+        msg_layout.addWidget(icon_label)
+        
+        # Text
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        text_layout.setContentsMargins(0, 10, 0, 10) # Center vertically relative to icon
+        
+        title = QLabel(f"Delete '{filename}'?")
+        title.setWordWrap(True)
+        title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold; font-size: 16px;")
+        
+        desc = QLabel("This action cannot be undone.")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 13px; opacity: 0.8;")
+        
+        text_layout.addWidget(title)
+        text_layout.addWidget(desc)
+        text_layout.addStretch()
+        
+        msg_layout.addLayout(text_layout)
+        layout.addWidget(msg_widget)
+        
+        layout.addStretch() 
+        
+        # Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setContentsMargins(10, 0, 10, 0) # Removed bottom margin
+        btn_layout.setSpacing(15)
+        btn_layout.addStretch()
+        
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setFixedWidth(100)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 6px;
+                padding: 6px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: {LIGHT_GREY};
+                border-color: {LIGHT_GREY};
+            }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+        
+        delete_btn = QPushButton("Delete")
+        delete_btn.setCursor(Qt.PointingHandCursor)
+        delete_btn.setFixedWidth(100)
+        delete_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #DC3545;
+                color: white;
+                border: 1px solid #DC3545;
+                border-radius: 6px;
+                padding: 6px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{
+                background-color: #BB2D3B;
+                border-color: #BB2D3B;
+            }}
+        """)
+        delete_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(delete_btn)
+        
+        layout.addLayout(btn_layout)
+        
+    def _icon_delete_large(self) -> QPixmap:
+        """Create a large delete icon pixmap."""
+        size = 64
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        
+        # Use a soft red for the icon to match the theme
+        pen = p.pen()
+        pen.setColor(QColor("#FF6B6B"))
+        pen.setWidth(3)
+        p.setPen(pen)
+        
+        # Scale factor relative to 24px icon
+        s = size / 24.0
+        
+        # Draw trash can
+        p.drawRect(int(6*s), int(9*s), int(12*s), int(12*s))
+        p.drawLine(int(9*s), int(12*s), int(9*s), int(18*s))
+        p.drawLine(int(15*s), int(12*s), int(15*s), int(18*s))
+        p.drawLine(int(7*s), int(9*s), int(17*s), int(9*s))
+        p.drawLine(int(10*s), int(6*s), int(14*s), int(6*s))
+        p.drawLine(int(10*s), int(6*s), int(8*s), int(9*s))
+        p.drawLine(int(14*s), int(6*s), int(16*s), int(9*s))
+        p.end()
+        return pix
+
+
+class TrashBinWidget(QPushButton):
+    """A drop target for deleting sequences."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setText("🗑 Drop to Delete")
+        self.setToolTip("Drag sequence files here to delete them")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
+                border: 2px dashed {LIGHT_GREY};
+                border-radius: 10px;
+                padding: 8px;
+                font-weight: bold;
+                min-height: 40px;
+            }}
+            QPushButton:hover {{
+                border-color: #FF6B6B;
+                background-color: rgba(255, 107, 107, 0.1);
+                color: #FF6B6B;
+            }}
+            """
+        )
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat('application/x-looper-sequence-file'):
+            event.accept()
+            self.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: rgba(255, 107, 107, 0.2);
+                    color: #FF6B6B;
+                    border: 2px dashed #FF6B6B;
+                    border-radius: 10px;
+                    padding: 8px;
+                    font-weight: bold;
+                    min-height: 40px;
+                }}
+                """
+            )
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        # Restore original style
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
+                border: 2px dashed {LIGHT_GREY};
+                border-radius: 10px;
+                padding: 8px;
+                font-weight: bold;
+                min-height: 40px;
+            }}
+            QPushButton:hover {{
+                border-color: #FF6B6B;
+                background-color: rgba(255, 107, 107, 0.1);
+                color: #FF6B6B;
+            }}
+            """
+        )
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat('application/x-looper-sequence-file'):
+            try:
+                file_path_bytes = event.mimeData().data('application/x-looper-sequence-file')
+                file_path = str(file_path_bytes, 'utf-8')
+                
+                if not os.path.exists(file_path):
+                    return
+
+                filename = os.path.basename(file_path)
+                
+                dialog = ModernDeleteDialog(self, filename)
+                if dialog.exec_() == QDialog.Accepted:
+                    try:
+                        os.remove(file_path)
+                        event.accept()
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", f"Failed to delete file: {e}")
+            except Exception as e:
+                logger.error(f"Error processing drop in trash bin: {e}")
+            finally:
+                # Restore style
+                self.dragLeaveEvent(None)
+        else:
+            event.ignore()
+
+
 class CollapsibleToolbar(QWidget):
     """Collapsible top toolbar that mirrors context menu actions."""
 
@@ -614,6 +903,25 @@ class CollapsibleToolbar(QWidget):
         content_layout.setContentsMargins(8, 8, 8, 8)
         content_layout.setSpacing(6)
 
+        # Title Label
+        title_label = QLabel("Sequence List")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setFixedHeight(40)  # Match standard toolbar height
+        title_label.setStyleSheet(
+            f"""
+            QLabel {{
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 14px;
+                padding: 4px;
+            }}
+            """
+        )
+        content_layout.addWidget(title_label)
+
         top_cluster = QFrame(self._content_frame)
         top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._top_layout = QVBoxLayout(top_cluster)
@@ -621,6 +929,11 @@ class CollapsibleToolbar(QWidget):
         self._top_layout.setSpacing(1)
         self._sequences_scroll = self._make_sequences_scroll_box()
         self._top_layout.addWidget(self._sequences_scroll)
+
+        # Trash Bin
+        self.trash_bin = TrashBinWidget(self._content_frame)
+        self._top_layout.addWidget(self.trash_bin)
+        self._top_layout.addSpacing(4)
 
         nodes_col = QVBoxLayout()
         nodes_col.setSpacing(1)
@@ -694,36 +1007,8 @@ class CollapsibleToolbar(QWidget):
         except Exception:
             pass
 
-    def _position_nodes_toggle(self):
-        # Position the button relative to the toolbar's position on the screen
-        if hasattr(self, '_toggle_btn_nodes') and self._toggle_btn_nodes:
-            try:
-                # Map our (0,0) to the parent (graph_view)
-                # If we are collapsed (width 0), mapTo parent might give the position where we would be?
-                # Actually, mapTo(parent, (0,0)) gives the top-left corner in parent coords.
-                
-                # If collapsed (width 0), we want the button to be at the right edge of the graph view?
-                # No, the toolbar is on the right. So (0,0) of the toolbar is the start of the toolbar.
-                # If collapsed, width is 0, so it's at the far right.
-                
-                pos_in_parent = self.mapTo(self.graph_view, QPoint(0, 0))
-                
-                # We want the button to be to the LEFT of the toolbar.
-                # Button width is 28.
-                # Overlap slightly? 
-                # Let's say we want it exactly adjacent to the left edge of the toolbar.
-                x = pos_in_parent.x() - 28 + 2 # +2 overlap
-                
-                # Vertical center relative to toolbar
-                y = pos_in_parent.y() + (self.height() // 2) - 14
-                
-                # Constrain y to be within graph view
-                if y < 0: y = 0
-                
-                self._toggle_btn_nodes.move(x, y)
-                self._toggle_btn_nodes.raise_()
-            except Exception:
-                pass
+    def refresh_sequences_list(self, path=None):
+        """Refresh the list of sequences in the toolbar."""
         try:
             new_scroll = self._make_sequences_scroll_box()
             if hasattr(self, '_sequences_scroll') and self._sequences_scroll is not None:
@@ -758,6 +1043,37 @@ class CollapsibleToolbar(QWidget):
         except Exception as e:
             logger.error(f"Failed to refresh sequences list: {e}")
 
+    def _position_nodes_toggle(self):
+        # Position the button relative to the toolbar's position on the screen
+        if hasattr(self, '_toggle_btn_nodes') and self._toggle_btn_nodes:
+            try:
+                # Map our (0,0) to the parent (graph_view)
+                # If we are collapsed (width 0), mapTo parent might give the position where we would be?
+                # Actually, mapTo(parent, (0,0)) gives the top-left corner in parent coords.
+                
+                # If collapsed (width 0), we want the button to be at the right edge of the graph view?
+                # No, the toolbar is on the right. So (0,0) of the toolbar is the start of the toolbar.
+                # If collapsed, width is 0, so it's at the far right.
+                
+                pos_in_parent = self.mapTo(self.graph_view, QPoint(0, 0))
+                
+                # We want the button to be to the LEFT of the toolbar.
+                # Button width is 28.
+                # Overlap slightly? 
+                # Let's say we want it exactly adjacent to the left edge of the toolbar.
+                x = pos_in_parent.x() - 28 + 2 # +2 overlap
+                
+                # Vertical center relative to toolbar
+                y = pos_in_parent.y() + (self.height() // 2) - 14
+                
+                # Constrain y to be within graph view
+                if y < 0: y = 0
+                
+                self._toggle_btn_nodes.move(x, y)
+                self._toggle_btn_nodes.raise_()
+            except Exception:
+                pass
+
     def _make_sequences_scroll_box(self):
         scroll = QScrollArea(self)
         scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -766,14 +1082,17 @@ class CollapsibleToolbar(QWidget):
         except Exception:
             pass
         try:
+            # Allow vertical scrollbar, hide horizontal
             scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         except Exception:
             pass
         
 
         container = QFrame(scroll)
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 4, 0, 4)
+        # Add right margin (12px) to make space for scrollbar without overlap
+        layout.setContentsMargins(4, 4, 12, 4)
         layout.setSpacing(6)
         folder = getattr(self.graph_view, 'sequences_folder', None)
         files = []

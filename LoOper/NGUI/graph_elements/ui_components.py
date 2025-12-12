@@ -83,7 +83,7 @@ class UIComponents:
                 QWidget {{
                     background-color: {MEDIUM_GREY};
                     border: 1px solid {LIGHT_GREY};
-                    border-radius: 8px;
+                    border-radius: 10px;
                 }}
             """)
             

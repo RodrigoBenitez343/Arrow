@@ -62,13 +62,13 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     p.setPen(pen)
     s = float(size) * dpr
     if name == 'CHEVRON_RIGHT':
-        p.drawPolyline(QPoint(int(0.35*s), int(0.25*s)), QPoint(int(0.65*s), int(0.5*s)), QPoint(int(0.35*s), int(0.75*s)))
+        p.drawPolyline([QPoint(int(0.35*s), int(0.25*s)), QPoint(int(0.65*s), int(0.5*s)), QPoint(int(0.35*s), int(0.75*s))])
     elif name == 'CHEVRON_LEFT':
-        p.drawPolyline(QPoint(int(0.65*s), int(0.25*s)), QPoint(int(0.35*s), int(0.5*s)), QPoint(int(0.65*s), int(0.75*s)))
+        p.drawPolyline([QPoint(int(0.65*s), int(0.25*s)), QPoint(int(0.35*s), int(0.5*s)), QPoint(int(0.65*s), int(0.75*s))])
     elif name == 'CHEVRON_UP':
-        p.drawPolyline(QPoint(int(0.25*s), int(0.65*s)), QPoint(int(0.5*s), int(0.35*s)), QPoint(int(0.75*s), int(0.65*s)))
+        p.drawPolyline([QPoint(int(0.25*s), int(0.65*s)), QPoint(int(0.5*s), int(0.35*s)), QPoint(int(0.75*s), int(0.65*s))])
     else:  # CHEVRON_DOWN
-        p.drawPolyline(QPoint(int(0.25*s), int(0.35*s)), QPoint(int(0.5*s), int(0.65*s)), QPoint(int(0.75*s), int(0.35*s)))
+        p.drawPolyline([QPoint(int(0.25*s), int(0.35*s)), QPoint(int(0.5*s), int(0.65*s)), QPoint(int(0.75*s), int(0.35*s))])
     p.end()
     try:
         pix.setDevicePixelRatio(dpr)
@@ -99,7 +99,7 @@ class ActionsToolbar(QWidget):
         except Exception:
             pass
         layout = QHBoxLayout(self._content_frame)
-        layout.setContentsMargins(8, 3, 8, 9)
+        layout.setContentsMargins(5, 5, 5, 5)  # Reduced padding to center buttons
         layout.setSpacing(6)
 
         layout.setAlignment(Qt.AlignVCenter)
@@ -115,12 +115,13 @@ class ActionsToolbar(QWidget):
         # Floating toggle button (modern chevron) centered under the actions frame
         self._toggle_btn_actions = QToolButton(self.graph_view)
         self._toggle_btn_actions.setToolTip("Toggle Actions Toolbar")
-        ico2 = load_tabler_icon('CHEVRON_DOWN', 14)
+        # Initialize with UP chevron because toolbar starts expanded (visible)
+        ico2 = load_tabler_icon('CHEVRON_UP', 14)
         if ico2:
             self._toggle_btn_actions.setIcon(ico2)
             self._toggle_btn_actions.setIconSize(QSize(14, 14))
         else:
-            self._toggle_btn_actions.setText("▾")
+            self._toggle_btn_actions.setText("▴")
         self._toggle_btn_actions.setAutoRaise(True)
         self._toggle_btn_actions.setCursor(Qt.PointingHandCursor)
         self._toggle_btn_actions.setFixedSize(28, 28)
@@ -193,7 +194,7 @@ class ActionsToolbar(QWidget):
                 background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 14px;
+                border-radius: 8px;
                 padding: 2px 8px;
                 min-width: 96px;
                 min-height: 24px;
@@ -229,7 +230,7 @@ class ActionsToolbar(QWidget):
                 background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 14px;
+                border-radius: 8px;
                 padding: 2px 8px;
                 min-width: 96px;
                 min-height: 24px;
