@@ -10,11 +10,95 @@ from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
     QComboBox, QSpinBox, QDoubleSpinBox, QWidget, QFileDialog,
-    QListWidgetItem, QTextEdit, QGroupBox, QListWidget, QDialog
+    QListWidgetItem, QTextEdit, QGroupBox, QListWidget, QDialog,
+    QFrame
 )
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QPixmap
 from ..constants import TEXT_COLOR
-from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog
+from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog, WaitConditionDialog
 from ..i18n import _
+
+
+class ConditionItemWidget(QFrame):
+    """Custom widget for displaying conditions in the list"""
+    def __init__(self, config, condition_type="presence"):
+        super().__init__()
+        self.config = config
+        self.condition_type = condition_type
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(15)
+        
+        # Style
+        self.setStyleSheet(f"""
+            ConditionItemWidget {{
+                background-color: #2b2b2b;
+                border: 1px solid #3d3d3d;
+                border-radius: 8px;
+            }}
+            QLabel {{
+                color: {TEXT_COLOR};
+                border: none;
+            }}
+        """)
+        
+        # Preview
+        preview_label = QLabel()
+        preview_label.setFixedSize(60, 60)
+        preview_label.setAlignment(Qt.AlignCenter)
+        preview_label.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
+        
+        info_text = ""
+        
+        if self.condition_type == "presence" or self.condition_type == "absence":
+            image_path = self.config.get('image_path', '')
+            if image_path:
+                pixmap = QPixmap(image_path)
+                if not pixmap.isNull():
+                    preview_label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                else:
+                    preview_label.setText("IMG")
+            else:
+                preview_label.setText("IMG")
+                
+            conf = self.config.get('confidence', 0.8)
+            timeout = self.config.get('timeout', 0)
+            timeout_str = f", Timeout: {timeout}s" if timeout > 0 else ""
+            info_text = f"<b>{_('Image Trigger')}</b><br>{image_path}<br>Confidence: {conf}{timeout_str}"
+            
+        elif self.condition_type == "ocr":
+            preview_label.setText("OCR")
+            text = self.config.get('target_text', '')
+            conf = self.config.get('confidence', 0.8)
+            info_text = f"<b>{_('OCR Trigger')}</b><br>Text: '{text}'<br>Confidence: {conf}"
+            
+        elif self.condition_type == "loop":
+            preview_label.setText("LOOP")
+            loop_type = self.config.get('type', '')
+            seq = self.config.get('sequence_file', '')
+            max_iter = self.config.get('max_iterations', 10)
+            info_text = f"<b>{_('Conditional Loop')}</b><br>Type: {loop_type}<br>Sequence: {seq}<br>Max Iterations: {max_iter}"
+            
+        elif self.condition_type == "wait":
+             preview_label.setText("WAIT")
+             wtype = self.config.get('type', 'wait_time')
+             if wtype == 'wait_time':
+                 duration = self.config.get('duration', 5.0)
+                 info_text = f"<b>{_('Wait Condition')}</b><br>Wait Time: {duration}s"
+             else:
+                 timeout = self.config.get('timeout', 30)
+                 info_text = f"<b>{_('Wait Condition')}</b><br>Type: {wtype}, Timeout: {timeout}s"
+
+        layout.addWidget(preview_label)
+        
+        info_label = QLabel(info_text)
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        layout.addStretch()
 
 
 class AdvancedConditionalDialog(ModernDialog):
@@ -72,6 +156,7 @@ class AdvancedConditionalDialog(ModernDialog):
 
         self.presence_triggers_list = QListWidget()
         self.presence_triggers_list.setMinimumHeight(120)
+        self.presence_triggers_list.itemDoubleClicked.connect(self.edit_presence_trigger)
         presence_layout.addWidget(self.presence_triggers_list)
 
         presence_buttons = QHBoxLayout()
@@ -98,6 +183,7 @@ class AdvancedConditionalDialog(ModernDialog):
 
         self.ocr_triggers_list = QListWidget()
         self.ocr_triggers_list.setMinimumHeight(120)
+        self.ocr_triggers_list.itemDoubleClicked.connect(self.edit_ocr_trigger)
         ocr_layout.addWidget(self.ocr_triggers_list)
 
         ocr_buttons = QHBoxLayout()
@@ -124,6 +210,7 @@ class AdvancedConditionalDialog(ModernDialog):
 
         self.pre_loops_list = QListWidget()
         self.pre_loops_list.setMinimumHeight(120)
+        self.pre_loops_list.itemDoubleClicked.connect(self.edit_pre_loop)
         pre_loops_layout.addWidget(self.pre_loops_list)
 
         pre_loops_buttons = QHBoxLayout()
@@ -338,14 +425,89 @@ class AdvancedConditionalDialog(ModernDialog):
         # Load existing data
         self.load_conditional_loops()
     
+    def create_list_item(self, list_widget, config, condition_type):
+        """Create a custom list item with widget"""
+        item = QListWidgetItem()
+        item.setSizeHint(QSize(0, 80))  # Set appropriate height
+        item.setData(32, config)
+        list_widget.addItem(item)
+        
+        widget = ConditionItemWidget(config, condition_type)
+        list_widget.setItemWidget(item, widget)
+        
+    def edit_presence_trigger(self, item):
+        """Edit presence trigger"""
+        config = item.data(32)
+        dialog = TriggerConfigDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            # Refresh widget
+            widget = ConditionItemWidget(new_config, "presence")
+            self.presence_triggers_list.setItemWidget(item, widget)
+
+    def edit_absence_trigger(self, item):
+        """Edit absence trigger"""
+        config = item.data(32)
+        dialog = TriggerConfigDialog(self, is_absence_trigger=True, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            
+            # Validate timeout
+            timeout = new_config.get('timeout', 0)
+            if timeout <= 0:
+                new_config['timeout'] = 10
+            
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "absence")
+            self.absence_triggers_list.setItemWidget(item, widget)
+
+    def edit_ocr_trigger(self, item):
+        """Edit OCR trigger"""
+        config = item.data(32)
+        dialog = OCRTriggerConfigDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "ocr")
+            self.ocr_triggers_list.setItemWidget(item, widget)
+
+    def edit_wait_condition(self, item):
+        """Edit wait condition"""
+        config = item.data(32)
+        dialog = WaitConditionDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "wait")
+            self.wait_conditions_list.setItemWidget(item, widget)
+
+    def edit_pre_loop(self, item):
+        """Edit pre-sequence conditional loop"""
+        config = item.data(32)
+        dialog = ConditionalLoopDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "loop")
+            self.pre_loops_list.setItemWidget(item, widget)
+
+    def edit_post_loop(self, item):
+        """Edit post-sequence conditional loop"""
+        config = item.data(32)
+        dialog = ConditionalLoopDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "loop")
+            self.post_loops_list.setItemWidget(item, widget)
+
     def add_presence_trigger(self):
         """Add a presence trigger"""
         dialog = TriggerConfigDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
-            item = QListWidgetItem(_("Image: {path} (Confidence: {conf})").format(path=config['image_path'], conf=config['confidence']))
-            item.setData(32, config)  # Store config in item data
-            self.presence_triggers_list.addItem(item)
+            self.create_list_item(self.presence_triggers_list, config, "presence")
     
     def add_absence_trigger(self):
         """Add an absence trigger"""
@@ -358,54 +520,36 @@ class AdvancedConditionalDialog(ModernDialog):
             if timeout <= 0:
                 # Force a default timeout for absence triggers to prevent workflow freezing
                 config['timeout'] = 10
-                timeout = 10
             
-            item = QListWidgetItem(_("Image: {path} (Timeout: {sec}s)").format(path=config['image_path'], sec=timeout))
-            item.setData(32, config)
-            self.absence_triggers_list.addItem(item)
+            self.create_list_item(self.absence_triggers_list, config, "absence")
     
     def add_ocr_trigger(self):
         """Add an OCR trigger"""
         dialog = OCRTriggerConfigDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
-            item = QListWidgetItem(_("Text: '{text}' (Confidence: {conf})").format(text=config['target_text'], conf=config['confidence']))
-            item.setData(32, config)
-            self.ocr_triggers_list.addItem(item)
+            self.create_list_item(self.ocr_triggers_list, config, "ocr")
     
     def add_wait_condition(self):
         """Add a wait condition"""
         dialog = WaitConditionDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
-            condition_type = config['type']
-            timeout = config.get('timeout', 30)
-            ctype_label = _(condition_type)
-            item = QListWidgetItem(_("Wait for {ctype}: {path} (Timeout: {sec}s)").format(ctype=ctype_label, path=config['image_path'], sec=timeout))
-            item.setData(32, config)
-            self.wait_conditions_list.addItem(item)
+            self.create_list_item(self.wait_conditions_list, config, "wait")
     
     def add_pre_conditional_loop(self):
         """Add a pre-sequence conditional loop"""
         dialog = ConditionalLoopDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
-            loop_type = config['type']
-            max_iter = config['max_iterations']
-            item = QListWidgetItem(_("{loop} loop: {seq} (Max: {max})").format(loop=loop_type, seq=config['sequence_file'], max=max_iter))
-            item.setData(32, config)
-            self.pre_loops_list.addItem(item)
+            self.create_list_item(self.pre_loops_list, config, "loop")
     
     def add_post_conditional_loop(self):
         """Add a post-sequence conditional loop"""
         dialog = ConditionalLoopDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
-            loop_type = config['type']
-            max_iter = config['max_iterations']
-            item = QListWidgetItem(_("{loop} loop: {seq} (Max: {max})").format(loop=loop_type, seq=config['sequence_file'], max=max_iter))
-            item.setData(32, config)
-            self.post_loops_list.addItem(item)
+            self.create_list_item(self.post_loops_list, config, "loop")
     
     def remove_selected_item(self, list_widget):
         """Remove selected item from list widget"""
@@ -417,36 +561,23 @@ class AdvancedConditionalDialog(ModernDialog):
         """Load existing pre-conditions"""
         presence_triggers = self.current_config.get('presence_triggers', [])
         for trigger in presence_triggers:
-            item = QListWidgetItem(_("Image: {path} (Confidence: {conf})").format(path=trigger['image_path'], conf=trigger['confidence']))
-            item.setData(32, trigger)
-            self.presence_triggers_list.addItem(item)
+            self.create_list_item(self.presence_triggers_list, trigger, "presence")
 
         ocr_triggers = self.current_config.get('ocr_triggers', [])
         for trigger in ocr_triggers:
-            item = QListWidgetItem(_("Text: '{text}' (Confidence: {conf})").format(text=trigger['target_text'], conf=trigger['confidence']))
-            item.setData(32, trigger)
-            self.ocr_triggers_list.addItem(item)
+            self.create_list_item(self.ocr_triggers_list, trigger, "ocr")
     
     def load_post_conditions(self):
         """Load existing post-conditions"""
         wait_conditions = self.current_config.get('wait_conditions', [])
         for condition in wait_conditions:
-            condition_type = condition['type']
-            timeout = condition.get('timeout', 30)
-            ctype_label = _(condition_type)
-            item = QListWidgetItem(_("Wait for {ctype}: {path} (Timeout: {sec}s)").format(ctype=ctype_label, path=condition['image_path'], sec=timeout))
-            item.setData(32, condition)
-            self.wait_conditions_list.addItem(item)
+            self.create_list_item(self.wait_conditions_list, condition, "wait")
     
     def load_conditional_loops(self):
         """Load existing conditional loops"""
         pre_loops = self.current_config.get('pre_conditional_loops', [])
         for loop_config in pre_loops:
-            loop_type = loop_config['type']
-            max_iter = loop_config['max_iterations']
-            item = QListWidgetItem(_("{loop} loop: {seq} (Max: {max})").format(loop=loop_type, seq=loop_config['sequence_file'], max=max_iter))
-            item.setData(32, loop_config)
-            self.pre_loops_list.addItem(item)
+            self.create_list_item(self.pre_loops_list, loop_config, "loop")
     
     def get_config(self):
         """Get the complete configuration from the dialog"""

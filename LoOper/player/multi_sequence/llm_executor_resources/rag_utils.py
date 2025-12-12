@@ -5,7 +5,6 @@ import re
 from xml.etree import ElementTree as ET
 
 # Ensure torch DLLs are loaded before langchain imports on Windows
-# Fix for Intel OpenMP runtime duplicate error
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
 # Ensure DLL load path on Windows

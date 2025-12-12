@@ -41,7 +41,8 @@ class ModernDialog(QDialog):
         
         # Container layout
         self.container_layout = QVBoxLayout(self.container)
-        self.container_layout.setContentsMargins(0, 0, 0, 0)
+        # Ensure padding inside the container respects the border radius
+        self.container_layout.setContentsMargins(1, 1, 1, 1) 
         self.container_layout.setSpacing(0)
         
         # Title bar
@@ -50,14 +51,14 @@ class ModernDialog(QDialog):
         self.title_bar.setStyleSheet(f"""
             QWidget {{
                 background-color: {MEDIUM_GREY};
-                border-top-left-radius: 10px;
-                border-top-right-radius: 10px;
+                border-top-left-radius: 9px;  /* Match container radius minus border */
+                border-top-right-radius: 9px;
                 border-bottom: 1px solid {LIGHT_GREY};
             }}
         """)
         
         title_layout = QHBoxLayout(self.title_bar)
-        title_layout.setContentsMargins(15, 0, 10, 0)
+        title_layout.setContentsMargins(15, 0, 15, 0) # Increased right margin to avoid corner clip
         
         self.title_label = QLabel(title)
         self.title_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
@@ -66,13 +67,21 @@ class ModernDialog(QDialog):
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(30, 30)
         self.close_btn.setCursor(Qt.PointingHandCursor)
+        # Ensure button stays on top and doesn't get clipped
+        self.close_btn.raise_() 
         self.close_btn.setStyleSheet(f"""
             QPushButton {{
                 color: {TEXT_COLOR};
                 background: transparent;
                 border: none;
-                border-radius: 15px;
+                border-radius: 15px; /* Half of 30px size */
                 font-size: 14px;
+                padding: 0px;
+                margin: 0px;
+                min-width: 30px;
+                max-width: 30px;
+                min-height: 30px;
+                max-height: 30px;
             }}
             QPushButton:hover {{
                 background-color: #FF4B4B;
@@ -83,7 +92,7 @@ class ModernDialog(QDialog):
         
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
-        title_layout.addWidget(self.close_btn)
+        title_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter) # Explicitly center vertically
         
         self.container_layout.addWidget(self.title_bar)
         

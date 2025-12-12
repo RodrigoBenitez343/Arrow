@@ -20,14 +20,23 @@ from ..i18n import _
 class TriggerConfigDialog(ModernDialog):
     """Dialog for configuring image-based triggers"""
     
-    def __init__(self, parent, is_absence_trigger=False):
+    def __init__(self, parent, is_absence_trigger=False, config=None):
         title = _("Absence Trigger Configuration") if is_absence_trigger else _("Trigger Configuration")
         super().__init__(parent, title=title)
         self.is_absence_trigger = is_absence_trigger
+        self.config = config
         self.setModal(True)
         self.resize(400, 200)
         self.setup_ui()
+        if self.config:
+            self.load_config()
     
+    def load_config(self):
+        """Load existing configuration"""
+        self.image_path_entry.setText(self.config.get('image_path', ''))
+        self.confidence_spin.setValue(self.config.get('confidence', 0.8))
+        self.timeout_spin.setValue(self.config.get('timeout', 10 if self.is_absence_trigger else 0))
+
     def setup_ui(self):
         """Setup the UI"""
         # Use content_layout from ModernDialog
@@ -129,11 +138,20 @@ class TriggerConfigDialog(ModernDialog):
 class OCRTriggerConfigDialog(ModernDialog):
     """Dialog for configuring OCR-based triggers"""
     
-    def __init__(self, parent):
+    def __init__(self, parent, config=None):
         super().__init__(parent, title=_("OCR Trigger Configuration"))
+        self.config = config
         self.setModal(True)
         self.resize(450, 350)
         self.setup_ui()
+        if self.config:
+            self.load_config()
+
+    def load_config(self):
+        """Load existing configuration"""
+        self.target_text_entry.setText(self.config.get('target_text', ''))
+        self.confidence_spin.setValue(self.config.get('confidence', 0.8))
+        self.case_sensitive_check.setChecked(self.config.get('case_sensitive', False))
     
     def setup_ui(self):
         """Setup the UI"""
@@ -195,11 +213,31 @@ class OCRTriggerConfigDialog(ModernDialog):
 class WaitConditionDialog(ModernDialog):
     """Dialog for configuring wait conditions"""
     
-    def __init__(self, parent):
+    def __init__(self, parent, config=None):
         super().__init__(parent, title=_("Wait Condition"))
+        self.config = config
         self.setModal(True)
         self.resize(400, 250)
         self.setup_ui()
+        if self.config:
+            self.load_config()
+
+    def load_config(self):
+        """Load existing configuration"""
+        wait_type = self.config.get('type', 'presence')
+        self.type_combo.setCurrentText(wait_type)
+        
+        if wait_type == 'ocr':
+            self.target_text_entry.setText(self.config.get('target_text', ''))
+            self.case_sensitive_check.setChecked(self.config.get('case_sensitive', True))
+            self.confidence_spin.setValue(self.config.get('confidence', 0.8))
+            self.timeout_spin.setValue(self.config.get('timeout', 30))
+        elif wait_type == 'wait_time':
+            self.wait_duration_spin.setValue(self.config.get('duration', 5.0))
+        else: # presence or absence
+            self.image_path_entry.setText(self.config.get('image_path', ''))
+            self.confidence_spin.setValue(self.config.get('confidence', 0.8))
+            self.timeout_spin.setValue(self.config.get('timeout', 30))
     
     def setup_ui(self):
         """Setup the UI"""
@@ -339,12 +377,35 @@ class WaitConditionDialog(ModernDialog):
 class ConditionalLoopDialog(ModernDialog):
     """Dialog for configuring conditional loops"""
     
-    def __init__(self, parent):
+    def __init__(self, parent, config=None):
         super().__init__(parent, title=_("Conditional Loop"))
+        self.config = config
         self.setModal(True)
         self.resize(500, 350)
         self.setup_ui()
-    
+        if self.config:
+            self.load_config()
+
+    def load_config(self):
+        """Load existing configuration"""
+        self.type_combo.setCurrentText(self.config.get('type', 'while_present'))
+        self.sequence_file_entry.setText(self.config.get('sequence_file', ''))
+        self.max_iterations_spin.setValue(self.config.get('max_iterations', 10))
+        self.iteration_delay_spin.setValue(self.config.get('iteration_delay', 1.0))
+        
+        condition = self.config.get('condition', {})
+        trigger_type = condition.get('trigger_type', 'presence')
+        
+        if trigger_type == 'ocr':
+            self.condition_method_combo.setCurrentText('ocr')
+            self.target_text_entry.setText(condition.get('target_text', ''))
+            self.case_sensitive_check.setChecked(condition.get('case_sensitive', True))
+            self.confidence_spin.setValue(condition.get('confidence', 0.8))
+        else:
+            self.condition_method_combo.setCurrentText('image')
+            self.image_path_entry.setText(condition.get('image_path', ''))
+            self.confidence_spin.setValue(condition.get('confidence', 0.8))
+
     def setup_ui(self):
         """Setup the UI"""
         # Use content_layout from ModernDialog
