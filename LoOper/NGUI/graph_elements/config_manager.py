@@ -2,7 +2,7 @@ import json
 import os
 import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode
 
 # Import cache invalidation function
 try:
@@ -34,7 +34,7 @@ class ConfigManager:
         logger.info("Initializing ConfigManager")
         try:
             self.parent_widget = parent_widget
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": []}
             logger.debug("ConfigManager initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing ConfigManager: {e}")
@@ -46,7 +46,7 @@ class ConfigManager:
         try:
             self.save_current_state()
             config_copy = self.chain_config.copy()
-            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes")
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes, {len(config_copy.get('code_nodes', []))} code nodes")
             return config_copy
         except Exception as e:
             logger.error(f"Error getting chain config: {e}")
@@ -58,7 +58,7 @@ class ConfigManager:
         try:
             # Clear current config
             logger.debug("Clearing current configuration")
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": []}
             
             # Get all nodes
             logger.debug("Getting all nodes from graph")
@@ -85,10 +85,13 @@ class ConfigManager:
                 elif isinstance(node, FormFillerNode):
                     logger.debug(f"Saving form filler node: {node.id}")
                     self._save_form_filler_node(node)
+                elif isinstance(node, CodeNode):
+                    logger.debug(f"Saving Code node: {node.id}")
+                    self._save_code_node(node)
                 else:
                     logger.warning(f"Unknown node type: {type(node).__name__}")
             
-            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes")
+            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes, {len(self.chain_config['code_nodes'])} code nodes")
                     
         except Exception as e:
             logger.error(f"Error saving current state: {e}")
@@ -112,7 +115,8 @@ class ConfigManager:
                 "llm_nodes": [], 
                 "tts_nodes": [], 
                 "chain_import_nodes": [], 
-                "form_filler_nodes": []
+                "form_filler_nodes": [],
+                "code_nodes": []
             }
             
             # Save the single node
@@ -128,6 +132,8 @@ class ConfigManager:
                 self._save_chain_import_node(node)
             elif isinstance(node, FormFillerNode):
                 self._save_form_filler_node(node)
+            elif isinstance(node, CodeNode):
+                self._save_code_node(node)
                 
             return self.chain_config.copy()
             
@@ -161,10 +167,11 @@ class ConfigManager:
                     "llm_nodes": loaded_config.get("llm_nodes", []),
                     "tts_nodes": loaded_config.get("tts_nodes", []),
                     "chain_import_nodes": loaded_config.get("chain_import_nodes", []),
-                    "form_filler_nodes": loaded_config.get("form_filler_nodes", [])
+                    "form_filler_nodes": loaded_config.get("form_filler_nodes", []),
+                    "code_nodes": loaded_config.get("code_nodes", [])
                 }
                 
-                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes, {len(self.chain_config.get('form_filler_nodes', []))} form filler nodes")
+                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes, {len(self.chain_config.get('form_filler_nodes', []))} form filler nodes, {len(self.chain_config.get('code_nodes', []))} code nodes")
                     
                 # Build graph from config
                 logger.debug("Building graph from loaded configuration")
@@ -260,6 +267,9 @@ class ConfigManager:
             if hasattr(self.parent_widget, 'chain_import_nodes'):
                 self.parent_widget.chain_import_nodes.clear()
                 logger.debug("Cleared chain_import_nodes tracking list")
+            if hasattr(self.parent_widget, 'code_nodes'):
+                self.parent_widget.code_nodes.clear()
+                logger.debug("Cleared code_nodes tracking list")
             
             # Store node references for connections
             node_map = {}
@@ -288,6 +298,10 @@ class ConfigManager:
             # Create form filler nodes
             logger.debug("Creating form filler nodes")
             self._create_form_filler_nodes(node_map)
+            
+            # Create Code nodes
+            logger.debug("Creating Code nodes")
+            self._create_code_nodes(node_map)
             
             # Restore connections
             logger.debug("Restoring node connections")
@@ -559,6 +573,32 @@ class ConfigManager:
             logger.debug(f"Successfully saved form filler node with instruction: {form_filler_data['instruction'][:30]}...")
         except Exception as e:
             logger.error(f"Error saving form filler node {node.id}: {e}")
+            raise
+            
+    def _save_code_node(self, node):
+        """Save a Code node to configuration."""
+        logger.debug(f"Saving Code node {node.id} to configuration")
+        try:
+            config = node.get_code_config()
+            code_data = {
+                "type": "code",
+                "code": config.get('code', ''),
+                "file_path": config.get('file_path', ''),
+                "execute_on_input": config.get('execute_on_input', True),
+                "output_variable": config.get('output_variable', 'result'),
+                "timeout": config.get('timeout', 30),
+                "node_id": node.id,
+                "position": node.pos(),
+                "connections": self._get_node_connections(node)
+            }
+            
+            if "code_nodes" not in self.chain_config:
+                self.chain_config["code_nodes"] = []
+                
+            self.chain_config["code_nodes"].append(code_data)
+            logger.debug(f"Successfully saved Code node: {node.id}")
+        except Exception as e:
+            logger.error(f"Error saving Code node {node.id}: {e}")
             raise
         
     def _get_node_connections(self, node):
@@ -954,6 +994,51 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error creating form filler nodes: {e}")
             raise
+            
+    def _create_code_nodes(self, node_map):
+        """Create Code nodes from configuration."""
+        logger.debug("Creating Code nodes from configuration")
+        try:
+            code_nodes = self.chain_config.get("code_nodes", [])
+            logger.debug(f"Found {len(code_nodes)} Code nodes to create")
+            
+            for code_data in code_nodes:
+                logger.debug(f"Creating Code node")
+                node = self.parent_widget.graph_manager.create_node(
+                    'code.CodeNode',
+                    name='Code'
+                )
+                
+                if node:
+                    # Set properties
+                    node.set_property('code', code_data.get('code', ''))
+                    node.set_property('file_path', code_data.get('file_path', ''))
+                    node.set_property('execute_on_input', 'true' if code_data.get('execute_on_input', True) else 'false')
+                    node.set_property('output_variable', code_data.get('output_variable', 'result'))
+                    node.set_property('timeout', str(code_data.get('timeout', 30)))
+                    
+                    # Update name
+                    if code_data.get('file_path'):
+                        import os
+                        name_preview = os.path.basename(code_data['file_path'])
+                        node.set_name(f"Code: {name_preview}")
+                    
+                    # Set position
+                    position = code_data.get("position", [0, 0])
+                    node.set_pos(*position)
+                    
+                    # Add to parent widget's tracking list
+                    if hasattr(self.parent_widget, 'code_nodes'):
+                        self.parent_widget.code_nodes.append(node)
+                        
+                    # Store in node map
+                    node_id = code_data.get("node_id", node.id)
+                    node_map[node_id] = node
+                else:
+                    logger.error(f"Failed to create Code node")
+        except Exception as e:
+            logger.error(f"Error creating Code nodes: {e}")
+            raise
 
     def _restore_connections(self, node_map):
         """Restore connections between nodes."""
@@ -965,7 +1050,8 @@ class ConfigManager:
                 self.chain_config.get("llm_nodes", []) +
                 self.chain_config.get("tts_nodes", []) +
                 self.chain_config.get("chain_import_nodes", []) +
-                self.chain_config.get("form_filler_nodes", [])
+                self.chain_config.get("form_filler_nodes", []) +
+                self.chain_config.get("code_nodes", [])
             )
             
             total_connections = sum(len(node_data.get("connections", [])) for node_data in all_node_data)

@@ -184,6 +184,8 @@ class DragDropManager:
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
                         new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
+                    elif node_type == 'code':
+                        new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):
@@ -266,6 +268,8 @@ class DragDropManager:
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
                         new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
+                    elif node_type == 'code':
+                        new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):

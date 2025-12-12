@@ -18,9 +18,13 @@ LLM_COLOR = '#FF6B35'
 TTS_COLOR = '#00CED1'
 CHAIN_IMPORT_COLOR = '#32CD32'
 FORM_FILLER_COLOR = '#DDA0DD'
+CODE_NODE_COLOR = '#F1C40F'
 
 # Port Color Mapping (visual emphasis; labels are background logic)
 INPUT_PORT_COLOR = '#4DB6FF'   # Bright blue for inputs
 OUTPUT_PORT_COLOR = '#66BB6A'  # Green for outputs
 PORT_TRUE_COLOR = '#2ECC71'    # Green for boolean true
 PORT_FALSE_COLOR = '#EF5350'   # Red for boolean false
+
+# Port Types
+UNIVERSAL_PORT_TYPE = 'neural_network'

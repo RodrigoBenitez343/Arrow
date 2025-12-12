@@ -36,12 +36,13 @@ if not chain_logger.handlers:
 class WorkflowGraphBuilder:
     """Builds and manages workflow graphs from sequences and conditional nodes"""
     
-    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None):
+    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None, code_nodes=None):
         self.sequences = sequences or []
         self.conditional_nodes = conditional_nodes or []
         self.llm_nodes = llm_nodes or []
         self.tts_nodes = tts_nodes or []
         self.chain_import_nodes = chain_import_nodes or []
+        self.code_nodes = code_nodes or []
     
     def build_workflow_graph(self):
         """
@@ -185,6 +186,32 @@ class WorkflowGraphBuilder:
                 },
                 'tool_provider': tool_provider,
                 'selected_by_llm': False
+            }
+            
+        # Add Code nodes to graph
+        for code_node in self.code_nodes:
+            node_id = code_node.get('id') or code_node.get('node_id')
+            # Convert connections format to outputs format for Code nodes
+            output_connections = []
+            error_connections = []
+            
+            for conn in code_node.get('connections', []):
+                target = {
+                    'node_id': conn['target_node_id'],
+                    'input_port': conn.get('input_port')
+                }
+                if conn.get('output_port') == 'error':
+                    error_connections.append(target)
+                else:
+                    output_connections.append(target)
+            
+            graph[node_id] = {
+                'type': 'code',
+                'data': code_node,
+                'connections': {
+                    'output': output_connections,
+                    'error': error_connections
+                }
             }
         
         # Build connections from conditional outputs to other nodes
@@ -612,6 +639,10 @@ class WorkflowExecutor:
         ready_nodes.update(starting_nodes)
         last_completed_node_id = None
         
+        # Track execution counts for recursion control
+        execution_counts = {}
+        MAX_RECURSION_DEPTH = 10
+        
         while True:
             # Check stop flag
             if stop_flag and stop_flag():
@@ -665,15 +696,23 @@ class WorkflowExecutor:
             
             current_node_id = self._select_next_node(ready_nodes)
             
-            if current_node_id in completed_nodes:
-                continue  # Skip already completed nodes
+            # Allow re-execution of nodes if they are in ready_nodes (recursion handling)
+            # if current_node_id in completed_nodes:
+            #    continue  # Skip already completed nodes
+            
+            # Check recursion depth
+            current_count = execution_counts.get(current_node_id, 0)
+            if current_count >= MAX_RECURSION_DEPTH:
+                logger.warning(f"Max recursion depth ({MAX_RECURSION_DEPTH}) reached for node {current_node_id}. Skipping.")
+                continue
+            execution_counts[current_node_id] = current_count + 1
             
             if current_node_id not in self.workflow_graph:
                 logger.warning(f"Node {current_node_id} not found in workflow graph")
                 continue
             
             node = self.workflow_graph[current_node_id]
-            logger.info(f"Executing node {current_node_id} (type: {node['type']})")
+            logger.info(f"Executing node {current_node_id} (type: {node['type']}) - Execution #{execution_counts[current_node_id]}")
             chain_logger.info(f"EXECUTING NODE: {current_node_id} (Type: {node['type']})")
             try:
                 from rich.table import Table
@@ -723,6 +762,8 @@ class WorkflowExecutor:
                 success = self._execute_tts_node(node, stop_flag) is not None
             elif node['type'] == 'chain_import':
                 success = self._execute_chain_import_node(node, stop_flag) is not None
+            elif node['type'] == 'code':
+                success = self._execute_code_node(node, stop_flag) is not None
             else:
                 logger.warning(f"Unknown node type: {node['type']}")
                 success = False
@@ -819,10 +860,19 @@ class WorkflowExecutor:
                     next_nodes = self._get_output_connected_nodes(current_node_id)
                     logger.debug(f"Output connected nodes from {current_node_id}: {next_nodes}")
                     for next_node_id in next_nodes:
-                        if next_node_id not in completed_nodes:
-                            if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
-                                ready_nodes.add(next_node_id)
-                                logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
+                        # Logic for re-execution in cycles:
+                        # If next_node_id is already completed, but we just triggered it again (via cycle),
+                        # we should allow it to run again.
+                        if next_node_id in completed_nodes:
+                            # It's a cycle or re-entrance.
+                            # We remove it from completed_nodes so it can be re-evaluated.
+                            # Note: This might cause it to run immediately if deps are satisfied.
+                            completed_nodes.remove(next_node_id)
+                            logger.info(f"Node {next_node_id} re-activated (cycle detected), removed from completed set")
+                            
+                        if self._are_all_dependencies_satisfied(next_node_id, completed_nodes):
+                            ready_nodes.add(next_node_id)
+                            logger.info(f"Node {next_node_id} is now ready (output connection from {current_node_id})")
                     newly_ready = self._find_newly_ready_nodes(current_node_id, completed_nodes)
                     ready_nodes.update(newly_ready)
                     if newly_ready:
@@ -1754,6 +1804,185 @@ class WorkflowExecutor:
             logger.info(f"No connection for '{branch}' branch, ending workflow")
             return None
     
+    def _execute_code_node(self, node, stop_flag):
+        """
+        Executes a Code node and returns the next node ID.
+        
+        Args:
+            node (dict): The Code node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        logger.info(f"Executing Code node: {node.get('id')}")
+        code_data = node.get('data', {})
+        
+        # Get properties
+        code = code_data.get('code', '')
+        file_path = code_data.get('file_path', '')
+        output_variable = code_data.get('output_variable', 'result')
+        
+        # Resolve inputs
+        input_data = []
+        args = {}
+        runtime_code = None
+        
+        inputs = node.get('inputs', [])
+        for inp in inputs:
+            from_node_id = inp.get('from_node')
+            input_port = str(inp.get('input_port'))
+            
+            # Get value from previous node
+            val = self.llm_executor.get_variable(f"node_{from_node_id}_output")
+            
+            if input_port == 'input':
+                input_data.append(val)
+            elif input_port == 'args':
+                if isinstance(val, dict):
+                    args.update(val)
+            elif input_port == 'code':
+                if val:
+                    runtime_code = str(val)
+                    # If file_path is set, save the code to file
+                    if file_path:
+                        try:
+                            # Strip markdown code blocks if present
+                            code_to_save = runtime_code
+                            if "```" in code_to_save:
+                                import re
+                                # Try to match python code blocks first
+                                match = re.search(r"```(?:python)?\s*(.*?)```", code_to_save, re.DOTALL | re.IGNORECASE)
+                                if match:
+                                    code_to_save = match.group(1).strip()
+                                else:
+                                    # Just strip first and last line if they look like fences
+                                    lines = code_to_save.strip().split('\n')
+                                    if lines[0].strip().startswith("```"):
+                                        lines = lines[1:]
+                                    if lines and lines[-1].strip().startswith("```"):
+                                        lines = lines[:-1]
+                                    code_to_save = '\n'.join(lines)
+                            
+                            # Resolve path again to be safe
+                            save_path = resolved_path if resolved_path else file_path
+                            
+                            logger.info(f"Saving generated code to: {save_path}")
+                            with open(save_path, 'w', encoding='utf-8') as f:
+                                f.write(code_to_save)
+                                
+                            # Update runtime_code to the cleaned version
+                            runtime_code = code_to_save
+                            
+                        except Exception as e:
+                            logger.error(f"Failed to save code to {file_path}: {e}")
+                            # Continue with runtime execution even if save fails
+        
+        # Simplify input_data if single item
+        if len(input_data) == 1:
+            input_data = input_data[0]
+        elif len(input_data) == 0:
+            input_data = None
+
+        # Determine code to run
+        code_to_run = ""
+        if runtime_code:
+            code_to_run = runtime_code
+        elif file_path:
+            # Use path resolver if available
+            resolved_path = None
+            if hasattr(self.fallback_handler, 'path_resolver') and self.fallback_handler.path_resolver:
+                # Use resolve_code_path if available, otherwise resolve_path
+                if hasattr(self.fallback_handler.path_resolver, 'resolve_code_path'):
+                    resolved_path = self.fallback_handler.path_resolver.resolve_code_path(file_path)
+                else:
+                    resolved_path = self.fallback_handler.path_resolver.resolve_path(file_path)
+            
+            # Fallback to direct check
+            if not resolved_path and os.path.exists(file_path):
+                resolved_path = file_path
+                
+            if resolved_path and os.path.exists(resolved_path):
+                try:
+                    logger.info(f"Reading code from file: {resolved_path}")
+                    with open(resolved_path, 'r', encoding='utf-8') as f:
+                        code_to_run = f.read()
+                except Exception as e:
+                    logger.error(f"Failed to read code file {resolved_path}: {e}")
+                    self._set_code_node_error(node, str(e))
+                    return self._get_code_next_node(node, 'error')
+            else:
+                 logger.warning(f"Code file not found: {file_path}")
+                 # If code content is provided in node, use it as fallback?
+                 # Current logic prefers file, but if file fails, should it use 'code'?
+                 # The 'else' block below handles 'code' if runtime_code and file_path are NOT used.
+                 # But here we are inside 'elif file_path'.
+                 # Let's fallback to inline code if file not found but inline code exists
+                 if code:
+                     logger.info("Fallback to inline code")
+                     code_to_run = code
+                 else:
+                     self._set_code_node_error(node, f"File not found: {file_path}")
+                     return self._get_code_next_node(node, 'error')
+        else:
+            code_to_run = code
+
+        if not code_to_run:
+             logger.warning("No code to execute in Code node")
+             return self._get_code_next_node(node, 'output')
+
+        # Execute
+        try:
+            # Prepare scope
+            local_scope = {
+                'input_data': input_data,
+                'args': args,
+                'os': os,
+                'print': print,
+            }
+            
+            # Execute code
+            exec(code_to_run, {}, local_scope)
+            
+            # Extract result
+            result = local_scope.get(output_variable)
+            if result is None and output_variable == 'result':
+                 result = local_scope.get('output')
+            
+            # Store result
+            node_id = node.get('id') or node.get('node_id')
+            self.llm_executor.set_variable(f"node_{node_id}_output", result)
+            self.llm_executor.set_variable(f"node_{node_id}_result", result)
+            
+            logger.info(f"Code node executed successfully.")
+            
+            return self._get_code_next_node(node, 'output')
+            
+        except Exception as e:
+            logger.error(f"Code execution failed: {e}")
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(error_trace)
+            self._set_code_node_error(node, error_trace)
+            
+            # Check if error output is connected
+            next_node = self._get_code_next_node(node, 'error')
+            if next_node and next_node != "__done__":
+                return next_node
+            return None # Fail workflow
+
+    def _get_code_next_node(self, node, port):
+        connections = node.get('connections', {})
+        if port in connections and connections[port]:
+             return connections[port][0]['node_id']
+        if port == 'output':
+            return "__done__"
+        return None
+
+    def _set_code_node_error(self, node, error_msg):
+        node_id = node.get('id') or node.get('node_id')
+        self.llm_executor.set_variable(f"node_{node_id}_error", error_msg)
+
     def _mark_skipped(self, conditional_id, unchosen_port):
         """
         Mark nodes in the unchosen branch as skipped.

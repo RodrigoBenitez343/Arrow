@@ -84,11 +84,12 @@ class MultiSequencePlayer(SeleniumBot):
             self.llm_nodes = chain_config.get('llm_nodes', [])
             self.tts_nodes = chain_config.get('tts_nodes', [])
             self.chain_import_nodes = chain_config.get('chain_import_nodes', [])
+            self.code_nodes = chain_config.get('code_nodes', [])
             
             # Use modularized workflow graph builder
-            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes)
+            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes, self.code_nodes)
             self.workflow_graph = graph_builder.build_workflow_graph()
-            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, and {len(self.chain_import_nodes)} chain import nodes")
+            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, {len(self.chain_import_nodes)} chain import nodes, and {len(self.code_nodes)} code nodes")
         
         self.current_sequence_index = 0
         
