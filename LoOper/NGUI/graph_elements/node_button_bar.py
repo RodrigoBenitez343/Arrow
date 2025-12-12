@@ -399,6 +399,8 @@ class NodeButtonBarManager(QObject):
                 self._on_exec_chain_import(node)
             elif 'conditional' in ntype:
                 self._on_exec_conditional(node)
+            elif 'code' in ntype:
+                self._on_exec_code(node)
 
     def _get_main_window(self):
         """Traverse up the widget hierarchy to find the MainWindow."""
@@ -464,6 +466,9 @@ class NodeButtonBarManager(QObject):
     def _on_exec_chain_import(self, node):
         self._execute_node(node)
 
+    def _on_exec_code(self, node):
+        self._execute_node(node)
+
     def _on_exec_conditional(self, node):
         main_window = self._get_main_window()
         if main_window:
@@ -507,3 +512,6 @@ class NodeButtonBarManager(QObject):
             elif 'chain_import' in ntype:
                 if hasattr(self.parent, 'edit_chain_import_node'):
                     self.parent.edit_chain_import_node(node)
+            elif 'code' in ntype:
+                if hasattr(self.parent, 'edit_code_node'):
+                    self.parent.edit_code_node(node)

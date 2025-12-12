@@ -28,6 +28,8 @@ class ClipboardManager:
             return {"chain_file","import_mode","prefix","loop_count","extra_delay","enabled"}
         if node_type in ("form_filler", "form_filler.FormFillerNode") or node_type.endswith("FormFillerNode"):
             return {"instruction","model","confidence_threshold"}
+        if node_type in ("code", "code.CodeNode") or node_type.endswith("CodeNode"):
+            return {"code", "file_path", "execute_on_input", "output_variable", "timeout"}
         return set()
 
     def copy_selected_nodes(self):
@@ -133,6 +135,8 @@ class ClipboardManager:
                     new_node = self.parent.graph_manager.create_node("chain_import.ChainImportNode", pos=new_pos)
                 elif node_type.endswith("FormFillerNode") or node_type == "form_filler":
                     new_node = None
+                elif node_type.endswith("CodeNode") or node_type == "code":
+                    new_node = self.parent.graph_manager.create_node("code.CodeNode", pos=new_pos)
                 else:
                     new_node = self.parent.graph_manager.create_node(node_type, pos=new_pos)
             except Exception:

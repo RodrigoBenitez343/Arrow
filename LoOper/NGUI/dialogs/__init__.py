@@ -11,6 +11,7 @@ from .tts_dialogs import TTSPropertiesDialog
 from .ai_settings_dialog import AISettingsDialog
 from .chain_expansion_dialog import ChainExpansionDialog
 from .form_filler_dialog import FormFillerDialog
+from .code_node_dialog import CodeNodeDialog
 from .utils import get_default_api_url
 
 __all__ = [
@@ -27,5 +28,6 @@ __all__ = [
     'AISettingsDialog',
     'ChainExpansionDialog',
     'FormFillerDialog',
+    'CodeNodeDialog',
     'get_default_api_url'
 ]

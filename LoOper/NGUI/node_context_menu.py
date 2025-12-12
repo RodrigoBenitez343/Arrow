@@ -30,6 +30,8 @@ class NodeContextMenuManager:
             self.add_tts_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'chain_import':
             self.add_chain_import_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'code':
+            self.add_code_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'form_filler':
             self.add_form_filler_node_actions(menu, node)
         else:
@@ -101,6 +103,12 @@ class NodeContextMenuManager:
         expand_action.triggered.connect(lambda: self.graph_view.expand_chain_import(node))
         menu.addAction(expand_action)
 
+    def add_code_node_actions(self, menu, node):
+        """Add actions for a Code node to the context menu"""
+        edit_action = QAction(_("Edit Code"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_code_node(node))
+        menu.addAction(edit_action)
+
     def add_form_filler_node_actions(self, menu, node):
         deprecated_action = QAction(_("Form Filler is deprecated"), menu)
         deprecated_action.setEnabled(False)
@@ -119,6 +127,10 @@ class NodeContextMenuManager:
         add_llm_action = QAction(_("Add LLM Node"), menu)
         add_llm_action.triggered.connect(lambda: self.graph_view.add_llm_node())
         menu.addAction(add_llm_action)
+        
+        add_code_action = QAction(_("Add Code Node"), menu)
+        add_code_action.triggered.connect(lambda: self.graph_view.add_code_node())
+        menu.addAction(add_code_action)
         
         # DEPRECATED: Context Builder - add action removed from graph menu
         # add_context_builder_action = QAction("Add Context Builder Node", menu)

@@ -88,7 +88,96 @@ class PathResolver:
                 
         logger.debug(f"Could not resolve path '{path}', returning original")
         return path
+
+    def resolve_code_path(self, path):
+        """
+        Resolve a code file path (e.g. .py scripts).
+        Checks common code directories like 'scripts', 'code', etc.
+        
+        Args:
+            path (str): The path to resolve
+            
+        Returns:
+            str: Resolved path
+        """
+        if not path:
+            return path
+            
+        # If the path already exists as given, return it
+        try:
+            if os.path.isabs(path) and os.path.exists(path):
+                return path
+        except Exception:
+            pass
+            
+        base_dir = self.chain_file_dir or os.getcwd()
+        candidates = []
+        
+        # Original path
+        candidates.append(path)
+        candidates.append(os.path.join(base_dir, path))
+        
+        # Common subdirectories for code
+        for subdir in ['scripts', 'code', 'python', 'custom_nodes']:
+            candidates.append(os.path.join(base_dir, subdir, path))
+            candidates.append(os.path.join(os.getcwd(), subdir, path))
+            candidates.append(os.path.join(os.getcwd(), 'LoOper', subdir, path))
+            
+        # Current working directory fallback
+        candidates.append(os.path.join(os.getcwd(), path))
+        
+        # Return the first existing candidate
+        for candidate in candidates:
+            try:
+                if os.path.exists(candidate):
+                    logger.debug(f"Resolved code path '{path}' to '{candidate}'")
+                    return candidate
+            except Exception:
+                continue
+                
+        logger.debug(f"Could not resolve code path '{path}', returning original")
+        return path
     
+    def resolve_node_paths(self, node):
+        """
+        Resolve all paths within a node structure.
+        Supports CodeNode, conditional nodes, etc.
+        
+        Args:
+            node (dict): The node to resolve
+            
+        Returns:
+            dict: Map of field names to resolved paths. Returns empty dict if no paths found or resolved.
+        """
+        resolved = {}
+        data = node.get('data', {})
+        node_type = node.get('type') or data.get('type')
+        
+        # Handle CodeNode
+        if node_type == 'CodeNode':
+            file_path = data.get('file_path')
+            if file_path:
+                resolved['file_path'] = self.resolve_code_path(file_path)
+                
+        # Handle Conditional Nodes
+        trigger_type = data.get('trigger_type') or data.get('condition_type')
+        if trigger_type:
+            if trigger_type in ['presence', 'absence']:
+                image_path = data.get('image_path')
+                if image_path:
+                    resolved['image_path'] = self.resolve_path(image_path)
+            elif trigger_type == 'loop':
+                seq_file = data.get('sequence_file')
+                if seq_file:
+                    resolved['sequence_file'] = self.resolve_path(seq_file, add_json=True)
+            elif trigger_type == 'ocr':
+                # OCR might have image path if it's image-based OCR (not screen)
+                image_path = data.get('image_path')
+                if image_path:
+                    resolved['image_path'] = self.resolve_path(image_path)
+                    
+        return resolved
+
     def set_chain_file_dir(self, chain_file_dir):
         """
         Update the base chain file directory.

@@ -1,0 +1,75 @@
+2025-12-12 14:51:14,511 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 14:52:55,397 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 14:52:57,418 - INFO - Built workflow graph with 1 nodes
+2025-12-12 14:52:57,419 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
+2025-12-12 14:53:34,773 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 14:53:36,793 - INFO - Built workflow graph with 1 nodes
+2025-12-12 14:53:36,794 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
+2025-12-12 14:53:36,802 - INFO - Starting chain playback
+2025-12-12 14:53:36,802 - DEBUG - Chain playback - workflow_graph exists: True
+2025-12-12 14:53:36,803 - DEBUG - Chain playback - sequences count: 0
+2025-12-12 14:53:38,812 - INFO - Using workflow executor for chain playback
+2025-12-12 14:53:38,812 - DEBUG - Looking for starting nodes in graph with 1 nodes
+2025-12-12 14:53:38,813 - DEBUG - Node code_1 (type: code) has 0 inputs: []
+2025-12-12 14:53:38,813 - DEBUG - Found starting node: code_1 (type: code)
+2025-12-12 14:53:38,813 - INFO - Starting workflow execution from nodes: ['code_1']
+2025-12-12 14:53:38,814 - DEBUG - Workflow graph has 1 nodes: ['code_1']
+2025-12-12 14:53:38,814 - INFO - Executing node code_1 (type: code) - Execution #1
+2025-12-12 14:53:38,817 - INFO - Executing Code node: None
+2025-12-12 14:53:38,817 - WARNING - No code to execute in Code node
+2025-12-12 14:53:38,817 - INFO - Node code_1 completed successfully
+2025-12-12 14:53:38,818 - DEBUG - Output connected nodes from code_1: ['__done__']
+2025-12-12 14:53:38,818 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:53:38,818 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:53:38,818 - DEBUG - Ready nodes after processing code_1: set()
+2025-12-12 14:53:38,819 - INFO - Workflow execution completed successfully
+2025-12-12 14:53:38,819 - INFO - Workflow execution completed with result: True
+2025-12-12 14:58:12,663 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 14:58:14,680 - INFO - Built workflow graph with 1 nodes
+2025-12-12 14:58:14,680 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
+2025-12-12 14:58:14,686 - INFO - Starting chain playback
+2025-12-12 14:58:14,686 - DEBUG - Chain playback - workflow_graph exists: True
+2025-12-12 14:58:14,687 - DEBUG - Chain playback - sequences count: 0
+2025-12-12 14:58:16,702 - INFO - Using workflow executor for chain playback
+2025-12-12 14:58:16,703 - DEBUG - Looking for starting nodes in graph with 1 nodes
+2025-12-12 14:58:16,703 - DEBUG - Node code_1 (type: code) has 0 inputs: []
+2025-12-12 14:58:16,703 - DEBUG - Found starting node: code_1 (type: code)
+2025-12-12 14:58:16,703 - INFO - Starting workflow execution from nodes: ['code_1']
+2025-12-12 14:58:16,704 - DEBUG - Workflow graph has 1 nodes: ['code_1']
+2025-12-12 14:58:16,704 - INFO - Executing node code_1 (type: code) - Execution #1
+2025-12-12 14:58:16,707 - INFO - Executing Code node: None
+2025-12-12 14:58:16,707 - WARNING - No code to execute in Code node
+2025-12-12 14:58:16,707 - INFO - Node code_1 completed successfully
+2025-12-12 14:58:16,708 - DEBUG - Output connected nodes from code_1: ['__done__']
+2025-12-12 14:58:16,708 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:58:16,708 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:58:16,708 - DEBUG - Ready nodes after processing code_1: set()
+2025-12-12 14:58:16,708 - INFO - Workflow execution completed successfully
+2025-12-12 14:58:16,709 - INFO - Workflow execution completed with result: True
+2025-12-12 14:59:30,879 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 14:59:32,915 - INFO - Built workflow graph with 1 nodes
+2025-12-12 14:59:32,915 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
+2025-12-12 14:59:32,921 - INFO - Starting chain playback
+2025-12-12 14:59:32,922 - DEBUG - Chain playback - workflow_graph exists: True
+2025-12-12 14:59:32,922 - DEBUG - Chain playback - sequences count: 0
+2025-12-12 14:59:34,937 - INFO - Using workflow executor for chain playback
+2025-12-12 14:59:34,937 - DEBUG - Looking for starting nodes in graph with 1 nodes
+2025-12-12 14:59:34,938 - DEBUG - Node code_1 (type: code) has 0 inputs: []
+2025-12-12 14:59:34,938 - DEBUG - Found starting node: code_1 (type: code)
+2025-12-12 14:59:34,938 - INFO - Starting workflow execution from nodes: ['code_1']
+2025-12-12 14:59:34,938 - DEBUG - Workflow graph has 1 nodes: ['code_1']
+2025-12-12 14:59:34,939 - INFO - Executing node code_1 (type: code) - Execution #1
+2025-12-12 14:59:34,941 - INFO - Executing Code node: None
+2025-12-12 14:59:34,942 - DEBUG - Resolved code path 'test_script.py' to 'test_script.py'
+2025-12-12 14:59:34,942 - INFO - Reading code from file: test_script.py
+2025-12-12 14:59:34,943 - INFO - Code node executed successfully.
+2025-12-12 14:59:34,943 - INFO - Node code_1 completed successfully
+2025-12-12 14:59:34,944 - DEBUG - Output connected nodes from code_1: ['__done__']
+2025-12-12 14:59:34,944 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:59:34,944 - DEBUG - Node __done__ not found in workflow graph
+2025-12-12 14:59:34,944 - DEBUG - Ready nodes after processing code_1: set()
+2025-12-12 14:59:34,944 - INFO - Workflow execution completed successfully
+2025-12-12 14:59:34,945 - INFO - Workflow execution completed with result: True
+2025-12-12 15:43:38,073 - DEBUG - mss library available for fast screenshot capture
+2025-12-12 15:43:40,223 - DEBUG - Resolved code path 'test_script.py' to 'test_script.py'
+2025-12-12 15:43:40,224 - DEBUG - Resolved path 'test_image.png' to 'test_image.png'
