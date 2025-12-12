@@ -52,26 +52,7 @@ def _previous_input(node: Dict, variables: Dict[str, object]) -> str:
     if not inputs_list:
         logger.warning("No workflow inputs found for node or missing connection")
         return ""
-    # Prefer the direct upstream LLM connected via the source's 'output' port
-    primary_upstream_id = None
-    try:
-        for inp in inputs_list:
-            if str(inp.get("input_port")) in ("tools", "context"):
-                continue
-            if str(inp.get("output_type", "")) == "output" and inp.get("from_node"):
-                primary_upstream_id = inp.get("from_node")
-                break
-    except Exception:
-        primary_upstream_id = None
-
-    if primary_upstream_id:
-        key = f"node_{primary_upstream_id}_output"
-        val = str(variables.get(key, ""))
-        if val:
-            logger.info(f"Retrieved previous node output from {primary_upstream_id}: {val[:200]}...")
-            return val
-
-    # Fallback: first available upstream non-context output
+    collected = []
     for inp in inputs_list:
         try:
             connected_node_id = inp.get("from_node")
@@ -84,12 +65,13 @@ def _previous_input(node: Dict, variables: Dict[str, object]) -> str:
             if key in variables:
                 val = str(variables.get(key, ""))
                 if val:
-                    logger.info(f"Retrieved previous node output fallback from {connected_node_id}: {val[:200]}...")
-                    return val
+                    collected.append(val)
         except Exception:
             continue
-
-    # Final fallback: last LLM global output
+    if collected:
+        joined = "\n\n".join(collected)
+        logger.info(f"Retrieved previous node output: {joined[:200]}...")
+        return joined
     val = str(variables.get("llm_output", ""))
     if val:
         logger.warning("Node-specific output not found; using fallback 'llm_output'")
@@ -103,52 +85,24 @@ def _context_input(node: Dict, variables: Dict[str, object]) -> str:
     if not inputs_list:
         logger.warning("No workflow inputs found for node or missing connection")
         return ""
-    # Prefer context from the same upstream that provides the main 'output' connection
-    primary_upstream_id = None
-    try:
-        for inp in inputs_list:
-            if str(inp.get("input_port")) in ("tools", "context"):
-                continue
-            if str(inp.get("output_type", "")) == "output" and inp.get("from_node"):
-                primary_upstream_id = inp.get("from_node")
-                break
-    except Exception:
-        primary_upstream_id = None
-
-    contexts_out = []
-    if primary_upstream_id is not None:
-        for inp in inputs_list:
-            try:
-                if str(inp.get("input_port")) != "context":
-                    continue
-                if inp.get("from_node") != primary_upstream_id:
-                    continue
-                key = f"node_{primary_upstream_id}_context"
-                val = str(variables.get(key, ""))
-                if val:
-                    logger.info(f"Retrieved paired context from {primary_upstream_id}: {val[:200]}...")
-                    contexts_out.append(val)
-                break
-            except Exception:
-                continue
-
-    # Fallback: first available context from any upstream
+    collected = []
     for inp in inputs_list:
         try:
-            if str(inp.get("input_port")) != "context":
-                continue
             connected_node_id = inp.get("from_node")
-            if not connected_node_id or (primary_upstream_id is not None and connected_node_id == primary_upstream_id):
+            if not connected_node_id:
+                continue
+            port = str(inp.get("input_port"))
+            if port != "context":
                 continue
             key = f"node_{connected_node_id}_context"
-            val = str(variables.get(key, ""))
-            if val:
-                logger.info(f"Retrieved additional context from {connected_node_id}: {val[:200]}...")
-                contexts_out.append(val)
+            if key in variables:
+                val = str(variables.get(key, ""))
+                if val:
+                    collected.append(val)
         except Exception:
             continue
-    if contexts_out:
-        joined = "\n\n".join(contexts_out)
+    if collected:
+        joined = "\n\n".join(collected)
         logger.info(f"Retrieved context input: {joined[:200]}...")
         return joined
     logger.warning("No context available from connected inputs")

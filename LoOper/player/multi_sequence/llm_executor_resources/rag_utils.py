@@ -1,8 +1,48 @@
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import os
 import zipfile
 import re
 from xml.etree import ElementTree as ET
+
+# Ensure torch DLLs are loaded before langchain imports on Windows
+# Fix for Intel OpenMP runtime duplicate error
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# Ensure DLL load path on Windows
+if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+    try:
+        import site
+        packages = []
+        try:
+            packages.extend(site.getsitepackages())
+        except Exception:
+            pass
+        try:
+            if hasattr(site, 'getusersitepackages'):
+                packages.append(site.getusersitepackages())
+        except Exception:
+            pass
+        # Also check current venv specifically
+        try:
+            from sys import executable
+            venv_path = os.path.dirname(os.path.dirname(executable)) 
+            site_pkg = os.path.join(venv_path, 'Lib', 'site-packages')
+            if os.path.isdir(site_pkg):
+                packages.append(site_pkg)
+        except Exception:
+            pass
+            
+        for p in packages:
+            torch_lib = os.path.join(p, 'torch', 'lib')
+            if os.path.isdir(torch_lib):
+                try:
+                    os.add_dll_directory(torch_lib)
+                    # Also prepend to PATH as a fallback for some DLL loaders
+                    os.environ['PATH'] = torch_lib + os.pathsep + os.environ['PATH']
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 from ...config import logger
 
@@ -55,7 +95,7 @@ def build_rag_context(
     use_input_text_in_prompt: bool,
     precomputed_chunks: Optional[List[str]] = None,
     precomputed_embeddings: Optional[List[List[float]]] = None,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[Dict[str, object]]]:
     """Compute direct RAG context from input_text using embeddings.
 
     Returns a tuple of (rag_context_text, updated_prompt_if_embeddings_fail).
@@ -71,7 +111,16 @@ def build_rag_context(
         if precomputed_chunks and precomputed_embeddings and len(precomputed_chunks) == len(precomputed_embeddings):
             valid_chunks = precomputed_chunks
             chunk_embs = precomputed_embeddings
-        # Fallback to manual if LangChain failed or not available
+            # Still need to compute query embedding for the new prompt
+            logger.info(f"RAG: Computing query embedding for prompt: '{prompt[:50]}...' (client.debug={getattr(client, 'debug', 'unknown')})")
+            query_embs = client.embeddings(embedding_model, [prompt])
+            if query_embs:
+                query_emb = query_embs[0]
+            else:
+                logger.warning("RAG: client.embeddings returned empty/None for query embedding")
+
+
+        # Fallback to manual if LangChain failed or not available (and no precomputed chunks)
         if not valid_chunks:
             chunks = _chunk_text_chars(input_text, chunk_size, overlap)
             logger.info(f"RAG: chunked previous output into {len(chunks)} chunks (size={chunk_size}, overlap={overlap})")
@@ -96,7 +145,7 @@ def build_rag_context(
                 updated_prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
             else:
                 updated_prompt = None
-            return None, updated_prompt
+            return None, updated_prompt, None
         
         if not chunk_embs:
             logger.warning("RAG: embeddings returned None or empty list")
@@ -109,7 +158,7 @@ def build_rag_context(
                 updated_prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
             else:
                 updated_prompt = None
-            return None, updated_prompt
+            return None, updated_prompt, None
 
         if not query_emb:
             logger.warning("RAG: query embedding failed; reverting to raw input injection")
@@ -117,8 +166,28 @@ def build_rag_context(
                 updated_prompt = f"[Input Source: {input_source.upper()}]\n{input_text}\n\n[User Prompt:]\n{prompt}"
             else:
                 updated_prompt = None
-            return None, updated_prompt
+            return None, updated_prompt, None
 
+        # Rank chunk candidates lexically first to avoid embedding very large contexts
+        def _lexical_rank_indices(query: str, chunks: List[str]) -> List[int]:
+            try:
+                import re as _re
+                def _tok(s: str) -> List[str]:
+                    s = s.lower()
+                    s = _re.sub(r"[^a-z0-9]+", " ", s)
+                    return [w for w in s.split() if w]
+                q_words = set(_tok(query))
+                scored = []
+                for idx, ch in enumerate(chunks):
+                    words = set(_tok(ch))
+                    score = len(q_words & words)
+                    scored.append((score, idx))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                return [i for _, i in scored]
+            except Exception:
+                return list(range(len(chunks)))
+
+        # Compute similarity on the embedded candidates
         q = query_emb
         sims = [( _cosine_sim(q, ce), idx) for idx, ce in enumerate(chunk_embs)]
         sims.sort(key=lambda x: x[0], reverse=True)
@@ -130,13 +199,13 @@ def build_rag_context(
         rag_context_text = f"[RAG Context from previous node]:\n{rag_context}"
         logger.info(f"RAG: selected top-{len(top_texts)} chunks for context (total chars={len(rag_context)})")
 
-        if include_raw_input:
-            rag_context_text = f"{rag_context_text}\n\n[Previous node raw output (truncated)]:\n{input_text[:min(len(input_text), max_chars)]}"
+        
 
-        return rag_context_text, None
+        store = {"chunks": valid_chunks, "embeddings": chunk_embs}
+        return rag_context_text, None, store
     except Exception as e:
         logger.warning(f"Direct RAG computation failed: {e}")
-        return None, None
+        return None, None, None
 
 def _read_text_file(path: str) -> str:
     try:
@@ -254,9 +323,32 @@ def build_rag_context_from_docs(
                 if cleaned:
                     cleaned_chunks.append(cleaned)
             
-            if cleaned_chunks:
-                logger.info(f"RAG: Sending {len(cleaned_chunks)} cleaned chunks to embedding model '{embedding_model}'")
-                chunk_embs = client.embeddings(embedding_model, cleaned_chunks)
+            # Lexical pre-filter to reduce embedding volume
+            def _lexical_rank_indices(query: str, chunks: List[str]) -> List[int]:
+                try:
+                    import re as _re
+                    def _tok(s: str) -> List[str]:
+                        s = s.lower()
+                        s = _re.sub(r"[^a-z0-9]+", " ", s)
+                        return [w for w in s.split() if w]
+                    q_words = set(_tok(query))
+                    scored = []
+                    for idx, ch in enumerate(chunks):
+                        words = set(_tok(ch))
+                        score = len(q_words & words)
+                        scored.append((score, idx))
+                    scored.sort(key=lambda x: x[0], reverse=True)
+                    return [i for _, i in scored]
+                except Exception:
+                    return list(range(len(chunks)))
+
+            pre_top_n = min(len(cleaned_chunks), max(1, top_k * 4))
+            idxs = _lexical_rank_indices(prompt, cleaned_chunks)[:pre_top_n]
+            filtered_chunks = [cleaned_chunks[i] for i in idxs]
+            
+            if filtered_chunks:
+                logger.info(f"RAG: Sending {len(filtered_chunks)} filtered chunks (lexical prefilter) to embedding model '{embedding_model}'")
+                chunk_embs = client.embeddings(embedding_model, filtered_chunks)
                 query_embs = client.embeddings(embedding_model, [prompt])
                 if query_embs:
                     query_emb = query_embs[0]
@@ -274,8 +366,8 @@ def build_rag_context_from_docs(
             logger.error("RAG: Received None or empty list for embeddings")
 
         # Fallback path if chunk embeddings fail
-        if not chunk_embs or len(chunk_embs) != len(cleaned_chunks):
-            logger.warning(f"RAG: document chunk embeddings unavailable (sent {len(cleaned_chunks)}, got {len(chunk_embs) if chunk_embs else 0}), using lexical fallback")
+        if not chunk_embs:
+            logger.warning(f"RAG: document chunk embeddings unavailable (sent {len(cleaned_chunks)}), using lexical fallback")
             top_texts = _lexical_select_top(prompt, cleaned_chunks, top_k)
             if not top_texts:
                 return None

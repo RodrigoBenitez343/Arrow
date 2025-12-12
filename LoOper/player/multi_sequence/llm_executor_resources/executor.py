@@ -99,15 +99,6 @@ class LLMExecutor:
         except Exception:
             main_inputs = node_inputs
         has_input_connection = bool(main_inputs)
-        # Identify the immediate upstream LLM via the main 'output' connection
-        primary_upstream_id = None
-        try:
-            for _inp in main_inputs:
-                if str(_inp.get('output_type','')) == 'output' and _inp.get('from_node'):
-                    primary_upstream_id = _inp.get('from_node')
-                    break
-        except Exception:
-            primary_upstream_id = None
         connected_ids = []
         try:
             connected_ids = [inp.get('from_node') for inp in main_inputs if isinstance(inp, dict) and inp.get('from_node')]
@@ -305,6 +296,11 @@ class LLMExecutor:
                                 if _name == model or (_name and model and (_name.startswith(model + ":") or model.startswith(_name + ":"))):
                                     logger.info(f"Model {_name} matches target {model}. Keeping it.")
                                     continue
+                                
+                                # Optimization: Don't stop the embedding model if we are about to use it for RAG
+                                if use_direct_rag and rag_embedding_model and _name and (_name == rag_embedding_model or _name.startswith(rag_embedding_model + ":") or rag_embedding_model.startswith(_name + ":")):
+                                    logger.info(f"Model {_name} matches RAG embedding model {rag_embedding_model}. Keeping it.")
+                                    continue
 
                                 _payload = {}
                                 if _pid:
@@ -329,22 +325,33 @@ class LLMExecutor:
         rag_docs_context = None
         emb_client = None
         try:
-            emb_client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
+            # Use direct Ollama connection for embeddings to avoid OverWatch queue/cleanup deadlocks
+            ollama_host = os.getenv('OLLAMA_HOST', 'localhost')
+            ollama_port = os.getenv('OLLAMA_PORT', '11434')
+            ollama_base_url = f"http://{ollama_host}:{ollama_port}"
+            logger.info(f"RAG: Connecting to embedding client at {ollama_base_url} (Direct Ollama)")
+            emb_client = OllamaClient(base_url=ollama_base_url, debug=True, use_comorag=False)
         except Exception:
-            emb_client = None
+            logger.warning("RAG: Failed to connect to direct Ollama, falling back to API URL")
+            emb_client = OllamaClient(base_url=api_url, debug=True, use_comorag=use_comorag)
         if use_direct_rag and input_source in ('previous', 'previous_node') and input_text and input_text.strip():
             pre_chunks = None
             pre_embs = None
             try:
-                prev_id = primary_upstream_id or (connected_ids[0] if connected_ids else None)
-                if prev_id:
-                    store = self.variables.get(f"node_{prev_id}_vectorstore")
-                    if isinstance(store, dict):
-                        pre_chunks = store.get('chunks')
-                        pre_embs = store.get('embeddings')
+                if connected_ids:
+                    # iterate in reverse to find the most recent/relevant predecessor with a vectorstore
+                    for prev_id in reversed(connected_ids):
+                        store = self.variables.get(f"node_{prev_id}_vectorstore")
+                        if isinstance(store, dict):
+                            pre_chunks = store.get('chunks')
+                            pre_embs = store.get('embeddings')
+                            if pre_chunks and pre_embs:
+                                logger.info(f"Using precomputed vectorstore from node {prev_id}")
+                                break
             except Exception:
                 pass
-            rag_context_text, updated_prompt = build_rag_context(
+            _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+            rag_context_text, updated_prompt, vector_store = build_rag_context(
                 emb_client,
                 prompt,
                 input_text,
@@ -361,6 +368,11 @@ class LLMExecutor:
             )
             if updated_prompt:
                 prompt = updated_prompt
+            try:
+                if vector_store and _node_id:
+                    self.variables[f"node_{_node_id}_vectorstore"] = vector_store
+            except Exception:
+                pass
 
         try:
             import json as _json
@@ -386,6 +398,44 @@ class LLMExecutor:
             try:
                 # Pre-check for torch to avoid WinError 1114 hard crash
                 try:
+                    # Fix for Intel OpenMP runtime duplicate error
+                    os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+                    
+                    # Ensure DLL load path on Windows
+                    if os.name == 'nt':
+                        if hasattr(os, 'add_dll_directory'):
+                            # Try to find torch/lib in site-packages
+                            import site
+                            packages = []
+                            try:
+                                packages.extend(site.getsitepackages())
+                            except Exception:
+                                pass
+                            try:
+                                if hasattr(site, 'getusersitepackages'):
+                                    packages.append(site.getusersitepackages())
+                            except Exception:
+                                pass
+                            
+                            # Also check current venv specifically
+                            try:
+                                venv_path = os.path.dirname(os.path.dirname(sys.executable)) # .venv/Scripts/python -> .venv
+                                site_pkg = os.path.join(venv_path, 'Lib', 'site-packages')
+                                if os.path.isdir(site_pkg):
+                                    packages.append(site_pkg)
+                            except Exception:
+                                pass
+
+                            for p in packages:
+                                torch_lib = os.path.join(p, 'torch', 'lib')
+                                if os.path.isdir(torch_lib):
+                                    try:
+                                        os.add_dll_directory(torch_lib)
+                                        # Also prepend to PATH as a fallback for some DLL loaders
+                                        os.environ['PATH'] = torch_lib + os.pathsep + os.environ['PATH']
+                                    except Exception:
+                                        pass
+                    
                     import torch
                 except ImportError:
                     logger.warning("Torch not found. Skipping Advanced Vision to avoid crash.")
@@ -542,6 +592,7 @@ class LLMExecutor:
                         else:
                             _buf = []
                             _full_text_tracker = ""
+                            _last_raw_chunk = None
                             _last_flush = time.time()
                             _FLUSH_CHARS = int(llm_config.get('stream_flush_chars', 120) or 120)
                             _FLUSH_MS = float(llm_config.get('stream_flush_ms', 0.25) or 0.25)
@@ -564,22 +615,46 @@ class LLMExecutor:
                                 except Exception:
                                     pass
                             def _on_delta(s: str):
-                                nonlocal _full_text_tracker
+                                nonlocal _full_text_tracker, _last_raw_chunk
                                 if stop_flag and stop_flag():
                                     raise Exception("Stopped by user")
                                 try:
                                     # Handle case where backend sends full text instead of deltas
                                     real_delta = s
-                                    if len(_full_text_tracker) > 0 and len(s) > len(_full_text_tracker) and s.startswith(_full_text_tracker):
-                                        real_delta = s[len(_full_text_tracker):]
-                                        _full_text_tracker = s
-                                    elif len(s) == len(_full_text_tracker) and s == _full_text_tracker:
-                                        # Duplicate full text frame
-                                        real_delta = ""
+                                    
+                                    # Determine if we are in Full Text mode (s extends previous chunk)
+                                    is_full_text = False
+                                    if _last_raw_chunk is not None and len(s) > len(_last_raw_chunk) and s.startswith(_last_raw_chunk):
+                                        is_full_text = True
+                                    elif len(_full_text_tracker) > 0 and len(s) > len(_full_text_tracker) and s.startswith(_full_text_tracker):
+                                        is_full_text = True
+                                    
+                                    if is_full_text:
+                                        # Full Text Mode
+                                        if _last_raw_chunk and s.startswith(_last_raw_chunk):
+                                            real_delta = s[len(_last_raw_chunk):]
+                                            # We must update tracker to match s because we trust s is the new full text
+                                            _full_text_tracker = s
+                                        elif s.startswith(_full_text_tracker):
+                                            real_delta = s[len(_full_text_tracker):]
+                                            _full_text_tracker = s
+                                        else:
+                                            # Fallback (should be covered by elif above)
+                                            real_delta = ""
                                     else:
-                                        # Standard delta behavior
-                                        real_delta = s
-                                        _full_text_tracker += s
+                                        # Delta Mode or Duplicate
+                                        if s == _full_text_tracker or (_last_raw_chunk and s == _last_raw_chunk):
+                                            # Duplicate
+                                            real_delta = ""
+                                        elif _full_text_tracker and _full_text_tracker.startswith(s):
+                                             # Regression / Prefix Duplicate (ignore)
+                                             real_delta = ""
+                                        else:
+                                            # Standard Delta
+                                            real_delta = s
+                                            _full_text_tracker += s
+                                    
+                                    _last_raw_chunk = s
                                     
                                     if not real_delta:
                                         return

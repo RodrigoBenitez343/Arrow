@@ -171,8 +171,19 @@ class OllamaEngine:
                     repeat_penalty=getattr(self.settings, 'repeat_penalty', 1.1)
                 )
             
-            # Test the model with a simple generation
-            test_response = await self._generate_test(model_name)
+            # Test the model appropriately (LLM vs embedding)
+            is_embedding = False
+            try:
+                async with self._session.post(f"{self.base_url}/api/embed", json={"model": model_name, "input": "hello", "keep_alive": 60}) as resp:
+                    is_embedding = resp.status in (200, 404)
+            except Exception:
+                is_embedding = False
+
+            test_response = False
+            if is_embedding:
+                test_response = await self._embed_test(model_name)
+            else:
+                test_response = await self._generate_test(model_name)
             if test_response:
                 self.loaded_models[model_name] = config
                 logger.info(f"Successfully loaded model: {model_name}")
@@ -256,12 +267,57 @@ class OllamaEngine:
         except Exception as e:
             logger.error(f"Test generation failed: {e}")
             return False
+
+    async def _embed_test(self, model_name: str) -> bool:
+        """Test model with a simple embedding call (for embedding-only models)"""
+        try:
+            payload = {"model": model_name, "input": "hello", "keep_alive": 60}
+            async with self._session.post(f"{self.base_url}/api/embed", json=payload) as response:
+                if response.status == 404:
+                    payload["prompt"] = "hello"
+                    async with self._session.post(f"{self.base_url}/api/embeddings", json=payload) as legacy:
+                        if legacy.status != 200:
+                            return False
+                        data = await legacy.json()
+                        return bool((isinstance(data, dict) and (data.get("embedding") or data.get("embeddings"))) or isinstance(data, list))
+                if response.status != 200:
+                    return False
+                data = await response.json()
+                if isinstance(data, dict):
+                    if data.get("embedding") and isinstance(data["embedding"], list):
+                        return True
+                    if data.get("embeddings") and isinstance(data["embeddings"], list):
+                        return True
+                if isinstance(data, list) and data and isinstance(data[0], float):
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"Test embedding failed: {e}")
+            return False
     
     async def embeddings(self, model: str, inputs: List[str], normalize: Optional[bool] = None, pooling: Optional[str] = None, ephemeral: bool = False) -> List[List[float]]:
         """Generate embeddings using Ollama"""
         if not self._initialized:
             raise RuntimeError("Ollama engine not initialized")
-        await self._cleanup_runners(model)
+        
+        # Check if the model is already running to avoid unnecessary cleanup/reloading
+        is_running = False
+        try:
+            async with self._session.get(f"{self.base_url}/api/ps") as r:
+                if r.status == 200:
+                    data = await r.json()
+                    items = data.get("models") if isinstance(data, dict) else (data if isinstance(data, list) else [])
+                    if isinstance(items, list):
+                        for m in items:
+                            name = (m.get("model") or m.get("name")) if isinstance(m, dict) else None
+                            if name and (name == model or name.startswith(model + ":") or model.startswith(name + ":")):
+                                is_running = True
+                                break
+        except Exception:
+            pass
+
+        if not is_running:
+            await self._cleanup_runners(model)
         
         # Ensure model is present/loaded
         # We try to load it if we track it, otherwise we assume Ollama handles it

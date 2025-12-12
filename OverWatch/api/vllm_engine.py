@@ -25,6 +25,45 @@ except ImportError:
     AsyncLLMEngine = None
 
 from transformers import AutoTokenizer
+
+# Fix for Intel OpenMP runtime duplicate error
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+# Ensure DLL load path on Windows
+if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+    try:
+        import site
+        packages = []
+        try:
+            packages.extend(site.getsitepackages())
+        except Exception:
+            pass
+        try:
+            if hasattr(site, 'getusersitepackages'):
+                packages.append(site.getusersitepackages())
+        except Exception:
+            pass
+        # Also check current venv specifically
+        try:
+            venv_path = os.path.dirname(os.path.dirname(sys.executable)) 
+            site_pkg = os.path.join(venv_path, 'Lib', 'site-packages')
+            if os.path.isdir(site_pkg):
+                packages.append(site_pkg)
+        except Exception:
+            pass
+            
+        for p in packages:
+            torch_lib = os.path.join(p, 'torch', 'lib')
+            if os.path.isdir(torch_lib):
+                try:
+                    os.add_dll_directory(torch_lib)
+                    # Also prepend to PATH as a fallback for some DLL loaders
+                    os.environ['PATH'] = torch_lib + os.pathsep + os.environ['PATH']
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
 import torch
 
 logger = logging.getLogger(__name__)

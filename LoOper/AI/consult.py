@@ -233,7 +233,9 @@ class OllamaClient:
     def embeddings(self, model: str, inputs: List[str],
                    normalize: Optional[bool] = None,
                    pooling: Optional[str] = None) -> List[List[float]]:
-        payload: Dict[str, Any] = {"model": model, "inputs": inputs, "ephemeral": True, "cleanup_after": True}
+        # Rely on server-side to ensure embedding model presence
+        # Disable cleanup_after to prevent unloading the model, allowing reuse in chained nodes
+        payload: Dict[str, Any] = {"model": model, "inputs": inputs, "ephemeral": True}
         if normalize is not None:
             payload["normalize"] = normalize
         if pooling is not None:
@@ -241,28 +243,65 @@ class OllamaClient:
 
         if not inputs or all((not s) or (isinstance(s, str) and s.strip() == "") for s in inputs):
             if self.debug:
-                print("Embeddings skipped: no valid input texts provided.")
+                print("Embeddings skipped: no valid input texts provided.", file=sys.stderr)
             return []
 
         if self.debug:
-            print(f"Sending {len(inputs)} inputs to embeddings endpoint at {self.base_url}/embeddings")
+            print(f"Sending {len(inputs)} inputs to embeddings endpoint at {self.base_url}/embeddings", file=sys.stderr)
             # Print first input preview
             if inputs:
-                print(f"Input 0 preview: {inputs[0][:100]}...")
+                print(f"Input 0 preview: {inputs[0][:100]}...", file=sys.stderr)
 
         attempt_count = 0
         last_error: Optional[Exception] = None
         while attempt_count < 2:
             try:
+                # Try standard OverWatch endpoint first
                 data = self._post_json('/embeddings', payload)
+                
+                # Check if it failed (e.g. 404 on direct Ollama connection) and try native Ollama endpoints
+                if isinstance(data, dict) and "error" in data:
+                    err_msg = str(data["error"]).lower()
+                    if "404" in err_msg or "not found" in err_msg or "failed" in err_msg:
+                        if self.debug:
+                            print(f"OverWatch /embeddings failed ({err_msg}), trying Ollama /api/embed", file=sys.stderr)
+                        
+                        # Prepare Ollama native payload
+                        ollama_payload = {"model": model, "input": inputs}
+                        if normalize is not None:
+                            ollama_payload["normalize"] = normalize
+                        
+                        # Try /api/embed (New Ollama)
+                        data = self._post_json('/api/embed', ollama_payload)
+                        
+                        # If that failed with 404, try /api/embeddings (Old Ollama)
+                        if isinstance(data, dict) and "error" in data:
+                            err_msg2 = str(data["error"]).lower()
+                            if "404" in err_msg2:
+                                if self.debug:
+                                    print(f"Ollama /api/embed failed ({err_msg2}), trying legacy /api/embeddings", file=sys.stderr)
+                                # Legacy endpoint expects "prompt" instead of "input" sometimes, but "input" usually works or "prompt"
+                                # Let's try matching the legacy signature if needed, but usually 'prompt' is for generation.
+                                # Actually for embeddings, old Ollama used {"model": "...", "prompt": "..."}
+                                legacy_payload = ollama_payload.copy()
+                                # Flatten input for legacy if it's a list (legacy often didn't support batching well, or expects 'prompt')
+                                # But let's try sending 'prompt'
+                                if isinstance(inputs, list) and len(inputs) == 1:
+                                    legacy_payload["prompt"] = inputs[0]
+                                    if "input" in legacy_payload: del legacy_payload["input"]
+                                
+                                data = self._post_json('/api/embeddings', legacy_payload)
+
                 if not isinstance(data, dict) and not isinstance(data, list):
                     raise ValueError("Invalid embeddings response")
 
                 if self.debug:
-                    print(f"Embeddings response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}")
+                    print(f"Embeddings response keys: {list(data.keys()) if isinstance(data, dict) else 'not a dict'}", file=sys.stderr)
 
                 vectors: List[List[float]] = []
                 if isinstance(data, dict):
+                    if "error" in data:
+                         raise ValueError(f"Embeddings API error: {data['error']}")
                     if "embeddings" in data and isinstance(data["embeddings"], list):
                         vectors = cast(List[List[float]], data["embeddings"])
                     elif "embedding" in data and isinstance(data["embedding"], list):
@@ -320,6 +359,12 @@ class OllamaClient:
                         
                     raise ValueError(f"Empty embedding vectors (valid: {valid_count}/{len(inputs)})")
 
+                try:
+                    # Unload embedding model after use via cleanup endpoint
+                    # self._post_json('/cleanup', {"model": model, "retries": 3, "wait": 0.5})
+                    pass
+                except Exception:
+                    pass
                 return vectors
             except requests.exceptions.RequestException as e:
                 last_error = e
@@ -342,7 +387,14 @@ class OllamaClient:
 
         if self.debug:
             print("Embeddings API did not return a usable result; no local fallback will be used.")
+        # Attempt to unload embedding model to keep memory clean
+        try:
+            # self._post_json('/cleanup', {"model": model, "retries": 3, "wait": 0.5})
+            pass
+        except Exception:
+            pass
         return []
+
     
     def _queue_comorag_request(self, model: str, prompt: str,
                               temperature: Optional[float] = None,
@@ -706,6 +758,10 @@ class OllamaClient:
                 continue
             try:
                 response = self.session.post(url, json=payload)
+                # Fail fast on 404 (Not Found) - usually means wrong endpoint, retrying won't help
+                if response.status_code == 404:
+                    return {"error": f"404 Client Error: Not Found for url: {url}"}
+                
                 response.raise_for_status()
                 self._fail_counts = 0
                 self._breaker_until = None
@@ -741,6 +797,22 @@ class OllamaClient:
                 except Exception:
                     pass
         return {"error": str(last_error) if last_error else "request_failed"}
+
+    def _delete(self, path: str) -> Any:
+        if self._shutdown_event.is_set():
+            return {"error": "client_shutdown"}
+        url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
+        try:
+            response = self.session.delete(url)
+            response.raise_for_status()
+            try:
+                return response.json()
+            except Exception:
+                return {"status": "deleted"}
+        except requests.exceptions.RequestException as e:
+            if self.debug:
+                print(f"DELETE {url} failed: {e}")
+            return {"error": str(e)}
 
     def _post_stream_text(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if self._shutdown_event.is_set():

@@ -394,7 +394,7 @@ def _stop_http(name=None, mid=None):
             payload["id"] = mid
         if not payload:
             return False
-        requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=3)
+        requests.post(f"{get_ollama_base_url()}/api/stop", json=payload, headers={"Connection": "close"}, timeout=10)
         return True
     except Exception:
         return False
@@ -402,7 +402,7 @@ def _stop_http(name=None, mid=None):
 def _list_cli():
     try:
         env = os.environ.copy()
-        p = subprocess.run(["ollama", "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+        p = subprocess.run(["ollama", "ps", "--json"], capture_output=True, text=True, timeout=10, env=env)
         if p.returncode != 0:
             return []
         s = (p.stdout or "").strip()
@@ -425,7 +425,7 @@ def _stop_cli(name):
         if not name:
             return False
         env = os.environ.copy()
-        subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=4, env=env)
+        subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=10, env=env)
         return True
     except Exception:
         return False
@@ -818,7 +818,7 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
         ollama_payload: Dict[str, Any] = {
             "model": request.model,
             "input": val,
-            "keep_alive": 60,
+            "keep_alive": 0,
         }
         # Optional fields if needed in future
         if request.normalize is not None:
@@ -938,7 +938,10 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
                 raise HTTPException(status_code=500, detail="Embeddings endpoint returned empty vectors")
 
         if request.cleanup_after:
-            background_tasks.add_task(_background_cleanup_model, request.model)
+            try:
+                _cleanup_model_exact(request.model, max_passes=3, wait_s=0.5)
+            except Exception:
+                pass
         return {"embeddings": embeddings}
     except HTTPException as e:
         raise e

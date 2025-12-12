@@ -8,6 +8,29 @@ from ..config import logger
 import time
 import copy
 from ..json_cache import get_chain
+import logging
+import os
+
+# Setup chain run logger
+chain_logger = logging.getLogger('chain_run')
+chain_logger.setLevel(logging.INFO)
+chain_logger.propagate = False 
+if not chain_logger.handlers:
+    # Save run.log in the root directory (parent of LoOper folder usually, or CWD)
+    # Using CWD as per user env
+    log_path = os.path.join(os.getcwd(), 'run.log')
+    try:
+        # Force encoding to utf-8 and ensure file creation
+        with open(log_path, 'w', encoding='utf-8') as f:
+            f.write(f"Log initialized at {time.ctime()}\n")
+            
+        file_handler = logging.FileHandler(log_path, mode='a', encoding='utf-8')
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        chain_logger.addHandler(file_handler)
+    except Exception as e:
+        logger.error(f"Failed to setup chain_run logger: {e}")
+
 
 
 class WorkflowGraphBuilder:
@@ -583,6 +606,8 @@ class WorkflowExecutor:
             return False
         
         logger.info(f"Starting workflow execution from nodes: {starting_nodes}")
+        chain_logger.info(f"=== CHAIN RUN STARTED ===")
+        chain_logger.info(f"Starting nodes: {starting_nodes}")
         logger.debug(f"Workflow graph has {len(self.workflow_graph)} nodes: {list(self.workflow_graph.keys())}")
         ready_nodes.update(starting_nodes)
         last_completed_node_id = None
@@ -649,6 +674,7 @@ class WorkflowExecutor:
             
             node = self.workflow_graph[current_node_id]
             logger.info(f"Executing node {current_node_id} (type: {node['type']})")
+            chain_logger.info(f"EXECUTING NODE: {current_node_id} (Type: {node['type']})")
             try:
                 from rich.table import Table
                 from rich.panel import Panel
@@ -706,6 +732,7 @@ class WorkflowExecutor:
                 completed_nodes.add(current_node_id)
                 last_completed_node_id = current_node_id
                 logger.info(f"Node {current_node_id} completed successfully")
+                chain_logger.info(f"Node {current_node_id} COMPLETED successfully")
                 self._apply_extra_delay(node, stop_flag)
                 
                 # Handle conditional branching
@@ -803,9 +830,11 @@ class WorkflowExecutor:
                     logger.debug(f"Ready nodes after processing {current_node_id}: {ready_nodes}")
             else:
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
+                chain_logger.error(f"Node {current_node_id} FAILED execution. Stopping workflow.")
                 return False
         
         logger.info("Workflow execution completed successfully")
+        chain_logger.info("=== CHAIN RUN COMPLETED SUCCESSFULLY ===")
         return True
     
     def _find_all_starting_nodes(self):
