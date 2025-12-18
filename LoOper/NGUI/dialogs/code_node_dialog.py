@@ -1,17 +1,78 @@
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QCheckBox, QPlainTextEdit, QFileDialog, QPushButton,
-    QTabWidget, QWidget, QSpinBox
+    QTabWidget, QWidget, QSpinBox, QComboBox, QMessageBox,
+    QApplication
 )
 from PyQt5.QtGui import QFont, QColor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from .base_dialog import ModernDialog
 from ..constants import TEXT_COLOR, LIGHT_GREY, ACCENT_COLOR
+from ..nodes_resources.base_node import get_default_api_url
+import sys
+import os
+
+# Import AI modules
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+try:
+    from AI.consult import OllamaClient
+    from AI.model_cache import get_cached_models, get_real_cached_models, get_model_cache
+except ImportError:
+    OllamaClient = None
+    get_cached_models = lambda: []
+    get_real_cached_models = lambda timeout=5.0: []
+    get_model_cache = lambda: None
+
+class CodeGeneratorThread(QThread):
+    finished = pyqtSignal(str)
+    error = pyqtSignal(str)
+    
+    def __init__(self, model, prompt, api_url=None):
+        super().__init__()
+        self.model = model
+        self.prompt = prompt
+        self.api_url = api_url
+        
+    def run(self):
+        try:
+            # Use provided API URL or default
+            api_url = self.api_url or get_default_api_url()
+            client = OllamaClient(base_url=api_url)
+            
+            # Construct a system prompt for code generation
+            system_prompt = (
+                "You are an expert Python developer. "
+                "Write a Python script based on the user's request. "
+                "The script should be self-contained or use standard libraries. "
+                "You have access to 'input_data' and 'args' variables from the previous node. "
+                "Assign the final result to a variable named 'result' (or as specified). "
+                "Return ONLY the Python code, no markdown formatting, no explanations."
+            )
+            
+            # Note: generate() does not accept 'stream' argument
+            response = client.generate(
+                model=self.model,
+                prompt=self.prompt,
+                system=system_prompt
+            )
+            
+            code = response.get('response', '')
+            # Strip markdown if present
+            if code.startswith("```python"):
+                code = code[9:]
+            elif code.startswith("```"):
+                code = code[3:]
+            if code.endswith("```"):
+                code = code[:-3]
+                
+            self.finished.emit(code.strip())
+        except Exception as e:
+            self.error.emit(str(e))
 
 class CodeNodeDialog(ModernDialog):
     def __init__(self, parent=None, config=None):
         super().__init__(parent, title="Code Node Configuration")
-        self.resize(600, 500)
+        self.resize(700, 600)
         
         self.config = config or {}
         
@@ -34,12 +95,17 @@ class CodeNodeDialog(ModernDialog):
             }}
         """)
         
-        # Tab 1: Code Editor
+        # Tab 1: AI Generator
+        self.generator_tab = QWidget()
+        self.setup_generator_tab()
+        self.tabs.addTab(self.generator_tab, "AI Generator")
+
+        # Tab 2: Code Editor
         self.editor_tab = QWidget()
         self.setup_editor_tab()
         self.tabs.addTab(self.editor_tab, "Code Editor")
         
-        # Tab 2: Settings
+        # Tab 3: Settings
         self.settings_tab = QWidget()
         self.setup_settings_tab()
         self.tabs.addTab(self.settings_tab, "Settings")
@@ -63,6 +129,162 @@ class CodeNodeDialog(ModernDialog):
         button_layout.addWidget(save_btn)
         
         self.content_layout.addLayout(button_layout)
+
+    def refresh_models(self):
+        """Refresh the list of available models from the API"""
+        try:
+            api_url = get_default_api_url()
+            current_model = self.model_combo.currentText()
+            
+            # Refresh cache
+            cache = get_model_cache()
+            if cache:
+                cache.refresh_models(api_url)
+                
+            # Get real models
+            models = get_real_cached_models(timeout=5.0)
+            
+            if models:
+                self.model_combo.clear()
+                self.model_combo.addItems(models)
+                
+                # Restore selection if it exists
+                if current_model in models:
+                    self.model_combo.setCurrentText(current_model)
+                else:
+                    self.model_combo.setCurrentText(models[0])
+            else:
+                # If no real models found, don't clear, just show message
+                QMessageBox.information(self, "No Models Found", "Could not detect any downloaded models from Ollama API.")
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Refresh Failed", f"Failed to refresh models: {str(e)}")
+
+    def setup_generator_tab(self):
+        layout = QVBoxLayout(self.generator_tab)
+        layout.setSpacing(15)
+
+        # Model Selection
+        model_layout = QVBoxLayout()
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        
+        model_select_layout = QHBoxLayout()
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setStyleSheet(self.get_input_style())
+        
+        # Refresh models button
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setStyleSheet(self.get_button_style())
+        refresh_btn.clicked.connect(self.refresh_models)
+        
+        model_select_layout.addWidget(self.model_combo)
+        model_select_layout.addWidget(refresh_btn)
+        
+        # Load models
+        try:
+            # Try to get real cached models first (downloaded ones)
+            models = get_real_cached_models(timeout=2.0)
+            if not models:
+                # Fallback to cached list (which might have defaults)
+                models = get_cached_models()
+                
+            if models:
+                self.model_combo.addItems(models)
+            else:
+                self.model_combo.addItem("llama3.2:latest")
+        except Exception:
+            self.model_combo.addItem("llama3.2:latest")
+            
+        current_model = self.config.get('gen_model', 'llama3.2:latest')
+        self.model_combo.setCurrentText(current_model)
+        
+        model_layout.addWidget(model_label)
+        model_layout.addLayout(model_select_layout)
+        layout.addLayout(model_layout)
+        
+        # Prompt
+        prompt_layout = QVBoxLayout()
+        prompt_label = QLabel("Prompt / Instructions:")
+        prompt_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        
+        self.prompt_edit = QPlainTextEdit()
+        self.prompt_edit.setPlaceholderText("Describe what the code should do...")
+        self.prompt_edit.setPlainText(self.config.get('gen_prompt', ''))
+        self.prompt_edit.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: #252526;
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 5px;
+            }}
+        """)
+        
+        prompt_layout.addWidget(prompt_label)
+        prompt_layout.addWidget(self.prompt_edit)
+        layout.addLayout(prompt_layout)
+        
+        # Generate Button
+        self.gen_btn = QPushButton("Generate Code")
+        self.gen_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_COLOR};
+                color: #121212;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #00CC99;
+            }}
+            QPushButton:disabled {{
+                background-color: #555555;
+                color: #888888;
+            }}
+        """)
+        self.gen_btn.clicked.connect(self.generate_code)
+        layout.addWidget(self.gen_btn)
+        
+        # Status Label
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet(f"color: {TEXT_COLOR}; font-style: italic;")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_label)
+        
+    def generate_code(self):
+        prompt = self.prompt_edit.toPlainText()
+        if not prompt:
+            QMessageBox.warning(self, "Missing Prompt", "Please enter a prompt describing the code you want to generate.")
+            return
+            
+        model = self.model_combo.currentText()
+        
+        self.gen_btn.setEnabled(False)
+        self.gen_btn.setText("Generating...")
+        self.status_label.setText("Generating code... please wait.")
+        
+        # Start generation thread
+        self.gen_thread = CodeGeneratorThread(model, prompt)
+        self.gen_thread.finished.connect(self.on_generation_finished)
+        self.gen_thread.error.connect(self.on_generation_error)
+        self.gen_thread.start()
+        
+    def on_generation_finished(self, code):
+        self.code_edit.setPlainText(code)
+        self.gen_btn.setEnabled(True)
+        self.gen_btn.setText("Generate Code")
+        self.status_label.setText("Code generated successfully! Switch to 'Code Editor' tab to view/edit.")
+        # Optional: Switch tab automatically
+        self.tabs.setCurrentWidget(self.editor_tab)
+        
+    def on_generation_error(self, error_msg):
+        self.gen_btn.setEnabled(True)
+        self.gen_btn.setText("Generate Code")
+        self.status_label.setText("Generation failed.")
+        QMessageBox.critical(self, "Generation Error", f"Failed to generate code:\n{error_msg}")
 
     def setup_editor_tab(self):
         layout = QVBoxLayout(self.editor_tab)
@@ -164,7 +386,7 @@ class CodeNodeDialog(ModernDialog):
             
     def get_input_style(self):
         return f"""
-            QLineEdit, QSpinBox {{
+            QLineEdit, QSpinBox, QComboBox {{
                 background-color: #252526;
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
@@ -174,6 +396,13 @@ class CodeNodeDialog(ModernDialog):
             QSpinBox::up-button, QSpinBox::down-button {{
                 background-color: {LIGHT_GREY};
                 border: none;
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                background-color: {LIGHT_GREY};
+                width: 20px;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
             }}
         """
         
@@ -197,5 +426,7 @@ class CodeNodeDialog(ModernDialog):
             'file_path': self.file_path_edit.text(),
             'execute_on_input': self.exec_check.isChecked(),
             'output_variable': self.output_var_edit.text(),
-            'timeout': self.timeout_spin.value()
+            'timeout': self.timeout_spin.value(),
+            'gen_model': self.model_combo.currentText(),
+            'gen_prompt': self.prompt_edit.toPlainText()
         }

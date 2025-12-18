@@ -170,11 +170,12 @@ class LLMPropertiesDialog(ModernDialog):
             "Information Extraction (OCR + LLM)",
             "Custom Instructions",
             "Direct Prompt",
-            "ComoRAG Analysis",
+            # "ComoRAG Analysis",
             "Data Processing Chain",
             "Text Analysis",
             "Content Summarization",
-            "Tool Selection (LLM Tools)"
+            "Tool Selection (LLM Tools)",
+            "Python Code Generation"
         ])
         self.template_combo.currentTextChanged.connect(self.apply_template)
         template_layout.addWidget(self.template_combo)
@@ -378,42 +379,55 @@ class LLMPropertiesDialog(ModernDialog):
         
         layout.addWidget(vision_group)
         
-        # ComoRAG Configuration Group
-        comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
-        comorag_layout = QGridLayout(comorag_group)
-        comorag_layout.setContentsMargins(8, 12, 8, 8)
-        comorag_layout.setSpacing(6)
+        # ComoRAG Configuration Group - HIDDEN as per user request
+        # comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
+        # comorag_layout = QGridLayout(comorag_group)
+        # comorag_layout.setContentsMargins(8, 12, 8, 8)
+        # comorag_layout.setSpacing(6)
         
-        # Enable ComoRAG checkbox
-        comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
+        # # Enable ComoRAG checkbox
+        # comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
+        # self.use_comorag_checkbox = ModernToggle(text="Use context-aware reasoning with OverWatch")
+        # self.use_comorag_checkbox.setChecked(False)
+        # comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
+        
+        # # Max reasoning cycles
+        # comorag_layout.addWidget(QLabel("Max Cycles:"), 1, 0)
+        # self.max_cycles_spin = QSpinBox()
+        # self.max_cycles_spin.setRange(1, 10)
+        # self.max_cycles_spin.setValue(5)
+        # self.max_cycles_spin.setToolTip("Maximum number of reasoning cycles for ComoRAG")
+        # comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
+        
+        # # Memory size
+        # comorag_layout.addWidget(QLabel("Memory Size:"), 2, 0)
+        # self.memory_size_spin = QSpinBox()
+        # self.memory_size_spin.setRange(100, 5000)
+        # self.memory_size_spin.setSingleStep(100)
+        # self.memory_size_spin.setValue(1000)
+        # self.memory_size_spin.setToolTip("Memory size for ComoRAG context retention")
+        # comorag_layout.addWidget(self.memory_size_spin, 2, 1)
+        
+        # # Add help text for ComoRAG
+        # comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API.")
+        # comorag_help_label.setWordWrap(True)
+        # comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        # comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
+        
+        # layout.addWidget(comorag_group)
+        
+        # Initialize hidden widgets to prevent AttributeError
         self.use_comorag_checkbox = ModernToggle(text="Use context-aware reasoning with OverWatch")
-        self.use_comorag_checkbox.setChecked(True)
-        comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
+        self.use_comorag_checkbox.setChecked(False)
+        self.use_comorag_checkbox.setVisible(False)
         
-        # Max reasoning cycles
-        comorag_layout.addWidget(QLabel("Max Cycles:"), 1, 0)
         self.max_cycles_spin = QSpinBox()
-        self.max_cycles_spin.setRange(1, 10)
         self.max_cycles_spin.setValue(5)
-        self.max_cycles_spin.setToolTip("Maximum number of reasoning cycles for ComoRAG")
-        comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
+        self.max_cycles_spin.setVisible(False)
         
-        # Memory size
-        comorag_layout.addWidget(QLabel("Memory Size:"), 2, 0)
         self.memory_size_spin = QSpinBox()
-        self.memory_size_spin.setRange(100, 5000)
-        self.memory_size_spin.setSingleStep(100)
         self.memory_size_spin.setValue(1000)
-        self.memory_size_spin.setToolTip("Memory size for ComoRAG context retention")
-        comorag_layout.addWidget(self.memory_size_spin, 2, 1)
-        
-        # Add help text for ComoRAG
-        comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API.")
-        comorag_help_label.setWordWrap(True)
-        comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
-        
-        layout.addWidget(comorag_group)
+        self.memory_size_spin.setVisible(False)
         
         layout.addStretch()
         self.tab_widget.addTab(features_tab, "Features")
@@ -452,11 +466,12 @@ class LLMPropertiesDialog(ModernDialog):
             "Information Extraction (OCR + LLM)",
             "Custom Instructions",
             "Direct Prompt",
-            "ComoRAG Analysis",
+            # "ComoRAG Analysis",
             "Data Processing Chain",
             "Text Analysis",
             "Content Summarization",
-            "Tool Selection (LLM Tools)"
+            "Tool Selection (LLM Tools)",
+            "Python Code Generation"
         ])
         self.template_combo.currentTextChanged.connect(self.apply_template)
         template_layout.addWidget(self.template_combo)
@@ -575,17 +590,17 @@ class LLMPropertiesDialog(ModernDialog):
                 "input_source": 0,  # No input
                 "output_variable": "llm_output"
             },
-            "ComoRAG Analysis": {
-                "system_message": "You are an AI assistant with memory and context awareness. Use the provided context to give informed responses.",
-                "prompt": "Analyze the following information and provide insights based on the context: [DESCRIBE ANALYSIS GOAL]",
-                "temperature": 0.3,
-                "max_tokens": 4096,
-                "input_source": 2,  # Previous node output
-                "use_comorag": True,
-                "max_cycles": 3,
-                "memory_size": 2000,
-                "output_variable": "analysis_result"
-            },
+            # "ComoRAG Analysis": {
+            #     "system_message": "You are an AI assistant with memory and context awareness. Use the provided context to give informed responses.",
+            #     "prompt": "Analyze the following information and provide insights based on the context: [DESCRIBE ANALYSIS GOAL]",
+            #     "temperature": 0.3,
+            #     "max_tokens": 4096,
+            #     "input_source": 2,  # Previous node output
+            #     "use_comorag": True,
+            #     "max_cycles": 3,
+            #     "memory_size": 2000,
+            #     "output_variable": "analysis_result"
+            # },
             "Data Processing Chain": {
                 "system_message": "You are a data processing assistant. Process the input data according to the specified requirements.",
                 "prompt": "Process the input data as follows: [DESCRIBE PROCESSING STEPS]",
@@ -616,6 +631,14 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
                 "temperature": 0.1,
                 "max_tokens": 150,
+                "input_source": 0,
+                "output_variable": "llm_output"
+            },
+            "Python Code Generation": {
+                "system_message": "You are a Python code generator. Your ONLY task is to output executable Python code.\\n1. Output the entire script in a SINGLE markdown code block (```python ... ```).\\n2. Do NOT split the code into multiple blocks.\\n3. Do NOT add any explanations, comments, steps, or text outside the code block.\\n4. Ensure all imports and logic are contained within that one block.",
+                "prompt": "Write a complete, single-file Python script to: [TASK_DESCRIPTION]\\n\\nIMPORTANT: Provide ONLY the raw python code inside a single ```python``` block. No other text.",
+                "temperature": 0.2,
+                "max_tokens": 4096,
                 "input_source": 0,
                 "output_variable": "llm_output"
             }
@@ -689,11 +712,12 @@ class LLMPropertiesDialog(ModernDialog):
             "Information Extraction (OCR + LLM)": "Extract specific information from screen text using OCR + LLM.",
             "Custom Instructions": "Define your own system message and prompt for the LLM.",
             "Direct Prompt": "Simple direct prompt without additional configuration.",
-            "ComoRAG Analysis": "Use ComoRAG for context-aware analysis with memory and reasoning.",
+            # "ComoRAG Analysis": "Use ComoRAG for context-aware analysis with memory and reasoning.",
             "Data Processing Chain": "Process data from previous nodes in a multi-step workflow.",
             "Text Analysis": "Analyze text content from clipboard with detailed insights.",
             "Content Summarization": "Summarize content extracted from screen using OCR.",
-            "Tool Selection (LLM Tools)": "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'."
+            "Tool Selection (LLM Tools)": "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'.",
+            "Python Code Generation": "Generate executable Python code in a single block."
         }
         self.template_description.setText(descriptions.get(template_name, ""))
       
@@ -1017,6 +1041,15 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
                 "temperature": 0.1,
                 "max_tokens": 150,
+                "use_comorag": False
+            },
+            "Python Code Generation": {
+                "description": "Generate executable Python code in a single block.",
+                "input_source": 0,
+                "system_message": "You are a Python code generator. Your ONLY task is to output executable Python code.\\n1. Output the entire script in a SINGLE markdown code block (```python ... ```).\\n2. Do NOT split the code into multiple blocks.\\n3. Do NOT add any explanations, comments, steps, or text outside the code block.\\n4. Ensure all imports and logic are contained within that one block.",
+                "prompt": "Write a complete, single-file Python script to: [TASK_DESCRIPTION]\\n\\nIMPORTANT: Provide ONLY the raw python code inside a single ```python``` block. No other text.",
+                "temperature": 0.2,
+                "max_tokens": 4096,
                 "use_comorag": False
             }
         }

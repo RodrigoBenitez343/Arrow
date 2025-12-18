@@ -1,9 +1,0 @@
- we need to add a new node, the code node, that will contain a file that can be constantly updated and run as a any node in LoOper.
-
-we will treat this node as a kind of text execution, we can put in it some code in python for example, the node should be able to be a "computing unit" that can receive.
-
-*arguments
-*code changes/overwrites
-*execute/skip flags and bools.
-
-through a series of distinct inputs and outputs for different things like how we treat LLM nodes.

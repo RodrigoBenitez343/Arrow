@@ -3,3 +3,8 @@
 /tests
 /build
 /looperv2.egg-info
+/dist
+/LoOper/chains
+/LoOper/sequences
+/LoOper/screenshots
+/LoOper/sequences/screenshots

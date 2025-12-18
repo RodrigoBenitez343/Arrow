@@ -57,6 +57,8 @@ class CodeOperationsMixin:
                 node.set_property('execute_on_input', 'true' if config['execute_on_input'] else 'false')
                 node.set_property('output_variable', config['output_variable'])
                 node.set_property('timeout', str(config['timeout']))
+                node.set_property('gen_model', config.get('gen_model', 'llama3.2:latest'))
+                node.set_property('gen_prompt', config.get('gen_prompt', ''))
                 
                 # Update node name? Maybe showing "Code: <file_name>" or "Code: <snippet>"
                 if config['file_path']:
