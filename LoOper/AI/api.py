@@ -13,6 +13,7 @@ import subprocess
 import time
 sys.path.append(os.path.dirname(__file__))
 from comorag_engine import ComoRAGEngine
+from ollama_engine import OllamaEngine
 import asyncio
 from typing import Set
 import threading
@@ -53,7 +54,7 @@ HARDCODED_REQUIRED_EMBED_MODELS: List[str] = [
     'nomic-embed-text'
 ]
 HARDCODED_REQUIRED_LLM_MODELS: List[str] = [
-    'llama3.1:8b-instruct-q8_0'
+    'llama3.2:1b'
 ]
 HARDCODED_REQUIRED_VISION_MODELS: List[str] = [
     'minicpm-v:latest'
@@ -1032,16 +1033,42 @@ class ComoRAGAddMemoryRequest(BaseModel):
     image_data: Optional[str] = None
 
 COMORAG_ENGINE: Optional[ComoRAGEngine] = None
+OLLAMA_ENGINE: Optional[OllamaEngine] = None
+
+@app.on_event("startup")
+async def startup_event():
+    global OLLAMA_ENGINE, COMORAG_ENGINE
+    
+    # Initialize Ollama Engine (using settings from LoOper config or defaults)
+    try:
+        from settings import OllamaSettings, Settings
+        settings = Settings()
+    except ImportError:
+        # Fallback if settings.py isn't fully integrated yet
+        class MockSettings:
+            pass
+        settings = MockSettings()
+        settings.ollama = MockSettings()
+        settings.ollama.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+    
+    OLLAMA_ENGINE = OllamaEngine(settings.ollama)
+    await OLLAMA_ENGINE.initialize()
+    
+    # Initialize ComoRAG Engine
+    COMORAG_ENGINE = ComoRAGEngine(settings=settings, ollama_engine=OLLAMA_ENGINE)
+    await COMORAG_ENGINE.initialize()
 
 @app.post("/comorag/reason")
 async def comorag_reason(request: ComoRAGReasonRequest):
+    """Perform ComoRAG reasoning locally using the integrated engine"""
     try:
         global COMORAG_ENGINE
         if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-            COMORAG_ENGINE = ComoRAGEngine()
-            await COMORAG_ENGINE.initialize(memory_size=request.memory_size or 1000)
+             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+
         ctx = request.context or ""
         imgs = process_images(request.images) if request.images else None
+        
         result = await COMORAG_ENGINE.reason(
             query=request.query,
             context=ctx,
@@ -1053,67 +1080,82 @@ async def comorag_reason(request: ComoRAGReasonRequest):
         return result
     except HTTPException as e:
         raise e
-    except requests.exceptions.Timeout:
-        raise HTTPException(status_code=408, detail="Request timeout - ComoRAG took too long to respond")
-    except requests.exceptions.RequestException as e:
-        raise HTTPException(status_code=503, detail=f"Failed to communicate with Ollama: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ComoRAG error: {str(e)}")
 
-@app.get("/comorag/status")
-async def comorag_status():
-    try:
-        global COMORAG_ENGINE
-        ready = COMORAG_ENGINE is not None and COMORAG_ENGINE.is_ready()
-        return {"ready": ready}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/comorag/memory")
-async def comorag_memory():
+@app.post("/comorag/reason/stream")
+async def comorag_reason_stream(request: ComoRAGReasonRequest):
+    """Stream ComoRAG reasoning locally"""
     try:
         global COMORAG_ENGINE
         if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-            return {"memory_items": 0, "max_memory_size": 0}
+             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+
+        async def event_generator():
+            try:
+                async for step in COMORAG_ENGINE.reason_stream(
+                    query=request.query,
+                    context=request.context,
+                    model=request.model,
+                    max_cycles=request.max_cycles,
+                    memory_size=request.memory_size,
+                    images=process_images(request.images) if request.images else None
+                ):
+                    yield json.dumps(step) + "\n"
+            except Exception as e:
+                yield json.dumps({"type": "error", "message": str(e)}) + "\n"
+
+        return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
+
+@app.get("/comorag/status")
+async def comorag_status():
+    global COMORAG_ENGINE
+    ready = COMORAG_ENGINE is not None and COMORAG_ENGINE.is_ready()
+    return {"ready": ready}
+
+@app.get("/comorag/memory")
+async def comorag_memory():
+    global COMORAG_ENGINE
+    if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
+        return {"memory_items": 0, "max_memory_size": 0}
+    
+    # Adapt to whatever memory workspace structure ComoRAG uses
+    try:
+        # Assuming OverWatch's ComoRAG exposes memory_workspace
         ws = COMORAG_ENGINE.memory_workspace
         return {
             "memory_items": len(ws.memory_pool),
             "max_memory_size": ws.max_size,
             "recent_access": list(ws.access_history)[-10:]
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        # Fallback or different structure
+        return {"memory_items": -1, "status": "unknown structure"}
 
 @app.post("/comorag/memory")
 async def add_comorag_memory(request: ComoRAGAddMemoryRequest):
-    try:
-        global COMORAG_ENGINE
-        if COMORAG_ENGINE is None:
-            COMORAG_ENGINE = ComoRAGEngine()
-            await COMORAG_ENGINE.initialize()
-        elif not COMORAG_ENGINE.is_ready():
-            await COMORAG_ENGINE.initialize()
-            
-        await COMORAG_ENGINE.add_memory(
-            content=request.content,
-            source=request.source,
-            metadata=request.metadata,
-            image_data=request.image_data
-        )
-        return {"status": "memory_added"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    global COMORAG_ENGINE
+    if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
+        raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+        
+    await COMORAG_ENGINE.add_memory(
+        content=request.content,
+        source=request.source,
+        metadata=request.metadata,
+        image_data=request.image_data
+    )
+    return {"status": "memory_added"}
 
 @app.delete("/comorag/memory")
 async def clear_comorag_memory():
-    try:
-        global COMORAG_ENGINE
-        if COMORAG_ENGINE is None:
-            COMORAG_ENGINE = ComoRAGEngine()
-        await COMORAG_ENGINE.clear_memory()
-        return {"status": "memory_cleared"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    global COMORAG_ENGINE
+    if COMORAG_ENGINE is None:
+         raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+    
+    await COMORAG_ENGINE.clear_memory()
+    return {"status": "memory_cleared"}
 
 if __name__ == "__main__":
     # Get Tailscale IP from environment variable, fallback to all interfaces

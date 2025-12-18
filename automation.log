@@ -1,75 +1,139 @@
-2025-12-12 14:51:14,511 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 14:52:55,397 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 14:52:57,418 - INFO - Built workflow graph with 1 nodes
-2025-12-12 14:52:57,419 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
-2025-12-12 14:53:34,773 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 14:53:36,793 - INFO - Built workflow graph with 1 nodes
-2025-12-12 14:53:36,794 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
-2025-12-12 14:53:36,802 - INFO - Starting chain playback
-2025-12-12 14:53:36,802 - DEBUG - Chain playback - workflow_graph exists: True
-2025-12-12 14:53:36,803 - DEBUG - Chain playback - sequences count: 0
-2025-12-12 14:53:38,812 - INFO - Using workflow executor for chain playback
-2025-12-12 14:53:38,812 - DEBUG - Looking for starting nodes in graph with 1 nodes
-2025-12-12 14:53:38,813 - DEBUG - Node code_1 (type: code) has 0 inputs: []
-2025-12-12 14:53:38,813 - DEBUG - Found starting node: code_1 (type: code)
-2025-12-12 14:53:38,813 - INFO - Starting workflow execution from nodes: ['code_1']
-2025-12-12 14:53:38,814 - DEBUG - Workflow graph has 1 nodes: ['code_1']
-2025-12-12 14:53:38,814 - INFO - Executing node code_1 (type: code) - Execution #1
-2025-12-12 14:53:38,817 - INFO - Executing Code node: None
-2025-12-12 14:53:38,817 - WARNING - No code to execute in Code node
-2025-12-12 14:53:38,817 - INFO - Node code_1 completed successfully
-2025-12-12 14:53:38,818 - DEBUG - Output connected nodes from code_1: ['__done__']
-2025-12-12 14:53:38,818 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:53:38,818 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:53:38,818 - DEBUG - Ready nodes after processing code_1: set()
-2025-12-12 14:53:38,819 - INFO - Workflow execution completed successfully
-2025-12-12 14:53:38,819 - INFO - Workflow execution completed with result: True
-2025-12-12 14:58:12,663 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 14:58:14,680 - INFO - Built workflow graph with 1 nodes
-2025-12-12 14:58:14,680 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
-2025-12-12 14:58:14,686 - INFO - Starting chain playback
-2025-12-12 14:58:14,686 - DEBUG - Chain playback - workflow_graph exists: True
-2025-12-12 14:58:14,687 - DEBUG - Chain playback - sequences count: 0
-2025-12-12 14:58:16,702 - INFO - Using workflow executor for chain playback
-2025-12-12 14:58:16,703 - DEBUG - Looking for starting nodes in graph with 1 nodes
-2025-12-12 14:58:16,703 - DEBUG - Node code_1 (type: code) has 0 inputs: []
-2025-12-12 14:58:16,703 - DEBUG - Found starting node: code_1 (type: code)
-2025-12-12 14:58:16,703 - INFO - Starting workflow execution from nodes: ['code_1']
-2025-12-12 14:58:16,704 - DEBUG - Workflow graph has 1 nodes: ['code_1']
-2025-12-12 14:58:16,704 - INFO - Executing node code_1 (type: code) - Execution #1
-2025-12-12 14:58:16,707 - INFO - Executing Code node: None
-2025-12-12 14:58:16,707 - WARNING - No code to execute in Code node
-2025-12-12 14:58:16,707 - INFO - Node code_1 completed successfully
-2025-12-12 14:58:16,708 - DEBUG - Output connected nodes from code_1: ['__done__']
-2025-12-12 14:58:16,708 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:58:16,708 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:58:16,708 - DEBUG - Ready nodes after processing code_1: set()
-2025-12-12 14:58:16,708 - INFO - Workflow execution completed successfully
-2025-12-12 14:58:16,709 - INFO - Workflow execution completed with result: True
-2025-12-12 14:59:30,879 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 14:59:32,915 - INFO - Built workflow graph with 1 nodes
-2025-12-12 14:59:32,915 - INFO - Loaded workflow chain with 0 sequences, 0 conditional nodes, 0 LLM nodes, 0 TTS nodes, 0 chain import nodes, and 1 code nodes
-2025-12-12 14:59:32,921 - INFO - Starting chain playback
-2025-12-12 14:59:32,922 - DEBUG - Chain playback - workflow_graph exists: True
-2025-12-12 14:59:32,922 - DEBUG - Chain playback - sequences count: 0
-2025-12-12 14:59:34,937 - INFO - Using workflow executor for chain playback
-2025-12-12 14:59:34,937 - DEBUG - Looking for starting nodes in graph with 1 nodes
-2025-12-12 14:59:34,938 - DEBUG - Node code_1 (type: code) has 0 inputs: []
-2025-12-12 14:59:34,938 - DEBUG - Found starting node: code_1 (type: code)
-2025-12-12 14:59:34,938 - INFO - Starting workflow execution from nodes: ['code_1']
-2025-12-12 14:59:34,938 - DEBUG - Workflow graph has 1 nodes: ['code_1']
-2025-12-12 14:59:34,939 - INFO - Executing node code_1 (type: code) - Execution #1
-2025-12-12 14:59:34,941 - INFO - Executing Code node: None
-2025-12-12 14:59:34,942 - DEBUG - Resolved code path 'test_script.py' to 'test_script.py'
-2025-12-12 14:59:34,942 - INFO - Reading code from file: test_script.py
-2025-12-12 14:59:34,943 - INFO - Code node executed successfully.
-2025-12-12 14:59:34,943 - INFO - Node code_1 completed successfully
-2025-12-12 14:59:34,944 - DEBUG - Output connected nodes from code_1: ['__done__']
-2025-12-12 14:59:34,944 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:59:34,944 - DEBUG - Node __done__ not found in workflow graph
-2025-12-12 14:59:34,944 - DEBUG - Ready nodes after processing code_1: set()
-2025-12-12 14:59:34,944 - INFO - Workflow execution completed successfully
-2025-12-12 14:59:34,945 - INFO - Workflow execution completed with result: True
-2025-12-12 15:43:38,073 - DEBUG - mss library available for fast screenshot capture
-2025-12-12 15:43:40,223 - DEBUG - Resolved code path 'test_script.py' to 'test_script.py'
-2025-12-12 15:43:40,224 - DEBUG - Resolved path 'test_image.png' to 'test_image.png'
+2025-12-17 12:35:32,492 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 12:35:32,955 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 12:35:33,010 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 12:35:33,011 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 12:56:29,613 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 12:56:30,000 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 12:56:30,034 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 12:56:30,035 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 13:12:00,276 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 13:12:00,607 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 13:12:00,634 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 13:12:00,635 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 13:39:46,453 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 13:39:46,785 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 13:39:46,814 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 13:39:46,815 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 14:45:44,991 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 14:45:45,346 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 14:45:45,377 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 14:45:45,377 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 14:45:46,591 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 14:45:46,591 - INFO - Loading faiss with AVX2 support.
+2025-12-17 14:45:46,679 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 14:45:49,821 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 14:45:50,083 - DEBUG - Calling CoUninitialize()
+2025-12-17 14:45:50,083 - DEBUG - CoUninitialize() done.
+2025-12-17 14:59:23,702 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 14:59:24,063 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 14:59:24,094 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 14:59:24,094 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 14:59:25,311 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 14:59:25,311 - INFO - Loading faiss with AVX2 support.
+2025-12-17 14:59:25,331 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 14:59:28,343 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 14:59:28,573 - DEBUG - Calling CoUninitialize()
+2025-12-17 14:59:28,573 - DEBUG - CoUninitialize() done.
+2025-12-17 15:09:36,920 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 15:09:37,274 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 15:09:37,300 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 15:09:37,301 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 15:09:38,610 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 15:09:38,610 - INFO - Loading faiss with AVX2 support.
+2025-12-17 15:09:38,629 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 15:09:41,220 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 15:09:41,448 - DEBUG - Calling CoUninitialize()
+2025-12-17 15:09:41,448 - DEBUG - CoUninitialize() done.
+2025-12-17 15:17:37,105 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 15:17:37,460 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 15:17:37,487 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 15:17:37,487 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 15:17:38,809 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 15:17:38,809 - INFO - Loading faiss with AVX2 support.
+2025-12-17 15:17:38,828 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 15:17:41,440 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 15:17:41,660 - DEBUG - Calling CoUninitialize()
+2025-12-17 15:17:41,661 - DEBUG - CoUninitialize() done.
+2025-12-17 16:26:32,043 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 16:26:32,779 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 16:26:32,869 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 16:26:32,870 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 16:26:34,897 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 16:26:34,897 - INFO - Loading faiss with AVX2 support.
+2025-12-17 16:26:34,985 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 16:26:39,433 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 16:26:39,898 - DEBUG - Calling CoUninitialize()
+2025-12-17 16:26:39,898 - DEBUG - CoUninitialize() done.
+2025-12-17 16:57:05,796 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 16:57:06,619 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 16:57:06,697 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 16:57:06,698 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 16:57:09,135 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 16:57:09,136 - INFO - Loading faiss with AVX2 support.
+2025-12-17 16:57:09,242 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 16:57:13,769 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 16:57:14,297 - DEBUG - Calling CoUninitialize()
+2025-12-17 16:57:14,298 - DEBUG - CoUninitialize() done.
+2025-12-17 17:02:35,593 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 17:02:36,174 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 17:02:36,225 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 17:02:36,226 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 17:02:38,489 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 17:02:38,490 - INFO - Loading faiss with AVX2 support.
+2025-12-17 17:02:38,527 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 17:02:42,512 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:02:42,928 - DEBUG - Calling CoUninitialize()
+2025-12-17 17:02:42,928 - DEBUG - CoUninitialize() done.
+2025-12-17 17:10:49,017 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 17:10:49,618 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 17:10:49,676 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 17:10:49,676 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 17:10:51,957 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 17:10:51,957 - INFO - Loading faiss with AVX2 support.
+2025-12-17 17:10:51,992 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 17:10:56,136 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:10:56,568 - DEBUG - Calling CoUninitialize()
+2025-12-17 17:10:56,569 - DEBUG - CoUninitialize() done.
+2025-12-17 17:17:48,599 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 17:17:48,993 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 17:17:49,037 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 17:17:49,038 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 17:17:51,217 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 17:17:51,218 - INFO - Loading faiss with AVX2 support.
+2025-12-17 17:17:51,260 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 17:17:55,815 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:17:56,132 - DEBUG - Calling CoUninitialize()
+2025-12-17 17:17:56,132 - DEBUG - CoUninitialize() done.
+2025-12-17 19:06:51,467 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 19:06:51,843 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 19:06:51,872 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 19:06:51,872 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 19:06:53,219 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 19:06:53,220 - INFO - Loading faiss with AVX2 support.
+2025-12-17 19:06:53,253 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 19:06:55,872 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 19:06:56,091 - DEBUG - Calling CoUninitialize()
+2025-12-17 19:06:56,092 - DEBUG - CoUninitialize() done.
+2025-12-17 19:13:38,297 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 19:13:38,652 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 19:13:38,695 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 19:13:38,695 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 19:13:39,988 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 19:13:39,988 - INFO - Loading faiss with AVX2 support.
+2025-12-17 19:13:40,007 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 19:13:42,706 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 19:13:42,954 - DEBUG - Calling CoUninitialize()
+2025-12-17 19:13:42,954 - DEBUG - CoUninitialize() done.
+2025-12-17 20:33:56,070 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 20:34:09,817 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 20:34:27,130 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 20:51:04,817 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 20:51:10,230 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 20:51:10,230 - INFO - Loading faiss with AVX2 support.
+2025-12-17 20:51:10,248 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 20:52:00,911 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 20:52:06,413 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 20:52:06,414 - INFO - Loading faiss with AVX2 support.
+2025-12-17 20:52:06,432 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 20:52:06,746 - INFO - Loaded workflow with 0 nodes
+2025-12-17 20:52:06,746 - ERROR - No code node found in workflow

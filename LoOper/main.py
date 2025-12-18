@@ -55,6 +55,12 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
     except Exception:
         pass
 
+# Explicitly import torch early to avoid DLL conflicts with PyQt5
+try:
+    import torch
+except ImportError:
+    pass
+
 # Normalize working directory and import path for frozen builds
 if getattr(sys, 'frozen', False):
     exe_dir = os.path.dirname(sys.executable)

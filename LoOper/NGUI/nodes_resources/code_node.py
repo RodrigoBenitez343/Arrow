@@ -37,19 +37,13 @@ class CodeNode(BaseNode):
         # Inputs
         # Main execution trigger / input data
         in_port = _add_multi_input(self, 'input', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
-        # Optional: Overwrite code at runtime
-        code_port = _add_multi_input(self, 'code', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
-        # Optional: Pass arguments as a dictionary
-        args_port = _add_multi_input(self, 'args', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
         
         # Outputs
         out_port = self.add_output('output', color=out_rgb, display_name=False, multi_output=True)
         # out_port.model.type_ = UNIVERSAL_PORT_TYPE
-        error_port = self.add_output('error', color=out_rgb, display_name=False, multi_output=True)
-        # error_port.model.type_ = UNIVERSAL_PORT_TYPE
         
         # Configure multi-connection
-        for p in [in_port, code_port, args_port, out_port, error_port]:
+        for p in [in_port, out_port]:
             try:
                 if hasattr(p, 'set_multi_connection'):
                     p.set_multi_connection(True)
@@ -64,6 +58,8 @@ class CodeNode(BaseNode):
         self.create_property('execute_on_input', 'true')
         self.create_property('output_variable', 'result')
         self.create_property('timeout', '30')
+        self.create_property('gen_model', 'llama3.2:latest')
+        self.create_property('gen_prompt', '')
 
         # Visual indicator
         try:
@@ -80,7 +76,9 @@ class CodeNode(BaseNode):
             'file_path': self.get_property('file_path'),
             'execute_on_input': self.get_property('execute_on_input') == 'true',
             'output_variable': self.get_property('output_variable'),
-            'timeout': int(self.get_property('timeout') or 30)
+            'timeout': int(self.get_property('timeout') or 30),
+            'gen_model': self.get_property('gen_model'),
+            'gen_prompt': self.get_property('gen_prompt')
         }
 
     def execute_code(self, input_data=None, args=None, runtime_code=None):

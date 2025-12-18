@@ -36,7 +36,7 @@ class MultiSequencePlayer(SeleniumBot):
     
     This class now uses modularized components for better maintainability.
     """
-    def __init__(self, chain_config, chain_file_path=None):
+    def __init__(self, chain_config, chain_file_path=None, variables=None):
         """
         Initializes the multi-sequence player.
 
@@ -45,6 +45,7 @@ class MultiSequencePlayer(SeleniumBot):
                                         - sequences: list of sequence configurations
                                         - conditional_nodes: list of conditional node configurations
             chain_file_path (str, optional): Path to the chain file for resolving relative sequence paths
+            variables (dict, optional): Shared variables dictionary from parent player (for nested chains)
         """
         super().__init__()
         
@@ -100,7 +101,7 @@ class MultiSequencePlayer(SeleniumBot):
         # Propagate chain_file_dir so conditional assets (images/sequences) resolve correctly in nested imports
         self.fallback_handler = ConditionalFallbackHandler(chain_file_dir=self.chain_file_dir)
         self.workflow_navigator = WorkflowNavigator(self.workflow_graph) if self.workflow_graph else None
-        self.llm_executor = LLMExecutor()
+        self.llm_executor = LLMExecutor(variables=variables)
         self.sequence_executor = SequenceExecutor(self.fallback_handler, self.chain_file_dir)
         
         # Initialize workflow executor for new format

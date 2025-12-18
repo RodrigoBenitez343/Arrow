@@ -35,7 +35,7 @@ class TriggerConfigDialog(ModernDialog):
         """Load existing configuration"""
         self.image_path_entry.setText(self.config.get('image_path', ''))
         self.confidence_spin.setValue(self.config.get('confidence', 0.8))
-        self.timeout_spin.setValue(self.config.get('timeout', 10 if self.is_absence_trigger else 0))
+        self.timeout_spin.setValue(int(self.config.get('timeout', 10 if self.is_absence_trigger else 0)))
 
     def setup_ui(self):
         """Setup the UI"""

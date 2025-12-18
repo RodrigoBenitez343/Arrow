@@ -1,81 +1,11 @@
-2025-12-08 09:44:03,203 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
-2025-12-11 06:36:33,451 - LoOper.NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
-2025-12-12 13:49:24,411 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
-2025-12-12 15:48:47,420 - LoOper.NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
-2025-12-12 15:48:47,435 - LoOper.NGUI.graph_elements.graph_manager - INFO - Initializing GraphManager
-2025-12-12 15:48:47,435 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - GraphManager initialized with parent_widget: QWidget
-2025-12-12 15:48:47,436 - LoOper.NGUI.graph_elements.graph_manager - INFO - Setting up node graph
-2025-12-12 15:48:47,436 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Creating NodeGraph instance
-2025-12-12 15:48:47,449 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering custom nodes
-2025-12-12 15:48:47,449 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering custom node types
-2025-12-12 15:48:47,449 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering SequenceNode
-2025-12-12 15:48:47,450 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ActionNode
-2025-12-12 15:48:47,450 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ConditionalNode
-2025-12-12 15:48:47,450 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering LLMNode
-2025-12-12 15:48:47,450 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering TTSNode
-2025-12-12 15:48:47,451 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ChainImportNode
-2025-12-12 15:48:47,451 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering FormFillerNode
-2025-12-12 15:48:47,451 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering CodeNode
-2025-12-12 15:48:47,452 - LoOper.NGUI.graph_elements.graph_manager - INFO - All custom node types registered successfully
-2025-12-12 15:48:47,452 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget
-2025-12-12 15:48:47,452 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget in UI
-2025-12-12 15:48:47,452 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting graph widget from node_graph
-2025-12-12 15:48:47,565 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up context menu policy
-2025-12-12 15:48:47,565 - LoOper.NGUI.graph_elements.graph_manager - ERROR - Error setting up graph widget: 'QWidget' object has no attribute 'show_custom_context_menu'
-2025-12-12 15:48:47,566 - LoOper.NGUI.graph_elements.graph_manager - ERROR - Error setting up node graph: 'QWidget' object has no attribute 'show_custom_context_menu'
-2025-12-12 15:49:06,066 - LoOper.NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
-2025-12-12 15:49:06,081 - LoOper.NGUI.graph_elements.graph_manager - INFO - Initializing GraphManager
-2025-12-12 15:49:06,081 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - GraphManager initialized with parent_widget: DummyParent
-2025-12-12 15:49:06,082 - LoOper.NGUI.graph_elements.graph_manager - INFO - Setting up node graph
-2025-12-12 15:49:06,082 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Creating NodeGraph instance
-2025-12-12 15:49:06,095 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering custom nodes
-2025-12-12 15:49:06,095 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering custom node types
-2025-12-12 15:49:06,095 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering SequenceNode
-2025-12-12 15:49:06,096 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ActionNode
-2025-12-12 15:49:06,096 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ConditionalNode
-2025-12-12 15:49:06,096 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering LLMNode
-2025-12-12 15:49:06,097 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering TTSNode
-2025-12-12 15:49:06,097 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering ChainImportNode
-2025-12-12 15:49:06,097 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering FormFillerNode
-2025-12-12 15:49:06,098 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Registering CodeNode
-2025-12-12 15:49:06,098 - LoOper.NGUI.graph_elements.graph_manager - INFO - All custom node types registered successfully
-2025-12-12 15:49:06,099 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget
-2025-12-12 15:49:06,099 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up graph widget in UI
-2025-12-12 15:49:06,100 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting graph widget from node_graph
-2025-12-12 15:49:06,221 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting up context menu policy
-2025-12-12 15:49:06,221 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Setting focus policy for graph widget
-2025-12-12 15:49:06,222 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Replacing placeholder widget with graph widget
-2025-12-12 15:49:06,224 - LoOper.NGUI.graph_elements.graph_manager - WARNING - Container has no layout; set parent directly and removed placeholder
-2025-12-12 15:49:06,224 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Storing graph widget references
-2025-12-12 15:49:06,224 - LoOper.NGUI.graph_elements.graph_manager - INFO - Graph widget setup completed successfully
-2025-12-12 15:49:06,224 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
-2025-12-12 15:49:06,225 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Configuring graph properties
-2025-12-12 15:49:06,225 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Graph configuration completed (pipes/style and grid mode applied)
-2025-12-12 15:49:06,225 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Storing node_graph reference in parent widget
-2025-12-12 15:49:06,226 - LoOper.NGUI.graph_elements.graph_manager - INFO - Node graph setup completed successfully
-2025-12-12 15:49:06,226 - LoOper.NGUI.graph_elements.graph_manager - INFO - Creating node of type: sequence.SequenceNode
-2025-12-12 15:49:06,226 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Node creation parameters - name: Seq, pos: None
-2025-12-12 15:49:06,227 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'code.CodeNode', 'conditional.ConditionalNode', 'form_filler.FormFillerNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
-2025-12-12 15:49:06,230 - LoOper.NGUI.graph_elements.graph_manager - INFO - Successfully created sequence.SequenceNode node with ID: 0x174b26b2120
-2025-12-12 15:49:06,230 - LoOper.NGUI.graph_elements.graph_manager - INFO - Creating node of type: llm.LLMNode
-2025-12-12 15:49:06,231 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Node creation parameters - name: LLM, pos: None
-2025-12-12 15:49:06,231 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'code.CodeNode', 'conditional.ConditionalNode', 'form_filler.FormFillerNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
-2025-12-12 15:49:06,235 - LoOper.NGUI.graph_elements.graph_manager - INFO - Successfully created llm.LLMNode node with ID: 0x174b26525d0
-2025-12-12 15:49:06,236 - LoOper.NGUI.graph_elements.graph_manager - INFO - Creating node of type: code.CodeNode
-2025-12-12 15:49:06,236 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Node creation parameters - name: Code, pos: None
-2025-12-12 15:49:06,236 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Available registered nodes: ['action.ActionNode', 'chain_import.ChainImportNode', 'code.CodeNode', 'conditional.ConditionalNode', 'form_filler.FormFillerNode', 'llm.LLMNode', 'nodeGraphQt.nodes.BackdropNode', 'sequence.SequenceNode', 'tts.TTSNode']
-2025-12-12 15:49:06,239 - LoOper.NGUI.graph_elements.graph_manager - INFO - Successfully created code.CodeNode node with ID: 0x174b2652c10
-2025-12-12 15:49:06,240 - LoOper.NGUI.graph_elements.graph_manager - INFO - Connecting nodes: 0x174b26b2120 -> 0x174b26525d0
-2025-12-12 15:49:06,241 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting default output port
-2025-12-12 15:49:06,241 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Using output port: output
-2025-12-12 15:49:06,241 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting default input port
-2025-12-12 15:49:06,241 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Using input port: input
-2025-12-12 15:49:06,242 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Creating connection: output -> input
-2025-12-12 15:49:06,243 - LoOper.NGUI.graph_elements.graph_manager - INFO - Successfully connected nodes: 0x174b26b2120 -> 0x174b26525d0
-2025-12-12 15:49:06,243 - LoOper.NGUI.graph_elements.graph_manager - INFO - Connecting nodes: 0x174b2652c10 -> 0x174b26525d0
-2025-12-12 15:49:06,243 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting default output port
-2025-12-12 15:49:06,244 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Using output port: output
-2025-12-12 15:49:06,244 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Getting default input port
-2025-12-12 15:49:06,244 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Using input port: input
-2025-12-12 15:49:06,245 - LoOper.NGUI.graph_elements.graph_manager - DEBUG - Creating connection: output -> input
-2025-12-12 15:49:06,245 - LoOper.NGUI.graph_elements.graph_manager - INFO - Successfully connected nodes: 0x174b2652c10 -> 0x174b26525d0
+2025-12-17 14:45:49,821 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 14:59:28,343 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 15:09:41,220 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 15:17:41,440 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 16:26:39,433 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 16:57:13,769 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:02:42,512 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:10:56,136 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 17:17:55,815 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 19:06:55,872 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 19:13:42,706 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError

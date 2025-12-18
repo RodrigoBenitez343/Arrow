@@ -19,7 +19,7 @@ class LLMExecutor:
     """Executes LLM nodes in workflow graphs (modularized)."""
 
     def __init__(self, variables: Optional[Dict[str, object]] = None):
-        self.variables: Dict[str, object] = variables or {}
+        self.variables: Dict[str, object] = variables if variables is not None else {}
         self.context_collector = None
         self.context_db = None
         self._initialize_context_collector()
@@ -145,6 +145,34 @@ class LLMExecutor:
                 system_message = (system_message + "\n\n" + extra).strip()
             except Exception:
                 pass
+
+        try:
+            code_paths = {}
+            for k, v in (self.variables.items() if isinstance(self.variables, dict) else []):
+                if isinstance(k, str) and k.endswith('_code_path') and v:
+                    nid = k.replace('node_', '').replace('_code_path', '')
+                    code_paths[nid] = str(v)
+            if code_paths:
+                alias_map = {}
+                for k, v in (self.variables.items() if isinstance(self.variables, dict) else []):
+                    if isinstance(k, str) and k.endswith('_module_alias') and v:
+                        nid = k.replace('node_', '').replace('_module_alias', '')
+                        alias_map[nid] = str(v)
+                lines = ["Available Code Files:"]
+                for nid, p in code_paths.items():
+                    alias = alias_map.get(nid, '')
+                    if alias:
+                        lines.append(f"- {nid}: {p} (alias: {alias})")
+                    else:
+                        lines.append(f"- {nid}: {p}")
+                lines.append("Import by path using importlib.util.spec_from_file_location and exec_module.")
+                lines.append("At the top of your single code block, include:")
+                lines.append("# ALIAS:<short_name>")
+                lines.append("This describes the module purpose for composite app integration.")
+                extra = "\n".join(lines)
+                system_message = (system_message + "\n\n" + extra).strip()
+        except Exception:
+            pass
 
         # Detect context connections and whether upstream context is available
         context_inputs = []
@@ -529,6 +557,37 @@ class LLMExecutor:
             prompt = f"{rag_docs_context}\n\n{prompt}"
         if use_direct_rag and not rag_context_text and input_source in ('previous', 'previous_node') and input_text:
             prompt = assemble_enhanced_prompt(prompt, input_source, input_text, include_raw=True)
+
+        # Inject chain modules context to encourage composition over rebuilding
+        try:
+            chain_ctx = self.variables.get('chain_modules_context') or ''
+            if chain_ctx:
+                guidance = (
+                    "\n\nUSING PREVIOUS MODULES:\n"
+                    "The following modules are already available as variables in the execution scope.\n"
+                    "Use them directly by their listed names; do not recreate their functionality.\n"
+                    "If you need file imports, paths are provided. Prefer composing by calling their functions/classes.\n"
+                    "\nMODULE DESIGN RULES:\n"
+                    "- Do NOT launch GUI or perform side-effects at import time.\n"
+                    "- Place any demo/app launch under: if __name__ == '__main__':\n"
+                    "- Expose clean functions/classes (e.g., create_window(), make_button()).\n"
+                    "- The final composition script will import and orchestrate these components.\n\n"
+                )
+                prompt = f"{prompt}\n\n{guidance}{chain_ctx}"
+        except Exception:
+            pass
+
+        # Enforce a single UI framework across the chain
+        try:
+            chain_fw = (self.variables.get('chain_framework') or '').strip()
+            if chain_fw:
+                prompt = (
+                    f"{prompt}\n\nFRAMEWORK CONSISTENCY:\n"
+                    f"Use the existing framework: {chain_fw}. Do NOT switch frameworks.\n"
+                    f"Integrate by importing and composing available modules; avoid rewriting components in a different framework."
+                )
+        except Exception:
+            pass
 
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before API call")
@@ -923,13 +982,37 @@ class LLMExecutor:
         except Exception:
             pass
 
-        # Store outputs
+        # Store outputs and artifact metadata
         try:
             self.variables[output_variable] = response_text
             node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
             if node_id:
                 self.variables[f"node_{node_id}_output"] = response_text
-                self.variables[f"node_{node_id}_context"] = response_text
+                try:
+                    import re
+                    nm = llm_data.get('name') or ''
+                    if not nm:
+                        nm = f"mod_{node_id}"
+                    s = re.sub(r"\W+", "_", str(nm).strip())
+                    if not s:
+                        s = "mod"
+                    if not re.match(r"^[A-Za-z_]", s):
+                        s = "mod_" + s
+                    alias = "module_" + s
+                    desc = llm_config.get('prompt') or llm_config.get('system_message') or ''
+                    desc = str(desc).strip().split("\n")[0]
+                    self.variables[f"node_{node_id}_artifact_alias"] = alias
+                    self.variables[f"node_{node_id}_artifact_desc"] = desc
+                except Exception:
+                    pass
+                try:
+                    chain_ctx = self.variables.get('chain_modules_context') or ''
+                    if chain_ctx:
+                        self.variables[f"node_{node_id}_context"] = (response_text or '') + "\n\n" + str(chain_ctx)
+                    else:
+                        self.variables[f"node_{node_id}_context"] = response_text
+                except Exception:
+                    self.variables[f"node_{node_id}_context"] = response_text
         except Exception:
             pass
 

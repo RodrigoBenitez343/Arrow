@@ -77,8 +77,16 @@ def _find_main_window():
     except Exception:
         return False
     try:
-        hwnd = win32gui.FindWindow(None, "LoOper BETA:1.9.0")
-        return bool(hwnd)
+        found = False
+        def _enum(hwnd, _):
+            nonlocal found
+            if found: return
+            if win32gui.IsWindowVisible(hwnd):
+                title = win32gui.GetWindowText(hwnd)
+                if title and title.startswith("LoOper BETA:"):
+                    found = True
+        win32gui.EnumWindows(_enum, None)
+        return found
     except Exception:
         return False
 
@@ -97,7 +105,7 @@ def _find_main_window_for_pid(pid: int):
             title = win32gui.GetWindowText(hwnd)
             if not title:
                 return
-            if title != "LoOper BETA:1.9.0":
+            if not title.startswith("LoOper BETA:"):
                 return
             _, wpid = win32process.GetWindowThreadProcessId(hwnd)
             if int(wpid) != int(pid):

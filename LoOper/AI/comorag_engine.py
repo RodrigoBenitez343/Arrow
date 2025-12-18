@@ -3,9 +3,15 @@ import time
 import json
 import asyncio
 import requests
+import logging
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from collections import deque
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 try:
     import numpy as np
     NP_AVAILABLE = True
@@ -147,12 +153,14 @@ class DynamicMemoryWorkspace:
         raise NotImplementedError
 
 class ComoRAGEngine:
-    def __init__(self):
+    def __init__(self, settings=None, ollama_engine=None):
         self.memory_workspace = None
         self.embedding_model = None
         self.reasoning_history: List[Dict[str, Any]] = []
         self._initialized = False
         self.confidence_threshold = 0.8
+        self.settings = settings
+        self.ollama_engine = ollama_engine
 
     async def initialize(self, memory_size: int = 1000) -> None:
         emb_dim = 384
@@ -472,6 +480,107 @@ class ComoRAGEngine:
             "reasoning_cycles": len(cycles),
             "memory_items_used": len(self.memory_workspace.memory_pool) if self.memory_workspace else 0,
             "reasoning_history": cycles
+        }
+
+    async def reason_stream(self, query: str, context: Optional[str], model: Optional[str], max_cycles: int, memory_size: Optional[int], images: Optional[List[str]]):
+        if not self._initialized:
+            await self.initialize(memory_size or 1000)
+        
+        yield {"type": "log", "message": f"Initialized ComoRAG engine with memory size {self.memory_workspace.max_size}"}
+
+        if memory_size and self.memory_workspace and self.memory_workspace.max_size != memory_size:
+            self.memory_workspace.max_size = memory_size
+        
+        current_query = query
+        global_context = context or ""
+        
+        # Initial memory
+        query_embedding = self._get_embedding(query)
+        initial_memory = MemoryItem(
+            id=f"query_{int(time.time()*1000)}",
+            content=query,
+            embedding=query_embedding,
+            timestamp=time.time(),
+            source="query",
+            metadata={"type": "initial_query"},
+            image_data=images[0] if images else None
+        )
+        self.memory_workspace.add_memory(initial_memory)
+        
+        yield {"type": "log", "message": f"Starting reasoning for query: {query}"}
+        
+        cycles: List[Dict[str, Any]] = []
+        output_text = ""
+        
+        for cycle in range(max_cycles):
+            try:
+                yield {"type": "cycle_start", "cycle": cycle + 1}
+                
+                # Probing
+                yield {"type": "step", "step": "probing", "message": "Generating probing questions..."}
+                probing = await self._generate_probing_queries(current_query, global_context, model, cycle)
+                yield {"type": "probing_questions", "questions": probing}
+                
+                evidence: List[MemoryItem] = []
+                # Vision data
+                if cycle == 0 and self.memory_workspace:
+                    vision_items = self.memory_workspace.get_recent_memories(source="advanced_vision", limit=1, seconds=120.0)
+                    if vision_items:
+                        evidence.extend(vision_items)
+                        for item in vision_items:
+                            item.access_count += 1
+                        yield {"type": "log", "message": f"Found {len(vision_items)} recent vision memories"}
+
+                # Retrieval
+                yield {"type": "step", "step": "retrieval", "message": f"Retrieving evidence for {len(probing)} questions..."}
+                for pq in probing:
+                    ev = await self._retrieve_evidence(pq)
+                    evidence.extend(ev)
+                
+                yield {"type": "evidence_retrieved", "count": len(evidence)}
+                
+                # Consolidation
+                yield {"type": "step", "step": "consolidation", "message": "Consolidating evidence..."}
+                consolidated_context = await self._consolidate_evidence(evidence, global_context, model)
+                
+                # Reasoning
+                yield {"type": "step", "step": "reasoning", "message": "Generating reasoning output..."}
+                output_text = await self._generate_reasoning_output(current_query, consolidated_context, model)
+                
+                # Confidence
+                confidence_score = await self._calculate_confidence(output_text, consolidated_context, model)
+                yield {"type": "cycle_complete", "cycle": cycle + 1, "confidence": confidence_score, "output": output_text}
+                
+                cycles.append({
+                    "cycle_id": cycle,
+                    "probing_queries": probing,
+                    "confidence_score": confidence_score,
+                    "evidence_count": len(evidence)
+                })
+                
+                if confidence_score >= self.confidence_threshold:
+                    yield {"type": "log", "message": f"Confidence threshold met ({confidence_score} >= {self.confidence_threshold})"}
+                    break
+                
+                global_context = consolidated_context
+                
+                if cycle < max_cycles - 1:
+                    yield {"type": "step", "step": "exploration", "message": "Generating exploratory query..."}
+                    current_query = await self._generate_exploratory_query(query, output_text, model)
+                    yield {"type": "exploratory_query", "query": current_query}
+                    
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error in reasoning cycle {cycle}: {e}", exc_info=True)
+                yield {"type": "error", "message": str(e)}
+                break
+        
+        final_conf = cycles[-1]["confidence_score"] if cycles else 0.0
+        yield {
+            "type": "final_result",
+            "response": output_text,
+            "confidence": final_conf,
+            "cycles_used": len(cycles)
         }
 
     async def add_memory(self, content: str, source: str = "external", metadata: Dict[str, Any] = None, image_data: str = None) -> None:
