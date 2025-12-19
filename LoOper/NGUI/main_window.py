@@ -293,13 +293,6 @@ class MainWindow(QMainWindow):
                     # Import MultiSequencePlayer for direct execution
                     from player.multi_sequence_player import MultiSequencePlayer
                     
-                    # Load the chain configuration from the temporary file
-                    with open(temp_filename, 'r') as f:
-                        chain_config = json.load(f)
-                    
-                    # Create and execute the chain directly
-                    player = MultiSequencePlayer(chain_config, temp_filename)
-                    
                     # Execute the chain in a separate thread to avoid blocking the UI
                     import threading
                     
@@ -307,25 +300,38 @@ class MainWindow(QMainWindow):
                         try:
                             logger.info("Starting chain execution in background thread")
                             
+                            # Load the chain configuration from the temporary file inside the thread
+                            logger.debug(f"Reading chain configuration from {temp_filename}")
+                            with open(temp_filename, 'r') as f:
+                                thread_chain_config = json.load(f)
+                            
+                            # Create the player inside the thread to avoid blocking UI
+                            logger.info("Initializing MultiSequencePlayer...")
+                            player = MultiSequencePlayer(thread_chain_config, temp_filename)
+                            
                             # Import and start keyboard monitoring for ESC key abort
                             from player.keyboard_monitor import start_global_monitoring, stop_global_monitoring, create_stop_flag
                             
                             # Start ESC key monitoring
+                            logger.info("Starting keyboard monitoring...")
                             start_global_monitoring()
                             stop_flag = create_stop_flag()
                             
                             try:
                                 # Execute the chain with stop flag for ESC key abort
+                                logger.info("Executing chain...")
                                 result = player.play_chain(stop_flag=stop_flag)
                                 logger.info(f"Chain execution completed with result: {result}")
                             finally:
                                 # Always stop monitoring when done
+                                logger.info("Stopping keyboard monitoring...")
                                 stop_global_monitoring()
                             
                             # Clean up temporary file
                             try:
-                                os.remove(temp_filename)
-                                logger.debug(f"Temporary file {temp_filename} cleaned up")
+                                if os.path.exists(temp_filename):
+                                    os.remove(temp_filename)
+                                    logger.debug(f"Temporary file {temp_filename} cleaned up")
                             except OSError as cleanup_error:
                                 logger.warning(f"Failed to clean up temporary file: {cleanup_error}")
                             
@@ -350,7 +356,8 @@ class MainWindow(QMainWindow):
                             
                             # Clean up temporary file even on error
                             try:
-                                os.remove(temp_filename)
+                                if os.path.exists(temp_filename):
+                                    os.remove(temp_filename)
                             except OSError:
                                 pass
                     
@@ -358,7 +365,7 @@ class MainWindow(QMainWindow):
                     execution_thread = threading.Thread(target=execute_chain, daemon=True)
                     execution_thread.start()
                     logger.info("Chain execution thread started")
-                        
+                            
                 except Exception as e:
                     logger.error(f"Error initializing chain execution: {e}")
                     import traceback
@@ -370,7 +377,8 @@ class MainWindow(QMainWindow):
                     
                     # Clean up temporary file even on error
                     try:
-                        os.remove(temp_filename)
+                        if os.path.exists(temp_filename):
+                            os.remove(temp_filename)
                     except OSError:
                         pass
             

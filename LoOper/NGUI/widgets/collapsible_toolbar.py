@@ -912,16 +912,21 @@ class CollapsibleToolbar(QWidget):
                 except Exception:
                     pass
                 try:
-                    self._watcher.addPath(folder)
-                except Exception:
-                    pass
+                    success = self._watcher.addPath(folder)
+                    if success:
+                        logger.debug(f"CollapsibleToolbar: Watching sequences folder: {folder}")
+                    else:
+                        logger.warning(f"CollapsibleToolbar: Failed to add folder to watcher: {folder}")
+                except Exception as e:
+                    logger.error(f"CollapsibleToolbar: Error adding folder to watcher: {e}")
             try:
                 self._watcher.directoryChanged.connect(self.refresh_sequences_list)
                 self._watcher.fileChanged.connect(self.refresh_sequences_list)
-            except Exception:
-                pass
-        except Exception:
+            except Exception as e:
+                logger.error(f"CollapsibleToolbar: Error connecting watcher signals: {e}")
+        except Exception as e:
             self._watcher = None
+            logger.error(f"CollapsibleToolbar: Failed to initialize QFileSystemWatcher: {e}")
         self._build_ui()
 
     def _build_ui(self):
@@ -1056,6 +1061,11 @@ class CollapsibleToolbar(QWidget):
     def refresh_sequences_list(self, path=None):
         """Refresh the list of sequences in the toolbar."""
         try:
+            if path:
+                logger.debug(f"CollapsibleToolbar: Refreshing sequences list due to change in: {path}")
+            else:
+                logger.debug("CollapsibleToolbar: Refreshing sequences list")
+            
             new_scroll = self._make_sequences_scroll_box()
             if hasattr(self, '_sequences_scroll') and self._sequences_scroll is not None:
                 old_scroll = self._sequences_scroll

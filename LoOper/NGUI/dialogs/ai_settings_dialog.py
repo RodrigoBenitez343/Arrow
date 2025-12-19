@@ -30,15 +30,13 @@ class APIServerThread(QThread):
         try:
             self.running = True
             self.status_update.emit("Starting local API server...")
-            ai_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "AI"))
-            if ai_dir not in sys.path:
-                sys.path.insert(0, ai_dir)
-            from config_loader import load_ai_config
+            # Use full package import instead of path hacking
+            from AI.config_loader import load_ai_config
             cfg = load_ai_config()
             host = cfg.get("TAILSCALE_SERVER_IP", "localhost") or "localhost"
             port = int(cfg.get("API_PORT", "8000"))
             import uvicorn
-            from api import app
+            from AI.api import app
             config = uvicorn.Config(app, host=host, port=port, log_level="info")
             self.server = uvicorn.Server(config)
             self.status_update.emit(f"Uvicorn starting on {host}:{port}")
