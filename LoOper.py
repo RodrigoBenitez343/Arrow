@@ -2,9 +2,93 @@ import sys
 import os
 import subprocess
 import signal
+import multiprocessing
+
+# Normalize working directory and import path for frozen builds
+if getattr(sys, 'frozen', False):
+    # For PyInstaller, sys._MEIPASS is the root of the bundle
+    meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    # _internal is where all libraries and the LoOper package live
+    internal_dir = os.path.join(meipass, '_internal')
+    
+    try:
+        os.chdir(meipass)
+    except Exception:
+        pass
+        
+    # Ensure both root and _internal are in path
+    if meipass not in sys.path:
+        sys.path.insert(0, meipass)
+    if internal_dir not in sys.path:
+        sys.path.insert(0, internal_dir)
+
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgressBar
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
+
+def _run_main_app():
+    """Import and run the main application logic"""
+    try:
+        # Import the main module. This will be bundled by PyInstaller.
+        from LoOper.main import run_app
+        run_app()
+    except Exception as e:
+        print(f"Error launching main app: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+def _run_vision_model():
+    """Import and run the vision model logic"""
+    try:
+        # Import the vision module. This will be bundled by PyInstaller.
+        if getattr(sys, 'frozen', False):
+            meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            
+            # Possible locations for the vision model directory
+            possible_dirs = [
+                os.path.join(meipass, "LoOper", "player", "Computer_vision"),
+                os.path.join(meipass, "_internal", "LoOper", "player", "Computer_vision"),
+                os.path.join(meipass, "player", "Computer_vision"),
+                os.path.join(meipass, "_internal", "player", "Computer_vision")
+            ]
+            
+            vision_dir = None
+            for d in possible_dirs:
+                if os.path.exists(d):
+                    vision_dir = d
+                    break
+            
+            if vision_dir:
+                try:
+                    os.chdir(vision_dir)
+                except Exception:
+                    pass
+                if vision_dir not in sys.path:
+                    sys.path.insert(0, vision_dir)
+
+        # We try to import the Vision class
+        try:
+            from LoOper.player.Computer_vision.model_vision import Vision
+        except ImportError:
+            # Fallback if the path structure is flattened
+            try:
+                from player.Computer_vision.model_vision import Vision
+            except ImportError:
+                from model_vision import Vision
+
+        model_path = "Computer_Vision_1.5.3.onnx"
+        if not os.path.exists(model_path):
+             # Try absolute path in current directory or bundle
+             model_path = os.path.join(os.getcwd(), "Computer_Vision_1.5.3.onnx")
+             
+        vision = Vision(model_path)
+        vision.start_vision(1) 
+    except Exception as e:
+        print(f"Error launching vision model: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 class Splash(QWidget):
     def __init__(self, logo_path: str):
@@ -130,17 +214,39 @@ def _find_main_window_for_pid(pid: int):
 def launch():
     app = QApplication(sys.argv)
     base = os.path.dirname(os.path.abspath(__file__))
-    logo_png = os.path.join(base, "LoOper", "LoOper.png")
-    logo_ico = os.path.join(base, "LoOper", "LoOper.ico")
-    logo = logo_png if os.path.exists(logo_png) else logo_ico
-    splash = Splash(logo)
+    if getattr(sys, 'frozen', False):
+        base = getattr(sys, '_MEIPASS', base)
+    
+    # Try multiple locations for the logo
+    possible_logos = [
+        os.path.join(base, "LoOper.png"),
+        os.path.join(base, "LoOper.ico"),
+        os.path.join(base, "LoOper", "LoOper.png"),
+        os.path.join(base, "LoOper", "LoOper.ico"),
+        os.path.join(base, "_internal", "LoOper", "LoOper.png"),
+        os.path.join(base, "_internal", "LoOper", "LoOper.ico")
+    ]
+    
+    logo = None
+    for l in possible_logos:
+        if os.path.exists(l):
+            logo = l
+            break
+            
+    splash = Splash(logo) if logo else Splash("")
     splash.show()
 
     main_path = os.path.join(base, "LoOper", "main.py")
-    if not os.path.exists(main_path):
+    if getattr(sys, 'frozen', False):
+        # Update main_path to point into _internal if it exists there
+        internal_main = os.path.join(base, "_internal", "LoOper", "main.py")
+        if os.path.exists(internal_main):
+            main_path = internal_main
+    
+    if not getattr(sys, 'frozen', False) and not os.path.exists(main_path):
         QTimer.singleShot(1500, app.quit)
         return app.exec_()
-
+    
     creationflags = 0
     if os.name == "nt":
         try:
@@ -148,17 +254,42 @@ def launch():
         except Exception:
             creationflags = 0
 
+    # Determine command to launch main app
+    if getattr(sys, 'frozen', False):
+        # When frozen, launch ourselves with the --run-main flag
+        main_cmd = [sys.executable, "--run-main"]
+        # Use bundle root as cwd for the child process
+        launch_cwd = base
+    else:
+        # When running as script, launch main.py
+        main_cmd = [sys.executable, main_path]
+        launch_cwd = os.path.dirname(main_path)
+
     # --- Vision Model Launch Logic ---
     vision_proc = None
     if "--apply_mask" in sys.argv or "-m" in sys.argv:
         try:
             vision_script = os.path.join(base, "LoOper", "player", "Computer_vision", "model_vision.py")
+            if getattr(sys, 'frozen', False):
+                internal_vision = os.path.join(base, "_internal", "LoOper", "player", "Computer_vision", "model_vision.py")
+                if os.path.exists(internal_vision):
+                    vision_script = internal_vision
+            
             if os.path.exists(vision_script):
                 print(f"Launching Vision Model: {vision_script}")
-                vision_cwd = os.path.dirname(vision_script)
+                # When frozen, use bundle root as cwd
+                v_cwd = base if getattr(sys, 'frozen', False) else os.path.dirname(vision_script)
+                
+                v_cmd = [sys.executable, vision_script]
+                if getattr(sys, 'frozen', False):
+                    # If we have a generic script executor, we can use it.
+                    # For now, let's assume the main app logic handles it if passed as an arg,
+                    # or we add a --run-vision flag.
+                    v_cmd = [sys.executable, "--run-vision"]
+
                 vision_proc = subprocess.Popen(
-                    [sys.executable, vision_script],
-                    cwd=vision_cwd,
+                    v_cmd,
+                    cwd=v_cwd,
                     creationflags=creationflags
                 )
             else:
@@ -168,8 +299,8 @@ def launch():
     # -------------------------------
 
     proc = subprocess.Popen(
-        [sys.executable, main_path],
-        cwd=os.path.dirname(main_path),
+        main_cmd,
+        cwd=launch_cwd,
         stdout=None,
         stderr=None,
         creationflags=creationflags,
@@ -290,4 +421,16 @@ def launch():
     return app.exec_()
 
 if __name__ == "__main__":
-    launch()
+    multiprocessing.freeze_support()
+    
+    # Check if we are being called to run the main app logic
+    if "--run-main" in sys.argv:
+        # Remove the flag so it doesn't interfere with the main app's argument parsing
+        sys.argv.remove("--run-main")
+        _run_main_app()
+    elif "--run-vision" in sys.argv:
+        # Remove the flag
+        sys.argv.remove("--run-vision")
+        _run_vision_model()
+    else:
+        launch()

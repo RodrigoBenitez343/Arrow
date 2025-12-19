@@ -9,19 +9,44 @@ operations with visual template matching capabilities.
 This is the main entry point that launches the GUI application.
 """
 
-import sys
 import os
+import sys
+import io
+
+# Force UTF-8 encoding for stdout and stderr to handle emojis on Windows
+if sys.platform == 'win32':
+    try:
+        if sys.stdout and hasattr(sys.stdout, 'buffer') and sys.stdout.buffer:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        if sys.stderr and hasattr(sys.stderr, 'buffer') and sys.stderr.buffer:
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+    except (AttributeError, io.UnsupportedOperation):
+        # Fallback for environments where stdout/stderr are replaced or don't have buffers (like some GUI wrappers)
+        pass
+
+# CRITICAL: Import torch before ANY other module to avoid DLL initialization conflicts (WinError 1114)
+# This is a known workaround for PyTorch 2.9+ and PyQt conflicts on Windows.
+# Even with 2.8.0, this is the safest order.
+try:
+    import torch
+except ImportError:
+    pass
+
+# Fix for Intel OpenMP runtime duplicate error
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 import threading
 import subprocess
 import time
 import atexit
+import multiprocessing
 
-# Ensure torch DLLs are loadable on Windows
-# Fix for Intel OpenMP runtime duplicate error
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# Standard PyInstaller support for multiprocessing
+if __name__ == '__main__':
+    multiprocessing.freeze_support()
 
 # Ensure DLL load path on Windows
-if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
+if os.name == 'nt' and hasattr(os, 'add_dll_directory') and not getattr(sys, 'frozen', False):
     try:
         import site
         packages = []
@@ -55,20 +80,23 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
     except Exception:
         pass
 
-# Explicitly import torch early to avoid DLL conflicts with PyQt5
-try:
-    import torch
-except ImportError:
-    pass
-
 # Normalize working directory and import path for frozen builds
 if getattr(sys, 'frozen', False):
-    exe_dir = os.path.dirname(sys.executable)
+    # For PyInstaller, sys._MEIPASS is the root of the bundle
+    meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    # _internal is where all libraries and the LoOper package live
+    internal_dir = os.path.join(meipass, '_internal')
+    
     try:
-        os.chdir(exe_dir)
+        os.chdir(meipass)
     except Exception:
         pass
-    sys.path.insert(0, exe_dir)
+        
+    # Ensure both root and _internal are in path
+    if meipass not in sys.path:
+        sys.path.insert(0, meipass)
+    if internal_dir not in sys.path:
+        sys.path.insert(0, internal_dir)
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -83,10 +111,13 @@ def start_api_server():
         print("🚀 Starting LLM API server...")
         if getattr(sys, 'frozen', False):
             try:
-                ai_dir = os.path.join(os.getcwd(), 'AI')
-                if ai_dir not in sys.path:
-                    sys.path.insert(0, ai_dir)
-                from AI.api import app  # type: ignore
+                # In frozen mode, imports might need explicit package naming
+                try:
+                    from AI.api import app
+                except ImportError:
+                    # Fallback if _internal is the root in sys.path
+                    from api import app
+                
                 import uvicorn, logging, json
                 host = os.getenv("TAILSCALE_SERVER_IP", "localhost") or "localhost"
                 port = int(os.getenv("API_PORT", "8000"))
@@ -191,16 +222,8 @@ def start_api_server():
         print(f"❌ Error starting LLM API server: {e}")
         return None
 
-def start_api_server_async():
-    """Start the API server in a separate thread"""
-    def run_server():
-        start_api_server()
-    
-    server_thread = threading.Thread(target=run_server, daemon=True)
-    server_thread.start()
-    return server_thread
-
-if __name__ == "__main__":
+def run_app():
+    """Main function to start the application logic"""
     # Load AI configuration
     print("LocalOperator starting up...")
     print("Loading AI configuration...")
@@ -227,3 +250,49 @@ if __name__ == "__main__":
     
     # Start the GUI application
     main()
+
+def start_api_server_async():
+    """Start the API server in a separate thread"""
+    def run_server():
+        start_api_server()
+    
+    server_thread = threading.Thread(target=run_server, daemon=True)
+    server_thread.start()
+    return server_thread
+
+if __name__ == "__main__":
+    # Standard PyInstaller support for multiprocessing
+    multiprocessing.freeze_support()
+
+    # CRITICAL: Check if we should run in "interpreter mode" for code nodes in frozen builds.
+    # This prevents recursive LoOper launches by allowing LoOper.exe to act as a Python 
+    # interpreter for its own bundled environment when passed a .py file.
+    if len(sys.argv) > 1 and sys.argv[1].endswith('.py') and os.path.exists(sys.argv[1]):
+        script_path = sys.argv[1]
+        # Shift arguments so the script sees itself as sys.argv[0]
+        sys.argv = sys.argv[1:]
+        
+        # Add the script's directory to sys.path
+        script_dir = os.path.dirname(os.path.abspath(script_path))
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+            
+        try:
+            with open(script_path, 'rb') as f:
+                code_content = f.read()
+            # Execute the script in the context of the bundled environment
+            exec_globals = {
+                '__name__': '__main__',
+                '__file__': script_path,
+                '__builtins__': __builtins__,
+            }
+            exec(code_content, exec_globals)
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error executing script {script_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
+    # Start the application
+    run_app()

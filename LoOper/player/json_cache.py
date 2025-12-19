@@ -6,6 +6,7 @@ Preloads entire chains and all referenced sequences for optimal performance.
 
 import json
 import os
+import sys
 import time
 from typing import Dict, Any, Optional, Set
 from .config import logger
@@ -201,6 +202,11 @@ class JSONCache:
         # Determine base directory
         base_dir = base_dir or os.getcwd()
         
+        # Determine executable directory for frozen builds
+        exe_dir = None
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+        
         # Try multiple path resolution strategies
         possible_paths = [
             sequence_file,  # Original path
@@ -210,6 +216,13 @@ class JSONCache:
             os.path.join(os.getcwd(), sequence_file),  # current working directory
             os.path.join(os.getcwd(), 'sequences', sequence_file),  # cwd/sequences
         ]
+        
+        # Add frozen build paths if applicable
+        if exe_dir:
+            possible_paths.extend([
+                os.path.join(exe_dir, sequence_file),
+                os.path.join(exe_dir, 'sequences', sequence_file),
+            ])
         
         # Add LoOper/sequences folder paths
         looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
@@ -231,11 +244,23 @@ class JSONCache:
                 os.path.join(looper_sequences, sequence_file + '.json'),
                 os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file + '.json'),
             ])
+            if exe_dir:
+                possible_paths.extend([
+                    os.path.join(exe_dir, sequence_file + '.json'),
+                    os.path.join(exe_dir, 'sequences', sequence_file + '.json'),
+                ])
         nested_sequences = os.path.join(os.getcwd(), 'sequences', 'sequences')
         possible_paths.extend([
             os.path.join(nested_sequences, sequence_file),
             os.path.join(nested_sequences, sequence_file + '.json') if not sequence_file.endswith('.json') else os.path.join(nested_sequences, sequence_file),
         ])
+        
+        if exe_dir:
+            nested_exe = os.path.join(exe_dir, 'sequences', 'sequences')
+            possible_paths.extend([
+                os.path.join(nested_exe, sequence_file),
+                os.path.join(nested_exe, sequence_file + '.json') if not sequence_file.endswith('.json') else os.path.join(nested_exe, sequence_file),
+            ])
         
         # Find the first existing file
         for path in possible_paths:

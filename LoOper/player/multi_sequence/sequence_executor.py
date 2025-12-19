@@ -4,8 +4,10 @@ Sequence executor for multi-sequence automation.
 Handles execution of sequence nodes and condition handling.
 """
 import os
+import sys
 import json
 import time
+import re
 from ..config import logger
 from ..sequence_player import SequencePlayer
 from ..json_cache import get_sequence
@@ -80,14 +82,12 @@ class SequenceExecutor:
                 
             # Handle numbered sequence names (e.g., "1.json 2" -> "1.json")
             # Remove trailing space and number pattern
-            import re
             if seq_file and re.match(r'^(.+\.json)\s+\d+$', seq_file):
                 base_name = re.match(r'^(.+\.json)\s+\d+$', seq_file).group(1)
                 logger.info(f"Detected numbered sequence name '{seq_file}', using base name '{base_name}'")
                 seq_file = base_name
         
         # Enhanced path resolution with better error handling
-        import os
         original_seq_file = seq_file
         
         if seq_file:
@@ -95,14 +95,26 @@ class SequenceExecutor:
             base_dir = self.chain_file_dir if self.chain_file_dir else os.getcwd()
             
             # Try multiple path resolution strategies
+            # Determine executable directory for frozen builds
+            exe_dir = None
+            if getattr(sys, 'frozen', False):
+                exe_dir = os.path.dirname(sys.executable)
+            
             possible_paths = [
-                seq_file,  # Original path (absolute or relative to cwd)
+                seq_file,  # original path
                 os.path.join(base_dir, seq_file),  # relative to chain file directory
                 os.path.join(base_dir, 'sequences', seq_file),  # sequences subdirectory in chain dir
                 os.path.join('sequences', seq_file),  # sequences subdirectory in cwd
                 os.path.join(os.getcwd(), seq_file),  # current working directory
                 os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
             ]
+            
+            # Add frozen build paths if applicable
+            if exe_dir:
+                possible_paths.extend([
+                    os.path.join(exe_dir, seq_file),
+                    os.path.join(exe_dir, 'sequences', seq_file),
+                ])
             
             # Add LoOper/sequences folder paths
             looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
@@ -124,6 +136,11 @@ class SequenceExecutor:
                     os.path.join(looper_sequences, seq_file + '.json'),
                     os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file + '.json'),
                 ])
+                if exe_dir:
+                    possible_paths.extend([
+                        os.path.join(exe_dir, seq_file + '.json'),
+                        os.path.join(exe_dir, 'sequences', seq_file + '.json'),
+                    ])
             
             # Find the first existing file
             seq_file = None

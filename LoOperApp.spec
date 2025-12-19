@@ -1,26 +1,24 @@
 import os
 import sys
 
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_all
 
 try:
     base_dir = os.path.abspath(SPECPATH)
 except Exception:
     base_dir = os.getcwd()
 looper_dir = os.path.join(base_dir, 'LoOper')
-overwatch_dir = os.path.join(looper_dir, 'AI', 'OverWatch')
-computer_vision_dir = os.path.join(looper_dir, 'player', 'Computer_vision')
+ai_dir = os.path.join(looper_dir, 'AI')
+ngui_dir = os.path.join(looper_dir, 'NGUI')
+player_dir = os.path.join(looper_dir, 'player')
 
-for p in (base_dir, looper_dir, overwatch_dir, computer_vision_dir):
+for p in (base_dir, looper_dir, ai_dir, ngui_dir, player_dir):
     if p and p not in sys.path:
         sys.path.insert(0, p)
 
-pathex = [looper_dir, overwatch_dir, computer_vision_dir]
+pathex = [looper_dir, ai_dir, ngui_dir, player_dir]
 
-hiddenimports = []
-datas = []
-
-hiddenimports += [
+hiddenimports = [
     'PyQt5',
     'PyQt5.QtCore',
     'PyQt5.QtGui',
@@ -33,39 +31,90 @@ hiddenimports += [
     'object',
     'ultralytics',
     'torchvision',
+    'intel_openmp',
+    'mkl',
+    'psutil',
+    'win32gui',
+    'win32process',
+    'fastapi',
+    'uvicorn',
+    'pydantic',
+    'email_validator',
+    'starlette',
+    'requests',
+    'h11',
+    'click',
+    'anyio',
+    'typing_extensions',
+    'json',
+    'base64',
+    'asyncio',
+    'threading',
+    'logging',
+    'pynput',
+    'pynput.keyboard._win32',
+    'pynput.mouse._win32',
+    'six',
+    'pyautogui',
+    'pyscreeze',
+    'pygetwindow',
+    'pymsgbox',
+    'pytweening',
+    'mouseinfo',
+    'numpy',
+    'cv2',
+    'pytesseract',
 ]
 
-datas += collect_data_files('NodeGraphQt', include_py_files=False)
-datas += collect_data_files('ultralytics', include_py_files=False)
+datas = []
+binaries = []
 
+# Use collect_all for complex packages
+for pkg in ['torch', 'torchvision', 'ultralytics', 'NodeGraphQt']:
+    tmp_ret = collect_all(pkg, include_py_files=False)
+    datas += tmp_ret[0]
+    binaries += tmp_ret[1]
+    hiddenimports += tmp_ret[2]
+
+# Add specific files
 datas += [(os.path.join(looper_dir, 'data'), 'data')]
 datas += [(os.path.join(looper_dir, 'player', 'Computer_vision', 'Computer_Vision_1.5.3.onnx'), 'player/Computer_vision')]
 datas += [(os.path.join(looper_dir, 'LoOper.ico'), '.')]
 datas += [(os.path.join(looper_dir, 'LoOper.png'), '.')]
 
+# Add Redist DLLs to multiple locations for maximum compatibility
+venv_site_packages = os.path.join(base_dir, '.venv', 'Lib', 'site-packages')
+redist_dlls = ['msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140_1.dll', 'libiomp5md.dll']
+for root, dirs, files in os.walk(venv_site_packages):
+    for file in files:
+        if file.lower() in redist_dlls:
+            src = os.path.join(root, file)
+            # Add to root
+            if not any(os.path.basename(b[0]).lower() == file.lower() and b[1] == '.' for b in binaries):
+                binaries.append((src, '.'))
+            # Add to torch/lib specifically
+            if not any(os.path.basename(b[0]).lower() == file.lower() and b[1] == 'torch/lib' for b in binaries):
+                binaries.append((src, 'torch/lib'))
+
 block_cipher = None
 
+runtime_hooks = [os.path.join(base_dir, 'torch_runtime_hook.py')]
+
 a = Analysis(
-    [os.path.join(looper_dir, 'main.py')],
+    [os.path.join(base_dir, 'LoOper.py')],
     pathex=pathex,
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=runtime_hooks,
     excludes=['onnx', 'onnx.reference'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     noarchive=False,
     cipher=block_cipher,
 )
-torch_libs = collect_dynamic_libs('torch')
-a.binaries += [(dest, src, 'BINARY') for src, dest in torch_libs]
-torchvision_libs = collect_dynamic_libs('torchvision')
-a.binaries += [(dest, src, 'BINARY') for src, dest in torchvision_libs]
-ultralytics_libs = collect_dynamic_libs('ultralytics')
-a.binaries += [(dest, src, 'BINARY') for src, dest in ultralytics_libs]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -81,7 +130,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=os.path.join(looper_dir, 'LoOper.ico'),

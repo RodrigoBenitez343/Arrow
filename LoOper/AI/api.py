@@ -11,9 +11,16 @@ from typing import List, Optional, Dict, Any, Union
 import uvicorn
 import subprocess
 import time
-sys.path.append(os.path.dirname(__file__))
-from comorag_engine import ComoRAGEngine
-from ollama_engine import OllamaEngine
+
+# Use absolute package imports instead of path hacking
+try:
+    from AI.comorag_engine import ComoRAGEngine
+    from AI.ollama_engine import OllamaEngine
+except ImportError:
+    # Fallback for frozen builds if paths are flattened
+    from comorag_engine import ComoRAGEngine
+    from ollama_engine import OllamaEngine
+
 import asyncio
 from typing import Set
 import threading

@@ -2403,9 +2403,21 @@ class WorkflowExecutor:
 
     def _run_persistent_script(self, script_path, timeout_s, cwd, leave_running=False):
         try:
-            if not self._venv_python or not os.path.exists(self._venv_python):
+            # Use the venv python if available, otherwise find a valid python executable
+            python_exe = self._venv_python
+            if not python_exe or not os.path.exists(python_exe):
                 self._ensure_chain_venv()
-            cmd = [self._venv_python or sys.executable, script_path]
+                python_exe = self._venv_python
+
+            # CRITICAL: In frozen mode (PyInstaller), sys.executable points to LoOper.exe.
+            # We have updated LoOper's main.py to act as a Python interpreter if passed a .py file.
+            # This allows us to run persistent scripts even if a separate venv isn't available.
+            if getattr(sys, 'frozen', False):
+                if not python_exe or not os.path.exists(python_exe):
+                    # Use LoOper.exe itself as the interpreter
+                    python_exe = sys.executable
+            
+            cmd = [python_exe or sys.executable, script_path]
             env = os.environ.copy()
             CREATE_NEW_PROCESS_GROUP = 0x00000200
             proc = _sp.Popen(cmd, cwd=cwd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=CREATE_NEW_PROCESS_GROUP)

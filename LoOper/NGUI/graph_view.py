@@ -71,9 +71,14 @@ class GraphViewWidget(QWidget):
             self._initialization_complete = False
             
             # Set up folder paths
-            project_root = os.path.dirname(os.path.dirname(__file__))
             if getattr(sys, 'frozen', False):
-                project_root = os.getcwd()
+                # In frozen builds, we want paths relative to the executable, 
+                # not the temporary _MEIPASS directory.
+                project_root = os.path.dirname(sys.executable)
+            else:
+                # In dev mode, use the repository root
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
             self.sequences_folder = os.path.join(project_root, "sequences")
             self.chains_folder = os.path.join(project_root, "chains")
             

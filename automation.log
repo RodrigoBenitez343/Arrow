@@ -137,3 +137,258 @@
 2025-12-17 20:52:06,432 - INFO - Successfully loaded faiss with AVX2 support.
 2025-12-17 20:52:06,746 - INFO - Loaded workflow with 0 nodes
 2025-12-17 20:52:06,746 - ERROR - No code node found in workflow
+2025-12-17 21:14:10,225 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 21:14:10,588 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 21:14:10,617 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 21:14:10,617 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 21:14:11,939 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 21:14:11,940 - INFO - Loading faiss with AVX2 support.
+2025-12-17 21:14:11,961 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 21:14:14,647 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 21:14:14,896 - DEBUG - Calling CoUninitialize()
+2025-12-17 21:14:14,896 - DEBUG - CoUninitialize() done.
+2025-12-17 21:18:54,722 - DEBUG - mss library available for fast screenshot capture
+2025-12-17 21:18:55,076 - DEBUG - CoInitializeEx(None, 2)
+2025-12-17 21:18:55,103 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-17 21:18:55,103 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-17 21:18:56,416 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-17 21:18:56,416 - INFO - Loading faiss with AVX2 support.
+2025-12-17 21:18:56,436 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-17 21:18:59,082 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-17 21:18:59,297 - DEBUG - Calling CoUninitialize()
+2025-12-17 21:18:59,298 - DEBUG - CoUninitialize() done.
+2025-12-18 04:07:04,744 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 04:07:05,096 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 04:07:05,123 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 04:07:05,124 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 04:07:06,422 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 04:07:06,423 - INFO - Loading faiss with AVX2 support.
+2025-12-18 04:07:06,442 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 04:07:09,003 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 04:07:09,220 - DEBUG - Calling CoUninitialize()
+2025-12-18 04:07:09,220 - DEBUG - CoUninitialize() done.
+2025-12-18 04:12:10,618 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 04:12:10,966 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 04:12:10,993 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 04:12:10,993 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 04:12:12,369 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 04:12:12,369 - INFO - Loading faiss with AVX2 support.
+2025-12-18 04:12:12,388 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 04:12:14,940 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 04:12:15,145 - DEBUG - Calling CoUninitialize()
+2025-12-18 04:12:15,145 - DEBUG - CoUninitialize() done.
+2025-12-18 04:42:38,633 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 04:42:38,987 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 04:42:39,014 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 04:42:39,014 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 04:42:40,318 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 04:42:40,319 - INFO - Loading faiss with AVX2 support.
+2025-12-18 04:42:40,338 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 04:42:42,943 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 04:42:43,154 - DEBUG - Calling CoUninitialize()
+2025-12-18 04:42:43,154 - DEBUG - CoUninitialize() done.
+2025-12-18 06:20:37,673 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 06:20:38,029 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 06:20:38,057 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 06:20:38,057 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 06:20:39,342 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 06:20:39,342 - INFO - Loading faiss with AVX2 support.
+2025-12-18 06:20:39,361 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 06:20:41,923 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 06:20:42,133 - DEBUG - Calling CoUninitialize()
+2025-12-18 06:20:42,133 - DEBUG - CoUninitialize() done.
+2025-12-18 06:56:08,938 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 06:56:09,297 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 06:56:09,325 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 06:56:09,325 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 06:56:10,640 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 06:56:10,640 - INFO - Loading faiss with AVX2 support.
+2025-12-18 06:56:10,660 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 06:56:13,334 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 06:56:13,547 - DEBUG - Calling CoUninitialize()
+2025-12-18 06:56:13,547 - DEBUG - CoUninitialize() done.
+2025-12-18 07:25:39,106 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 07:25:39,468 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 07:25:39,495 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 07:25:39,496 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 07:25:40,800 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 07:25:40,801 - INFO - Loading faiss with AVX2 support.
+2025-12-18 07:25:40,821 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 07:25:43,360 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 07:25:43,570 - DEBUG - Calling CoUninitialize()
+2025-12-18 07:25:43,570 - DEBUG - CoUninitialize() done.
+2025-12-18 07:51:00,880 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 07:51:01,230 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 07:51:01,256 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 07:51:01,257 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 07:51:02,553 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 07:51:02,554 - INFO - Loading faiss with AVX2 support.
+2025-12-18 07:51:02,573 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 07:51:05,105 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 07:51:05,316 - DEBUG - Calling CoUninitialize()
+2025-12-18 07:51:05,316 - DEBUG - CoUninitialize() done.
+2025-12-18 08:07:11,990 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 08:07:12,342 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 08:07:12,368 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 08:07:12,369 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 08:07:13,700 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 08:07:13,700 - INFO - Loading faiss with AVX2 support.
+2025-12-18 08:07:13,719 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 08:07:16,284 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 08:07:16,496 - DEBUG - Calling CoUninitialize()
+2025-12-18 08:07:16,497 - DEBUG - CoUninitialize() done.
+2025-12-18 08:17:09,790 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 08:17:10,145 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 08:17:10,171 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 08:17:10,171 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 08:17:11,473 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 08:17:11,473 - INFO - Loading faiss with AVX2 support.
+2025-12-18 08:17:11,492 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 08:17:14,026 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 08:17:14,236 - DEBUG - Calling CoUninitialize()
+2025-12-18 08:17:14,236 - DEBUG - CoUninitialize() done.
+2025-12-18 08:25:17,739 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 08:25:18,099 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 08:25:18,126 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 08:25:18,127 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 08:25:19,458 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-18 08:25:19,458 - INFO - Loading faiss with AVX2 support.
+2025-12-18 08:25:19,478 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-18 08:25:21,957 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 08:25:22,175 - DEBUG - Calling CoUninitialize()
+2025-12-18 08:25:22,175 - DEBUG - CoUninitialize() done.
+2025-12-18 08:33:44,479 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 08:33:44,748 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 08:33:44,776 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 08:33:44,776 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 08:33:45,258 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 08:33:45,283 - DEBUG - Calling CoUninitialize()
+2025-12-18 08:33:45,283 - DEBUG - CoUninitialize() done.
+2025-12-18 08:48:20,315 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 08:48:20,575 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 08:48:20,602 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 08:48:20,603 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 08:48:21,017 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 08:48:21,041 - DEBUG - Calling CoUninitialize()
+2025-12-18 08:48:21,041 - DEBUG - CoUninitialize() done.
+2025-12-18 09:03:02,134 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 09:03:02,977 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 09:03:03,019 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 09:03:03,020 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 09:03:03,115 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 09:03:03,146 - DEBUG - Calling CoUninitialize()
+2025-12-18 09:03:03,146 - DEBUG - CoUninitialize() done.
+2025-12-18 09:14:00,587 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 09:14:01,437 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 09:14:01,480 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 09:14:01,481 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 09:14:01,578 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 09:14:01,607 - DEBUG - Calling CoUninitialize()
+2025-12-18 09:14:01,607 - DEBUG - CoUninitialize() done.
+2025-12-18 09:21:50,265 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 09:21:51,081 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 09:21:51,123 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 09:21:51,124 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 09:21:51,218 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 09:21:51,249 - DEBUG - Calling CoUninitialize()
+2025-12-18 09:21:51,249 - DEBUG - CoUninitialize() done.
+2025-12-18 09:47:24,669 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 09:47:25,383 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 09:47:25,427 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 09:47:25,428 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 09:47:25,518 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 09:47:25,548 - DEBUG - Calling CoUninitialize()
+2025-12-18 09:47:25,548 - DEBUG - CoUninitialize() done.
+2025-12-18 10:24:01,060 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 10:24:01,792 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 10:24:01,836 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 10:24:01,837 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 10:24:01,931 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 10:24:01,959 - DEBUG - Calling CoUninitialize()
+2025-12-18 10:24:01,959 - DEBUG - CoUninitialize() done.
+2025-12-18 10:38:06,355 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 10:38:07,106 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 10:38:07,150 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 10:38:07,151 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 10:38:07,251 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 10:38:07,281 - DEBUG - Calling CoUninitialize()
+2025-12-18 10:38:07,281 - DEBUG - CoUninitialize() done.
+2025-12-18 10:47:35,956 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 10:47:36,655 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 10:47:36,701 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 10:47:36,701 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 10:47:36,788 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 10:47:36,817 - DEBUG - Calling CoUninitialize()
+2025-12-18 10:47:36,817 - DEBUG - CoUninitialize() done.
+2025-12-18 10:57:05,014 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 10:57:05,746 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 10:57:05,788 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 10:57:05,789 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 10:57:05,874 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 10:57:05,903 - DEBUG - Calling CoUninitialize()
+2025-12-18 10:57:05,903 - DEBUG - CoUninitialize() done.
+2025-12-18 11:10:27,206 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 11:10:27,951 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 11:10:27,997 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 11:10:27,997 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 11:10:28,085 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 11:10:28,113 - DEBUG - Calling CoUninitialize()
+2025-12-18 11:10:28,114 - DEBUG - CoUninitialize() done.
+2025-12-18 11:14:56,622 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 11:14:57,195 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 11:14:57,226 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 11:14:57,226 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 11:14:57,284 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 11:14:57,301 - DEBUG - Calling CoUninitialize()
+2025-12-18 11:14:57,301 - DEBUG - CoUninitialize() done.
+2025-12-18 11:41:12,250 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 11:41:12,956 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 11:41:13,000 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 11:41:13,000 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 11:41:13,090 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 11:41:13,122 - DEBUG - Calling CoUninitialize()
+2025-12-18 11:41:13,123 - DEBUG - CoUninitialize() done.
+2025-12-18 12:07:33,318 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 12:07:34,027 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 12:07:34,074 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 12:07:34,075 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 12:07:34,166 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 12:07:34,196 - DEBUG - Calling CoUninitialize()
+2025-12-18 12:07:34,196 - DEBUG - CoUninitialize() done.
+2025-12-18 12:20:08,863 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 12:20:09,569 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 12:20:09,612 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 12:20:09,612 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 12:20:09,706 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 12:20:09,734 - DEBUG - Calling CoUninitialize()
+2025-12-18 12:20:09,735 - DEBUG - CoUninitialize() done.
+2025-12-18 12:30:46,338 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 12:30:47,040 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 12:30:47,085 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 12:30:47,085 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 12:30:47,170 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 12:30:47,200 - DEBUG - Calling CoUninitialize()
+2025-12-18 12:30:47,200 - DEBUG - CoUninitialize() done.
+2025-12-18 12:48:19,284 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 12:48:19,991 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 12:48:20,035 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 12:48:20,035 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 12:48:20,121 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 12:48:20,151 - DEBUG - Calling CoUninitialize()
+2025-12-18 12:48:20,151 - DEBUG - CoUninitialize() done.
+2025-12-18 13:01:07,331 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 13:01:08,173 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 13:01:08,216 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 13:01:08,217 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 13:01:08,287 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 13:01:08,323 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 13:01:08,351 - DEBUG - Calling CoUninitialize()
+2025-12-18 13:01:08,351 - DEBUG - CoUninitialize() done.
+2025-12-18 13:17:21,766 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 13:17:22,605 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 13:17:22,648 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 13:17:22,648 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 13:17:22,720 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 13:17:22,766 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 13:17:22,811 - DEBUG - Calling CoUninitialize()
+2025-12-18 13:17:22,811 - DEBUG - CoUninitialize() done.
