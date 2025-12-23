@@ -37,7 +37,58 @@ class APIServerThread(QThread):
             port = int(cfg.get("API_PORT", "8000"))
             import uvicorn
             from AI.api import app
-            config = uvicorn.Config(app, host=host, port=port, log_level="info")
+            
+            # Safe logging configuration for frozen environments
+            log_config = {
+                "version": 1,
+                "disable_existing_loggers": False,
+                "formatters": {
+                    "default": {
+                        "()": "uvicorn.logging.DefaultFormatter",
+                        "fmt": "%(levelprefix)s %(message)s",
+                        "use_colors": False,
+                    },
+                    "access": {
+                        "()": "uvicorn.logging.AccessFormatter",
+                        "fmt": "%(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+                        "use_colors": False,
+                    },
+                },
+                "handlers": {
+                    "default": {
+                        "formatter": "default",
+                        "class": "logging.StreamHandler",
+                        "stream": "ext://sys.stdout",
+                    },
+                    "access": {
+                        "formatter": "access",
+                        "class": "logging.StreamHandler",
+                        "stream": "ext://sys.stdout",
+                    },
+                },
+                "loggers": {
+                    "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+                    "uvicorn.error": {"level": "INFO"},
+                    "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+                },
+            }
+            
+            # In some frozen environments, uvicorn formatters might fail to load via string.
+            # We can try to provide the actual classes if they are importable.
+            try:
+                import uvicorn.logging
+                log_config["formatters"]["default"]["()"] = uvicorn.logging.DefaultFormatter
+                log_config["formatters"]["access"]["()"] = uvicorn.logging.AccessFormatter
+            except Exception:
+                # Fallback to standard logging formatters if uvicorn's are not found
+                log_config["formatters"]["default"] = {
+                    "format": "%(levelname)s: %(message)s"
+                }
+                log_config["formatters"]["access"] = {
+                    "format": "%(levelname)s: %(message)s"
+                }
+
+            config = uvicorn.Config(app, host=host, port=port, log_level="info", log_config=log_config)
             self.server = uvicorn.Server(config)
             self.status_update.emit(f"Uvicorn starting on {host}:{port}")
             self.server.run()

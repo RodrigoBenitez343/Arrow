@@ -127,7 +127,12 @@ def launch_both(args):
         if args.debug:
             api_cmd.append("--debug")
         
-        api_process = subprocess.Popen(api_cmd)
+        # Use CREATE_NO_WINDOW on Windows to prevent console popup
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000
+            
+        api_process = subprocess.Popen(api_cmd, creationflags=creationflags)
         
         # Wait a moment for the API server to start
         print("⏳ Waiting for API server to initialize...")
@@ -140,7 +145,7 @@ def launch_both(args):
         if args.api_url:
             gui_cmd.extend(["--api-url", args.api_url])
         
-        gui_process = subprocess.Popen(gui_cmd)
+        gui_process = subprocess.Popen(gui_cmd, creationflags=creationflags)
         
         print("✅ Both applications started successfully")
         print("💡 Close this terminal to stop both applications")

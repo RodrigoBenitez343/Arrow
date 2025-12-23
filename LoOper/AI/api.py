@@ -12,6 +12,15 @@ import uvicorn
 import subprocess
 import time
 
+def _subprocess_no_window_kwargs():
+    if os.name != "nt":
+        return {}
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+    startupinfo.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    return {"creationflags": creationflags, "startupinfo": startupinfo}
+
 # Use absolute package imports instead of path hacking
 try:
     from AI.comorag_engine import ComoRAGEngine
@@ -338,7 +347,7 @@ def _cleanup_ollama_runners_cli(target_model: Optional[str] = None) -> bool:
         data = None
         for cmd in _find_ollama_bin():
             try:
-                p = subprocess.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+                p = subprocess.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env, **_subprocess_no_window_kwargs())
                 if p.returncode != 0:
                     continue
                 out = (p.stdout or "").strip()
@@ -368,7 +377,7 @@ def _cleanup_ollama_runners_cli(target_model: Optional[str] = None) -> bool:
 
             for cmd in _find_ollama_bin():
                 try:
-                    subprocess.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env)
+                    subprocess.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env, **_subprocess_no_window_kwargs())
                     break
                 except Exception:
                     continue
@@ -410,7 +419,7 @@ def _stop_http(name=None, mid=None):
 def _list_cli():
     try:
         env = os.environ.copy()
-        p = subprocess.run(["ollama", "ps", "--json"], capture_output=True, text=True, timeout=10, env=env)
+        p = subprocess.run(["ollama", "ps", "--json"], capture_output=True, text=True, timeout=10, env=env, **_subprocess_no_window_kwargs())
         if p.returncode != 0:
             return []
         s = (p.stdout or "").strip()
@@ -433,7 +442,7 @@ def _stop_cli(name):
         if not name:
             return False
         env = os.environ.copy()
-        subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=10, env=env)
+        subprocess.run(["ollama", "stop", name], capture_output=True, text=True, timeout=10, env=env, **_subprocess_no_window_kwargs())
         return True
     except Exception:
         return False
@@ -1184,4 +1193,47 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[BOOTSTRAP] Failed to start background bootstrap thread: {e}")
     
-    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info")
+    # Safe logging configuration for frozen environments
+    log_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "default": {
+                "()": "uvicorn.logging.DefaultFormatter",
+                "fmt": "%(levelprefix)s %(message)s",
+                "use_colors": False,
+            },
+            "access": {
+                "()": "uvicorn.logging.AccessFormatter",
+                "fmt": "%(levelprefix)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+                "use_colors": False,
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "default",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+            "access": {
+                "formatter": "access",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"level": "INFO"},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+        },
+    }
+
+    try:
+        import uvicorn.logging
+        log_config["formatters"]["default"]["()"] = uvicorn.logging.DefaultFormatter
+        log_config["formatters"]["access"]["()"] = uvicorn.logging.AccessFormatter
+    except Exception:
+        log_config["formatters"]["default"] = {"format": "%(levelname)s: %(message)s"}
+        log_config["formatters"]["access"] = {"format": "%(levelname)s: %(message)s"}
+
+    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info", log_config=log_config)

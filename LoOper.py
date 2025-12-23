@@ -3,8 +3,16 @@ import os
 import subprocess
 import signal
 import multiprocessing
+import time
+import logging
 
-# Normalize working directory and import path for frozen builds
+# Move win32 imports to top for better performance and reliability
+try:
+    import win32gui
+    import win32process
+    HAS_WIN32 = True
+except ImportError:
+    HAS_WIN32 = False
 if getattr(sys, 'frozen', False):
     # For PyInstaller, sys._MEIPASS is the root of the bundle
     meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
@@ -156,29 +164,37 @@ class Splash(QWidget):
         pass
 
 def _find_main_window():
-    try:
-        import win32gui
-    except Exception:
+    if not HAS_WIN32:
         return False
     try:
         found = False
+        current_pid = os.getpid()
         def _enum(hwnd, _):
             nonlocal found
             if found: return
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd)
-                if title and title.startswith("LoOper BETA:"):
-                    found = True
+                # Search for the main window title case-insensitively
+                if title and "looper" in title.lower():
+                    # Double check it's not this process (the splash process)
+                    _, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                    if int(wpid) != current_pid:
+                        # Also check size to avoid catching small/utility windows
+                        try:
+                            rect = win32gui.GetWindowRect(hwnd)
+                            w = rect[2] - rect[0]
+                            h = rect[3] - rect[1]
+                            if w > 200 and h > 200:
+                                found = True
+                        except Exception:
+                            found = True # Fallback if rect fails
         win32gui.EnumWindows(_enum, None)
         return found
     except Exception:
         return False
 
 def _find_main_window_for_pid(pid: int):
-    try:
-        import win32gui
-        import win32process
-    except Exception:
+    if not HAS_WIN32:
         return False
     found = False
     def _enum(hwnd, _):
@@ -189,7 +205,8 @@ def _find_main_window_for_pid(pid: int):
             title = win32gui.GetWindowText(hwnd)
             if not title:
                 return
-            if not title.startswith("LoOper BETA:"):
+            # Be flexible with title but ensure it contains LoOper
+            if "looper" not in title.lower():
                 return
             _, wpid = win32process.GetWindowThreadProcessId(hwnd)
             if int(wpid) != int(pid):
@@ -198,7 +215,8 @@ def _find_main_window_for_pid(pid: int):
                 rect = win32gui.GetWindowRect(hwnd)
                 w = rect[2] - rect[0]
                 h = rect[3] - rect[1]
-                if w < 100 or h < 100:
+                # Main window should be reasonably large
+                if w < 300 or h < 200:
                     return
             except Exception:
                 pass
@@ -250,9 +268,11 @@ def launch():
     creationflags = 0
     if os.name == "nt":
         try:
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            # CREATE_NEW_PROCESS_GROUP = 0x00000200
+            # CREATE_NO_WINDOW = 0x08000000
+            creationflags = 0x00000200 | 0x08000000
         except Exception:
-            creationflags = 0
+            creationflags = 0x08000000  # Fallback to at least hide window
 
     # Determine command to launch main app
     if getattr(sys, 'frozen', False):
@@ -306,6 +326,8 @@ def launch():
         creationflags=creationflags,
     )
 
+    start_time = time.time()
+    min_splash_time = 4.0 # Minimum 4 seconds for splash screen
     ready_seen = False
     def _kill_process_tree():
         # Kill Main Process
@@ -326,7 +348,8 @@ def launch():
         try:
             if os.name == "nt":
                 try:
-                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], check=False, capture_output=True)
+                    # Add CREATE_NO_WINDOW for taskkill
+                    subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], check=False, capture_output=True, creationflags=0x08000000)
                 except Exception:
                     pass
         except Exception:
@@ -363,7 +386,8 @@ def launch():
             try:
                 if os.name == "nt":
                     try:
-                        subprocess.run(["taskkill", "/T", "/F", "/PID", str(vision_proc.pid)], check=False, capture_output=True)
+                        # Add CREATE_NO_WINDOW for taskkill
+                        subprocess.run(["taskkill", "/T", "/F", "/PID", str(vision_proc.pid)], check=False, capture_output=True, creationflags=0x08000000)
                     except Exception:
                         pass
             except Exception:
@@ -387,17 +411,27 @@ def launch():
         except Exception:
             has_window_any = False
 
+        elapsed = time.time() - start_time
+        
+        # Only consider ready if window exists AND minimum time has passed
         if not ready_seen and (has_window_pid or has_window_any):
-            ready_seen = True
-            try:
-                splash.progress.setValue(100)
-            except Exception:
-                pass
-            try:
-                poll.stop()
-            except Exception:
-                pass
-            QTimer.singleShot(50, splash.close)
+            if elapsed >= min_splash_time:
+                ready_seen = True
+                try:
+                    splash.progress.setValue(100)
+                except Exception:
+                    pass
+                try:
+                    poll.stop()
+                except Exception:
+                    pass
+                QTimer.singleShot(500, splash.close)
+            else:
+                # Update progress even if not ready to close
+                progress_pct = min(99, int((elapsed / min_splash_time) * 100))
+                if progress_pct > splash.progress.value():
+                    splash.progress.setValue(progress_pct)
+                    
         elif ready_seen and not (has_window_pid or has_window_any):
             if proc.poll() is None:
                 _kill_process_tree()
@@ -423,6 +457,42 @@ def launch():
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     
+    # CRITICAL: Check if we should run in "interpreter mode" for code nodes in frozen builds.
+    # This prevents recursive LoOper launches by allowing LoOper.exe to act as a Python 
+    # interpreter for its own bundled environment when passed a .py file.
+    if len(sys.argv) > 1 and sys.argv[1].endswith('.py') and os.path.exists(sys.argv[1]):
+        script_path = sys.argv[1]
+        # Shift arguments so the script sees itself as sys.argv[0]
+        sys.argv = sys.argv[1:]
+        
+        # Add the script's directory to sys.path
+        script_dir = os.path.dirname(os.path.abspath(script_path))
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+            
+        try:
+            with open(script_path, 'rb') as f:
+                code_content = f.read()
+            # Execute the script in the context of the bundled environment
+            exec_globals = {
+                '__name__': '__main__',
+                '__file__': script_path,
+                '__builtins__': __builtins__,
+            }
+            # Import modules that might be needed by the script
+            import os as _os
+            import sys as _sys
+            exec_globals['os'] = _os
+            exec_globals['sys'] = _sys
+            
+            exec(code_content, exec_globals)
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error executing script {script_path}: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
     # Check if we are being called to run the main app logic
     if "--run-main" in sys.argv:
         # Remove the flag so it doesn't interfere with the main app's argument parsing

@@ -808,9 +808,10 @@ class LLMExecutor:
                         cands.append("ollama")
                         return cands
                     env = os.environ.copy()
+                    cflags = 0x08000000 if os.name == "nt" else 0
                     for cmd in _find_ollama_bin():
                         try:
-                            _sp.run([cmd, "stop", model], capture_output=True, text=True, timeout=4, env=env)
+                            _sp.run([cmd, "stop", model], capture_output=True, text=True, timeout=4, env=env, creationflags=cflags)
                             break
                         except Exception:
                             continue

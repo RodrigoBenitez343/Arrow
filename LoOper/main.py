@@ -164,6 +164,21 @@ def start_api_server():
                         "uvicorn.access": {"handlers": ["access_file"], "level": "INFO", "propagate": False}
                     }
                 }
+
+                # Try to use actual classes for formatters in frozen environment
+                try:
+                    import uvicorn.logging
+                    log_config["formatters"]["default"]["()"] = uvicorn.logging.DefaultFormatter
+                    log_config["formatters"]["access"]["()"] = uvicorn.logging.AccessFormatter
+                except Exception:
+                    # Fallback to standard logging formatters
+                    log_config["formatters"]["default"] = {
+                        "format": "%(levelname)s: %(message)s"
+                    }
+                    log_config["formatters"]["access"] = {
+                        "format": "%(levelname)s: %(message)s"
+                    }
+
                 config = uvicorn.Config(app, host=host, port=port, log_level="info", log_config=log_config)
                 server = uvicorn.Server(config)
 
@@ -186,12 +201,16 @@ def start_api_server():
             if not os.path.exists(api_path):
                 print(f"❌ API server file not found at: {api_path}")
                 return None
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = 0x08000000 # CREATE_NO_WINDOW
             process = subprocess.Popen(
                 [sys.executable, api_path],
                 cwd=os.path.dirname(api_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                creationflags=creationflags
             )
             time.sleep(3)
             if process.poll() is None:

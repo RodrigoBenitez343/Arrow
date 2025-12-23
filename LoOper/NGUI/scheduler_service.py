@@ -201,7 +201,12 @@ class SchedulerService:
         if platform.system() == "Linux" and shutil.which("xvfb-run"):
             cmd = ["xvfb-run", "-a"] + cmd
         
-        subprocess.Popen(cmd, cwd=self.project_root)
+        # Use CREATE_NO_WINDOW on Windows to prevent console popup
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = 0x08000000
+            
+        subprocess.Popen(cmd, cwd=self.project_root, creationflags=creationflags)
 
     def _compute_next_run(self, schedule: Dict, from_time: Optional[datetime] = None) -> Optional[str]:
         now = from_time or datetime.now()

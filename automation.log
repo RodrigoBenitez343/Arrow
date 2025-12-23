@@ -392,3 +392,186 @@
 2025-12-18 13:17:22,766 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
 2025-12-18 13:17:22,811 - DEBUG - Calling CoUninitialize()
 2025-12-18 13:17:22,811 - DEBUG - CoUninitialize() done.
+2025-12-18 16:05:26,608 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 16:05:27,458 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 16:05:27,503 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 16:05:27,504 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 16:05:27,574 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 16:05:27,616 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 16:05:27,646 - DEBUG - Calling CoUninitialize()
+2025-12-18 16:05:27,647 - DEBUG - CoUninitialize() done.
+2025-12-18 16:18:27,493 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 16:18:28,335 - DEBUG - CoInitializeEx(None, 2)
+2025-12-18 16:18:28,379 - INFO - Imported existing <module 'comtypes.gen' from 'C:\\Users\\User\\Desktop\\LoOperV2\\.venv\\Lib\\site-packages\\comtypes\\gen\\__init__.py'>
+2025-12-18 16:18:28,380 - INFO - Using writeable comtypes cache directory: 'C:\Users\User\Desktop\LoOperV2\.venv\Lib\site-packages\comtypes\gen'
+2025-12-18 16:18:28,451 - DEBUG - mss library available for fast screenshot capture
+2025-12-18 16:18:28,490 - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-18 16:18:28,521 - DEBUG - Calling CoUninitialize()
+2025-12-18 16:18:28,521 - DEBUG - CoUninitialize() done.
+2025-12-22 06:13:59,372 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 06:14:36,361 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 06:14:41,529 - DEBUG - Looking for starting nodes in graph with 5 nodes
+2025-12-22 06:14:41,529 - DEBUG - Node cond1 (type: conditional) has 0 inputs: []
+2025-12-22 06:14:41,529 - DEBUG -   Conditional node cond1 connections: {'true': [{'node_id': 'seq_true_1'}], 'false': [{'node_id': 'seq_false_1'}]}
+2025-12-22 06:14:41,529 - DEBUG - Node seq_true_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:14:41,529 - DEBUG -   Sequence node seq_true_1 connections: {'output': [{'node_id': 'seq_true_2'}]}
+2025-12-22 06:14:41,530 - DEBUG - Node seq_true_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:14:41,530 - DEBUG -   Sequence node seq_true_2 connections: {}
+2025-12-22 06:14:41,530 - DEBUG - Node seq_false_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:14:41,530 - DEBUG -   Sequence node seq_false_1 connections: {'output': [{'node_id': 'seq_false_2'}]}
+2025-12-22 06:14:41,530 - DEBUG - Node seq_false_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:14:41,531 - DEBUG -   Sequence node seq_false_2 connections: {}
+2025-12-22 06:14:41,531 - DEBUG - Found starting node: cond1 (type: conditional)
+2025-12-22 06:14:41,531 - INFO - Starting workflow execution from nodes: ['cond1']
+2025-12-22 06:14:41,531 - DEBUG - Workflow graph has 5 nodes: ['cond1', 'seq_true_1', 'seq_true_2', 'seq_false_1', 'seq_false_2']
+2025-12-22 06:14:41,531 - INFO - Executing node cond1 (type: conditional)
+2025-12-22 06:14:41,532 - INFO - Evaluating conditional with raw trigger type: presence_trigger -> mapped to: presence_trigger
+2025-12-22 06:14:41,532 - DEBUG - Condition config: {'image_path': None, 'confidence': 0.8, 'timeout': 10, 'target_text': None, 'region': None, 'strict_validation': False}
+2025-12-22 06:15:01,060 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 06:15:06,200 - DEBUG - Looking for starting nodes in graph with 5 nodes
+2025-12-22 06:15:06,200 - DEBUG - Node cond1 (type: conditional) has 0 inputs: []
+2025-12-22 06:15:06,200 - DEBUG -   Conditional node cond1 connections: {'true': [{'node_id': 'seq_true_1'}], 'false': [{'node_id': 'seq_false_1'}]}
+2025-12-22 06:15:06,200 - DEBUG - Node seq_true_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:15:06,201 - DEBUG -   Sequence node seq_true_1 connections: {'output': [{'node_id': 'seq_true_2'}]}
+2025-12-22 06:15:06,201 - DEBUG - Node seq_true_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:15:06,201 - DEBUG -   Sequence node seq_true_2 connections: {}
+2025-12-22 06:15:06,201 - DEBUG - Node seq_false_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:15:06,201 - DEBUG -   Sequence node seq_false_1 connections: {'output': [{'node_id': 'seq_false_2'}]}
+2025-12-22 06:15:06,202 - DEBUG - Node seq_false_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:15:06,202 - DEBUG -   Sequence node seq_false_2 connections: {}
+2025-12-22 06:15:06,202 - DEBUG - Found starting node: cond1 (type: conditional)
+2025-12-22 06:15:06,202 - INFO - Starting workflow execution from nodes: ['cond1']
+2025-12-22 06:15:06,203 - DEBUG - Workflow graph has 5 nodes: ['cond1', 'seq_true_1', 'seq_true_2', 'seq_false_1', 'seq_false_2']
+2025-12-22 06:15:06,203 - INFO - Executing node cond1 (type: conditional)
+2025-12-22 06:15:06,203 - INFO - Evaluating conditional with raw trigger type: presence_trigger -> mapped to: presence_trigger
+2025-12-22 06:15:06,203 - DEBUG - Condition config: {'image_path': None, 'confidence': 0.8, 'timeout': 10, 'target_text': None, 'region': None, 'strict_validation': False}
+2025-12-22 06:16:03,469 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 06:16:08,650 - DEBUG - Looking for starting nodes in graph with 5 nodes
+2025-12-22 06:16:08,651 - DEBUG - Node cond1 (type: conditional) has 0 inputs: []
+2025-12-22 06:16:08,651 - DEBUG -   Conditional node cond1 connections: {'true': [{'node_id': 'seq_true_1'}], 'false': [{'node_id': 'seq_false_1'}]}
+2025-12-22 06:16:08,651 - DEBUG - Node seq_true_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:16:08,651 - DEBUG -   Sequence node seq_true_1 connections: {'output': [{'node_id': 'seq_true_2'}]}
+2025-12-22 06:16:08,651 - DEBUG - Node seq_true_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,652 - DEBUG -   Sequence node seq_true_2 connections: {}
+2025-12-22 06:16:08,652 - DEBUG - Node seq_false_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:16:08,652 - DEBUG -   Sequence node seq_false_1 connections: {'output': [{'node_id': 'seq_false_2'}]}
+2025-12-22 06:16:08,652 - DEBUG - Node seq_false_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,652 - DEBUG -   Sequence node seq_false_2 connections: {}
+2025-12-22 06:16:08,653 - DEBUG - Found starting node: cond1 (type: conditional)
+2025-12-22 06:16:08,653 - INFO - Starting workflow execution from nodes: ['cond1']
+2025-12-22 06:16:08,653 - DEBUG - Workflow graph has 5 nodes: ['cond1', 'seq_true_1', 'seq_true_2', 'seq_false_1', 'seq_false_2']
+2025-12-22 06:16:08,653 - INFO - Executing node cond1 (type: conditional)
+2025-12-22 06:16:08,654 - INFO - Conditional evaluation result: True
+2025-12-22 06:16:08,654 - INFO - Node cond1 completed successfully
+2025-12-22 06:16:08,654 - DEBUG - Node seq_true_1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:16:08,654 - DEBUG - All dependencies satisfied for node seq_true_1
+2025-12-22 06:16:08,654 - INFO - Conditional branch chosen: seq_true_1
+2025-12-22 06:16:08,655 - INFO - Marked 2 nodes as skipped from unchosen branch: {'seq_false_1', 'seq_false_2'}
+2025-12-22 06:16:08,655 - DEBUG - Node seq_true_1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:16:08,655 - DEBUG - All dependencies satisfied for node seq_true_1
+2025-12-22 06:16:08,655 - DEBUG - Node seq_true_1 is now ready (output connection from cond1)
+2025-12-22 06:16:08,655 - DEBUG - Node seq_false_1 is in skipped_nodes, not ready
+2025-12-22 06:16:08,655 - DEBUG - Node seq_true_2 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,656 - DEBUG - Dependency seq_true_1 not satisfied (neither completed nor skipped) for node seq_true_2
+2025-12-22 06:16:08,656 - DEBUG - Node seq_false_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,656 - INFO - Executing node seq_true_1 (type: sequence)
+2025-12-22 06:16:08,656 - INFO - Node seq_true_1 completed successfully
+2025-12-22 06:16:08,657 - DEBUG - Node seq_true_2 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,657 - DEBUG - All dependencies satisfied for node seq_true_2
+2025-12-22 06:16:08,657 - DEBUG - Node seq_true_2 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,657 - DEBUG - All dependencies satisfied for node seq_true_2
+2025-12-22 06:16:08,657 - DEBUG - Node seq_true_2 is now ready (output connection from seq_true_1)
+2025-12-22 06:16:08,657 - DEBUG - Node seq_false_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,658 - INFO - Executing node seq_true_2 (type: sequence)
+2025-12-22 06:16:08,658 - INFO - Node seq_true_2 completed successfully
+2025-12-22 06:16:08,658 - DEBUG - Node seq_false_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,658 - DEBUG - Node seq_false_1 is in skipped_nodes, not ready
+2025-12-22 06:16:08,659 - DEBUG - Node seq_false_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,659 - INFO - Workflow execution completed successfully
+2025-12-22 06:16:08,659 - DEBUG - Looking for starting nodes in graph with 5 nodes
+2025-12-22 06:16:08,659 - DEBUG - Node cond1 (type: conditional) has 0 inputs: []
+2025-12-22 06:16:08,659 - DEBUG -   Conditional node cond1 connections: {'true': [{'node_id': 'seq_true_1'}], 'false': [{'node_id': 'seq_false_1'}]}
+2025-12-22 06:16:08,660 - DEBUG - Node seq_true_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'true'}]
+2025-12-22 06:16:08,660 - DEBUG -   Sequence node seq_true_1 connections: {'output': [{'node_id': 'seq_true_2'}]}
+2025-12-22 06:16:08,660 - DEBUG - Node seq_true_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_true_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,660 - DEBUG -   Sequence node seq_true_2 connections: {}
+2025-12-22 06:16:08,661 - DEBUG - Node seq_false_1 (type: sequence) has 1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:16:08,661 - DEBUG -   Sequence node seq_false_1 connections: {'output': [{'node_id': 'seq_false_2'}]}
+2025-12-22 06:16:08,661 - DEBUG - Node seq_false_2 (type: sequence) has 1 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,661 - DEBUG -   Sequence node seq_false_2 connections: {}
+2025-12-22 06:16:08,662 - DEBUG - Found starting node: cond1 (type: conditional)
+2025-12-22 06:16:08,662 - INFO - Starting workflow execution from nodes: ['cond1']
+2025-12-22 06:16:08,662 - DEBUG - Workflow graph has 5 nodes: ['cond1', 'seq_true_1', 'seq_true_2', 'seq_false_1', 'seq_false_2']
+2025-12-22 06:16:08,662 - INFO - Executing node cond1 (type: conditional)
+2025-12-22 06:16:08,664 - INFO - Conditional evaluation result: False
+2025-12-22 06:16:08,665 - INFO - Node cond1 completed successfully
+2025-12-22 06:16:08,665 - DEBUG - Node seq_false_1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:16:08,665 - DEBUG - All dependencies satisfied for node seq_false_1
+2025-12-22 06:16:08,665 - INFO - Conditional branch chosen: seq_false_1
+2025-12-22 06:16:08,665 - INFO - Marked 2 nodes as skipped from unchosen branch: {'seq_true_2', 'seq_true_1'}
+2025-12-22 06:16:08,666 - DEBUG - Node seq_true_1 is in skipped_nodes, not ready
+2025-12-22 06:16:08,666 - DEBUG - Node seq_false_1 inputs: [{'from_node': 'cond1', 'input_port': 'input', 'output_port': 'false'}]
+2025-12-22 06:16:08,666 - DEBUG - All dependencies satisfied for node seq_false_1
+2025-12-22 06:16:08,666 - DEBUG - Node seq_false_1 is now ready (output connection from cond1)
+2025-12-22 06:16:08,666 - DEBUG - Node seq_true_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,666 - DEBUG - Node seq_false_2 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,666 - DEBUG - Dependency seq_false_1 not satisfied (neither completed nor skipped) for node seq_false_2
+2025-12-22 06:16:08,667 - INFO - Executing node seq_false_1 (type: sequence)
+2025-12-22 06:16:08,667 - INFO - Node seq_false_1 completed successfully
+2025-12-22 06:16:08,667 - DEBUG - Node seq_false_2 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,667 - DEBUG - All dependencies satisfied for node seq_false_2
+2025-12-22 06:16:08,668 - DEBUG - Node seq_false_2 inputs: [{'from_node': 'seq_false_1', 'input_port': 'input', 'output_port': 'output'}]
+2025-12-22 06:16:08,668 - DEBUG - All dependencies satisfied for node seq_false_2
+2025-12-22 06:16:08,668 - DEBUG - Node seq_false_2 is now ready (output connection from seq_false_1)
+2025-12-22 06:16:08,668 - DEBUG - Node seq_true_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,668 - INFO - Executing node seq_false_2 (type: sequence)
+2025-12-22 06:16:08,669 - INFO - Node seq_false_2 completed successfully
+2025-12-22 06:16:08,669 - DEBUG - Node seq_true_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,669 - DEBUG - Node seq_true_1 is in skipped_nodes, not ready
+2025-12-22 06:16:08,669 - DEBUG - Node seq_true_2 is in skipped_nodes, not ready
+2025-12-22 06:16:08,670 - INFO - Workflow execution completed successfully
+2025-12-22 07:16:15,701 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 07:16:23,142 - INFO - Built workflow graph with 17 nodes
+2025-12-22 13:15:42,163 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 13:16:00,078 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 13:19:54,428 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 13:26:52,734 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 16:24:56,871 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 19:23:07,305 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 19:24:23,681 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 19:24:46,873 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 19:24:52,000 - INFO - Built workflow graph with 2 nodes
+2025-12-22 19:24:52,001 - INFO - Built workflow graph with 3 nodes
+2025-12-22 19:24:52,001 - DEBUG - Looking for starting node in graph with 2 nodes
+2025-12-22 19:24:52,001 - DEBUG - Node start_node (type: sequence) has 0 inputs: []
+2025-12-22 19:24:52,002 - DEBUG - Node end_node (type: sequence) has 1 inputs: [{'from_node': 'start_node'}]
+2025-12-22 19:24:52,002 - INFO - Found starting node: start_node (type: sequence)
+2025-12-22 19:24:52,002 - DEBUG - Node node1 inputs: []
+2025-12-22 19:24:52,003 - DEBUG - Node node1 has no inputs, marking as ready
+2025-12-22 19:24:52,003 - DEBUG - Node node2 inputs: [{'from_node': 'node1', 'input_port': 'input'}]
+2025-12-22 19:24:52,003 - DEBUG - Dependency node1 not satisfied (neither completed nor skipped) for node node2
+2025-12-22 19:24:52,004 - DEBUG - Node node2 inputs: [{'from_node': 'node1', 'input_port': 'input'}]
+2025-12-22 19:24:52,004 - DEBUG - All dependencies satisfied for node node2
+2025-12-22 19:24:52,004 - DEBUG - Node node3 inputs: [{'from_node': 'node2', 'input_port': 'input'}]
+2025-12-22 19:24:52,004 - DEBUG - Dependency node2 not satisfied (neither completed nor skipped) for node node3
+2025-12-22 19:24:52,005 - DEBUG - Node node3 inputs: [{'from_node': 'node2', 'input_port': 'input'}]
+2025-12-22 19:24:52,005 - DEBUG - All dependencies satisfied for node node3
+2025-12-22 19:24:52,005 - INFO - Marked 1 nodes as skipped from unchosen branch false of cond1: {'node_false'}
+2025-12-22 19:24:59,379 - DEBUG - mss library available for fast screenshot capture
+2025-12-22 19:25:04,457 - INFO - Built workflow graph with 2 nodes
+2025-12-22 19:25:04,457 - INFO - Built workflow graph with 3 nodes
+2025-12-22 19:25:04,457 - DEBUG - Looking for starting node in graph with 2 nodes
+2025-12-22 19:25:04,457 - DEBUG - Node start_node (type: sequence) has 0 inputs: []
+2025-12-22 19:25:04,458 - DEBUG - Node end_node (type: sequence) has 1 inputs: [{'from_node': 'start_node'}]
+2025-12-22 19:25:04,458 - INFO - Found starting node: start_node (type: sequence)
+2025-12-22 19:25:04,459 - DEBUG - Node node1 inputs: []
+2025-12-22 19:25:04,459 - DEBUG - Node node1 has no inputs, marking as ready
+2025-12-22 19:25:04,459 - DEBUG - Node node2 inputs: [{'from_node': 'node1', 'input_port': 'input'}]
+2025-12-22 19:25:04,459 - DEBUG - Dependency node1 not satisfied (neither completed nor skipped) for node node2
+2025-12-22 19:25:04,460 - DEBUG - Node node2 inputs: [{'from_node': 'node1', 'input_port': 'input'}]
+2025-12-22 19:25:04,460 - DEBUG - All dependencies satisfied for node node2
+2025-12-22 19:25:04,460 - DEBUG - Node node3 inputs: [{'from_node': 'node2', 'input_port': 'input'}]
+2025-12-22 19:25:04,461 - DEBUG - Dependency node2 not satisfied (neither completed nor skipped) for node node3
+2025-12-22 19:25:04,461 - DEBUG - Node node3 inputs: [{'from_node': 'node2', 'input_port': 'input'}]
+2025-12-22 19:25:04,461 - DEBUG - All dependencies satisfied for node node3
+2025-12-22 19:25:04,462 - INFO - Marked 1 nodes as skipped from unchosen branch false of cond1: {'node_false'}

@@ -183,7 +183,11 @@ class DragDropManager:
                     elif node_type == 'conditional':
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
-                        new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
+                        if mime.hasFormat('application/x-looper-chain-file'):
+                            fp = bytes(mime.data('application/x-looper-chain-file')).decode('utf-8')
+                            new_node = self.parent.node_operations.add_chain_import_from_file(fp, pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
                         new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'sequence':
@@ -267,7 +271,11 @@ class DragDropManager:
                     elif node_type == 'conditional':
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
-                        new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
+                        if mime.hasFormat('application/x-looper-chain-file'):
+                            fp = bytes(mime.data('application/x-looper-chain-file')).decode('utf-8')
+                            new_node = self.parent.node_operations.add_chain_import_from_file(fp, pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
                         new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'sequence':

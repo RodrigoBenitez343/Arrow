@@ -76,6 +76,12 @@ class UIComponents:
             main_layout.setContentsMargins(5, 5, 5, 5)
             main_layout.setSpacing(5)
             
+            # Left-side collapsible chains library
+            logger.debug("Creating left-side chains library")
+            from ..widgets.chains_library import ChainsLibrary
+            self.parent_widget.chains_library = ChainsLibrary(self.parent_widget)
+            main_layout.addWidget(self.parent_widget.chains_library, 0)
+            
             # Node graph widget (placeholder - will be set by graph manager)
             logger.debug("Creating node graph widget placeholder")
             self.parent_widget.node_graph_widget = QWidget()
