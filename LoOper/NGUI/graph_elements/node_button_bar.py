@@ -404,14 +404,33 @@ class NodeButtonBarManager(QObject):
 
     def _get_main_window(self):
         """Traverse up the widget hierarchy to find the MainWindow."""
-        p = self.parent
-        while p:
-            if hasattr(p, 'execute_chain_config') and hasattr(p, 'start_recording'):
-                return p
-            if hasattr(p, 'parent'):
-                p = p.parent()
-            else:
+        # Start from the graph view widget
+        curr = self.parent
+        
+        # Try traversing up using both parentWidget() and parent()
+        while curr:
+            # Check if this is the MainWindow by looking for its unique methods
+            if hasattr(curr, 'execute_chain_config') and hasattr(curr, 'start_recording'):
+                return curr
+            
+            # Get the next parent in the hierarchy
+            next_p = None
+            if hasattr(curr, 'parentWidget') and callable(curr.parentWidget):
+                try:
+                    next_p = curr.parentWidget()
+                except Exception:
+                    next_p = None
+            
+            if not next_p and hasattr(curr, 'parent') and callable(curr.parent):
+                try:
+                    next_p = curr.parent()
+                except Exception:
+                    next_p = None
+            
+            if not next_p or next_p == curr:
                 break
+            curr = next_p
+            
         return None
 
     # Actions
@@ -427,9 +446,9 @@ class NodeButtonBarManager(QObject):
                 else:
                     logger.warning("Config manager not found in GraphView")
             else:
-                logger.warning("Main window not found")
+                logger.warning("Main window not found for execution")
         except Exception as e:
-            logger.error(f"Error executing node: {e}")
+            logger.error(f"Error executing node: {e}", exc_info=True)
 
     def _on_record(self, node):
         """Re-record the sequence associated with this node immediately."""
@@ -438,21 +457,30 @@ class NodeButtonBarManager(QObject):
             if sequence_file:
                 # Extract name from filename
                 import os
-                name = os.path.splitext(os.path.basename(sequence_file))[0]
-                logger.info(f"Re-recording triggered for sequence: {name}")
+                # Ensure we have a string and handle potential full paths
+                seq_path = str(sequence_file)
+                name = os.path.splitext(os.path.basename(seq_path))[0]
+                
+                logger.info(f"Re-recording triggered for sequence name: '{name}' (source: {seq_path})")
                 
                 main_window = self._get_main_window()
                 if main_window:
-                    main_window.start_recording(name)
+                    if hasattr(main_window, 'start_recording'):
+                        logger.info(f"Calling start_recording('{name}') on main window")
+                        main_window.start_recording(name)
+                    else:
+                        logger.error("Found MainWindow but it lacks 'start_recording' method")
                 else:
-                    logger.warning("Main window not found for recording")
+                    logger.error("Could not locate MainWindow for re-recording")
             else:
                 # Fallback to editing if no sequence file is set yet
-                logger.info("No sequence file assigned to node, opening editor")
+                logger.info("No sequence file assigned to node, opening properties dialog")
                 if hasattr(self.parent, 'edit_sequence'):
                     self.parent.edit_sequence(node)
+                else:
+                    logger.warning("GraphView lacks 'edit_sequence' method for fallback")
         except Exception as e:
-            logger.error(f"Error in _on_record: {e}")
+            logger.error(f"Error in _on_record: {e}", exc_info=True)
 
     def _on_play_sequence(self, node):
         self._execute_node(node)

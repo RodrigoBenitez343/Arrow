@@ -23,6 +23,8 @@ class JSONCache:
         self._chain_cache: Dict[str, Dict[str, Any]] = {}
         self._path_cache: Dict[str, str] = {}  # Cache resolved paths
         self._loaded_chains: Set[str] = set()  # Track loaded chains to prevent cycles
+        self._sequence_mtimes: Dict[str, float] = {}  # Track modification times
+        self._chain_mtimes: Dict[str, float] = {}     # Track modification times
         
     def preload_chain(self, chain_file_path: str, chain_file_dir: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -44,16 +46,29 @@ class JSONCache:
         
         # Check if already loaded to prevent infinite recursion
         if resolved_chain_path in self._loaded_chains:
-            logger.info(f"Chain already loaded: {resolved_chain_path}")
-            return self._chain_cache[resolved_chain_path]
+            # Also check if the file on disk is newer than our cached version
+            try:
+                current_mtime = os.path.getmtime(resolved_chain_path)
+                if current_mtime <= self._chain_mtimes.get(resolved_chain_path, 0):
+                    logger.info(f"Chain already loaded and up-to-date: {resolved_chain_path}")
+                    return self._chain_cache[resolved_chain_path]
+                logger.info(f"Chain file modified on disk, reloading: {resolved_chain_path}")
+            except (OSError, IOError):
+                # If we can't check mtime, assume it's okay to use cache or reload if needed
+                if resolved_chain_path in self._chain_cache:
+                    return self._chain_cache[resolved_chain_path]
         
         # Load chain configuration
         logger.info(f"Preloading chain: {resolved_chain_path}")
         with open(resolved_chain_path, 'r', encoding='utf-8') as f:
             chain_config = json.load(f)
         
-        # Cache the chain
+        # Cache the chain and its modification time
         self._chain_cache[resolved_chain_path] = chain_config
+        try:
+            self._chain_mtimes[resolved_chain_path] = os.path.getmtime(resolved_chain_path)
+        except (OSError, IOError):
+            self._chain_mtimes[resolved_chain_path] = 0
         self._loaded_chains.add(resolved_chain_path)
         
         # Determine base directory for sequence resolution
@@ -117,7 +132,15 @@ class JSONCache:
         
         # Check if already cached
         if resolved_path in self._sequence_cache:
-            return self._sequence_cache[resolved_path]
+            # Check if file has been modified since caching
+            try:
+                current_mtime = os.path.getmtime(resolved_path)
+                if current_mtime <= self._sequence_mtimes.get(resolved_path, 0):
+                    return self._sequence_cache[resolved_path]
+                logger.info(f"Sequence file modified on disk, reloading: {resolved_path}")
+            except (OSError, IOError):
+                # If we can't check mtime, assume cache is okay
+                return self._sequence_cache[resolved_path]
         
         # Load and cache sequence
         logger.debug(f"Loading sequence: {resolved_path}")
@@ -128,32 +151,61 @@ class JSONCache:
             raise ValueError(f"Invalid sequence format in {resolved_path}: Missing actions")
         
         self._sequence_cache[resolved_path] = sequence_data
+        try:
+            self._sequence_mtimes[resolved_path] = os.path.getmtime(resolved_path)
+        except (OSError, IOError):
+            self._sequence_mtimes[resolved_path] = 0
+            
         logger.debug(f"Cached sequence with {len(sequence_data['actions'])} actions: {resolved_path}")
         
         return sequence_data
     
     def get_sequence(self, sequence_file: str, base_dir: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
-        Get a cached sequence or load it if not cached.
+        Get a sequence from cache or load it if not cached.
         
         Args:
             sequence_file (str): Sequence file name or path
             base_dir (str, optional): Base directory for path resolution
             
         Returns:
-            dict: The sequence data, or None if not found
+            dict: The loaded sequence configuration, or None if not found
         """
         resolved_path = self._resolve_sequence_path(sequence_file, base_dir)
         if not resolved_path:
             return None
         
-        # Return from cache if available
-        if resolved_path in self._sequence_cache:
-            return self._sequence_cache[resolved_path].copy()  # Return copy to prevent modification
+        # Check cache
+        cache_key = resolved_path
+        if cache_key in self._sequence_cache:
+            # Check if file has been modified since caching
+            try:
+                current_mtime = os.path.getmtime(resolved_path)
+                if current_mtime <= self._sequence_mtimes.get(cache_key, 0):
+                    logger.debug(f"Using cached sequence: {cache_key}")
+                    return self._sequence_cache[cache_key].copy()
+                logger.info(f"Sequence file modified on disk, reloading: {cache_key}")
+            except (OSError, IOError):
+                # If we can't check mtime, assume cache is okay
+                return self._sequence_cache[cache_key].copy()
         
-        # Load if not cached
+        # Load from file
+        logger.debug(f"Loading sequence from disk: {resolved_path}")
         try:
-            return self._preload_sequence(sequence_file, base_dir or os.getcwd())
+            with open(resolved_path, 'r', encoding='utf-8') as f:
+                sequence_data = json.load(f)
+            
+            if "actions" not in sequence_data:
+                raise ValueError(f"Invalid sequence format in {resolved_path}: Missing actions")
+            
+            # Cache the data and modification time
+            self._sequence_cache[cache_key] = sequence_data
+            try:
+                self._sequence_mtimes[cache_key] = os.path.getmtime(resolved_path)
+            except (OSError, IOError):
+                self._sequence_mtimes[cache_key] = 0
+            
+            return sequence_data.copy()
         except Exception as e:
             logger.error(f"Failed to load sequence {sequence_file}: {e}")
             return None

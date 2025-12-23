@@ -88,7 +88,7 @@ class MainWindow(QMainWindow):
         logger.info("Initializing MainWindow")
         try:
             super().__init__()
-            self.setWindowTitle(_("LoOper BETA:1.9.8"))
+            self.setWindowTitle(_("LoOper Release 1.0.0"))
             self.setGeometry(100, 100, 1200, 800)
             
             # Set window icon
@@ -561,12 +561,21 @@ class MainWindow(QMainWindow):
                         keyboard_listener.join()  # Will block until ESC
                         mouse_listener.stop()
                         thread_logger.info("Listeners stopped successfully")
+                        
+                        try:
+                            # Clear JSON cache to ensure new recording is picked up
+                            from player.json_cache import clear_cache
+                            clear_cache()
+                            logger.info("Cleared JSON cache after recording")
+                        except Exception as cache_err:
+                            logger.warning(f"Failed to clear cache after recording: {cache_err}")
+
                         # Refresh sequences list in toolbar on the main thread
                         try:
                             QTimer.singleShot(0, lambda: self.graph_view.refresh_sequences_toolbar())
                             QTimer.singleShot(300, lambda: self.graph_view.refresh_sequences_toolbar())
-                        except Exception as e:
-                            thread_logger.error(f"Failed to request sequences refresh: {e}")
+                        except Exception as refresh_err:
+                            thread_logger.error(f"Failed to request sequences refresh: {refresh_err}")
                     except Exception as e:
                         thread_logger.error(f"Error during listener operation: {str(e)}")
                         thread_logger.error(f"Listener operation traceback: {traceback.format_exc()}")

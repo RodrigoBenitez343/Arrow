@@ -209,9 +209,10 @@ def _ow_list_cli():
             return cands
         env = os.environ.copy()
         data = None
+        cflags = 0x08000000 if os.name == "nt" else 0
         for cmd in _find_ollama_bin():
             try:
-                p = _sp.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env)
+                p = _sp.run([cmd, "ps", "--json"], capture_output=True, text=True, timeout=4, env=env, creationflags=cflags)
                 if p.returncode != 0:
                     continue
                 s = (p.stdout or "").strip()
@@ -251,9 +252,10 @@ def _ow_stop_cli(name):
             cands.append("ollama")
             return cands
         env = os.environ.copy()
+        cflags = 0x08000000 if os.name == "nt" else 0
         for cmd in _find_ollama_bin():
             try:
-                _sp.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env)
+                _sp.run([cmd, "stop", name], capture_output=True, text=True, timeout=4, env=env, creationflags=cflags)
                 return True
             except Exception:
                 continue

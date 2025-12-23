@@ -24,6 +24,8 @@ hiddenimports = [
     'PyQt5.QtGui',
     'PyQt5.QtWidgets',
     'PyQt5.QtSvg',
+    'PyQt5.QtPrintSupport',
+    'PyQt5.QtOpenGL',
     'NodeGraphQt',
     'pytablericons',
     'PIL.ImageQt',
@@ -38,6 +40,7 @@ hiddenimports = [
     'win32process',
     'fastapi',
     'uvicorn',
+    'uvicorn.logging',
     'pydantic',
     'email_validator',
     'starlette',
@@ -70,7 +73,7 @@ datas = []
 binaries = []
 
 # Use collect_all for complex packages
-for pkg in ['torch', 'torchvision', 'ultralytics', 'NodeGraphQt']:
+for pkg in ['torch', 'torchvision', 'ultralytics', 'NodeGraphQt', 'pynput', 'cv2', 'pyautogui', 'numpy']:
     tmp_ret = collect_all(pkg, include_py_files=False)
     datas += tmp_ret[0]
     binaries += tmp_ret[1]
@@ -130,7 +133,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=os.path.join(looper_dir, 'LoOper.ico'),

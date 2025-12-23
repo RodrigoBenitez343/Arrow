@@ -42,6 +42,31 @@ class ChainImportOperationsMixin:
             )
             
         return None
+
+    def add_chain_import_from_file(self, file_path, pos=None):
+        """Add a Chain Import node pre-configured with a specific chain file."""
+        logger.info(f"Adding Chain Import node from file: {file_path} at position: {pos}")
+        try:
+            node = self.add_chain_import_node(pos)
+            if node:
+                # Extract file name without extension as default prefix
+                file_name = os.path.basename(file_path)
+                prefix = os.path.splitext(file_name)[0]
+                
+                # Update the node with the chain file
+                node.set_chain_import_data(
+                    file_path,
+                    import_mode='full',
+                    prefix=prefix,
+                    loop_count=1,
+                    extra_delay=0.0,
+                    enabled=True
+                )
+                logger.info(f"Successfully configured Chain Import node {node.id} with {file_path}")
+                return node
+        except Exception as e:
+            logger.error(f"Error adding Chain Import from file: {e}")
+        return None
         
     def edit_chain_import_node(self, node):
         """Edit a Chain Import node configuration."""

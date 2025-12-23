@@ -75,10 +75,12 @@ class TailscaleManager:
                     return path
                 elif path in ["tailscale", "tailscale.exe"]:
                     # Check if it's in PATH
+                    cflags = 0x08000000 if os.name == "nt" else 0
                     result = subprocess.run(
                         ["where" if os.name == "nt" else "which", path],
                         capture_output=True,
-                        text=True
+                        text=True,
+                        creationflags=cflags
                     )
                     if result.returncode == 0 and result.stdout.strip():
                         return result.stdout.strip().split('\n')[0]
@@ -94,11 +96,13 @@ class TailscaleManager:
         
         try:
             cmd = [self.tailscale_binary] + args
+            cflags = 0x08000000 if os.name == "nt" else 0
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                creationflags=cflags
             )
             
             return result.returncode == 0, result.stdout, result.stderr
