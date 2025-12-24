@@ -359,23 +359,30 @@ class LLMPropertiesDialog(ModernDialog):
         self.use_vision_checkbox.setChecked(False)
         vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
         
+        # Vision Model selection
+        vision_layout.addWidget(QLabel(_("Vision Model:")), 1, 0)
+        self.vision_model_combo = QComboBox()
+        self.vision_model_combo.setEditable(True)
+        self.vision_model_combo.addItems(self.get_available_models())
+        vision_layout.addWidget(self.vision_model_combo, 1, 1)
+        
         # Screenshot enabled checkbox
-        vision_layout.addWidget(QLabel(_("Screenshot:")), 1, 0)
+        vision_layout.addWidget(QLabel(_("Screenshot:")), 2, 0)
         self.screenshot_enabled_checkbox = ModernToggle(text=_("Take screenshot automatically for vision models"))
         self.screenshot_enabled_checkbox.setChecked(True)
-        vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
+        vision_layout.addWidget(self.screenshot_enabled_checkbox, 2, 1)
 
         # Use advanced vision checkbox
-        vision_layout.addWidget(QLabel(_("Use Advanced Vision:")), 2, 0)
+        vision_layout.addWidget(QLabel(_("Use Advanced Vision:")), 3, 0)
         self.use_advanced_vision_checkbox = ModernToggle(text=_("Enable YOLO object detection + OCR"))
         self.use_advanced_vision_checkbox.setChecked(False)
-        vision_layout.addWidget(self.use_advanced_vision_checkbox, 2, 1)
+        vision_layout.addWidget(self.use_advanced_vision_checkbox, 3, 1)
         
         # Add help text
         help_label = QLabel(_("Note: Vision models can analyze screenshots. Advanced vision uses YOLO+OCR."))
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        vision_layout.addWidget(help_label, 3, 0, 1, 2)
+        vision_layout.addWidget(help_label, 4, 0, 1, 2)
         
         layout.addWidget(vision_group)
         
@@ -538,6 +545,7 @@ class LLMPropertiesDialog(ModernDialog):
             
             # Features tab settings
             self.use_vision_checkbox.setChecked(self.current_config.get('use_vision', False))
+            self.vision_model_combo.setCurrentText(self.current_config.get('vision_model', 'minicpm-v:latest'))
             self.use_advanced_vision_checkbox.setChecked(self.current_config.get('use_advanced_vision', False))
             self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
@@ -734,6 +742,7 @@ class LLMPropertiesDialog(ModernDialog):
             'write_text': self.write_text_checkbox.isChecked(),
             'use_async': self.use_async_checkbox.isChecked(),
             'use_vision': self.use_vision_checkbox.isChecked(),
+            'vision_model': self.vision_model_combo.currentText(),
             'use_advanced_vision': self.use_advanced_vision_checkbox.isChecked(),
             'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
             

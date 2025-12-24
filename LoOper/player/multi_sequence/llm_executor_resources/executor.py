@@ -51,9 +51,58 @@ class LLMExecutor:
         except Exception:
             self.context_db = None
 
+    def _format_yolo_data(self, vision_data: Dict) -> str:
+        """Formats raw YOLO JSON into a concise, semantic string for LLMs, sorted spatially."""
+        objects = vision_data.get("Object", [])
+        if not objects:
+            return "No UI elements detected."
+            
+        # Sort objects top-to-bottom (y1), then left-to-right (x1)
+        # Assuming coords are [x1, y1, x2, y2]
+        def sort_key(obj):
+            coords = obj.get("coords", [])
+            if coords and len(coords) == 4:
+                return (coords[1], coords[0]) # y1, x1
+            return (0, 0)
+            
+        sorted_objects = sorted(objects, key=sort_key)
+            
+        lines = ["DETECTED UI ELEMENTS (Ordered Top-to-Bottom):"]
+        for obj in sorted_objects:
+            label = obj.get("label", "Unknown")
+            coords = obj.get("coords", [])
+            text_content = obj.get("text_content", [])
+            text = ", ".join(text_content) if isinstance(text_content, list) else str(text_content)
+            
+            # Format coordinates to integer for readability
+            loc_str = ""
+            if coords and len(coords) == 4:
+                try:
+                    x1, y1, x2, y2 = map(int, coords)
+                    # Calculate center for easier spatial reasoning
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    loc_str = f"at ({cx}, {cy})"
+                except Exception:
+                    loc_str = f"at {coords}"
+            
+            # Build line
+            line = f"- {label} {loc_str}"
+            if text and text.strip():
+                line += f" | Text: '{text}'"
+                
+            # Interactions/Properties
+            props = obj.get("property")
+            if props:
+                line += f" | Prop: {props}"
+                
+            lines.append(line)
+            
+        return "\n".join(lines)
+
     def execute_llm_node(self, node: Dict, stop_flag, action_handlers=None) -> Optional[str]:
         """Execute an LLM node and return the next node ID to run."""
         llm_data = node.get('data', {})
+        _node_id = node.get('id', node.get('node_id', 'Unknown'))
         logger.info("=== STARTING LLM NODE EXECUTION ===")
         logger.info(f"Executing LLM node: {llm_data.get('name', llm_data.get('id', llm_data.get('node_id', 'Unknown')))}")
         logger.info(f"Full node data: {node}")
@@ -421,6 +470,7 @@ class LLMExecutor:
                 rag_max_chars,
             )
 
+        advanced_vision_image_path = None
         if use_advanced_vision:
             logger.info("Advanced Vision enabled. Starting analysis...")
             try:
@@ -495,9 +545,16 @@ class LLMExecutor:
                     
                     # Analyze screen (using monitor 1 as default)
                     vision_data = vision_instance.analyze_single_frame(1)
+                    advanced_vision_image_path = vision_data.get("image_path")
                     
-                    # Serialize to JSON
-                    vision_text = _json.dumps(vision_data, indent=2)
+                    # Serialize to text description
+                    vision_text = self._format_yolo_data(vision_data)
+                    
+                    # Store vision data in variables for later retrieval in task runner
+                    if _node_id:
+                        self.variables[f"node_{_node_id}_vision_data"] = vision_text
+                        # Also store raw path just in case
+                        self.variables[f"node_{_node_id}_vision_image"] = advanced_vision_image_path
                     
                     # Integrate with ComoRAG if enabled
                     vision_integrated = False
@@ -545,6 +602,14 @@ class LLMExecutor:
         is_vision_model = _is_vision_model_name(model)
         should_use_vision = use_vision or is_vision_model
         images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
+        
+        if advanced_vision_image_path and should_use_vision:
+            if images is None:
+                images = []
+            # Insert the annotated image at the beginning
+            images.insert(0, advanced_vision_image_path)
+            logger.info(f"Included Advanced Vision annotation image: {advanced_vision_image_path}")
+
         try:
             if emb_client:
                 emb_client.close()
@@ -596,22 +661,99 @@ class LLMExecutor:
         def _task_runner(out_dict: Dict[str, Any]):
             if stop_flag and stop_flag():
                 return
+            
+            _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+
             try:
                 from AI.consult import OllamaClient as _Client
                 # Disable client request timeouts for local LLMs
                 cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag, timeout=None)
                 if use_comorag and hasattr(cli, 'set_comorag_config'):
                     cli.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
+                
+                # --- Vision Pass Logic ---
+                # If a separate vision model is configured, use it to analyze images first
+                # and pass the description to the main model (which might be text-only).
+                effective_prompt = prompt
+                effective_images = images
+                
+                vision_model = llm_config.get('vision_model')
+                if effective_images and vision_model and str(vision_model).strip() and str(vision_model) != str(model):
+                    logger.info(f"Running separate vision pass with model: {vision_model}")
+                    try:
+                        # Construct a vision-specific prompt
+                        # Ask for spatial layout to correlate with YOLO data
+                        vision_prompt = (
+                            f"Please analyze this screen image in detail. "
+                            f"Describe the visual layout, specifically identifying input fields, buttons, and text labels. "
+                            f"Explain where each element is located relative to others (e.g., 'below the Name label'). "
+                            f"\n\nContext from user: {effective_prompt}"
+                        )
+                        
+                        # Use standard generation (no ComoRAG for the vision pass to keep it fast)
+                        # We temporarily disable ComoRAG on the client for this call if needed, 
+                        # but cli.generate uses the instance flag.
+                        # We can create a temp client or just call generate. 
+                        # Since we want to bypass ComoRAG for this pre-pass (usually), 
+                        # let's assume standard generation is fine.
+                        # However, cli.generate uses self.use_comorag.
+                        
+                        # Create a lightweight client for vision pass if ComoRAG is on
+                        v_cli = cli
+                        if use_comorag:
+                            v_cli = _Client(base_url=api_url, debug=True, use_comorag=False, timeout=None)
+                            
+                        vision_res = v_cli.generate(
+                            model=vision_model,
+                            prompt=vision_prompt,
+                            images=effective_images,
+                            temperature=0.5, # Lower temp for accurate description
+                            max_tokens=1024
+                        )
+                        
+                        vision_text = None
+                        if isinstance(vision_res, dict):
+                            vision_text = vision_res.get('response') or vision_res.get('text') or (vision_res.get('message') or {}).get('content')
+                        elif isinstance(vision_res, str):
+                            vision_text = vision_res
+                            
+                        if vision_text:
+                            logger.info(f"Vision pass complete. Length: {len(vision_text)}")
+                            
+                            # Retrieve formatted YOLO data
+                            yolo_data = self.variables.get(f"node_{_node_id}_vision_data", "")
+                            
+                            # Construct unified prompt
+                            screen_context = (
+                                "=== UNIFIED SCREEN CONTEXT ===\n"
+                                f"1. VISUAL DESCRIPTION (General Layout):\n{vision_text}\n\n"
+                                f"2. DETECTED UI ELEMENTS (Detailed Metadata):\n{yolo_data}\n"
+                                "==============================\n"
+                            )
+                            
+                            effective_prompt = f"{screen_context}\n\nUSER REQUEST:\n{effective_prompt}"
+                            # Clear images for the main model execution
+                            effective_images = None
+                    except Exception as ve:
+                        logger.error(f"Vision pass failed: {ve}")
+                        # If vision pass fails, we keep images and try main model as fallback
+                        pass
+                
+                # If separate vision pass didn't run (e.g. no vision_model), but we have YOLO data, inject it now
+                if not (effective_images and vision_model and str(vision_model).strip() and str(vision_model) != str(model)):
+                     yolo_data = self.variables.get(f"node_{_node_id}_vision_data", "")
+                     if yolo_data and "UNIFIED SCREEN CONTEXT" not in effective_prompt:
+                         effective_prompt = f"DETECTED UI ELEMENTS (YOLO):\n{yolo_data}\n\nUSER REQUEST:\n{effective_prompt}"
+
                 # Mark writing active for streaming typing paths
-                _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
                 if use_comorag:
                     res = cli.generate(
                         model=model,
-                        prompt=prompt,
+                        prompt=effective_prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
                         system=system_message or None,
-                        images=images,
+                        images=effective_images,
                         context=None,
                         async_request=False,
                     )
@@ -641,11 +783,11 @@ class LLMExecutor:
                         if write_mode == 'paste':
                             res = cli.chat_stream(
                                 model=model,
-                                prompt=prompt,
+                                prompt=effective_prompt,
                                 temperature=temperature,
                                 max_tokens=max_tokens,
                                 system=system_message or None,
-                                images=images,
+                                images=effective_images,
                                 on_delta=None,
                             )
                         else:
@@ -736,11 +878,11 @@ class LLMExecutor:
                                     pass
                             res = cli.chat_stream(
                                 model=model,
-                                prompt=prompt,
+                                prompt=effective_prompt,
                                 temperature=temperature,
                                 max_tokens=max_tokens,
                                 system=system_message or None,
-                                images=images,
+                                images=effective_images,
                                 on_delta=_on_delta,
                             )
                             # Final flush for remaining buffered text
@@ -758,11 +900,11 @@ class LLMExecutor:
                             try:
                                 res2 = cli.chat(
                                     model=model,
-                                    prompt=prompt,
+                                    prompt=effective_prompt,
                                     temperature=temperature,
                                     max_tokens=max_tokens,
                                     system=system_message or None,
-                                    images=images,
+                                    images=effective_images,
                                     stream=False,
                                 )
                                 res = res2
@@ -772,11 +914,11 @@ class LLMExecutor:
                     else:
                         res = cli.chat(
                             model=model,
-                            prompt=prompt,
+                            prompt=effective_prompt,
                             temperature=temperature,
                             max_tokens=max_tokens,
                             system=system_message or None,
-                            images=images,
+                            images=effective_images,
                             stream=False,
                         )
                         out_dict["result"] = res
@@ -1019,7 +1161,11 @@ class LLMExecutor:
 
         # Optional: write text via handlers when not streaming
         try:
-            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not bool(llm_config.get('stream', True)) or bool(shared.get('stream_failed'))):
+            # Check if streaming was actually used.
+            # If ComoRAG was used, streaming is bypassed even if 'stream' is True in config.
+            # So we rely on the runtime flag 'stream_used' from the task runner.
+            was_streamed = shared.get('stream_used', False)
+            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not was_streamed or bool(shared.get('stream_failed'))):
                 logger.info("Writing LLM output via action handlers")
                 
                 # Prevent repetition if streaming partially succeeded but failed at the end

@@ -26,6 +26,7 @@ class LLMNode(BaseNode):
             'api_url': get_default_api_url(),
             'write_text': True,
             'use_vision': False,
+            'vision_model': 'minicpm-v:latest',
             'use_advanced_vision': False,
             'screenshot_enabled': True,
             'use_comorag': True,
@@ -109,6 +110,7 @@ class LLMNode(BaseNode):
         self.create_property('api_url', get_default_api_url())
         self.create_property('write_text', 'true')
         self.create_property('use_vision', 'false')
+        self.create_property('vision_model', 'minicpm-v:latest')
         self.create_property('use_advanced_vision', 'false')
         self.create_property('screenshot_enabled', 'true')
         self.create_property('use_comorag', 'true')
@@ -156,6 +158,7 @@ class LLMNode(BaseNode):
         self.set_property('api_url', config.get('api_url', get_default_api_url()))
         self.set_property('write_text', str(config.get('write_text', True)).lower())
         self.set_property('use_vision', str(config.get('use_vision', False)).lower())
+        self.set_property('vision_model', config.get('vision_model', 'minicpm-v:latest'))
         self.set_property('use_advanced_vision', str(config.get('use_advanced_vision', False)).lower())
         self.set_property('screenshot_enabled', str(config.get('screenshot_enabled', True)).lower())
         self.set_property('use_comorag', str(config.get('use_comorag', True)).lower())
@@ -223,6 +226,7 @@ class LLMNode(BaseNode):
             'api_url': self.get_property('api_url'),
             'write_text': write_text,
             'use_vision': use_vision,
+            'vision_model': self.get_property('vision_model'),
             'use_advanced_vision': str(self.get_property('use_advanced_vision') or 'false').lower() in ('true', '1', 'yes', 'on'),
             'screenshot_enabled': screenshot_enabled,
             'use_comorag': use_comorag,
