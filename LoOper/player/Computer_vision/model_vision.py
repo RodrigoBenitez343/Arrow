@@ -244,8 +244,63 @@ class Vision:
                 "interactions": obj.interactions_to_list()
             }
             output_data["Object"].append(obj_dict)
+
+        # 8. Generate Annotated Image
+        try:
+            annotated_img = self.draw_annotations(screen.shape, data, objects)
+            timestamp = int(time.time())
+            # Save to a temporary location or specific directory
+            # Assuming we are in LoOper/player/Computer_vision
+            # We want to save where the other screenshots are, or locally.
+            # LoOper/screenshots is a good place.
+            
+            # Try to find the screenshots directory relative to this file
+            # this file: .../LoOper/player/Computer_vision/model_vision.py
+            # screenshots: .../LoOper/screenshots
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            screenshots_dir = os.path.join(base_dir, "screenshots")
+            if not os.path.exists(screenshots_dir):
+                os.makedirs(screenshots_dir, exist_ok=True)
+            
+            image_filename = f"yolo_annotation_{timestamp}.png"
+            image_path = os.path.join(screenshots_dir, image_filename)
+            cv2.imwrite(image_path, annotated_img)
+            output_data["image_path"] = image_path
+            print(f"Annotated image saved to: {image_path}")
+        except Exception as e:
+            print(f"Error generating annotated image: {e}")
+            output_data["image_path"] = None
             
         return output_data
+
+    def draw_annotations(self, shape, data, objects):
+        """Draw annotations on a black background"""
+        h, w = shape[:2]
+        display_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+        
+        # Draw all raw data first (Green)
+        for label, boxes in data.items():
+            for coords in boxes:
+                x1, y1, x2, y2 = map(int, coords)
+                cv2.rectangle(display_overlay, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(display_overlay, str(label), (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+        # Draw objects (Blue)
+        for obj in objects:
+            x1, y1, x2, y2 = map(int, obj.get_coords())
+            cv2.rectangle(display_overlay, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.putText(display_overlay, str(obj.get_label()), (x1, max(0, y1 - 20)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+            if obj.get_property():
+                cv2.putText(display_overlay, str(obj.get_property()), (x1, max(0, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            
+            # Draw interactions inside objects (Orange)
+            for inter in obj.get_interactions() or []:
+                ix1, iy1, ix2, iy2 = map(int, inter.get_coords())
+                cv2.rectangle(display_overlay, (ix1, iy1), (ix2, iy2), (0, 165, 255), 2)
+                cv2.putText(display_overlay, str(inter.get_label()), (ix1, max(0, iy1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+        
+        return display_overlay
+
 
     def start_vision(self, num):
 

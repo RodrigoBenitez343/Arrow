@@ -36,6 +36,7 @@ class LLMOperationsMixin:
                 except Exception:
                     default_model = ''
                 node.set_property('model', default_model)
+                node.set_property('vision_model', 'minicpm-v:latest')
                 node.set_property('temperature', '0.7')
                 node.set_property('max_tokens', '150')
                 
@@ -173,6 +174,8 @@ class LLMOperationsMixin:
             use_vision_str = node.get_property('use_vision') or 'false'
             use_vision = use_vision_str.lower() in ('true', '1', 'yes', 'on')
             dialog.use_vision_checkbox.setChecked(use_vision)
+            
+            dialog.vision_model_combo.setCurrentText(node.get_property('vision_model') or 'minicpm-v:latest')
 
             use_advanced_vision_str = node.get_property('use_advanced_vision') or 'false'
             use_advanced_vision = use_advanced_vision_str.lower() in ('true', '1', 'yes', 'on')
@@ -248,6 +251,7 @@ class LLMOperationsMixin:
                 
                 # Features tab properties
                 node.set_property('use_vision', str(dialog.use_vision_checkbox.isChecked()).lower())
+                node.set_property('vision_model', dialog.vision_model_combo.currentText())
                 node.set_property('use_advanced_vision', str(dialog.use_advanced_vision_checkbox.isChecked()).lower())
                 node.set_property('screenshot_enabled', str(dialog.screenshot_enabled_checkbox.isChecked()).lower())
                 node.set_property('use_comorag', str(dialog.use_comorag_checkbox.isChecked()).lower())

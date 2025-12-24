@@ -461,6 +461,7 @@ class ConfigManager:
                 "api_url": llm_config.get('api_url', ''),
                 "write_text": llm_config.get('write_text', True),
                 "use_vision": llm_config.get('use_vision', False),
+                "vision_model": llm_config.get('vision_model', 'minicpm-v:latest'),
                 "use_advanced_vision": llm_config.get('use_advanced_vision', False),
                 "screenshot_enabled": llm_config.get('screenshot_enabled', True),
                 "use_comorag": llm_config.get('use_comorag', True),
@@ -781,6 +782,7 @@ class ConfigManager:
                     node.set_property('api_url', llm_data.get('api_url', ''))
                     node.set_property('write_text', str(llm_data.get('write_text', 'true')))
                     node.set_property('use_vision', str(llm_data.get('use_vision', 'false')))
+                    node.set_property('vision_model', str(llm_data.get('vision_model', 'minicpm-v:latest')))
                     node.set_property('use_advanced_vision', str(llm_data.get('use_advanced_vision', 'false')))
                     node.set_property('screenshot_enabled', str(llm_data.get('screenshot_enabled', 'true')))
                     node.set_property('use_comorag', str(llm_data.get('use_comorag', 'true')))
