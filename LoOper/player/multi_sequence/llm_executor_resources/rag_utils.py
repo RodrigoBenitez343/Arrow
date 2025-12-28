@@ -4,53 +4,7 @@ import zipfile
 import re
 from xml.etree import ElementTree as ET
 
-# Ensure torch DLLs are loaded before langchain imports on Windows
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
-# Ensure DLL load path on Windows
-if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
-    try:
-        import site
-        packages = []
-        try:
-            packages.extend(site.getsitepackages())
-        except Exception:
-            pass
-        try:
-            if hasattr(site, 'getusersitepackages'):
-                packages.append(site.getusersitepackages())
-        except Exception:
-            pass
-        # Also check current venv specifically
-        try:
-            from sys import executable
-            venv_path = os.path.dirname(os.path.dirname(executable)) 
-            site_pkg = os.path.join(venv_path, 'Lib', 'site-packages')
-            if os.path.isdir(site_pkg):
-                packages.append(site_pkg)
-        except Exception:
-            pass
-            
-        for p in packages:
-            torch_lib = os.path.join(p, 'torch', 'lib')
-            if os.path.isdir(torch_lib):
-                try:
-                    os.add_dll_directory(torch_lib)
-                    # Also prepend to PATH as a fallback for some DLL loaders
-                    os.environ['PATH'] = torch_lib + os.pathsep + os.environ['PATH']
-                except Exception:
-                    pass
-    except Exception:
-        pass
-
 from ...config import logger
-
-try:
-    from langchain_ollama import OllamaEmbeddings
-    from langchain_text_splitters import RecursiveCharacterTextSplitter
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
 
 
 def _chunk_text_chars(text: str, size: int, overlap: int) -> List[str]:

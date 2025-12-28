@@ -32,6 +32,16 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         self._runtime_needed = False
         self._llm_selected_next = None
     
+    def reset(self):
+        """Resets the executor state for a new run."""
+        self.skipped_nodes = set()
+        self._llm_selected_next = None
+        self._code_retry_counts = {}
+        # We don't reset runtime environment to avoid reloading venv unnecessarily,
+        # but we reset the initialization flags to ensure checks happen if needed.
+        # actually, keeping runtime initialized is better for performance.
+        logger.info("WorkflowExecutor state reset")
+
     def execute_workflow(self, stop_flag=None, action_handlers=None):
         """
         Executes the workflow graph with proper dependency resolution.
@@ -112,6 +122,9 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     if not ready_nodes:
                         logger.info("Workflow execution completed successfully")
                         return True
+                else:
+                    logger.info("Workflow execution completed successfully")
+                    return True
             
             current_node_id = self._select_next_node(ready_nodes)
             

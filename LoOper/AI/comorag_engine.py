@@ -436,9 +436,14 @@ class ComoRAGEngine:
         )
         self.memory_workspace.add_memory(initial_memory)
         cycles: List[Dict[str, Any]] = []
+        output_text = ""
         for cycle in range(max_cycles):
             try:
                 probing = await self._generate_probing_queries(current_query, global_context, model, cycle)
+                if not probing and cycle == 0:
+                    # If we can't even generate probing queries, something is wrong with the LLM
+                    break
+                
                 evidence: List[MemoryItem] = []
                 
                 # Force include recent vision data in the first cycle
@@ -473,7 +478,8 @@ class ComoRAGEngine:
                 break
         final_text = output_text if cycles else ""
         final_conf = cycles[-1]["confidence_score"] if cycles else 0.0
-        return {
+        
+        result = {
             "query": query,
             "response": final_text,
             "confidence": final_conf,
@@ -481,6 +487,12 @@ class ComoRAGEngine:
             "memory_items_used": len(self.memory_workspace.memory_pool) if self.memory_workspace else 0,
             "reasoning_history": cycles
         }
+        
+        if not final_text or (len(cycles) == 0 and max_cycles > 0):
+            result["comorag_fallback"] = True
+            result["comorag_error"] = "No reasoning output generated"
+            
+        return result
 
     async def reason_stream(self, query: str, context: Optional[str], model: Optional[str], max_cycles: int, memory_size: Optional[int], images: Optional[List[str]]):
         if not self._initialized:
@@ -615,8 +627,16 @@ class ComoRAGEngine:
         if self.memory_workspace:
             self.memory_workspace.memory_pool.clear()
             self.memory_workspace.access_history.clear()
+            if self.memory_workspace.index is not None and FAISS_AVAILABLE:
+                try:
+                    self.memory_workspace.index.reset()
+                    self.memory_workspace.id_to_index.clear()
+                    self.memory_workspace.index_to_id.clear()
+                except Exception:
+                    pass
         self.reasoning_history.clear()
-        self._initialized = False
+        # Keep initialized status to prevent 503 errors
+        # self._initialized = False
 
     def is_ready(self) -> bool:
         return self._initialized and self.memory_workspace is not None

@@ -52,12 +52,19 @@ import json
 import time
 import logging
 import multiprocessing
-import pytesseract
 import re
 import os
 import object
 from shapely.geometry import Polygon
 from huggingface_hub import hf_hub_download
+try:
+    from ..ocr_engine import extract_text
+except Exception:
+    try:
+        from player.ocr_engine import extract_text
+    except Exception:
+        def extract_text(image, min_confidence=0.0, language="eng"):
+            return ""
 
 class Vision:
     
@@ -666,9 +673,6 @@ class Vision:
     
                             
     def read_image(self, image, coords):
-
-        pytesseract.pytesseract.tesseract_cmd = r'C:/Program Files/Tesseract-OCR/tesseract.exe'  # Tesseract path
-
         
         # Konvertiere die Koordinaten in Ganzzahlen
         coords = [int(x) for x in coords]
@@ -691,7 +695,7 @@ class Vision:
             pass
 
 
-        text = pytesseract.image_to_string(image)
+        text = extract_text(image, language="eng")
 
         # Bereinige den Text, um nicht druckbare Zeichen zu entfernen
         text = re.sub(r'[^\x00-\x7F]+', '', text)

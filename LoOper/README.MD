@@ -65,7 +65,7 @@ pip install -r requirements.txt
 - **opencv-python** - Computer vision and template matching
 - **numpy** - Numerical operations
 - **Pillow** - Image processing
-- **pytesseract** - OCR functionality
+- **paddleocr** - OCR functionality
 - **requests** - HTTP client for API integration
 
 ## 🎨 NGUI - Visual Interface

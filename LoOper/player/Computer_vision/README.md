@@ -1,10 +1,10 @@
 # Vision & Text Detection System 📸🧠
 
-Welcome to the **Vision & Text Detection System**, a Python-based tool that leverages **YOLO (You Only Look Once)** for real-time object detection and **Tesseract OCR** for text recognition. This project captures live screen data, detects objects, extracts text, and organizes it into readable formats. It's designed for multi-process handling, ensuring both vision and text detection processes run seamlessly in parallel.
+Welcome to the **Vision & Text Detection System**, a Python-based tool that leverages **YOLO (You Only Look Once)** for real-time object detection and **PaddleOCR** for text recognition. This project captures live screen data, detects objects, extracts text, and organizes it into readable formats. It's designed for multi-process handling, ensuring both vision and text detection processes run seamlessly in parallel.
 
 ## Features 🚀
 - **Real-Time Object Detection**: Uses a YOLO model to detect objects from the screen and logs their coordinates.
-- **Text Extraction**: Extracts text from detected objects' bounding boxes using Tesseract OCR.
+- **Text Extraction**: Extracts text from detected objects' bounding boxes using PaddleOCR.
 - **Data Storage**: Object coordinates and labels are stored as JSON files, making it easy to track detections over time.
 - **Multi-Process Functionality**: Runs vision detection and text updating concurrently for improved performance.
 - **Configurable**: You can replace the YOLO model with your preferred version.
@@ -16,7 +16,7 @@ Welcome to the **Vision & Text Detection System**, a Python-based tool that leve
   - `numpy`
   - `mss`
   - `pillow`
-  - `pytesseract`
+  - `paddleocr`
   - `json`
   - `logging`
   - `multiprocessing`
@@ -32,14 +32,13 @@ Welcome to the **Vision & Text Detection System**, a Python-based tool that leve
    
 2. **Install libs**:
    ```bash
-   pip install ultralytics mss pytesseract
+   pip install ultralytics mss paddleocr
    ```
    
-4. **Install Tesseract OCR**:
-   - Download and install [Tesseract OCR](https://github.com/tesseract-ocr/tesseract).
-   - Make sure to set the Tesseract path in the code correctly. Example:
+4. **Install PaddleOCR**:
+   - Install the Python package:
      ```python
-     pytesseract.pytesseract.tesseract_cmd = r'C:/Program Files/Tesseract-OCR/tesseract.exe'
+     pip install paddleocr
      ```
 
 5. **Configure the YOLO Model**:
@@ -59,7 +58,7 @@ The `Vision` class is responsible for handling object detection. It uses the YOL
 The `Api` class handles reading the JSON outputs, retrieving object coordinates, and performing OCR to extract text.
 
 - **Retrieve Labels & Positions**: Methods to get label data and object coordinates from JSON files.
-- **Text Extraction**: Uses Tesseract OCR to extract text from the detected objects' bounding boxes.
+- **Text Extraction**: Uses PaddleOCR to extract text from the detected objects' bounding boxes.
 - **Text Cleanup**: Removes non-ASCII characters from the extracted text.
 
 ### Multi-Process Flow 🔄
@@ -75,7 +74,7 @@ The system creates a directory `model_view_output/` with the following files:
 - **sumirize.json**: A summary of the extracted text and corresponding coordinates.
 
 ## How to Run ▶️
-1. Ensure Tesseract is properly installed and its path is correctly set.
+1. Ensure PaddleOCR is installed.
 2. Start the system by running the main script:
    ```bash
    python main.py
@@ -98,7 +97,7 @@ The system creates a directory `model_view_output/` with the following files:
 
 ## Customization Options 🎛️
 - **YOLO Model**: Replace `vision_model = "Computer_Vision_1.3.0.onnx"` with your own model path.
-- **Tesseract Path**: Update the Tesseract OCR path if installed in a different directory.
+- **OCR Engine**: Install PaddleOCR in the active environment.
 - **Detection Intervals**: Modify the `time.sleep()` intervals in the `start_vision()` and `updating_text()` methods for faster/slower detection cycles.
 
 ## Contributing 🤝

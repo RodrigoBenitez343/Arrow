@@ -8,6 +8,7 @@ import time
 import pyautogui
 from functools import lru_cache
 from .config import logger, CV2_AVAILABLE, OCR_AVAILABLE
+from .ocr_engine import extract_text_elements
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
@@ -24,11 +25,6 @@ except ImportError:
 if CV2_AVAILABLE:
     import cv2
     import numpy as np
-
-if OCR_AVAILABLE:
-    import pytesseract
-    # Set tesseract command path for Windows
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 
 class TemplateMatching:
@@ -403,26 +399,12 @@ class TemplateMatching:
                 logger.info("Stop flag detected after OCR screenshot - aborting")
                 return None
             
-            # Convert to PIL Image for pytesseract
-            if CV2_AVAILABLE and len(screen_cv.shape) == 3:
-                # Convert BGR to RGB for PIL
-                screen_rgb = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2RGB)
-                from PIL import Image
-                pil_image = Image.fromarray(screen_rgb)
-            else:
-                from PIL import Image
-                pil_image = Image.fromarray(screen_cv)
-            
-            # Configure OCR settings for better accuracy (using default English)
-            custom_config = '--oem 3 --psm 6 -l eng'
-            
             # Check stop flag before OCR processing
             if stop_flag and stop_flag():
                 logger.info("Stop flag detected before OCR processing - aborting")
                 return None
-            
-            # Get detailed OCR data with confidence scores
-            ocr_data = pytesseract.image_to_data(pil_image, config=custom_config, output_type=pytesseract.Output.DICT)
+
+            ocr_elements = extract_text_elements(image=screen_cv, min_confidence=confidence, language="eng")
             
             # Check stop flag after OCR processing
             if stop_flag and stop_flag():
@@ -431,24 +413,17 @@ class TemplateMatching:
             
             # Process OCR results
             found_matches = []
-            
-            for i in range(len(ocr_data['text'])):
+
+            for element in ocr_elements:
                 # Check stop flag during OCR result processing
                 if stop_flag and stop_flag():
                     logger.info("Stop flag detected during OCR result processing - aborting")
                     return None
-                
-                text = ocr_data['text'][i].strip()
-                conf = float(ocr_data['conf'][i])
-                
-                if not text:  # Skip empty text
-                    continue
-                    
-                # Normalize confidence to 0-1 range (pytesseract uses 0-100)
-                normalized_conf = conf / 100.0
-                
-                # Check if confidence meets threshold
-                if normalized_conf < confidence:
+
+                text = (element.get("text") or "").strip()
+                normalized_conf = float(element.get("confidence") or 0.0)
+                bbox = element.get("bbox")
+                if not text or not bbox:
                     continue
                 
                 # Perform text matching
@@ -462,10 +437,7 @@ class TemplateMatching:
                     (len(search_text) > 2 and search_text in target_search)):  # OCR text in target (but not single chars)
                     
                     # Calculate bounding box (full screen coordinates)
-                    x = ocr_data['left'][i]
-                    y = ocr_data['top'][i]
-                    w = ocr_data['width'][i]
-                    h = ocr_data['height'][i]
+                    x, y, w, h = bbox
                     
                     match_result = {
                         'found': True,
@@ -524,72 +496,25 @@ class TemplateMatching:
                 logger.info("Stop flag detected after OCR screenshot - aborting")
                 return []
             
-            # Convert to PIL Image for pytesseract
-            if CV2_AVAILABLE and len(screen_cv.shape) == 3:
-                # Convert BGR to RGB for PIL
-                screen_rgb = cv2.cvtColor(screen_cv, cv2.COLOR_BGR2RGB)
-                from PIL import Image
-                pil_image = Image.fromarray(screen_rgb)
-            else:
-                from PIL import Image
-                pil_image = Image.fromarray(screen_cv)
-            
-            # Configure OCR settings (using default English)
-            custom_config = '--oem 3 --psm 6 -l eng'
-            
             # Check stop flag before OCR processing
             if stop_flag and stop_flag():
                 logger.info("Stop flag detected before OCR processing - aborting")
                 return []
-            
-            # Get detailed OCR data
-            ocr_data = pytesseract.image_to_data(pil_image, config=custom_config, output_type=pytesseract.Output.DICT)
+
+            logger.debug(f"Starting OCR extraction with confidence {min_confidence}")
+            extracted_text = extract_text_elements(image=screen_cv, min_confidence=min_confidence, language="eng")
+            logger.debug(f"OCR extraction finished, found {len(extracted_text)} elements")
             
             # Check stop flag after OCR processing
             if stop_flag and stop_flag():
                 logger.info("Stop flag detected after OCR processing - aborting")
                 return []
             
-            # Process and filter results
-            extracted_text = []
-            
-            for i in range(len(ocr_data['text'])):
-                # Check stop flag during OCR result processing
-                if stop_flag and stop_flag():
-                    logger.info("Stop flag detected during OCR result processing - aborting")
-                    return extracted_text  # Return partial results
-                
-                text = ocr_data['text'][i].strip()
-                conf = float(ocr_data['conf'][i])
-                
-                if not text:  # Skip empty text
-                    continue
-                    
-                # Normalize confidence to 0-1 range
-                normalized_conf = conf / 100.0
-                
-                # Check if confidence meets threshold
-                if normalized_conf < min_confidence:
-                    continue
-                
-                # Calculate bounding box (full screen coordinates)
-                x = ocr_data['left'][i]
-                y = ocr_data['top'][i]
-                w = ocr_data['width'][i]
-                h = ocr_data['height'][i]
-                
-                text_info = {
-                    'text': text,
-                    'confidence': normalized_conf,
-                    'bbox': (x, y, w, h),
-                    'center': (x + w // 2, y + h // 2)
-                }
-                
-                extracted_text.append(text_info)
-            
             logger.info(f"OCR extracted {len(extracted_text)} text elements with confidence >= {min_confidence}")
             return extracted_text
             
         except Exception as e:
-            logger.error(f"OCR text extraction failed: {e}")
+            import traceback
+            logger.error(f"OCR text extraction failed: {e!r}")
+            logger.error(traceback.format_exc())
             return []

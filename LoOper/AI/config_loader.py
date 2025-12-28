@@ -4,6 +4,8 @@ import os
 import json
 from typing import Dict, Any
 
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
+
 def load_ai_config() -> Dict[str, Any]:
     """Load AI configuration from config file and environment variables"""
     config = {
@@ -18,25 +20,24 @@ def load_ai_config() -> Dict[str, Any]:
     }
     
     # Try to load from config file first
-    config_path = os.path.join(os.path.dirname(__file__), "config.json")
     file_config_loaded = False
-    if os.path.exists(config_path):
+    file_keys = set()
+    if os.path.exists(_CONFIG_PATH):
         try:
-            with open(config_path, 'r') as f:
+            with open(_CONFIG_PATH, 'r') as f:
                 file_config = json.load(f)
+                if isinstance(file_config, dict):
+                    file_keys = set(file_config.keys())
                 config.update(file_config)
                 file_config_loaded = True
         except Exception as e:
             print(f"Warning: Failed to load AI config file: {e}")
     
     # Override with environment variables where appropriate
-    # Prefer config file value for AUTO_START_API to honor GUI toggle if present,
-    # but allow environment override when no config.json exists yet.
     for key in config.keys():
         env_value = os.getenv(key)
         if env_value is not None:
-            if key == "AUTO_START_API" and file_config_loaded:
-                # If a config file exists, keep its AUTO_START_API to honor GUI toggle
+            if file_config_loaded and key in file_keys:
                 continue
             config[key] = env_value
     

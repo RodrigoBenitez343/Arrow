@@ -8,13 +8,11 @@ from pathlib import Path
 
 # Import OCR functionality
 try:
-    import pytesseract
-    from PIL import Image
-    OCR_AVAILABLE = True
+    from player.ocr_engine import extract_text_elements_from_image_path, ocr_available
+    OCR_AVAILABLE = ocr_available()
 except ImportError:
     OCR_AVAILABLE = False
-    pytesseract = None
-    Image = None
+    extract_text_elements_from_image_path = None
 
 class ContextCollector:
     """Collects context data for ComoRAG integration including screenshots, automation data, and workflow state"""
@@ -135,7 +133,7 @@ class ContextCollector:
             return []
     
     def _extract_ocr_text(self, image_path: str, min_confidence: float = 0.6) -> tuple[str, List[Dict[str, Any]]]:
-        """Extract text from image using OCR (Tesseract)
+        """Extract text from image using OCR
         
         Args:
             image_path: Path to the image file
@@ -148,51 +146,13 @@ class ContextCollector:
             return None, []
             
         try:
-            # Load image
-            image = Image.open(image_path)
-            
-            # Configure OCR settings for better accuracy
-            custom_config = '--oem 3 --psm 6 -l eng'
-            
-            # Get detailed OCR data with confidence scores
-            ocr_data = pytesseract.image_to_data(image, config=custom_config, output_type=pytesseract.Output.DICT)
-            
-            # Process OCR results
-            text_elements = []
-            all_text_parts = []
-            
-            for i in range(len(ocr_data['text'])):
-                text = ocr_data['text'][i].strip()
-                conf = float(ocr_data['conf'][i])
-                
-                if not text:  # Skip empty text
-                    continue
-                    
-                # Normalize confidence to 0-1 range (pytesseract uses 0-100)
-                normalized_conf = conf / 100.0
-                
-                # Check if confidence meets threshold
-                if normalized_conf < min_confidence:
-                    continue
-                
-                # Calculate bounding box
-                x = ocr_data['left'][i]
-                y = ocr_data['top'][i]
-                w = ocr_data['width'][i]
-                h = ocr_data['height'][i]
-                
-                text_element = {
-                    'text': text,
-                    'confidence': normalized_conf,
-                    'bbox': (x, y, w, h),
-                    'center': (x + w // 2, y + h // 2)
-                }
-                
-                text_elements.append(text_element)
-                all_text_parts.append(text)
-            
-            # Combine all text into a single string
-            combined_text = ' '.join(all_text_parts) if all_text_parts else None
+            if not extract_text_elements_from_image_path:
+                return None, []
+
+            text_elements = extract_text_elements_from_image_path(
+                image_path=image_path, min_confidence=min_confidence, language="eng"
+            )
+            combined_text = " ".join([e["text"] for e in text_elements if e.get("text")]) if text_elements else None
             
             print(f"OCR extracted {len(text_elements)} text elements from {os.path.basename(image_path)}")
             return combined_text, text_elements

@@ -575,3 +575,198 @@
 2025-12-22 19:25:04,461 - DEBUG - Node node3 inputs: [{'from_node': 'node2', 'input_port': 'input'}]
 2025-12-22 19:25:04,461 - DEBUG - All dependencies satisfied for node node3
 2025-12-22 19:25:04,462 - INFO - Marked 1 nodes as skipped from unchosen branch false of cond1: {'node_false'}
+2025-12-24 05:31:23,557 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:15:57,620 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:38:25,675 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:49:05,128 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:58:00,067 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:58:05,170 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 07:58:05,170 - INFO - Loading faiss with AVX2 support.
+2025-12-24 07:58:05,190 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 07:58:22,453 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:58:27,270 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 07:58:27,271 - INFO - Loading faiss with AVX2 support.
+2025-12-24 07:58:27,291 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 07:59:05,284 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:59:10,116 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 07:59:10,117 - INFO - Loading faiss with AVX2 support.
+2025-12-24 07:59:10,140 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 07:59:36,795 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 07:59:41,612 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 07:59:41,613 - INFO - Loading faiss with AVX2 support.
+2025-12-24 07:59:41,634 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 08:00:44,228 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 08:00:49,058 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 08:00:49,058 - INFO - Loading faiss with AVX2 support.
+2025-12-24 08:00:49,079 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 08:38:56,159 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 08:39:01,235 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 08:39:01,235 - INFO - Loading faiss with AVX2 support.
+2025-12-24 08:39:01,256 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 08:39:20,896 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 08:39:25,791 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 08:39:25,792 - INFO - Loading faiss with AVX2 support.
+2025-12-24 08:39:25,812 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 08:41:08,535 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 08:41:13,691 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 08:41:13,692 - INFO - Loading faiss with AVX2 support.
+2025-12-24 08:41:13,714 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 10:40:30,155 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 10:42:45,161 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 10:42:45,278 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 10:42:49,944 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 10:42:49,945 - INFO - Loading faiss with AVX2 support.
+2025-12-24 10:42:49,968 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 10:42:50,105 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-24 10:42:50,105 - INFO - Executing LLM node: Unknown
+2025-12-24 10:42:50,106 - INFO - Full node data: {'id': 'test_node_60', 'prompt': 'Test', 'model': 'test', 'api_url': 'http://localhost:11434', 'ocr_confidence': '60', 'input_source': 'none'}
+2025-12-24 10:42:50,106 - INFO - LLM configuration: {}
+2025-12-24 10:42:50,106 - INFO - Resolved model for execution: 'llama3.2' (Default: 'llama3.2')
+2025-12-24 10:42:50,106 - INFO - Input source: none, OCR confidence: 0.6
+2025-12-24 10:42:50,106 - INFO - LLM Parameters:
+2025-12-24 10:42:50,107 - INFO -   Model: llama3.2
+2025-12-24 10:42:50,107 - INFO -   API URL: http://localhost:8000
+2025-12-24 10:42:50,107 - INFO -   System Message: 
+2025-12-24 10:42:50,107 - INFO -   Original Prompt: 
+2025-12-24 10:42:50,108 - INFO -   Temperature: 0.7
+2025-12-24 10:42:50,108 - INFO -   Max Tokens: 4096
+2025-12-24 10:42:50,108 - INFO -   Output Variable: llm_output
+2025-12-24 10:42:50,108 - INFO -   Write Text: True
+2025-12-24 10:42:50,109 - INFO -   Use Vision: False
+2025-12-24 10:42:50,109 - INFO -   Screenshot Enabled: True
+2025-12-24 10:42:50,116 - INFO - Prompt after variable substitution: 
+2025-12-24 10:42:50,116 - INFO - Input source is 'none' but ocr_confidence=0.6. Attempting fallback OCR.
+2025-12-24 10:42:50,116 - WARNING - No workflow inputs found for node or missing connection
+2025-12-24 10:42:50,117 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-24 10:42:50,117 - INFO - Checking for running Ollama models to unload...
+2025-12-24 10:42:50,118 - INFO - RAG: Connecting to embedding client at http://localhost:11434 (Direct Ollama)
+2025-12-24 10:42:50,119 - INFO - Sending request to LLM API in thread
+2025-12-24 10:42:50,273 - INFO - Writing LLM output via action handlers
+2025-12-24 10:42:50,273 - INFO - LLM node execution complete. Next node: __done__
+2025-12-24 10:42:50,274 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-24 10:42:50,274 - INFO - Executing LLM node: Unknown
+2025-12-24 10:42:50,274 - INFO - Full node data: {'id': 'test_node_05', 'prompt': 'Test', 'model': 'test', 'api_url': 'http://localhost:11434', 'ocr_confidence': 0.5, 'input_source': 'none'}
+2025-12-24 10:42:50,274 - INFO - LLM configuration: {}
+2025-12-24 10:42:50,274 - INFO - Resolved model for execution: 'llama3.2' (Default: 'llama3.2')
+2025-12-24 10:42:50,275 - INFO - Input source: none, OCR confidence: 0.6
+2025-12-24 10:42:50,275 - INFO - LLM Parameters:
+2025-12-24 10:42:50,275 - INFO -   Model: llama3.2
+2025-12-24 10:42:50,275 - INFO -   API URL: http://localhost:8000
+2025-12-24 10:42:50,275 - INFO -   System Message: 
+2025-12-24 10:42:50,275 - INFO -   Original Prompt: 
+2025-12-24 10:42:50,276 - INFO -   Temperature: 0.7
+2025-12-24 10:42:50,276 - INFO -   Max Tokens: 4096
+2025-12-24 10:42:50,276 - INFO -   Output Variable: llm_output
+2025-12-24 10:42:50,276 - INFO -   Write Text: True
+2025-12-24 10:42:50,276 - INFO -   Use Vision: False
+2025-12-24 10:42:50,276 - INFO -   Screenshot Enabled: True
+2025-12-24 10:42:50,281 - INFO - Prompt after variable substitution: 
+2025-12-24 10:42:50,281 - INFO - Input source is 'none' but ocr_confidence=0.6. Attempting fallback OCR.
+2025-12-24 10:42:50,281 - WARNING - No workflow inputs found for node or missing connection
+2025-12-24 10:42:50,282 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-24 10:42:50,283 - INFO - Checking for running Ollama models to unload...
+2025-12-24 10:42:50,283 - INFO - RAG: Connecting to embedding client at http://localhost:11434 (Direct Ollama)
+2025-12-24 10:42:50,283 - INFO - Sending request to LLM API in thread
+2025-12-24 10:42:50,436 - INFO - Writing LLM output via action handlers
+2025-12-24 10:42:50,437 - INFO - LLM node execution complete. Next node: __done__
+2025-12-24 10:42:50,444 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 10:42:51,120 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-24 10:42:51,121 - INFO - Loading faiss with AVX2 support.
+2025-12-24 10:42:51,134 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-24 10:42:51,272 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-24 10:42:51,272 - INFO - Executing LLM node: Unknown
+2025-12-24 10:42:51,272 - INFO - Full node data: {'id': 'test_node', 'prompt': 'Test Prompt', 'model': 'test-model', 'api_url': 'http://localhost:11434', 'ocr_confidence': 0.5, 'input_source': 'none', 'use_vision': False, 'screenshot_enabled': True}
+2025-12-24 10:42:51,273 - INFO - LLM configuration: {}
+2025-12-24 10:42:51,273 - INFO - Resolved model for execution: 'llama3.2' (Default: 'llama3.2')
+2025-12-24 10:42:51,273 - INFO - Input source: none, OCR confidence: 0.6
+2025-12-24 10:42:51,273 - INFO - LLM Parameters:
+2025-12-24 10:42:51,273 - INFO -   Model: llama3.2
+2025-12-24 10:42:51,273 - INFO -   API URL: http://localhost:8000
+2025-12-24 10:42:51,274 - INFO -   System Message: 
+2025-12-24 10:42:51,274 - INFO -   Original Prompt: 
+2025-12-24 10:42:51,274 - INFO -   Temperature: 0.7
+2025-12-24 10:42:51,274 - INFO -   Max Tokens: 4096
+2025-12-24 10:42:51,274 - INFO -   Output Variable: llm_output
+2025-12-24 10:42:51,274 - INFO -   Write Text: True
+2025-12-24 10:42:51,275 - INFO -   Use Vision: False
+2025-12-24 10:42:51,275 - INFO -   Screenshot Enabled: True
+2025-12-24 10:42:51,280 - INFO - Prompt after variable substitution: 
+2025-12-24 10:42:51,280 - INFO - Input source is 'none' but ocr_confidence=0.6. Attempting fallback OCR.
+2025-12-24 10:42:51,281 - INFO - Fallback OCR successful. Using extracted text as input.
+2025-12-24 10:42:51,281 - INFO - Enhanced prompt with SCREEN_CONTEXT input
+2025-12-24 10:42:51,281 - WARNING - No workflow inputs found for node or missing connection
+2025-12-24 10:42:51,282 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-24 10:42:51,282 - INFO - Checking for running Ollama models to unload...
+2025-12-24 10:42:51,283 - INFO - RAG: Connecting to embedding client at http://localhost:11434 (Direct Ollama)
+2025-12-24 10:42:51,283 - INFO - Sending request to LLM API in thread
+2025-12-24 10:42:51,438 - INFO - Writing LLM output via action handlers
+2025-12-24 10:42:51,439 - INFO - LLM node execution complete. Next node: __done__
+2025-12-24 10:44:25,275 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 10:44:55,815 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 11:37:04,711 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 11:37:04,878 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-24 11:37:04,878 - INFO - Executing LLM node: Unknown
+2025-12-24 11:37:04,878 - INFO - Full node data: {'id': 'test_node', 'llm_config': {'model': 'test-model', 'prompt': 'User Question', 'input_source': 'none', 'ocr_confidence': 0.5, 'use_vision': False, 'screenshot_enabled': True}}
+2025-12-24 11:37:04,879 - INFO - LLM configuration: {}
+2025-12-24 11:37:04,879 - INFO - Resolved model for execution: 'llama3.2' (Default: 'llama3.2')
+2025-12-24 11:37:04,879 - INFO - Input source: none, OCR confidence: 0.6
+2025-12-24 11:37:04,879 - INFO - LLM Parameters:
+2025-12-24 11:37:04,879 - INFO -   Model: llama3.2
+2025-12-24 11:37:04,880 - INFO -   API URL: http://localhost:8000
+2025-12-24 11:37:04,880 - INFO -   System Message: 
+2025-12-24 11:37:04,880 - INFO -   Original Prompt: 
+2025-12-24 11:37:04,880 - INFO -   Temperature: 0.7
+2025-12-24 11:37:04,880 - INFO -   Max Tokens: 4096
+2025-12-24 11:37:04,880 - INFO -   Output Variable: llm_output
+2025-12-24 11:37:04,881 - INFO -   Write Text: True
+2025-12-24 11:37:04,881 - INFO -   Use Vision: False
+2025-12-24 11:37:04,881 - INFO -   Screenshot Enabled: True
+2025-12-24 11:37:04,889 - INFO - Prompt after variable substitution: 
+2025-12-24 11:37:04,889 - INFO - Input source is 'none' but ocr_confidence=0.6. Attempting fallback OCR.
+2025-12-24 11:37:04,889 - INFO - Fallback OCR successful. Using extracted text as input.
+2025-12-24 11:37:04,889 - INFO - Enhanced prompt with SCREEN_CONTEXT input
+2025-12-24 11:37:04,890 - WARNING - No workflow inputs found for node or missing connection
+2025-12-24 11:37:04,891 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-24 11:37:04,891 - INFO - Checking for running Ollama models to unload...
+2025-12-24 11:37:04,893 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-24 11:37:06,928 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-24 11:37:06,929 - DEBUG - No running models found.
+2025-12-24 11:37:06,929 - INFO - RAG: Connecting to embedding client at http://localhost:11434 (Direct Ollama)
+2025-12-24 11:37:06,930 - INFO - Sending request to LLM API in thread
+2025-12-24 11:37:06,932 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-24 11:37:08,964 - DEBUG - http://localhost:11434 "POST /api/stop HTTP/1.1" 404 18
+2025-12-24 11:37:09,104 - INFO - LLM node execution complete. Next node: __done__
+2025-12-24 11:37:25,643 - DEBUG - mss library available for fast screenshot capture
+2025-12-24 11:37:25,809 - INFO - === STARTING LLM NODE EXECUTION ===
+2025-12-24 11:37:25,810 - INFO - Executing LLM node: Unknown
+2025-12-24 11:37:25,810 - INFO - Full node data: {'id': 'test_node', 'data': {'model': 'test-model', 'prompt': 'User Question', 'input_source': 'none', 'ocr_confidence': 0.5, 'use_vision': False, 'screenshot_enabled': True}}
+2025-12-24 11:37:25,810 - INFO - LLM configuration: {'model': 'test-model', 'prompt': 'User Question', 'input_source': 'none', 'ocr_confidence': 0.5, 'use_vision': False, 'screenshot_enabled': True}
+2025-12-24 11:37:25,810 - INFO - Resolved model for execution: 'test-model' (Default: 'llama3.2')
+2025-12-24 11:37:25,811 - INFO - Input source: none, OCR confidence: 0.5
+2025-12-24 11:37:25,811 - INFO - LLM Parameters:
+2025-12-24 11:37:25,811 - INFO -   Model: test-model
+2025-12-24 11:37:25,811 - INFO -   API URL: http://localhost:8000
+2025-12-24 11:37:25,811 - INFO -   System Message: 
+2025-12-24 11:37:25,811 - INFO -   Original Prompt: User Question
+2025-12-24 11:37:25,812 - INFO -   Temperature: 0.7
+2025-12-24 11:37:25,812 - INFO -   Max Tokens: 4096
+2025-12-24 11:37:25,812 - INFO -   Output Variable: llm_output
+2025-12-24 11:37:25,812 - INFO -   Write Text: True
+2025-12-24 11:37:25,812 - INFO -   Use Vision: False
+2025-12-24 11:37:25,812 - INFO -   Screenshot Enabled: True
+2025-12-24 11:37:25,819 - INFO - Prompt after variable substitution: User Question
+2025-12-24 11:37:25,820 - INFO - Input source is 'none' but ocr_confidence=0.5. Attempting fallback OCR.
+2025-12-24 11:37:25,820 - INFO - Fallback OCR successful. Using extracted text as input.
+2025-12-24 11:37:25,820 - INFO - Enhanced prompt with SCREEN_CONTEXT input
+2025-12-24 11:37:25,820 - WARNING - No workflow inputs found for node or missing connection
+2025-12-24 11:37:25,821 - INFO - Preparing Ollama request thread for base_url: http://localhost:8000
+2025-12-24 11:37:25,821 - INFO - Checking for running Ollama models to unload...
+2025-12-24 11:37:25,823 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-24 11:37:27,850 - DEBUG - http://localhost:11434 "GET /api/ps HTTP/1.1" 200 13
+2025-12-24 11:37:27,851 - DEBUG - No running models found.
+2025-12-24 11:37:27,851 - INFO - RAG: Connecting to embedding client at http://localhost:11434 (Direct Ollama)
+2025-12-24 11:37:27,852 - INFO - Sending request to LLM API in thread
+2025-12-24 11:37:27,854 - DEBUG - Starting new HTTP connection (1): localhost:11434
+2025-12-24 11:37:29,912 - DEBUG - http://localhost:11434 "POST /api/stop HTTP/1.1" 404 18
+2025-12-24 11:37:29,974 - INFO - LLM node execution complete. Next node: __done__
+2025-12-26 11:37:58,441 - DEBUG - mss library available for fast screenshot capture

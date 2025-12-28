@@ -582,7 +582,7 @@ async def root():
 async def health_check():
     """Check if Ollama server is running"""
     try:
-        response = requests.get(f"{get_ollama_base_url()}/api/tags")
+        response = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=5)
         models_status = "running" if response.status_code == 200 else "not responding"
         # Report bootstrap state and missing models
         with _BOOTSTRAP_LOCK:
@@ -1050,37 +1050,96 @@ class ComoRAGAddMemoryRequest(BaseModel):
 
 COMORAG_ENGINE: Optional[ComoRAGEngine] = None
 OLLAMA_ENGINE: Optional[OllamaEngine] = None
+SETTINGS: Any = None
 
 @app.on_event("startup")
 async def startup_event():
-    global OLLAMA_ENGINE, COMORAG_ENGINE
+    global OLLAMA_ENGINE, COMORAG_ENGINE, SETTINGS
     
     # Initialize Ollama Engine (using settings from LoOper config or defaults)
     try:
-        from settings import OllamaSettings, Settings
-        settings = Settings()
+        try:
+            from AI.settings import OllamaSettings, Settings
+            SETTINGS = Settings()
+        except ImportError:
+            # Fallback for frozen builds or flat structure
+            from settings import OllamaSettings, Settings
+            SETTINGS = Settings()
     except ImportError:
         # Fallback if settings.py isn't fully integrated yet
         class MockSettings:
             pass
-        settings = MockSettings()
-        settings.ollama = MockSettings()
-        settings.ollama.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        SETTINGS = MockSettings()
+        SETTINGS.ollama = MockSettings()
+        SETTINGS.ollama.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
     
-    OLLAMA_ENGINE = OllamaEngine(settings.ollama)
-    await OLLAMA_ENGINE.initialize()
-    
-    # Initialize ComoRAG Engine
-    COMORAG_ENGINE = ComoRAGEngine(settings=settings, ollama_engine=OLLAMA_ENGINE)
-    await COMORAG_ENGINE.initialize()
+    try:
+        OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+    except Exception as e:
+        print(f"Warning: Failed to create Ollama engine: {e}")
+        OLLAMA_ENGINE = None
+
+    try:
+        COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+    except Exception as e:
+        print(f"Warning: Failed to create ComoRAG engine: {e}")
+        COMORAG_ENGINE = None
+
+    async def _init_engines_in_background():
+        global OLLAMA_ENGINE, COMORAG_ENGINE
+        try:
+            if OLLAMA_ENGINE is not None:
+                await OLLAMA_ENGINE.initialize()
+        except Exception as e:
+            print(f"Warning: Failed to initialize Ollama engine: {e}")
+        try:
+            if COMORAG_ENGINE is not None and not COMORAG_ENGINE.is_ready():
+                await COMORAG_ENGINE.initialize()
+        except Exception as e:
+            print(f"Warning: Failed to initialize ComoRAG engine: {e}")
+
+    try:
+        asyncio.create_task(_init_engines_in_background())
+    except Exception as e:
+        print(f"Warning: Failed to start background engine initialization: {e}")
 
 @app.post("/comorag/reason")
 async def comorag_reason(request: ComoRAGReasonRequest):
     """Perform ComoRAG reasoning locally using the integrated engine"""
     try:
-        global COMORAG_ENGINE
-        if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+        global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+        
+        # Attempt to create engine if missing (Lazy Creation)
+        if COMORAG_ENGINE is None:
+             if SETTINGS is None:
+                 # Try to load settings if not loaded (should rely on startup but just in case)
+                 try:
+                     from AI.settings import Settings
+                     SETTINGS = Settings()
+                 except:
+                     pass
+                     
+             if OLLAMA_ENGINE is None and SETTINGS:
+                 try:
+                     OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+                 except:
+                     pass
+             
+             if SETTINGS:
+                 try:
+                     COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+                 except Exception as e:
+                     raise HTTPException(status_code=503, detail=f"ComoRAG engine creation failed: {str(e)}")
+        
+        if COMORAG_ENGINE is None:
+             raise HTTPException(status_code=503, detail="ComoRAG engine not created")
+             
+        if not COMORAG_ENGINE.is_ready():
+            try:
+                # Attempt lazy initialization if not ready
+                await COMORAG_ENGINE.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
 
         ctx = request.context or ""
         imgs = process_images(request.images) if request.images else None
@@ -1103,9 +1162,36 @@ async def comorag_reason(request: ComoRAGReasonRequest):
 async def comorag_reason_stream(request: ComoRAGReasonRequest):
     """Stream ComoRAG reasoning locally"""
     try:
-        global COMORAG_ENGINE
-        if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-             raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+        global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+        
+        # Attempt to create engine if missing (Lazy Creation)
+        if COMORAG_ENGINE is None:
+             if SETTINGS is None:
+                 try:
+                     from AI.settings import Settings
+                     SETTINGS = Settings()
+                 except:
+                     pass
+             if OLLAMA_ENGINE is None and SETTINGS:
+                 try:
+                     OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+                 except:
+                     pass
+             if SETTINGS:
+                 try:
+                     COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+                 except Exception:
+                     pass
+
+        if COMORAG_ENGINE is None:
+             raise HTTPException(status_code=503, detail="ComoRAG engine not created")
+
+        if not COMORAG_ENGINE.is_ready():
+            try:
+                # Attempt lazy initialization if not ready
+                await COMORAG_ENGINE.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
 
         async def event_generator():
             try:
@@ -1122,14 +1208,72 @@ async def comorag_reason_stream(request: ComoRAGReasonRequest):
                 yield json.dumps({"type": "error", "message": str(e)}) + "\n"
 
         return StreamingResponse(event_generator(), media_type="application/x-ndjson")
+    except HTTPException as e:
+        raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
 
 @app.get("/comorag/status")
-async def comorag_status():
-    global COMORAG_ENGINE
+async def comorag_status(init_if_needed: bool = True):
+    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+    init_error = None
+    if init_if_needed:
+        if COMORAG_ENGINE is None:
+             if SETTINGS is None:
+                 try:
+                     from AI.settings import Settings
+                     SETTINGS = Settings()
+                 except:
+                     pass
+             if OLLAMA_ENGINE is None and SETTINGS:
+                 try:
+                     OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+                 except:
+                     pass
+             if SETTINGS:
+                 try:
+                     COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+                 except Exception as e:
+                     init_error = f"Creation failed: {str(e)}"
+        if COMORAG_ENGINE and (not COMORAG_ENGINE.is_ready()):
+            try:
+                await COMORAG_ENGINE.initialize()
+            except Exception as e:
+                init_error = f"Init failed: {str(e)}"
+                print(f"ComoRAG lazy init failed: {e}")
     ready = COMORAG_ENGINE is not None and COMORAG_ENGINE.is_ready()
-    return {"ready": ready}
+    resp = {"ready": ready}
+    if init_error:
+        resp["error"] = init_error
+    return resp
+
+@app.post("/comorag/init")
+async def comorag_init(memory_size: Optional[int] = 1000):
+    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+    if COMORAG_ENGINE is None:
+         if SETTINGS is None:
+             try:
+                 from AI.settings import Settings
+                 SETTINGS = Settings()
+             except:
+                 pass
+         if OLLAMA_ENGINE is None and SETTINGS:
+             try:
+                 OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+             except:
+                 pass
+         if SETTINGS:
+             try:
+                 COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+             except Exception as e:
+                 raise HTTPException(status_code=503, detail=f"ComoRAG engine creation failed: {str(e)}")
+    if COMORAG_ENGINE is None:
+        raise HTTPException(status_code=503, detail="ComoRAG engine not created")
+    try:
+        await COMORAG_ENGINE.initialize(memory_size or 1000)
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
+    return {"ready": COMORAG_ENGINE.is_ready(), "memory_size": COMORAG_ENGINE.memory_workspace.max_size if COMORAG_ENGINE.memory_workspace else 0}
 
 @app.get("/comorag/memory")
 async def comorag_memory():
@@ -1152,9 +1296,35 @@ async def comorag_memory():
 
 @app.post("/comorag/memory")
 async def add_comorag_memory(request: ComoRAGAddMemoryRequest):
-    global COMORAG_ENGINE
-    if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-        raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+    
+    # Attempt to create engine if missing
+    if COMORAG_ENGINE is None:
+         if SETTINGS is None:
+             try:
+                 from AI.settings import Settings
+                 SETTINGS = Settings()
+             except:
+                 pass
+         if OLLAMA_ENGINE is None and SETTINGS:
+             try:
+                 OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+             except:
+                 pass
+         if SETTINGS:
+             try:
+                 COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+             except Exception:
+                 pass
+
+    if COMORAG_ENGINE is None:
+        raise HTTPException(status_code=503, detail="ComoRAG engine not created")
+        
+    if not COMORAG_ENGINE.is_ready():
+        try:
+            await COMORAG_ENGINE.initialize()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
         
     await COMORAG_ENGINE.add_memory(
         content=request.content,
@@ -1166,19 +1336,45 @@ async def add_comorag_memory(request: ComoRAGAddMemoryRequest):
 
 @app.delete("/comorag/memory")
 async def clear_comorag_memory():
-    global COMORAG_ENGINE
+    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
+    
+    # Attempt to create engine if missing
     if COMORAG_ENGINE is None:
-         raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+         if SETTINGS is None:
+             try:
+                 from AI.settings import Settings
+                 SETTINGS = Settings()
+             except:
+                 pass
+         if OLLAMA_ENGINE is None and SETTINGS:
+             try:
+                 OLLAMA_ENGINE = OllamaEngine(SETTINGS.ollama if hasattr(SETTINGS, 'ollama') else None)
+             except:
+                 pass
+         if SETTINGS:
+             try:
+                 COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
+             except Exception:
+                 pass
+
+    if COMORAG_ENGINE is None:
+         raise HTTPException(status_code=503, detail="ComoRAG engine not created")
+         
+    if not COMORAG_ENGINE.is_ready():
+        try:
+            await COMORAG_ENGINE.initialize()
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
     
     await COMORAG_ENGINE.clear_memory()
     return {"status": "memory_cleared"}
 
 if __name__ == "__main__":
-    # Get Tailscale IP from environment variable, fallback to all interfaces
-    tailscale_ip = os.getenv("TAILSCALE_IP", "0.0.0.0")
+    bind_host = os.getenv("API_BIND_HOST") or "0.0.0.0"
+    tailscale_ip = os.getenv("TAILSCALE_IP") or bind_host
     port = int(os.getenv("API_PORT", "8000"))
     
-    print(f"Starting Ollama API Gateway on {tailscale_ip}:{port}")
+    print(f"Starting Ollama API Gateway on {bind_host}:{port}")
     print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
     # Start model bootstrap in background so API binds immediately
     def _run_bootstrap_async():
@@ -1236,4 +1432,4 @@ if __name__ == "__main__":
         log_config["formatters"]["default"] = {"format": "%(levelname)s: %(message)s"}
         log_config["formatters"]["access"] = {"format": "%(levelname)s: %(message)s"}
 
-    uvicorn.run(app, host=tailscale_ip, port=port, reload=False, log_level="info", log_config=log_config)
+    uvicorn.run(app, host=bind_host, port=port, reload=False, log_level="info", log_config=log_config)

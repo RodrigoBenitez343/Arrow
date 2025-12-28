@@ -10,24 +10,52 @@ def _ocr_input(ocr_confidence: int, stop_flag) -> str:
     """Capture a screenshot and extract text using OCR."""
     try:
         from ...computer_vision import TemplateMatching
-        import pyautogui
+        from ...config import CV2_AVAILABLE
+        
+        if CV2_AVAILABLE:
+            import cv2
+            import numpy as np
 
         if stop_flag and stop_flag():
             logger.info("Stopped before OCR screenshot capture")
             return ""
 
-        pyautogui.FAILSAFE = False
-        screenshot = pyautogui.screenshot()
+        # Use TemplateMatching.capture_screen() which prefers mss (faster/more reliable)
+        logger.debug("Taking screenshot for OCR input...")
+        screen_cv = TemplateMatching.capture_screen()
+        
+        if screen_cv is None:
+            logger.error("Failed to capture screen for OCR")
+            return ""
 
         screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "screenshots")
         os.makedirs(screenshots_dir, exist_ok=True)
         timestamp = int(time.time())
         screenshot_path = os.path.join(screenshots_dir, f"llm_ocr_{timestamp}.png")
-        screenshot.save(screenshot_path)
-        register_temporal_screenshot(screenshot_path)
+        
+        # Save the EXACT image we are about to process
+        if CV2_AVAILABLE:
+            try:
+                cv2.imwrite(screenshot_path, screen_cv)
+                register_temporal_screenshot(screenshot_path)
+                logger.debug(f"Saved OCR screenshot to {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save debug screenshot: {e}")
+        else:
+            # Fallback if cv2 is not available (e.g. using PIL if possible, but screen_cv is numpy array)
+            # If CV2 is not available, TemplateMatching might return something else or fail?
+            # Assuming if CV2_AVAILABLE is False, we might not have numpy either.
+            # But TemplateMatching depends on CV2/Numpy.
+            pass
 
-        ocr_results = TemplateMatching.ocr_extract_all_text(min_confidence=ocr_confidence, stop_flag=stop_flag)
-        cleanup_screenshot(screenshot_path)
+        # Pass the captured image directly to OCR engine to avoid re-capture
+        ocr_results = TemplateMatching.ocr_extract_all_text(
+            min_confidence=ocr_confidence, 
+            screen_cv=screen_cv, 
+            stop_flag=stop_flag
+        )
+        if CV2_AVAILABLE:
+            cleanup_screenshot(screenshot_path)
 
         if not ocr_results:
             logger.warning("No OCR text extracted")
@@ -44,6 +72,8 @@ def _ocr_input(ocr_confidence: int, stop_flag) -> str:
             return ""
     except Exception as e:
         logger.error(f"OCR processing failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return ""
 
 

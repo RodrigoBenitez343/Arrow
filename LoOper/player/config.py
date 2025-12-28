@@ -4,7 +4,9 @@ Configuration and logging setup for the LocalOperator automation system.
 """
 
 import logging
+import os
 import sys
+import importlib.util
 
 # Import computer vision libraries with fallback handling
 try:
@@ -17,14 +19,15 @@ except ImportError:
     print("Install with: pip install opencv-python numpy")
 
 # Import OCR libraries with fallback handling
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_mkldnn", "0")
+_paddleocr_spec = None
 try:
-    import pytesseract                  # Python wrapper for Tesseract OCR engine.
-    OCR_AVAILABLE = True
-except ImportError:
-    OCR_AVAILABLE = False
-    print("Warning: pytesseract not available. OCR functionality will be disabled.")
-    print("Install with: pip install pytesseract")
-    print("Also ensure Tesseract OCR is installed on your system.")
+    _paddleocr_spec = importlib.util.find_spec("paddleocr")
+except Exception:
+    _paddleocr_spec = None
+OCR_AVAILABLE = bool(_paddleocr_spec is not None)
+OCR_ENGINE = "paddle" if OCR_AVAILABLE else None
 
 # --- Logging Configuration ---
 # Sets up how the script will log information. It will both save to a file ('automation.log')

@@ -22,8 +22,14 @@ class CodeMixin:
             self._initialize_chain_runtime()
             self._runtime_initialized = True
         
-        logger.info(f"Executing Code node: {node.get('id')}")
         code_data = node.get('data', {})
+        node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
+        if node_id:
+            try:
+                node['id'] = node_id
+            except Exception:
+                pass
+        logger.info(f"Executing Code node: {node_id}")
         
         # Get properties
         code = code_data.get('code', '')
@@ -178,7 +184,8 @@ class CodeMixin:
              logger.warning("No code to execute in Code node")
              return self._get_code_next_node(node, 'output')
 
-        node_id = node.get('id') or node.get('node_id')
+        if not node_id:
+            node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
         try:
             base_dir = self._chain_runtime_dir or os.path.join(os.getcwd(), 'runtime')
             tmp_dir = os.path.join(base_dir, 'code_nodes', str(node_id))
@@ -266,9 +273,14 @@ class CodeMixin:
             if self._venv_site_packages and os.path.isdir(self._venv_site_packages):
                 if self._venv_site_packages not in sys.path:
                     sys.path.insert(0, self._venv_site_packages)
-            self._install_code_dependencies(code_to_run)
+            dep_report = self._install_code_dependencies(code_to_run)
+            try:
+                if node_id and dep_report:
+                    self.llm_executor.set_variable(f"node_{node_id}_deps", dep_report)
+            except Exception:
+                pass
         except Exception:
-            pass
+            dep_report = None
         try:
             for inp in (inputs or []):
                 src_id = inp.get('from_node')
@@ -299,7 +311,8 @@ class CodeMixin:
                 leave_running = False
             ok, result, stdout_str, stderr_str, terminal_output, pid = self._run_persistent_script(script_path, timeout_s, os.path.dirname(script_path), leave_running=leave_running)
             if ok:
-                node_id = node.get('id') or node.get('node_id')
+                if not node_id:
+                    node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
                 self.llm_executor.set_variable(f"node_{node_id}_output", result)
                 self.llm_executor.set_variable(f"node_{node_id}_result", result)
                 self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
@@ -328,29 +341,45 @@ class CodeMixin:
                 except Exception:
                     pass
                 return self._get_code_next_node(node, 'output')
-            # fallthrough to error handling below
+            try:
+                if not node_id:
+                    node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
+                msg = terminal_output or stderr_str or "Persistent script failed to start"
+                self._set_code_node_error(node, msg)
+                self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
+                self.llm_executor.set_variable(f"node_{node_id}_stderr", stderr_str)
+                self.llm_executor.set_variable(f"node_{node_id}_terminal_output", terminal_output)
+                try:
+                    node['last_output_port'] = 'error'
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            return self._get_code_next_node(node, 'error')
 
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
 
         try:
             # Prepare scope
-            local_scope = {
-                'input_data': input_data,
-                'args': args,
-                'os': os,
-                'print': print,
-                '__name__': '__main__'
-            }
+            exec_scope = self.llm_executor.variables
             try:
-                self._preload_chain_modules(local_scope)
+                exec_scope['input_data'] = input_data
+                exec_scope['args'] = args
+                exec_scope['os'] = os
+                exec_scope['print'] = print
+                exec_scope['__name__'] = '__main__'
+            except Exception:
+                pass
+            try:
+                self._preload_chain_modules(exec_scope)
             except Exception:
                 pass
             
             # Execute code with capture
             # Use llm_executor.variables as globals to allow scripts to share state (aggregation)
             with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
-                exec(code_to_run, self.llm_executor.variables, local_scope)
+                exec(code_to_run, exec_scope, exec_scope)
             
             # Get captured output
             stdout_str = stdout_capture.getvalue()
@@ -363,9 +392,9 @@ class CodeMixin:
                 logger.warning(f"Code node stderr:\n{stderr_str}")
 
             # Extract result
-            result = local_scope.get(output_variable)
+            result = exec_scope.get(output_variable)
             if result is None and output_variable == 'result':
-                 result = local_scope.get('output')
+                 result = exec_scope.get('output')
             
             # If result is still None, use terminal_output as the main output
             if result is None:
@@ -416,7 +445,8 @@ class CodeMixin:
             # Combined error output
             full_error_output = f"{stdout_str}\n{stderr_str}\nError:\n{error_trace}"
             
-            node_id = node.get('id') or node.get('node_id')
+            if not node_id:
+                node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
             self._set_code_node_error(node, error_trace)
             self.llm_executor.set_variable(f"node_{node_id}_terminal_output", full_error_output)
             self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
@@ -439,7 +469,8 @@ class CodeMixin:
             # Check if error output is connected
             # Retry control: allow up to 3 patch cycles
             try:
-                node_id = node.get('id') or node.get('node_id')
+                if not node_id:
+                    node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
                 cnt = int(self._code_retry_counts.get(node_id, 0) or 0)
                 cnt += 1
                 self._code_retry_counts[node_id] = cnt
@@ -462,7 +493,12 @@ class CodeMixin:
         return None
 
     def _set_code_node_error(self, node, error_msg):
-        node_id = node.get('id') or node.get('node_id')
+        code_data = node.get('data', {}) if isinstance(node, dict) else {}
+        node_id = None
+        try:
+            node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
+        except Exception:
+            node_id = code_data.get('node_id') or code_data.get('id')
         self.llm_executor.set_variable(f"node_{node_id}_error", error_msg)
 
     def _sanitize_alias(self, alias):
@@ -558,6 +594,35 @@ class CodeMixin:
             CREATE_NO_WINDOW = 0x08000000
             proc = _sp.Popen(cmd, cwd=cwd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
             if leave_running:
+                start = time.time()
+                rc = None
+                while (time.time() - start) < 1.0:
+                    try:
+                        rc = proc.poll()
+                    except Exception:
+                        rc = None
+                    if rc is not None:
+                        break
+                    try:
+                        time.sleep(0.05)
+                    except Exception:
+                        break
+                if rc is not None:
+                    ok = (rc == 0)
+                    stdout_str = ''
+                    stderr_str = ''
+                    try:
+                        out, err = proc.communicate(timeout=0.2)
+                        stdout_str = out or ''
+                        stderr_str = err or ''
+                    except Exception:
+                        pass
+                    terminal_output = (stdout_str or '') + (stderr_str or '')
+                    result = terminal_output or ''
+                    try:
+                        return ok, result, stdout_str, stderr_str, terminal_output, None
+                    except Exception:
+                        return ok, result, stdout_str, stderr_str, terminal_output
                 try:
                     pid = proc.pid
                 except Exception:
@@ -731,7 +796,7 @@ class CodeMixin:
         try:
             self._ensure_chain_venv()
             if not self._venv_python:
-                return
+                return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
             import re
             pkgs = set()
             for line in (code_str or '').splitlines():
@@ -739,7 +804,8 @@ class CodeMixin:
                 if m1:
                     names = [n.strip() for n in m1.group(1).split(',') if n.strip()]
                     for n in names:
-                        pkgs.add(n.split('.')[0])
+                        base = n.split(' as ')[0].strip()
+                        pkgs.add(base.split('.')[0].strip())
                     continue
                 m2 = re.match(r"\s*from\s+([a-zA-Z0-9_\.]+)\s+import\s+", line)
                 if m2:
@@ -747,13 +813,36 @@ class CodeMixin:
             stdlib = {
                 'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','tkinter'
             }
-            pkgs = [p for p in pkgs if p and p not in stdlib]
-            for p in pkgs:
+            wanted = [p for p in pkgs if p and p not in stdlib]
+            installed = []
+            failed = []
+            skipped = []
+            pip_out_all = []
+            pip_err_all = []
+            for p in wanted:
                 try:
                     # Use CREATE_NO_WINDOW on Windows to prevent console popup
                     cflags = 0x08000000 if sys.platform == "win32" else 0
-                    _sp.run([self._venv_python, '-m', 'pip', 'install', p], capture_output=True, text=True, timeout=60, creationflags=cflags)
+                    r = _sp.run([self._venv_python, '-m', 'pip', 'install', p], capture_output=True, text=True, timeout=180, creationflags=cflags)
+                    if r.returncode == 0:
+                        installed.append(p)
+                    else:
+                        failed.append(p)
+                    if r.stdout:
+                        pip_out_all.append(r.stdout)
+                    if r.stderr:
+                        pip_err_all.append(r.stderr)
                 except Exception:
-                    continue
+                    failed.append(p)
+            for p in pkgs:
+                if p in stdlib:
+                    skipped.append(p)
+            return {
+                "installed": installed,
+                "failed": failed,
+                "skipped": sorted(set(skipped)),
+                "pip_stdout": "\n".join([s for s in pip_out_all if s]).strip(),
+                "pip_stderr": "\n".join([s for s in pip_err_all if s]).strip(),
+            }
         except Exception:
-            pass
+            return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}

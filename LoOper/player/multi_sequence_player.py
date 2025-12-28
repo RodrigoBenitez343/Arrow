@@ -130,6 +130,60 @@ class MultiSequencePlayer(SeleniumBot):
             pass
     
 
+    def _chain_uses_comorag(self):
+        try:
+            llm_nodes = self.llm_nodes or []
+        except Exception:
+            llm_nodes = []
+        if not llm_nodes:
+            return False
+        for n in llm_nodes:
+            try:
+                cfg = (n.get('llm_configuration') or n) if isinstance(n, dict) else {}
+                val = cfg.get('use_comorag', True)
+                if isinstance(val, str):
+                    val = val.strip().lower() in ('true', '1', 'yes', 'on')
+                if bool(val):
+                    return True
+            except Exception:
+                return True
+        return False
+
+
+    def _wait_for_comorag_ready(self, base_url, timeout=30, stop_flag=None):
+        """Waits for ComoRAG engine to be ready."""
+        import requests
+        import time
+        
+        start_time = time.time()
+        logger.info(f"Waiting for ComoRAG engine to be ready at {base_url}...")
+        
+        while time.time() - start_time < timeout:
+            try:
+                if stop_flag and stop_flag():
+                    return False
+            except Exception:
+                pass
+            try:
+                response = requests.get(f"{base_url}/comorag/status?init_if_needed=true", timeout=8)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("ready", False):
+                        logger.info("ComoRAG engine is ready")
+                        return True
+                
+                try:
+                    init_payload = {"memory_size": 1000}
+                    requests.post(f"{base_url}/comorag/init", json=init_payload, timeout=10)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            
+            time.sleep(1)
+            
+        logger.warning("ComoRAG engine did not become ready within timeout")
+        return False
 
     def play_chain(self, stop_flag=None):
         """
@@ -147,6 +201,36 @@ class MultiSequencePlayer(SeleniumBot):
                 _cleanup_ollama_runners()
         except Exception:
             pass
+
+        if self._chain_uses_comorag():
+            try:
+                import requests
+                tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
+                port = os.getenv("API_PORT", "8000")
+                base_url = f"http://{tailscale_ip}:{port}"
+                if self._wait_for_comorag_ready(base_url, stop_flag=stop_flag):
+                    url = f"{base_url}/comorag/memory"
+                    logger.info(f"Clearing ComoRAG memory at {url}...")
+                    response = requests.delete(url, timeout=5)
+                    if response.status_code == 200:
+                        logger.info("Successfully cleared ComoRAG memory")
+                    else:
+                        logger.warning(f"Failed to clear ComoRAG memory: {response.status_code} {response.text}")
+            except Exception as e:
+                logger.warning(f"Could not clear ComoRAG memory (API might be down or unreachable): {e}")
+
+        # Reset component states to prevent variable persistence across runs
+        try:
+            if hasattr(self, 'llm_executor'):
+                self.llm_executor.reset()
+            if hasattr(self, 'workflow_executor'):
+                self.workflow_executor.reset()
+            self.skipped_nodes = set()
+            self.clear_selection_memory()
+            logger.info("Reset MultiSequencePlayer component states")
+        except Exception as e:
+            logger.warning(f"Failed to reset component states: {e}")
+
         # Interruption-friendly initial delay
         initial_delay = 2.0
         elapsed = 0.0
