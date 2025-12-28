@@ -5,6 +5,7 @@ Handles OCR-based conditional triggers with text detection and validation.
 """
 import time
 from ...config import logger, OCR_AVAILABLE
+from ...ocr_engine import extract_text
 
 
 class OCRTrigger:
@@ -40,7 +41,7 @@ class OCRTrigger:
             self.stop_flag = stop_flag
             
         if not OCR_AVAILABLE:
-            logger.warning("OCR not available - pytesseract not installed")
+            logger.warning("OCR not available")
             return False
         
         try:
@@ -124,8 +125,7 @@ class OCRTrigger:
         try:
             if not OCR_AVAILABLE:
                 return ""
-            
-            import pytesseract
+
             import cv2
             
             # Crop to region if specified
@@ -143,9 +143,7 @@ class OCRTrigger:
             # Increase contrast
             gray = cv2.convertScaleAbs(gray, alpha=1.2, beta=10)
             
-            # Perform OCR
-            config = f'--oem 3 --psm 6 -l {language}'
-            text = pytesseract.image_to_string(gray, config=config)
+            text = extract_text(gray, language=language)
             
             # Clean up the text
             text = text.strip()
@@ -172,7 +170,7 @@ class OCRTrigger:
             bool: True if text is found
         """
         if not OCR_AVAILABLE:
-            logger.warning("OCR not available - pytesseract not installed")
+            logger.warning("OCR not available")
             return False
         
         try:
@@ -246,7 +244,7 @@ class OCRTrigger:
             str: Extracted text or empty string
         """
         if not OCR_AVAILABLE:
-            logger.warning("OCR not available - pytesseract not installed")
+            logger.warning("OCR not available")
             return ""
         
         try:

@@ -585,8 +585,16 @@ async def cleanup_endpoint(body: Dict[str, Any]):
 async def comorag_reason(request: ComoRAGRequest):
     """Perform ComoRAG reasoning"""
     try:
+        global comorag_engine, ollama_engine, settings
         if not comorag_engine:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+            try:
+                if not ollama_engine:
+                    ollama_engine = OllamaEngine(settings.ollama)
+                    await ollama_engine.initialize()
+                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
+                await comorag_engine.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
         
         result = await comorag_engine.reason(
             query=request.query,
@@ -634,8 +642,16 @@ async def comorag_reason_stream(request: ComoRAGRequest):
 async def comorag_add_memory(request: ComoRAGAddMemoryRequest):
     """Add memory to ComoRAG"""
     try:
+        global comorag_engine, ollama_engine, settings
         if not comorag_engine:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+            try:
+                if not ollama_engine:
+                    ollama_engine = OllamaEngine(settings.ollama)
+                    await ollama_engine.initialize()
+                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
+                await comorag_engine.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
         
         await comorag_engine.add_memory(
             content=request.content,
@@ -653,8 +669,16 @@ async def comorag_add_memory(request: ComoRAGAddMemoryRequest):
 async def comorag_memory_state():
     """Get ComoRAG memory state"""
     try:
+        global comorag_engine, ollama_engine, settings
         if not comorag_engine:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+            try:
+                if not ollama_engine:
+                    ollama_engine = OllamaEngine(settings.ollama)
+                    await ollama_engine.initialize()
+                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
+                await comorag_engine.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
         
         return await comorag_engine.get_memory_state()
     except Exception as e:
@@ -666,14 +690,40 @@ async def comorag_memory_state():
 async def comorag_clear_memory():
     """Clear ComoRAG memory"""
     try:
+        global comorag_engine, ollama_engine, settings
         if not comorag_engine:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
+            try:
+                if not ollama_engine:
+                    ollama_engine = OllamaEngine(settings.ollama)
+                    await ollama_engine.initialize()
+                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
+                await comorag_engine.initialize()
+            except Exception as e:
+                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
         
         await comorag_engine.clear_memory()
         return {"status": "success", "message": "Memory cleared"}
     except Exception as e:
         logger.error(f"Failed to clear memory: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/comorag/status")
+async def comorag_status(init_if_needed: bool = True):
+    """Check ComoRAG readiness"""
+    global comorag_engine, ollama_engine, settings
+    if init_if_needed:
+        try:
+            if not comorag_engine:
+                if not ollama_engine:
+                    ollama_engine = OllamaEngine(settings.ollama)
+                    await ollama_engine.initialize()
+                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
+            if comorag_engine and (not comorag_engine.is_ready()):
+                await comorag_engine.initialize()
+        except Exception:
+            pass
+    ready = bool(comorag_engine) and comorag_engine.is_ready()
+    return {"ready": ready}
 
 
 if __name__ == "__main__":

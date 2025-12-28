@@ -1,5 +1,5 @@
 # install_dependencies.ps1
-# This script checks for Tesseract OCR and Ollama, and installs them if missing.
+# This script checks for Ollama, and installs it if missing.
 
 Add-Type -AssemblyName PresentationFramework
 
@@ -7,30 +7,21 @@ function Show-MessageBox($Message, $Title, $Buttons = "YesNo", $Icon = "Question
     return [System.Windows.MessageBox]::Show($Message, $Title, $Buttons, $Icon)
 }
 
-$TesseractInstalled = $false
 $OllamaInstalled = $false
 
-# 1. Check Tesseract
-if (Get-Command tesseract -ErrorAction SilentlyContinue) {
-    $TesseractInstalled = $true
-} elseif (Test-Path "C:\Program Files\Tesseract-OCR\tesseract.exe") {
-    $TesseractInstalled = $true
-}
-
-# 2. Check Ollama
+# 1. Check Ollama
 if (Get-Command ollama -ErrorAction SilentlyContinue) {
     $OllamaInstalled = $true
 } elseif (Test-Path "$env:LOCALAPPDATA\Ollama\ollama.exe") {
     $OllamaInstalled = $true
 }
 
-if (-not $TesseractInstalled -or -not $OllamaInstalled) {
+if (-not $OllamaInstalled) {
     # If we are running from the MSI, we might want to be more silent or just show progress
     # But since we want the user to "see" it, we'll keep the message box for confirmation if needed
     # or just proceed if the user already agreed in the MSI (though we don't have that link yet)
     
     $Missing = @()
-    if (-not $TesseractInstalled) { $Missing += "Tesseract OCR" }
     if (-not $OllamaInstalled) { $Missing += "Ollama" }
     
     $MissingStr = $Missing -join " and "
@@ -48,25 +39,6 @@ if (-not $TesseractInstalled -or -not $OllamaInstalled) {
     $balloon.Visible = $true
     $balloon.ShowBalloonTip(5000)
 
-    if (-not $TesseractInstalled) {
-            Write-Host "Downloading Tesseract..."
-            $TessUrl = "https://github.com/UB-Mannheim/tesseract/releases/download/v5.5.0.20241111/tesseract-ocr-w64-setup-5.5.0.20241111.exe"
-            $TessPath = Join-Path $env:TEMP "tesseract-setup.exe"
-            try {
-                if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-                    curl.exe -L $TessUrl -o $TessPath
-                } else {
-                    Invoke-WebRequest -Uri $TessUrl -OutFile $TessPath
-                }
-                Write-Host "Installing Tesseract..."
-                Start-Process -FilePath $TessPath -ArgumentList "/S" -Wait
-            } catch {
-                Show-MessageBox "Failed to download or install Tesseract: $($_.Exception.Message)" "Error" "OK" "Error"
-            } finally {
-                if (Test-Path $TessPath) { Remove-Item $TessPath }
-            }
-        }
-        
         if (-not $OllamaInstalled) {
             Write-Host "Downloading Ollama..."
             $OllamaUrl = "https://ollama.com/download/OllamaSetup.exe"

@@ -24,16 +24,11 @@ if sys.platform == 'win32':
         # Fallback for environments where stdout/stderr are replaced or don't have buffers (like some GUI wrappers)
         pass
 
-# CRITICAL: Import torch before ANY other module to avoid DLL initialization conflicts (WinError 1114)
-# This is a known workaround for PyTorch 2.9+ and PyQt conflicts on Windows.
-# Even with 2.8.0, this is the safest order.
-try:
-    import torch
-except ImportError:
-    pass
-
 # Fix for Intel OpenMP runtime duplicate error
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# Force disable MKLDNN for PaddleOCR to avoid OneDNN errors
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_enable_mkldnn"] = "0"
 
 import threading
 import subprocess
@@ -80,6 +75,14 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory') and not getattr(sys, 'fr
     except Exception:
         pass
 
+# CRITICAL: Import torch before ANY other module to avoid DLL initialization conflicts (WinError 1114)
+# This is a known workaround for PyTorch 2.9+ and PyQt conflicts on Windows.
+# Even with 2.8.0, this is the safest order.
+try:
+    import torch
+except Exception:
+    torch = None
+
 # Normalize working directory and import path for frozen builds
 if getattr(sys, 'frozen', False):
     # For PyInstaller, sys._MEIPASS is the root of the bundle
@@ -105,10 +108,27 @@ from AI.model_cache import load_models_at_startup
 from AI.config_loader import load_ai_config, should_auto_start_api, get_api_url
 import requests
 
+def _wait_for_api(base_url: str, timeout_s: float = 60.0) -> bool:
+    deadline = time.time() + float(timeout_s)
+    url = f"{base_url.rstrip('/')}/"
+    while time.time() < deadline:
+        try:
+            r = requests.get(url, timeout=2)
+            if r.status_code == 200:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
 def start_api_server():
     """Start the LLM API server"""
     try:
         print("🚀 Starting LLM API server...")
+        try:
+            load_ai_config()
+        except Exception:
+            pass
         if getattr(sys, 'frozen', False):
             try:
                 # In frozen mode, imports might need explicit package naming
@@ -190,7 +210,19 @@ def start_api_server():
 
                 t = threading.Thread(target=run_server, daemon=True)
                 t.start()
-                time.sleep(3)
+                api_url = get_api_url()
+                if _wait_for_api(api_url, timeout_s=90):
+                    try:
+                        url = f"{api_url}/comorag/status?init_if_needed=true"
+                        r = requests.get(url, timeout=15)
+                        if r.status_code == 200 and r.json().get("ready"):
+                            print("✅ ComoRAG engine initialized successfully")
+                        else:
+                            print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
+                    except Exception as e:
+                        print(f"❌ ComoRAG initialization check failed: {e}")
+                else:
+                    print(f"❌ API did not become ready in time: {api_url}")
                 print("✅ LLM API server started successfully")
                 return t
             except Exception as e:
@@ -206,14 +238,27 @@ def start_api_server():
                 creationflags = 0x08000000 # CREATE_NO_WINDOW
             process = subprocess.Popen(
                 [sys.executable, api_path],
-                cwd=os.path.dirname(api_path),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                cwd=os.path.dirname(os.path.abspath(__file__)),
+                stdout=sys.stdout,
+                stderr=sys.stderr,
                 text=True,
+                env=os.environ.copy(),
                 creationflags=creationflags
             )
-            time.sleep(3)
             if process.poll() is None:
+                api_url = get_api_url()
+                if _wait_for_api(api_url, timeout_s=90):
+                    try:
+                        url = f"{api_url}/comorag/status?init_if_needed=true"
+                        r = requests.get(url, timeout=15)
+                        if r.status_code == 200 and r.json().get("ready"):
+                            print("✅ ComoRAG engine initialized successfully")
+                        else:
+                            print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
+                    except Exception as e:
+                        print(f"❌ ComoRAG initialization check failed: {e}")
+                else:
+                    print(f"❌ API did not become ready in time: {api_url}")
                 print("✅ LLM API server started successfully")
                 
                 def cleanup_api():
@@ -251,16 +296,20 @@ def run_app():
     if should_auto_start_api():
         print("🔧 Auto-start API enabled - starting LLM API server...")
         api_thread = start_api_server_async()
-        time.sleep(3)
-        try:
-            url = f"{get_api_url()}/health"
-            r = requests.get(url, timeout=5)
-            if r.status_code == 200:
-                print("✅ API health verified")
-            else:
-                print(f"⚠️ API health check returned status {r.status_code}")
-        except Exception as e:
-            print(f"❌ API health check failed: {e}")
+        api_url = get_api_url()
+        if _wait_for_api(api_url, timeout_s=90):
+            print("✅ API health verified")
+            try:
+                url = f"{api_url}/comorag/status?init_if_needed=true"
+                r = requests.get(url, timeout=15)
+                if r.status_code == 200 and r.json().get("ready"):
+                    print("✅ ComoRAG engine initialized and ready")
+                else:
+                    print(f"⚠️ ComoRAG not ready after startup: {r.status_code} {r.text}")
+            except Exception as e:
+                print(f"❌ ComoRAG status check failed: {e}")
+        else:
+            print(f"❌ API health check failed: {api_url}")
     else:
         print("ℹ️  Auto-start API disabled - LLM API server will not be started automatically")
     

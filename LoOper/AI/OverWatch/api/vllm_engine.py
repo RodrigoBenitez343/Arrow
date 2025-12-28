@@ -8,6 +8,7 @@ Handles vLLM model loading, management, and inference for HuggingFace models.
 import asyncio
 import logging
 import os
+import sys
 import psutil
 from typing import Dict, List, Optional, Any, AsyncGenerator
 from dataclasses import dataclass
@@ -64,7 +65,12 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
     except Exception:
         pass
 
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except Exception:
+    torch = None
+    TORCH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +113,13 @@ class VLLMEngine:
         """Initialize the vLLM engine"""
         if not VLLM_AVAILABLE:
             raise RuntimeError("vLLM is not available. Please install vllm package.")
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("Torch is not available. Please install torch.")
         
         logger.info("Initializing vLLM engine...")
         
         # Check GPU availability
-        if torch.cuda.is_available():
+        if torch and torch.cuda.is_available():
             gpu_count = torch.cuda.device_count()
             logger.info(f"Found {gpu_count} GPU(s)")
             for i in range(gpu_count):

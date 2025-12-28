@@ -695,6 +695,26 @@ class OllamaClient:
             print(f"ComoRAG request payload: {json.dumps(payload, indent=2)}")
         
         try:
+            # First ensure engine is initialized
+            try:
+                st = self.session.get(f"{self.base_url.rstrip('/')}/comorag/status?init_if_needed=true", timeout=8)
+                if st.status_code == 200:
+                    js = st.json()
+                    if not js.get("ready", False):
+                        if self.debug:
+                            print("ComoRAG status NOT ready. Attempting explicit initialization...")
+                        init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
+                        _ = self._post_json('/comorag/init', init_payload)
+                else:
+                    if self.debug:
+                        print(f"ComoRAG status check failed with code {st.status_code}. Attempting explicit initialization...")
+                    init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
+                    _ = self._post_json('/comorag/init', init_payload)
+            except Exception as e:
+                if self.debug:
+                    print(f"Error during reasoning status check/init: {e}")
+                pass
+            
             result = self._post_json('/comorag/reason', payload)
             
             if self.debug:
@@ -761,6 +781,10 @@ class OllamaClient:
                 # Fail fast on 404 (Not Found) - usually means wrong endpoint, retrying won't help
                 if response.status_code == 404:
                     return {"error": f"404 Client Error: Not Found for url: {url}"}
+                if response.status_code == 503:
+                    return {"error": f"503 Service Unavailable: ComoRAG not ready for url: {url}"}
+                if response.status_code == 500:
+                    return {"error": f"500 Internal Server Error for url: {url}"}
                 
                 response.raise_for_status()
                 self._fail_counts = 0
@@ -945,41 +969,84 @@ class OllamaClient:
                 print("ComoRAG is disabled. Cannot add memory.")
             return False
             
+        payload = {
+            "content": content,
+            "source": source,
+            "metadata": metadata,
+            "image_data": image_data
+        }
+        
+        if self.debug:
+            print(f"Adding memory to ComoRAG: source={source}, content_len={len(content)}")
+        
         try:
-            payload = {
-                "content": content,
-                "source": source,
-                "metadata": metadata,
-                "image_data": image_data
-            }
+            # First ensure engine is initialized
+            try:
+                st = self.session.get(f"{self.base_url.rstrip('/')}/comorag/status?init_if_needed=true", timeout=8)
+                if st.status_code == 200:
+                    js = st.json()
+                    if not js.get("ready", False):
+                        if self.debug:
+                            print("ComoRAG status NOT ready. Attempting explicit initialization...")
+                        init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
+                        _ = self._post_json('/comorag/init', init_payload)
+                else:
+                    if self.debug:
+                        print(f"ComoRAG status check failed with code {st.status_code}. Attempting explicit initialization...")
+                    init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
+                    _ = self._post_json('/comorag/init', init_payload)
+            except Exception as e:
+                if self.debug:
+                    print(f"Error during status check/init: {e}")
+                pass
             
-            # Ensure base_url doesn't end with slash if endpoint starts with slash, 
-            # but urljoin handles it usually. However, simplistic string concat is safer if we know base_url structure.
-            # consult.py seems to use simple requests calls in other methods? 
-            # I'll use the same pattern as other methods. 
-            # Assuming base_url is the root API URL.
+            # Now add memory
+            result = self._post_json('/comorag/memory', payload)
             
-            url = f"{self.base_url.rstrip('/')}/comorag/memory"
-            
-            response = requests.post(
-                url,
-                json=payload,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
+            if isinstance(result, dict) and "error" not in result:
                 if self.debug:
                     print("Successfully added memory to ComoRAG")
                 return True
             else:
                 if self.debug:
-                    print(f"Failed to add memory: {response.text}")
+                    err = result.get("error") if isinstance(result, dict) else "Unknown error"
+                    print(f"Failed to add memory: {err}")
                 return False
                 
         except Exception as e:
             if self.debug:
                 print(f"Error adding memory to ComoRAG: {e}")
             return False
+
+    def clear_memory(self) -> bool:
+        """Clear all ComoRAG memory.
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.use_comorag:
+            return True
+            
+        try:
+            if self.debug:
+                print("Clearing ComoRAG memory...")
+                
+            result = self._delete('/comorag/memory')
+            
+            if isinstance(result, dict) and "error" not in result:
+                if self.debug:
+                    print("Successfully cleared ComoRAG memory")
+                return True
+            else:
+                if self.debug:
+                    err = result.get("error") if isinstance(result, dict) else "Unknown error"
+                    print(f"Failed to clear memory: {err}")
+                return False
+        except Exception as e:
+            if self.debug:
+                print(f"Error clearing ComoRAG memory: {e}")
+            return False
+
     
     def _process_images(self, images: List[str]) -> List[str]:
         """Process images for API request

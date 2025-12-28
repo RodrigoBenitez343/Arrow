@@ -3,9 +3,6 @@
   <Package Name="LoOper" Manufacturer="LoOperTeam" Version="0.1.7" UpgradeCode="77E1E624-9B5A-4B6A-8A1E-8B5B4E6C7D8E" Language="1033" Scope="perUser">
     <MajorUpgrade DowngradeErrorMessage="A newer version of LoOper is already installed."/>
     <MediaTemplate EmbedCab="yes"/>
-    <Property Id="TESSERACT_PATH">
-      <DirectorySearch Id="CheckTessProgramFiles" Path="C:\Program Files\Tesseract-OCR"/>
-    </Property>
     <Property Id="OLLAMA_PATH">
       <DirectorySearch Id="CheckOllamaLocalApp" Path="[LocalAppDataFolder]Ollama"/>
     </Property>
@@ -15,9 +12,7 @@
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf"/>
     <Icon Id="WizardIcon" SourceFile="LoOper\LoOper.ico"/>
     <Property Id="ARPPRODUCTICON" Value="WizardIcon"/>
-    <Property Id="TESS_STATUS_MSG" Value="Tesseract OCR: Not Found (Will be installed)"/>
     <Property Id="OLLAMA_STATUS_MSG" Value="Ollama: Not Found (Will be installed)"/>
-    <SetProperty Id="TESS_STATUS_MSG" Value="Tesseract OCR: Installed" After="AppSearch" Condition="TESSERACT_PATH"/>
     <SetProperty Id="OLLAMA_STATUS_MSG" Value="Ollama: Installed" After="AppSearch" Condition="OLLAMA_PATH"/>
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="LoOper">

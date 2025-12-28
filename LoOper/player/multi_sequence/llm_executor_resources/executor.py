@@ -3,6 +3,7 @@ import os
 import threading
 import time
 import re
+import copy
 from typing import Dict, Optional, Any
 import requests as _rq
 import subprocess as _sp
@@ -19,7 +20,19 @@ class LLMExecutor:
     """Executes LLM nodes in workflow graphs (modularized)."""
 
     def __init__(self, variables: Optional[Dict[str, object]] = None):
-        self.variables: Dict[str, object] = variables if variables is not None else {}
+        # Store initial variables to support resetting state between runs
+        # Use deepcopy to ensure we have a true independent snapshot
+        try:
+            self._initial_variables = copy.deepcopy(variables) if variables else {}
+        except Exception:
+            # Fallback to shallow copy if deepcopy fails (e.g. non-pickleable objects)
+            self._initial_variables = variables.copy() if variables else {}
+            
+        try:
+            self.variables: Dict[str, object] = copy.deepcopy(self._initial_variables)
+        except Exception:
+            self.variables = self._initial_variables.copy()
+        
         self.context_collector = None
         self.context_db = None
         self._initialize_context_collector()
@@ -30,6 +43,14 @@ class LLMExecutor:
             self._rich_console = Console()
         except Exception:
             self._rich_console = None
+
+    def reset(self) -> None:
+        """Resets the executor state to initial configuration."""
+        try:
+            self.variables = copy.deepcopy(self._initial_variables)
+        except Exception:
+            self.variables = self._initial_variables.copy()
+        logger.info("LLMExecutor state reset")
 
     def _initialize_context_collector(self) -> None:
         try:
@@ -247,7 +268,17 @@ class LLMExecutor:
                 input_source = 'previous'
                 logger.info("Auto-enabled input_source='previous' due to detected input connection for concatenation")
 
-        ocr_confidence = llm_config.get('ocr_confidence', 60)
+        raw_conf = llm_config.get('ocr_confidence')
+        if raw_conf is None:
+            ocr_confidence = 0.6
+        else:
+            try:
+                ocr_confidence = float(raw_conf)
+                if ocr_confidence > 1.0:
+                    ocr_confidence = ocr_confidence / 100.0
+            except Exception:
+                ocr_confidence = 0.6
+        
         logger.info(f"Input source: {input_source}, OCR confidence: {ocr_confidence}")
 
         use_comorag = str(llm_config.get('use_comorag', 'true')).lower() in ('true', '1', 'yes', 'on')
@@ -327,6 +358,25 @@ class LLMExecutor:
             use_direct_rag,
         )
 
+        # Fallback: If input_source is none/empty but we have OCR confidence configured, 
+        # assume the user wants screen context unless explicitly disabled.
+        if input_text is None and ocr_confidence > 0 and input_source.lower() in ('none', '', 'null'):
+             logger.info(f"Input source is '{input_source}' but ocr_confidence={ocr_confidence}. Attempting fallback OCR.")
+             ocr_text, _ = get_input_text(
+                node,
+                self.variables,
+                "ocr",
+                ocr_confidence,
+                stop_flag,
+                use_direct_rag,
+             )
+             if ocr_text:
+                 input_text = ocr_text
+                 # Update source for prompt assembly
+                 input_source = "SCREEN_CONTEXT"
+                 use_input_text_in_prompt = True
+                 logger.info("Fallback OCR successful. Using extracted text as input.")
+
         if input_text is not None:
             if use_input_text_in_prompt:
                 prompt = assemble_enhanced_prompt(prompt, input_source, input_text, include_raw=True)
@@ -351,11 +401,13 @@ class LLMExecutor:
         logger.info(f"Preparing Ollama request thread for base_url: {api_url}")
         # Always attempt to stop running models to ensure clean state for the new one
         # unless explicitly disabled via OLLAMA_PRE_STOP=false
+        # IMPORTANT: If using ComoRAG (API Server), do NOT stop models from the client side.
+        # The API server manages its own models and stopping them here can cause race conditions or API failures.
+        _base = f"http://{os.getenv('OLLAMA_HOST','localhost')}:{os.getenv('OLLAMA_PORT','11434')}"
         try:
             _pre_stop = str(os.getenv('OLLAMA_PRE_STOP','true')).lower() not in ('false','0','no','off')
-            if _pre_stop:
+            if _pre_stop and not use_comorag:
                 logger.info("Checking for running Ollama models to unload...")
-                _base = f"http://{os.getenv('OLLAMA_HOST','localhost')}:{os.getenv('OLLAMA_PORT','11434')}"
                 try:
                     _ps = _rq.get(f"{_base}/api/ps", headers={"Connection": "close"}, timeout=4)
                     if _ps.status_code == 200:
@@ -565,21 +617,60 @@ class LLMExecutor:
                             memory_content = f"Real-time Screen Analysis (YOLO+OCR):\n{vision_text}"
                             
                             # Add to memory
-                            success = emb_client.add_memory(
-                                content=memory_content,
-                                source="advanced_vision",
-                                metadata={
-                                    "timestamp": time.time(), 
-                                    "type": "yolo_ocr_analysis",
-                                    "monitor": 1
-                                }
-                            )
+                            mem_client = emb_client
+                            try:
+                                from AI.consult import OllamaClient as _MemClient
+                                # IMPORTANT: Ensure we use the correct base_url for the API server (port 8010 usually)
+                                # and ensure use_comorag is True for memory addition
+                                current_api_url = api_url or get_default_api_url()
+                                
+                                # Warning if URL seems to point to standard Ollama (11434) instead of ComoRAG (8010)
+                                if use_comorag and ":11434" in current_api_url and "8010" not in current_api_url:
+                                    logger.warning(f"ComoRAG is enabled but API URL ({current_api_url}) looks like standard Ollama. Ensure ComoRAG API server is running on port 8010.")
+
+                                if not getattr(mem_client, 'use_comorag', False) or getattr(mem_client, 'base_url', '') != current_api_url:
+                                    logger.info(f"Re-initializing memory client for ComoRAG at {current_api_url}")
+                                    mem_client = _MemClient(base_url=current_api_url, debug=True, use_comorag=True, timeout=None)
+                                
+                                # Pre-check API health to avoid ugly stack traces if server is down
+                                try:
+                                    if hasattr(mem_client, 'health_check'):
+                                        status_res = mem_client.health_check()
+                                        if status_res.get("status") != "healthy":
+                                            logger.warning(f"ComoRAG API at {current_api_url} reports unhealthy: {status_res}")
+                                            # If unhealthy, don't attempt add_memory to avoid timeout/hang
+                                            mem_client = None
+                                except Exception as he:
+                                    logger.warning(f"ComoRAG health check failed: {he}")
+                                    # If health check fails completely (connection error), disable client
+                                    mem_client = None
+                                    
+                            except Exception as e:
+                                logger.error(f"Failed to re-initialize memory client: {e}")
+                                mem_client = None
+                            
+                            if mem_client:
+                                logger.info(f"ComoRAG memory client base_url: {getattr(mem_client, 'base_url', '')}")
+                                # Use a string timestamp to avoid PowerShell Int32 overflow issues if payload is logged/processed by shell
+                                ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
+                                success = bool(mem_client.add_memory(
+                                    content=memory_content,
+                                    source="advanced_vision",
+                                    metadata={
+                                        "timestamp": ts_str, 
+                                        "type": "yolo_ocr_analysis",
+                                        "monitor": 1,
+                                        "raw_timestamp": time.time()
+                                    }
+                                ))
+                            else:
+                                success = False
                             
                             if success:
                                 logger.info("Successfully added vision data to ComoRAG memory.")
                                 vision_integrated = True
                             else:
-                                logger.warning("Failed to add vision data to ComoRAG memory.")
+                                logger.warning("Failed to add vision data to ComoRAG memory (API might be down or busy).")
                         except Exception as mem_err:
                             logger.error(f"Error adding to ComoRAG memory: {mem_err}")
                     
@@ -932,33 +1023,37 @@ class LLMExecutor:
                         self.variables.pop(f"node_{_node_id}_writing", None)
                 except Exception:
                     pass
-                try:
-                    _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
-                except Exception:
-                    pass
-                try:
-                    def _find_ollama_bin():
-                        cands = []
-                        for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
-                            v = os.getenv(k)
-                            if v:
-                                cands.append(v)
-                        la = os.getenv("LOCALAPPDATA")
-                        if la:
-                            cands.append(os.path.join(la, "Programs", "Ollama", "ollama.exe"))
-                        cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
-                        cands.append("ollama")
-                        return cands
-                    env = os.environ.copy()
-                    cflags = 0x08000000 if os.name == "nt" else 0
-                    for cmd in _find_ollama_bin():
-                        try:
-                            _sp.run([cmd, "stop", model], capture_output=True, text=True, timeout=4, env=env, creationflags=cflags)
-                            break
-                        except Exception:
-                            continue
-                except Exception:
-                    pass
+                
+                # Only stop models if NOT using ComoRAG (API Server manages its own models)
+                if not use_comorag:
+                    try:
+                        _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=3)
+                    except Exception:
+                        pass
+                    try:
+                        def _find_ollama_bin():
+                            cands = []
+                            for k in ("OLLAMA_BIN", "OLLAMA_EXE"):
+                                v = os.getenv(k)
+                                if v:
+                                    cands.append(v)
+                            la = os.getenv("LOCALAPPDATA")
+                            if la:
+                                cands.append(os.path.join(la, "Programs", "Ollama", "ollama.exe"))
+                            cands.append(r"C:\\Program Files\\Ollama\\ollama.exe")
+                            cands.append("ollama")
+                            return cands
+                        env = os.environ.copy()
+                        cflags = 0x08000000 if os.name == "nt" else 0
+                        for cmd in _find_ollama_bin():
+                            try:
+                                _sp.run([cmd, "stop", model], capture_output=True, text=True, timeout=4, env=env, creationflags=cflags)
+                                break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
                 try:
                     cli.close()
                 except Exception:
@@ -976,12 +1071,13 @@ class LLMExecutor:
         while th.is_alive():
             if stop_flag and stop_flag():
                 logger.info("Stop flag detected. Attempting to stop LLM generation...")
-                try:
-                    for _ in range(2):
-                        _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=2)
-                        time.sleep(0.1)
-                except Exception:
-                    pass
+                if not use_comorag:
+                    try:
+                        for _ in range(2):
+                            _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=2)
+                            time.sleep(0.1)
+                    except Exception:
+                        pass
                 break
             # No timeout: allow long-running local models to complete
             try:
@@ -1369,4 +1465,3 @@ class LLMExecutor:
             return {
                 'error': f'TTS execution failed: {str(e)}'
             }
-        

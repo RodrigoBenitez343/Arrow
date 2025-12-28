@@ -221,7 +221,7 @@ def show_status():
             print(f"🎮 GPU: {gpu_name} ({gpu_count} device(s))")
         else:
             print("🎮 GPU: Not available (CPU only)")
-    except ImportError:
+    except Exception:
         print("🎮 GPU: PyTorch not installed")
     
     # Memory info
