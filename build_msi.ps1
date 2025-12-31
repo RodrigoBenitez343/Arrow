@@ -48,7 +48,7 @@ if ($LASTEXITCODE -ne 0) {
 # 4. Build MSI
 if ($WixInstalled) {
     Write-Host "Building MSI..." -ForegroundColor Green
-    wix build $WxsFile -ext WixToolset.UI.wixext -o $MsiFile
+    wix build -arch x64 $WxsFile -ext WixToolset.UI.wixext -o $MsiFile
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Successfully created $MsiFile" -ForegroundColor Green
     } else {
