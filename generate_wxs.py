@@ -33,10 +33,6 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
     ET.SubElement(package, "MediaTemplate", EmbedCab="yes")
 
     # --- Dependency Detection ---
-    # Detect Tesseract
-    tess_search = ET.SubElement(package, "Property", Id="TESSERACT_PATH")
-    ET.SubElement(tess_search, "DirectorySearch", Id="CheckTessProgramFiles", Path="C:\\Program Files\\Tesseract-OCR")
-    
     # Detect Ollama
     ollama_search = ET.SubElement(package, "Property", Id="OLLAMA_PATH")
     ET.SubElement(ollama_search, "DirectorySearch", Id="CheckOllamaLocalApp", Path="[LocalAppDataFolder]Ollama")
@@ -67,11 +63,9 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
     # In WiX 4, we can use WixUI_InstallDir and customize the sequence
     # For simplicity, we'll use a Property to drive the message
     
-    ET.SubElement(package, "Property", Id="TESS_STATUS_MSG", Value="Tesseract OCR: Not Found (Will be installed)")
     ET.SubElement(package, "Property", Id="OLLAMA_STATUS_MSG", Value="Ollama: Not Found (Will be installed)")
     
     # Custom Actions to update the status messages if found
-    ET.SubElement(package, "SetProperty", Id="TESS_STATUS_MSG", Value="Tesseract OCR: Installed", After="AppSearch", Condition="TESSERACT_PATH")
     ET.SubElement(package, "SetProperty", Id="OLLAMA_STATUS_MSG", Value="Ollama: Installed", After="AppSearch", Condition="OLLAMA_PATH")
     
     # Icons and properties

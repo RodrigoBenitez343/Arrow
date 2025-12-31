@@ -30,34 +30,78 @@ def _normalize_language_for_paddle(language: str) -> str:
 @lru_cache(maxsize=4)
 def _get_paddle_ocr(lang: str):
     import os
+    import sys
+    from .config import logger
+    import importlib
 
     # Force disable MKLDNN to avoid OneDnnContext errors
     os.environ["FLAGS_use_mkldnn"] = "0"
     os.environ["FLAGS_enable_mkldnn"] = "0"
-    
-    # Also try to set flags via paddle API directly if possible
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
     try:
-        import paddle
+        paddle = importlib.import_module("paddle")
         if hasattr(paddle, "set_flags"):
             paddle.set_flags({'FLAGS_use_mkldnn': False})
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    except Exception as e:
+        raise e
 
     from paddleocr import PaddleOCR
 
-    # Try to pass enable_mkldnn=False if supported, otherwise rely on env vars
+    # Prepare arguments
+    kwargs = {
+        'use_angle_cls': True,
+        'lang': lang,
+        'show_log': False,
+        'enable_mkldnn': False
+    }
+
+    # Check for bundled models in frozen mode (PyInstaller)
+    if getattr(sys, 'frozen', False):
+        try:
+            # For PyInstaller, sys._MEIPASS is the root of the bundle
+            base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            # In our spec we added them to _internal/paddle_models
+            internal_dir = base_dir
+            if os.path.basename(internal_dir).lower() != '_internal':
+                exe_dir = os.path.dirname(sys.executable)
+                candidate_internal = os.path.join(exe_dir, '_internal')
+                if os.path.isdir(candidate_internal):
+                    internal_dir = candidate_internal
+                else:
+                    candidate_internal = os.path.join(base_dir, '_internal')
+                    if os.path.isdir(candidate_internal):
+                        internal_dir = candidate_internal
+            models_dir = os.path.join(internal_dir, 'paddle_models')
+            
+            if os.path.exists(models_dir):
+                logger.debug(f"Found bundled PaddleOCR models at {models_dir}")
+                
+                det_path = os.path.join(models_dir, 'det')
+                rec_path = os.path.join(models_dir, 'rec')
+                cls_path = os.path.join(models_dir, 'cls')
+
+                if os.path.exists(det_path):
+                    kwargs['det_model_dir'] = det_path
+                if os.path.exists(rec_path):
+                    kwargs['rec_model_dir'] = rec_path
+                if os.path.exists(cls_path):
+                    kwargs['cls_model_dir'] = cls_path
+        except Exception as e:
+            logger.error(f"Error checking for bundled models: {e}")
+
+    # Try to initialize with enable_mkldnn first
     try:
-        from .config import logger
-        logger.debug(f"Initializing PaddleOCR with lang={lang}")
-        ocr = PaddleOCR(use_angle_cls=True, lang=lang, show_log=False, enable_mkldnn=False)
+        logger.debug(f"Initializing PaddleOCR with kwargs={kwargs}")
+        ocr = PaddleOCR(**kwargs)
         logger.debug("PaddleOCR initialized successfully")
         return ocr
     except TypeError:
         # Fallback if the installed version doesn't support enable_mkldnn arg
+        if 'enable_mkldnn' in kwargs:
+            del kwargs['enable_mkldnn']
         logger.debug("PaddleOCR initialized with fallback (no enable_mkldnn arg)")
-        return PaddleOCR(use_angle_cls=True, lang=lang, show_log=False)
+        return PaddleOCR(**kwargs)
 
 
 def _ensure_numpy():

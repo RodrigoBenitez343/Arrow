@@ -45,6 +45,7 @@ class DependenciesMixin:
                 starting_nodes.append(node_id)
                 logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
 
+
         if not starting_nodes:
             for node_id, node_data in self.workflow_graph.items():
                 if node_data.get('type') != 'llm':

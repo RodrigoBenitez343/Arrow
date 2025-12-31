@@ -386,58 +386,45 @@ class LLMPropertiesDialog(ModernDialog):
         
         layout.addWidget(vision_group)
         
-        # ComoRAG Configuration Group - HIDDEN as per user request
-        # comorag_group = QGroupBox("Context-Aware Features (ComoRAG)")
-        # comorag_layout = QGridLayout(comorag_group)
-        # comorag_layout.setContentsMargins(8, 12, 8, 8)
-        # comorag_layout.setSpacing(6)
+        # ComoRAG Configuration Group
+        comorag_group = QGroupBox(_("Context-Aware Features (ComoRAG)"))
+        comorag_layout = QGridLayout(comorag_group)
+        comorag_layout.setContentsMargins(8, 12, 8, 8)
+        comorag_layout.setSpacing(6)
         
-        # # Enable ComoRAG checkbox
-        # comorag_layout.addWidget(QLabel("Enable ComoRAG:"), 0, 0)
-        # self.use_comorag_checkbox = ModernToggle(text="Use context-aware reasoning with OverWatch")
-        # self.use_comorag_checkbox.setChecked(False)
-        # comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
-        
-        # # Max reasoning cycles
-        # comorag_layout.addWidget(QLabel("Max Cycles:"), 1, 0)
-        # self.max_cycles_spin = QSpinBox()
-        # self.max_cycles_spin.setRange(1, 10)
-        # self.max_cycles_spin.setValue(5)
-        # self.max_cycles_spin.setToolTip("Maximum number of reasoning cycles for ComoRAG")
-        # comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
-        
-        # # Memory size
-        # comorag_layout.addWidget(QLabel("Memory Size:"), 2, 0)
-        # self.memory_size_spin = QSpinBox()
-        # self.memory_size_spin.setRange(100, 5000)
-        # self.memory_size_spin.setSingleStep(100)
-        # self.memory_size_spin.setValue(1000)
-        # self.memory_size_spin.setToolTip("Memory size for ComoRAG context retention")
-        # comorag_layout.addWidget(self.memory_size_spin, 2, 1)
-        
-        # # Add help text for ComoRAG
-        # comorag_help_label = QLabel("ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API.")
-        # comorag_help_label.setWordWrap(True)
-        # comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        # comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
-        
-        # layout.addWidget(comorag_group)
-        
-        # Initialize hidden widgets to prevent AttributeError
-        self.use_comorag_checkbox = ModernToggle(text="Use context-aware reasoning with OverWatch")
+        # Enable ComoRAG checkbox
+        comorag_layout.addWidget(QLabel(_("Enable ComoRAG:")), 0, 0)
+        self.use_comorag_checkbox = ModernToggle(text=_("Use context-aware reasoning with OverWatch"))
         self.use_comorag_checkbox.setChecked(False)
-        self.use_comorag_checkbox.setVisible(False)
+        comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
         
+        # Max reasoning cycles
+        comorag_layout.addWidget(QLabel(_("Max Cycles:")), 1, 0)
         self.max_cycles_spin = QSpinBox()
+        self.max_cycles_spin.setRange(1, 10)
         self.max_cycles_spin.setValue(5)
-        self.max_cycles_spin.setVisible(False)
+        self.max_cycles_spin.setToolTip(_("Maximum number of reasoning cycles for ComoRAG"))
+        comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
         
+        # Memory size
+        comorag_layout.addWidget(QLabel(_("Memory Size:")), 2, 0)
         self.memory_size_spin = QSpinBox()
+        self.memory_size_spin.setRange(100, 5000)
+        self.memory_size_spin.setSingleStep(100)
         self.memory_size_spin.setValue(1000)
-        self.memory_size_spin.setVisible(False)
+        self.memory_size_spin.setToolTip(_("Memory size for ComoRAG context retention"))
+        comorag_layout.addWidget(self.memory_size_spin, 2, 1)
+        
+        # Add help text for ComoRAG
+        comorag_help_label = QLabel(_("ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API."))
+        comorag_help_label.setWordWrap(True)
+        comorag_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
+        
+        layout.addWidget(comorag_group)
         
         layout.addStretch()
-        self.tab_widget.addTab(features_tab, "Features")
+        self.tab_widget.addTab(features_tab, _("Features"))
         
         # Connect signals for UI elements
         self.setup_signal_connections()

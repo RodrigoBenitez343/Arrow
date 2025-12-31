@@ -7,6 +7,29 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # Ensure DLL load path on Windows
 if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
     try:
+        if getattr(sys, 'frozen', False):
+            meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            internal_dir = meipass
+            if os.path.basename(internal_dir).lower() != '_internal':
+                candidate_internal = os.path.join(os.path.dirname(sys.executable), '_internal')
+                if os.path.isdir(candidate_internal):
+                    internal_dir = candidate_internal
+
+            ort_capi = os.path.join(internal_dir, 'onnxruntime', 'capi')
+            if os.path.isdir(ort_capi):
+                try:
+                    _dll_dir_handles = []
+                    _dll_dir_handles.append(os.add_dll_directory(ort_capi))
+                    os.environ['PATH'] = ort_capi + os.pathsep + os.environ['PATH']
+                except Exception:
+                    pass
+                try:
+                    import ctypes as _ctypes
+                    _ctypes.CDLL(os.path.join(ort_capi, 'onnxruntime_providers_shared.dll'))
+                    _ctypes.CDLL(os.path.join(ort_capi, 'onnxruntime.dll'))
+                except Exception:
+                    pass
+
         import site
         packages = []
         try:
@@ -63,8 +86,11 @@ except Exception:
     try:
         from player.ocr_engine import extract_text
     except Exception:
-        def extract_text(image, min_confidence=0.0, language="eng"):
-            return ""
+        try:
+            from LoOper.player.ocr_engine import extract_text
+        except Exception:
+            def extract_text(image, min_confidence=0.0, language="eng"):
+                return ""
 
 class Vision:
     
@@ -135,14 +161,25 @@ class Vision:
         # Capture screen
         screen = np.array(sct.grab(monitor))
         screen = screen[:, :, :3] # Remove alpha
-        
-        # Setup labels
+        return self.analyze_frame(screen)
+
+    def analyze_frame(self, screen: np.ndarray):
+        logging.getLogger('ultralytics').setLevel(logging.WARNING)
+
+        if screen is None or not hasattr(screen, "shape"):
+            return {"Object": [], "image_path": None}
+
+        if len(screen.shape) == 2:
+            screen = cv2.cvtColor(screen, cv2.COLOR_GRAY2BGR)
+        elif screen.shape[2] == 4:
+            screen = screen[:, :, :3]
+
         structure_labels = list(self.structure_model.names.values())
         icon_labels = list(self.icon_model.names.values()) if self.icon_model else []
         all_labels = list(set(structure_labels + icon_labels))
-        
+
         label_objects = {label: "Interaction" for label in all_labels}
-        
+
         try:
             json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "label_description.json")
             if os.path.exists(json_path):
@@ -153,25 +190,21 @@ class Vision:
                         label_objects[label] = json_data[label]
         except Exception as e:
             print(f"Error loading label description: {e}")
-            
-        # Initialize data
+
         data = {label: [] for label in all_labels}
-        
-        # 1. Structure Detection
+
         results_structure = self.structure_model(screen, conf=0.25)
         for result in results_structure:
             for box in result.boxes:
                 label = self.structure_model.names[int(box.cls)]
                 data[label].append(box.xyxy.tolist()[0])
-                
-        # 2. Masking
+
         masked_screen = screen.copy()
         if "text" in data:
             for coords in data["text"]:
                 x1, y1, x2, y2 = map(int, coords)
                 cv2.rectangle(masked_screen, (x1, y1), (x2, y2), (128, 128, 128), -1)
-                
-        # 3. Icon Detection
+
         if self.icon_model:
             results_icons = self.icon_model(masked_screen, conf=0.25)
             for result in results_icons:
@@ -180,26 +213,23 @@ class Vision:
                     if label not in data:
                         data[label] = []
                     data[label].append(box.xyxy.tolist()[0])
-                    
-        # 4. Create Objects
+
         objects = []
-        
-        # Identify "Object" type labels
+
         obj_labels = [key for key in label_objects if label_objects[key] == "Object"]
-        
+
         for label in obj_labels:
             if label in data:
                 for coords in data[label]:
                     new_obj = object.Object(label=label, coords=coords)
                     objects.append(new_obj)
-                    
-        # 5. Assign Properties
+
         property_labels = [key for key in label_objects if label_objects[key] == "Property"]
-        
+
         for obj in objects:
             best_property = None
             max_area = 0
-            
+
             for prop_label in property_labels:
                 if prop_label in data:
                     for prop_coords in data[prop_label]:
@@ -207,39 +237,36 @@ class Vision:
                         if area > max_area:
                             max_area = area
                             best_property = prop_label
-            
+
             if best_property:
                 obj.set_property(best_property)
-                
-        # 6. Assign Interactions and Text
+
         for obj in objects:
             obj_coords = obj.get_coords()
-            
-            # Check for interactions and text inside object
+
             for key, coords_list in data.items():
-                if key not in label_objects: continue
+                if key not in label_objects:
+                    continue
                 type_ = label_objects[key]
-                
+
                 if type_ == "Interaction":
                     for coords in coords_list:
                         if self.is_box_inside_box(coords, obj_coords):
                             interaction = object.Interaction(label=key, coords=coords, object=obj, interaction_type=1)
                             obj.add_interaction(interaction)
-                            
+
                 elif type_ == "Text":
                     for coords in coords_list:
                         if self.is_box_inside_box(coords, obj_coords):
-                            # PERFORM OCR HERE
                             try:
                                 text_content = self.read_image(screen, coords)
                             except Exception:
                                 text_content = ""
-                            
+
                             if text_content and text_content.strip():
                                 text_item = object.Text(content=text_content, coords=coords, object=obj)
                                 obj.add_text(text_item)
-                                
-        # 7. Format Output
+
         output_data = {"Object": []}
         for i, obj in enumerate(objects):
             obj_dict = {
@@ -252,23 +279,15 @@ class Vision:
             }
             output_data["Object"].append(obj_dict)
 
-        # 8. Generate Annotated Image
         try:
-            annotated_img = self.draw_annotations(screen.shape, data, objects)
+            annotated_img = self.draw_annotations(screen, data, objects)
             timestamp = int(time.time())
-            # Save to a temporary location or specific directory
-            # Assuming we are in LoOper/player/Computer_vision
-            # We want to save where the other screenshots are, or locally.
-            # LoOper/screenshots is a good place.
-            
-            # Try to find the screenshots directory relative to this file
-            # this file: .../LoOper/player/Computer_vision/model_vision.py
-            # screenshots: .../LoOper/screenshots
+
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             screenshots_dir = os.path.join(base_dir, "screenshots")
             if not os.path.exists(screenshots_dir):
                 os.makedirs(screenshots_dir, exist_ok=True)
-            
+
             image_filename = f"yolo_annotation_{timestamp}.png"
             image_path = os.path.join(screenshots_dir, image_filename)
             cv2.imwrite(image_path, annotated_img)
@@ -277,13 +296,15 @@ class Vision:
         except Exception as e:
             print(f"Error generating annotated image: {e}")
             output_data["image_path"] = None
-            
+
         return output_data
 
-    def draw_annotations(self, shape, data, objects):
-        """Draw annotations on a black background"""
-        h, w = shape[:2]
-        display_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+    def draw_annotations(self, screen_or_shape, data, objects):
+        if isinstance(screen_or_shape, tuple):
+            h, w = screen_or_shape[:2]
+            display_overlay = np.zeros((h, w, 3), dtype=np.uint8)
+        else:
+            display_overlay = screen_or_shape.copy()
         
         # Draw all raw data first (Green)
         for label, boxes in data.items():

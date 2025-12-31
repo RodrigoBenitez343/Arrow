@@ -25,14 +25,14 @@ class WorkflowGraphBuilder:
             # Handle both old and new sequence formats
             if isinstance(sequence, dict) and ('id' in sequence or 'node_id' in sequence):
                 # New format with ID and connections - support both 'id' and 'node_id'
-                node_id = sequence.get('id') or sequence.get('node_id')
+                node_id = str(sequence.get('id') or sequence.get('node_id'))
                 # Handle both 'outputs' and 'connections' formats
                 if 'outputs' in sequence:
                     output_connections = sequence.get('outputs', {}).get('output', [])
                 elif 'connections' in sequence:
                     # Convert connections format to outputs format
                     output_connections = [{
-                        'node_id': conn['target_node_id'],
+                        'node_id': str(conn['target_node_id']),
                         'input_port': conn.get('input_port')
                     } for conn in sequence.get('connections', [])]
                 else:
@@ -52,21 +52,26 @@ class WorkflowGraphBuilder:
         # Add conditional nodes to graph
         for conditional in self.conditional_nodes:
             # Support both 'id' and 'node_id' fields
-            node_id = conditional.get('id') or conditional.get('node_id')
+            node_id = str(conditional.get('id') or conditional.get('node_id'))
             
             # Handle both 'outputs' and 'connections' formats for conditionals
             if 'outputs' in conditional:
                 true_connections = conditional.get('outputs', {}).get('true', [])
                 false_connections = conditional.get('outputs', {}).get('false', [])
+                # Ensure target IDs are strings
+                for conn in true_connections:
+                    if 'node_id' in conn: conn['node_id'] = str(conn['node_id'])
+                for conn in false_connections:
+                    if 'node_id' in conn: conn['node_id'] = str(conn['node_id'])
             elif 'connections' in conditional:
                 # Convert connections format to outputs format
                 true_connections = []
                 false_connections = []
                 for conn in conditional.get('connections', []):
                     if conn.get('output_port') == 'true':
-                        true_connections.append({'node_id': conn['target_node_id'], 'input_port': conn.get('input_port')})
+                        true_connections.append({'node_id': str(conn['target_node_id']), 'input_port': conn.get('input_port')})
                     elif conn.get('output_port') == 'false':
-                        false_connections.append({'node_id': conn['target_node_id'], 'input_port': conn.get('input_port')})
+                        false_connections.append({'node_id': str(conn['target_node_id']), 'input_port': conn.get('input_port')})
             else:
                 true_connections = []
                 false_connections = []
@@ -82,19 +87,25 @@ class WorkflowGraphBuilder:
         
         # Add LLM nodes to graph
         for llm_node in self.llm_nodes:
-            node_id = llm_node.get('id') or llm_node.get('node_id')
+            node_id = str(llm_node.get('id') or llm_node.get('node_id'))
             connections_by_port = {}
             if isinstance(llm_node.get('outputs'), dict):
                 for port_name, conns in (llm_node.get('outputs') or {}).items():
                     try:
-                        connections_by_port[port_name] = list(conns or [])
+                        # Ensure target IDs are strings
+                        fixed_conns = []
+                        for c in (conns or []):
+                            if isinstance(c, dict):
+                                c['node_id'] = str(c.get('node_id'))
+                                fixed_conns.append(c)
+                        connections_by_port[port_name] = fixed_conns
                     except Exception:
                         connections_by_port[port_name] = []
             elif isinstance(llm_node.get('connections'), list):
                 for conn in llm_node.get('connections', []):
                     port = conn.get('output_port') or 'output'
                     lst = connections_by_port.setdefault(port, [])
-                    lst.append({'node_id': conn.get('target_node_id'), 'input_port': conn.get('input_port')})
+                    lst.append({'node_id': str(conn.get('target_node_id')), 'input_port': conn.get('input_port')})
             else:
                 connections_by_port = {'output': []}
             graph[node_id] = {
@@ -105,10 +116,10 @@ class WorkflowGraphBuilder:
         
         # Add TTS nodes to graph
         for tts_node in self.tts_nodes:
-            node_id = tts_node.get('id') or tts_node.get('node_id')
+            node_id = str(tts_node.get('id') or tts_node.get('node_id'))
             # Convert connections format to outputs format for TTS nodes
             output_connections = [{
-                'node_id': conn['target_node_id'],
+                'node_id': str(conn['target_node_id']),
                 'input_port': conn.get('input_port')
             } for conn in tts_node.get('connections', [])]
             
@@ -122,10 +133,10 @@ class WorkflowGraphBuilder:
         
         # Add chain import nodes to graph
         for chain_import_node in self.chain_import_nodes:
-            node_id = chain_import_node.get('id') or chain_import_node.get('node_id')
+            node_id = str(chain_import_node.get('id') or chain_import_node.get('node_id'))
             # Convert connections format to outputs format for chain import nodes
             output_connections = [{
-                'node_id': conn['target_node_id'],
+                'node_id': str(conn['target_node_id']),
                 'input_port': conn.get('input_port')
             } for conn in chain_import_node.get('connections', [])]
             # Detect if this chain import acts purely as a tool provider to an LLM
@@ -157,14 +168,14 @@ class WorkflowGraphBuilder:
             
         # Add Code nodes to graph
         for code_node in self.code_nodes:
-            node_id = code_node.get('id') or code_node.get('node_id')
+            node_id = str(code_node.get('id') or code_node.get('node_id'))
             # Convert connections format to outputs format for Code nodes
             output_connections = []
             error_connections = []
             
             for conn in code_node.get('connections', []):
                 target = {
-                    'node_id': conn['target_node_id'],
+                    'node_id': str(conn['target_node_id']),
                     'input_port': conn.get('input_port')
                 }
                 if conn.get('output_port') == 'error':
@@ -309,10 +320,10 @@ class WorkflowGraphBuilder:
         # Handle sequence node inputs
         for i, sequence in enumerate(self.sequences):
             if isinstance(sequence, dict) and 'inputs' in sequence:
-                sequence_id = sequence.get('id') or sequence.get('node_id') or f'sequence_{i}'
+                sequence_id = str(sequence.get('id') or sequence.get('node_id') or f'sequence_{i}')
                 inputs = sequence.get('inputs', {})
                 for input_name, connection_info in inputs.items():
-                    source_node_id = connection_info['node_id']
+                    source_node_id = str(connection_info['node_id'])
                     if source_node_id in graph:
                         if 'inputs' not in graph[sequence_id]:
                             graph[sequence_id]['inputs'] = []
@@ -323,10 +334,10 @@ class WorkflowGraphBuilder:
         
         # Handle LLM node inputs
         for llm_node in self.llm_nodes:
-            llm_id = llm_node.get('id') or llm_node.get('node_id')
+            llm_id = str(llm_node.get('id') or llm_node.get('node_id'))
             inputs = llm_node.get('inputs', {})
             for input_name, connection_info in inputs.items():
-                source_node_id = connection_info['node_id']
+                source_node_id = str(connection_info['node_id'])
                 if source_node_id in graph:
                     if 'inputs' not in graph[llm_id]:
                         graph[llm_id]['inputs'] = []
@@ -337,10 +348,10 @@ class WorkflowGraphBuilder:
         
         # Handle conditional node inputs
         for conditional in self.conditional_nodes:
-            conditional_id = conditional.get('id') or conditional.get('node_id')
+            conditional_id = str(conditional.get('id') or conditional.get('node_id'))
             inputs = conditional.get('inputs', {})
             for input_name, connection_info in inputs.items():
-                source_node_id = connection_info['node_id']
+                source_node_id = str(connection_info['node_id'])
                 if source_node_id in graph:
                     if 'inputs' not in graph[conditional_id]:
                         graph[conditional_id]['inputs'] = []
@@ -351,10 +362,10 @@ class WorkflowGraphBuilder:
         
         # Handle TTS node inputs
         for tts_node in self.tts_nodes:
-            tts_id = tts_node.get('id') or tts_node.get('node_id')
+            tts_id = str(tts_node.get('id') or tts_node.get('node_id'))
             inputs = tts_node.get('inputs', {})
             for input_name, connection_info in inputs.items():
-                source_node_id = connection_info['node_id']
+                source_node_id = str(connection_info['node_id'])
                 if source_node_id in graph:
                     if 'inputs' not in graph[tts_id]:
                         graph[tts_id]['inputs'] = []
@@ -365,10 +376,10 @@ class WorkflowGraphBuilder:
         
         # Handle chain import node inputs
         for chain_import_node in self.chain_import_nodes:
-            chain_import_id = chain_import_node.get('id') or chain_import_node.get('node_id')
+            chain_import_id = str(chain_import_node.get('id') or chain_import_node.get('node_id'))
             inputs = chain_import_node.get('inputs', {})
             for input_name, connection_info in inputs.items():
-                source_node_id = connection_info['node_id']
+                source_node_id = str(connection_info['node_id'])
                 if source_node_id in graph:
                     if 'inputs' not in graph[chain_import_id]:
                         graph[chain_import_id]['inputs'] = []
@@ -379,10 +390,10 @@ class WorkflowGraphBuilder:
         
         # Handle code node inputs
         for code_node in self.code_nodes:
-            code_id = code_node.get('id') or code_node.get('node_id')
+            code_id = str(code_node.get('id') or code_node.get('node_id'))
             inputs = code_node.get('inputs', {})
             for input_name, connection_info in inputs.items():
-                source_node_id = connection_info['node_id']
+                source_node_id = str(connection_info['node_id'])
                 if source_node_id in graph:
                     if 'inputs' not in graph[code_id]:
                         graph[code_id]['inputs'] = []

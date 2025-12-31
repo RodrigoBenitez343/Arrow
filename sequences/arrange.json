@@ -1,0 +1,44 @@
+{
+    "metadata": {
+        "created_at": "2025-12-28 19:11:58",
+        "total_actions": 3,
+        "duration_sec": 19.03,
+        "mode": "desktop_only"
+    },
+    "actions": [
+        {
+            "type": "drag_drop",
+            "from": {
+                "x": 341,
+                "y": 19
+            },
+            "to": {
+                "x": 1365,
+                "y": 274
+            },
+            "timestamp": 1766977901.7832317
+        },
+        {
+            "type": "click",
+            "button": "left",
+            "coordinates": {
+                "x": 707,
+                "y": 18
+            },
+            "timestamp": 1766977908.9491389,
+            "screenshot": "C:\\Users\\User\\Desktop\\LoOperV2\\dist\\LoOper\\sequences\\screenshots\\click_1_1766977908.png"
+        },
+        {
+            "type": "drag_drop",
+            "from": {
+                "x": 508,
+                "y": 20
+            },
+            "to": {
+                "x": 0,
+                "y": 243
+            },
+            "timestamp": 1766977914.1589987
+        }
+    ]
+}

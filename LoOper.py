@@ -6,6 +6,8 @@ import multiprocessing
 import time
 import logging
 
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+
 # Move win32 imports to top for better performance and reliability
 try:
     import win32gui
@@ -14,21 +16,44 @@ try:
 except ImportError:
     HAS_WIN32 = False
 if getattr(sys, 'frozen', False):
-    # For PyInstaller, sys._MEIPASS is the root of the bundle
     meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-    # _internal is where all libraries and the LoOper package live
-    internal_dir = os.path.join(meipass, '_internal')
-    
+    exe_dir = os.path.dirname(sys.executable)
+    internal_dir = meipass
+    if os.path.basename(internal_dir).lower() != '_internal':
+        candidate_internal = os.path.join(exe_dir, '_internal')
+        if os.path.isdir(candidate_internal):
+            internal_dir = candidate_internal
+
     try:
-        os.chdir(meipass)
+        os.chdir(exe_dir)
     except Exception:
         pass
-        
-    # Ensure both root and _internal are in path
-    if meipass not in sys.path:
-        sys.path.insert(0, meipass)
-    if internal_dir not in sys.path:
+
+    if exe_dir and exe_dir not in sys.path:
+        sys.path.insert(0, exe_dir)
+    if internal_dir and internal_dir not in sys.path:
         sys.path.insert(0, internal_dir)
+
+    # CRITICAL: Add Paddle's libs directory to PATH and DLL search path
+    # When paddle is excluded from PYZ, it lives in _internal/paddle
+    paddle_libs = os.path.join(internal_dir, 'paddle', 'libs')
+    if os.path.exists(paddle_libs):
+        os.environ['PATH'] = paddle_libs + os.pathsep + os.environ['PATH']
+        if hasattr(os, 'add_dll_directory'):
+            try:
+                os.add_dll_directory(paddle_libs)
+            except Exception:
+                pass
+    
+    # Also add paddle/base just in case
+    paddle_base = os.path.join(internal_dir, 'paddle', 'base')
+    if os.path.exists(paddle_base):
+        os.environ['PATH'] = paddle_base + os.pathsep + os.environ['PATH']
+        if hasattr(os, 'add_dll_directory'):
+            try:
+                os.add_dll_directory(paddle_base)
+            except Exception:
+                pass
 
 from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgressBar
 from PyQt5.QtCore import Qt, QTimer
@@ -52,13 +77,23 @@ def _run_vision_model():
         # Import the vision module. This will be bundled by PyInstaller.
         if getattr(sys, 'frozen', False):
             meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            exe_dir = os.path.dirname(sys.executable)
+            internal_dir = meipass
+            if os.path.basename(internal_dir).lower() != '_internal':
+                candidate_internal = os.path.join(exe_dir, '_internal')
+                if os.path.isdir(candidate_internal):
+                    internal_dir = candidate_internal
+                else:
+                    candidate_internal = os.path.join(meipass, '_internal')
+                    if os.path.isdir(candidate_internal):
+                        internal_dir = candidate_internal
             
             # Possible locations for the vision model directory
             possible_dirs = [
-                os.path.join(meipass, "LoOper", "player", "Computer_vision"),
-                os.path.join(meipass, "_internal", "LoOper", "player", "Computer_vision"),
-                os.path.join(meipass, "player", "Computer_vision"),
-                os.path.join(meipass, "_internal", "player", "Computer_vision")
+                os.path.join(internal_dir, "LoOper", "player", "Computer_vision"),
+                os.path.join(exe_dir, "LoOper", "player", "Computer_vision"),
+                os.path.join(internal_dir, "player", "Computer_vision"),
+                os.path.join(exe_dir, "player", "Computer_vision"),
             ]
             
             vision_dir = None
@@ -297,15 +332,14 @@ def launch():
             
             if os.path.exists(vision_script):
                 print(f"Launching Vision Model: {vision_script}")
-                # When frozen, use bundle root as cwd
-                v_cwd = base if getattr(sys, 'frozen', False) else os.path.dirname(vision_script)
+                # Use the script's directory as CWD to ensure it can find local models/files
+                v_cwd = os.path.dirname(vision_script)
                 
                 v_cmd = [sys.executable, vision_script]
-                if getattr(sys, 'frozen', False):
-                    # If we have a generic script executor, we can use it.
-                    # For now, let's assume the main app logic handles it if passed as an arg,
-                    # or we add a --run-vision flag.
-                    v_cmd = [sys.executable, "--run-vision"]
+                # Note: When frozen, sys.executable is the LoOper.exe itself.
+                # LoOper.exe detects if the first argument is a .py file and executes it,
+                # behaving like a python interpreter. This allows running the unbundled script
+                # with the bundled environment.
 
                 vision_proc = subprocess.Popen(
                     v_cmd,
@@ -502,5 +536,71 @@ if __name__ == "__main__":
         # Remove the flag
         sys.argv.remove("--run-vision")
         _run_vision_model()
+    elif "--install-deps" in sys.argv:
+        try:
+            print("Installing/Verifying PaddleOCR dependencies...")
+            
+            # Ensure sys.path includes the bundle directory for imports
+            if getattr(sys, 'frozen', False):
+                 meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+                 exe_dir = os.path.dirname(sys.executable)
+                 internal_dir = meipass
+                 if os.path.basename(internal_dir).lower() != '_internal':
+                     candidate_internal = os.path.join(exe_dir, '_internal')
+                     if os.path.isdir(candidate_internal):
+                         internal_dir = candidate_internal
+                     else:
+                         candidate_internal = os.path.join(meipass, '_internal')
+                         if os.path.isdir(candidate_internal):
+                             internal_dir = candidate_internal
+                 if internal_dir not in sys.path:
+                     sys.path.insert(0, internal_dir)
+
+            # Try to import using the app's own logic which handles bundled models
+            try:
+                # Attempt to import the ocr_engine from the package
+                # We try multiple import paths to be safe
+                try:
+                    from LoOper.player import ocr_engine
+                except ImportError:
+                    try:
+                        from player import ocr_engine
+                    except ImportError:
+                         # If we can't import the engine, fall back to direct check
+                         raise ImportError("Could not import ocr_engine")
+
+                print(f"OCR Available: {ocr_engine.ocr_available()}")
+                
+                if ocr_engine.ocr_available():
+                    # This will trigger the bundled model check in _get_paddle_ocr
+                    ocr = ocr_engine._get_paddle_ocr("en")
+                    if ocr:
+                        print("PaddleOCR initialized successfully using app configuration.")
+                    else:
+                        print("PaddleOCR initialization returned None.")
+                        sys.exit(1)
+                else:
+                    print("OCR reported as unavailable in config.")
+                    # Try to force initialization anyway to see the error
+                    ocr_engine._get_paddle_ocr("en")
+                    
+            except Exception as e:
+                print(f"Standard initialization failed: {e}")
+                print("Falling back to direct initialization...")
+                
+                # Fallback: direct initialization (similar to old logic but cleaner)
+                os.environ["FLAGS_use_mkldnn"] = "0"
+                os.environ["FLAGS_enable_mkldnn"] = "0"
+                
+                from paddleocr import PaddleOCR
+                PaddleOCR(lang='en', show_log=True, use_angle_cls=True, enable_mkldnn=False)
+                
+            print("PaddleOCR dependencies check completed.")
+        except Exception as e:
+            print(f"Error installing dependencies: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+        sys.exit(0)
     else:
         launch()

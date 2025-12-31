@@ -3,7 +3,7 @@ import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QLabel, QApplication, QScrollArea,
-    QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QStyleOptionButton, QStyle
 )
 from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QMimeData
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
@@ -21,13 +21,14 @@ class DraggableChainButton(QPushButton):
     
     def __init__(self, label: str, file_path: str, graph_view, parent=None):
         # Remove .json from label for display
-        display_label = os.path.splitext(label)[0]
-        super().__init__(display_label, parent)
+        self._full_text = os.path.splitext(label)[0]
+        super().__init__(self._full_text, parent)
         self.file_path = file_path
         self.graph_view = graph_view
         self._drag_start_pos = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setToolTip(self._full_text)
         
         # Set icon (chain_import icon)
         icon = get_node_icon('chain_import', 24)
@@ -56,6 +57,16 @@ class DraggableChainButton(QPushButton):
             }}
             """
         )
+
+    def update_display_text(self):
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        contents_rect = self.style().subElementRect(QStyle.SE_PushButtonContents, option, self)
+        text_rect = contents_rect
+        if not option.icon.isNull():
+            text_rect.setLeft(text_rect.left() + option.iconSize.width() + 8)
+        fm = self.fontMetrics()
+        self.setText(fm.elidedText(self._full_text, Qt.ElideRight, max(0, text_rect.width())))
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -252,7 +263,23 @@ class ChainsLibrary(QWidget):
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(f"color: {TEXT_COLOR}; opacity: 0.5; padding: 20px;")
             self._container_layout.insertWidget(0, placeholder)
+        QTimer.singleShot(0, self._sync_chain_buttons)
+
+    def _sync_chain_buttons(self):
+        if not hasattr(self, '_scroll_area') or not self._scroll_area:
+            return
+        viewport = self._scroll_area.viewport()
+        if not viewport:
+            return
+        target_width = max(0, viewport.width() - 2)
+        for i in range(self._container_layout.count()):
+            item = self._container_layout.itemAt(i)
+            w = item.widget() if item else None
+            if isinstance(w, DraggableChainButton):
+                w.setFixedWidth(target_width)
+                w.update_display_text()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         QTimer.singleShot(0, self._position_toggle)
+        QTimer.singleShot(0, self._sync_chain_buttons)

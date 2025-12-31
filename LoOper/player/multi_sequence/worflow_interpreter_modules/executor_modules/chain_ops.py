@@ -15,7 +15,14 @@ class ChainImportMixin:
         Returns:
             str: Next node ID to execute, or None if workflow should end
         """
-        from ...multi_sequence_player import MultiSequencePlayer
+        try:
+            from ....multi_sequence_player import MultiSequencePlayer
+        except ImportError:
+            # Fallback for different directory structures
+            try:
+                from ...multi_sequence_player import MultiSequencePlayer
+            except ImportError:
+                from player.multi_sequence_player import MultiSequencePlayer
         
         # Check stop flag before starting chain import
         if stop_flag and stop_flag():

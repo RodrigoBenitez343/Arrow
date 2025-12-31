@@ -1,0 +1,47 @@
+{
+    "metadata": {
+        "created_at": "2025-12-28 19:17:56",
+        "total_actions": 6,
+        "duration_sec": 11.44,
+        "mode": "desktop_only"
+    },
+    "actions": [
+        {
+            "type": "drag_drop",
+            "from": {
+                "x": 229,
+                "y": 63
+            },
+            "to": {
+                "x": 194,
+                "y": 62
+            },
+            "timestamp": 1766978266.480318
+        },
+        {
+            "type": "clipboard",
+            "operation": "a",
+            "timestamp": 1766978267.7345266
+        },
+        {
+            "type": "keystroke",
+            "key": "backspace",
+            "timestamp": 1766978268.9022028
+        },
+        {
+            "type": "type_string",
+            "text": "gmail",
+            "timestamp": 1766978274.0181751
+        },
+        {
+            "type": "keystroke",
+            "key": "down",
+            "timestamp": 1766978274.0181832
+        },
+        {
+            "type": "keystroke",
+            "key": "enter",
+            "timestamp": 1766978275.2500324
+        }
+    ]
+}
