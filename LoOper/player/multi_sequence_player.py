@@ -185,7 +185,7 @@ class MultiSequencePlayer(SeleniumBot):
         logger.warning("ComoRAG engine did not become ready within timeout")
         return False
 
-    def play_chain(self, stop_flag=None):
+    def play_chain(self, stop_flag=None, preserve_selection_memory=False):
         """
         Plays the entire chain of sequences with proper workflow execution.
         
@@ -226,7 +226,8 @@ class MultiSequencePlayer(SeleniumBot):
             if hasattr(self, 'workflow_executor'):
                 self.workflow_executor.reset()
             self.skipped_nodes = set()
-            self.clear_selection_memory()
+            if not preserve_selection_memory:
+                self.clear_selection_memory()
             logger.info("Reset MultiSequencePlayer component states")
         except Exception as e:
             logger.warning(f"Failed to reset component states: {e}")

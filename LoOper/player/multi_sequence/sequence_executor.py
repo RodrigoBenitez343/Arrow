@@ -93,6 +93,11 @@ class SequenceExecutor:
         if seq_file:
             # Determine base directory for path resolution
             base_dir = self.chain_file_dir if self.chain_file_dir else os.getcwd()
+            base_dir_name = os.path.basename(os.path.normpath(base_dir)).lower() if base_dir else ""
+            is_bare_filename = (
+                os.path.basename(seq_file) == seq_file
+                and ("/" not in seq_file and "\\" not in seq_file)
+            )
             
             # Try multiple path resolution strategies
             # Determine executable directory for frozen builds
@@ -100,14 +105,27 @@ class SequenceExecutor:
             if getattr(sys, 'frozen', False):
                 exe_dir = os.path.dirname(sys.executable)
             
-            possible_paths = [
-                seq_file,  # original path
-                os.path.join(base_dir, seq_file),  # relative to chain file directory
-                os.path.join(base_dir, 'sequences', seq_file),  # sequences subdirectory in chain dir
-                os.path.join('sequences', seq_file),  # sequences subdirectory in cwd
-                os.path.join(os.getcwd(), seq_file),  # current working directory
-                os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
-            ]
+            looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
+            possible_paths = [seq_file]  # original path (may already be absolute)
+
+            if is_bare_filename:
+                possible_paths.extend([
+                    os.path.join(base_dir, 'sequences', seq_file),  # sequences next to chain
+                    os.path.join(os.getcwd(), 'sequences', seq_file),  # cwd/sequences
+                    os.path.join('sequences', seq_file),  # sequences relative to cwd
+                    os.path.join(looper_sequences, seq_file),  # LoOper/sequences
+                ])
+                possible_paths.append(os.path.join(os.getcwd(), seq_file))
+                possible_paths.append(os.path.join(base_dir, seq_file))  # last-resort (can collide with chains/*.json)
+            else:
+                possible_paths.extend([
+                    os.path.join(base_dir, seq_file),
+                    os.path.join(base_dir, 'sequences', seq_file),
+                    os.path.join('sequences', seq_file),
+                    os.path.join(os.getcwd(), seq_file),
+                    os.path.join(os.getcwd(), 'sequences', seq_file),
+                    os.path.join(looper_sequences, seq_file),
+                ])
             
             # Add frozen build paths if applicable
             if exe_dir:
@@ -116,30 +134,37 @@ class SequenceExecutor:
                     os.path.join(exe_dir, 'sequences', seq_file),
                 ])
             
-            # Add LoOper/sequences folder paths
-            looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
             possible_paths.extend([
-                os.path.join(looper_sequences, seq_file),  # LoOper/sequences folder
                 os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file),  # absolute LoOper/sequences
             ])
             
             # Add .json extension if missing
             if not seq_file.endswith('.json'):
-                possible_paths.extend([
-                    seq_file + '.json',
-                    os.path.join(base_dir, seq_file + '.json'),
-                    os.path.join(base_dir, 'sequences', seq_file + '.json'),
-                    os.path.join('sequences', seq_file + '.json'),
-                    os.path.join(os.getcwd(), seq_file + '.json'),
-                    os.path.join(os.getcwd(), 'sequences', seq_file + '.json'),
-                    # Add LoOper/sequences paths with .json extension
-                    os.path.join(looper_sequences, seq_file + '.json'),
-                    os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file + '.json'),
-                ])
+                json_name = seq_file + '.json'
+                possible_paths.append(json_name)
+                if is_bare_filename:
+                    possible_paths.extend([
+                        os.path.join(base_dir, 'sequences', json_name),
+                        os.path.join(os.getcwd(), 'sequences', json_name),
+                        os.path.join('sequences', json_name),
+                        os.path.join(looper_sequences, json_name),
+                    ])
+                    possible_paths.append(os.path.join(os.getcwd(), json_name))
+                    possible_paths.append(os.path.join(base_dir, json_name))
+                else:
+                    possible_paths.extend([
+                        os.path.join(base_dir, json_name),
+                        os.path.join(base_dir, 'sequences', json_name),
+                        os.path.join('sequences', json_name),
+                        os.path.join(os.getcwd(), json_name),
+                        os.path.join(os.getcwd(), 'sequences', json_name),
+                        os.path.join(looper_sequences, json_name),
+                        os.path.join(os.getcwd(), 'LoOper', 'sequences', json_name),
+                    ])
                 if exe_dir:
                     possible_paths.extend([
-                        os.path.join(exe_dir, seq_file + '.json'),
-                        os.path.join(exe_dir, 'sequences', seq_file + '.json'),
+                        os.path.join(exe_dir, json_name),
+                        os.path.join(exe_dir, 'sequences', json_name),
                     ])
             
             # Find the first existing file
@@ -187,7 +212,9 @@ class SequenceExecutor:
             # Load sequence data - try cache first for optimal performance
             try:
                 # First try to get from cache
-                sequence_data = get_sequence(seq_file)
+                sequence_data = get_sequence(seq_file, self.chain_file_dir)
+                if not sequence_data and self.chain_file_dir:
+                    sequence_data = get_sequence(seq_file)
                 if sequence_data:
                     logger.info(f"Using cached sequence data for: {seq_file}")
                     # Create a player instance without reloading JSON but ensure base init occurs

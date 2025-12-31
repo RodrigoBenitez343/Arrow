@@ -775,3 +775,22 @@
 2025-12-30 05:45:01,769 - DEBUG - mss library available for fast screenshot capture
 2025-12-30 10:52:57,700 - DEBUG - mss library available for fast screenshot capture
 2025-12-30 10:53:16,036 - DEBUG - mss library available for fast screenshot capture
+2025-12-31 08:54:07,791 - DEBUG - mss library available for fast screenshot capture
+2025-12-31 08:54:07,917 - INFO - Loaded legacy chain with 0 sequences
+2025-12-31 08:54:07,921 - DEBUG - mss library available for fast screenshot capture
+2025-12-31 08:54:12,799 - DEBUG - Environment variable FAISS_OPT_LEVEL is not set, so let's pick the instruction set according to the current CPU
+2025-12-31 08:54:12,800 - INFO - Loading faiss with AVX2 support.
+2025-12-31 08:54:12,821 - INFO - Successfully loaded faiss with AVX2 support.
+2025-12-31 08:54:12,964 - INFO - Starting chain playback
+2025-12-31 08:54:12,965 - DEBUG - Chain playback - workflow_graph exists: False
+2025-12-31 08:54:12,965 - DEBUG - Chain playback - sequences count: 0
+2025-12-31 08:54:12,965 - INFO - LLMExecutor state reset
+2025-12-31 08:54:12,965 - INFO - Reset MultiSequencePlayer component states
+2025-12-31 08:54:12,965 - INFO - Chain playback stopped during initial delay
+2025-12-31 08:54:12,966 - INFO - Starting chain playback
+2025-12-31 08:54:12,966 - DEBUG - Chain playback - workflow_graph exists: False
+2025-12-31 08:54:12,966 - DEBUG - Chain playback - sequences count: 0
+2025-12-31 08:54:12,966 - INFO - LLMExecutor state reset
+2025-12-31 08:54:12,966 - INFO - Selection memory cleared
+2025-12-31 08:54:12,966 - INFO - Reset MultiSequencePlayer component states
+2025-12-31 08:54:12,966 - INFO - Chain playback stopped during initial delay

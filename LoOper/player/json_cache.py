@@ -253,6 +253,14 @@ class JSONCache:
         
         # Determine base directory
         base_dir = base_dir or os.getcwd()
+
+        base_dir_name = os.path.basename(os.path.normpath(base_dir)).lower() if base_dir else ""
+        is_base_dir_chains = base_dir_name == "chains"
+        is_bare_filename = (
+            bool(sequence_file)
+            and os.path.basename(sequence_file) == sequence_file
+            and ("/" not in sequence_file and "\\" not in sequence_file)
+        )
         
         # Determine executable directory for frozen builds
         exe_dir = None
@@ -260,14 +268,31 @@ class JSONCache:
             exe_dir = os.path.dirname(sys.executable)
         
         # Try multiple path resolution strategies
-        possible_paths = [
-            sequence_file,  # Original path
-            os.path.join(base_dir, sequence_file),  # Relative to base dir
-            os.path.join(base_dir, 'sequences', sequence_file),  # sequences subdirectory in base dir
-            os.path.join('sequences', sequence_file),  # sequences subdirectory in cwd
-            os.path.join(os.getcwd(), sequence_file),  # current working directory
-            os.path.join(os.getcwd(), 'sequences', sequence_file),  # cwd/sequences
-        ]
+        looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
+
+        possible_paths = [sequence_file]  # Original path (may be absolute)
+
+        if is_bare_filename:
+            possible_paths.extend([
+                os.path.join(base_dir, 'sequences', sequence_file),  # sequences next to chain
+                os.path.join(os.getcwd(), 'sequences', sequence_file),  # cwd/sequences
+                os.path.join('sequences', sequence_file),  # sequences relative to cwd
+                os.path.join(looper_sequences, sequence_file),  # LoOper/sequences
+            ])
+            if not is_base_dir_chains:
+                possible_paths.append(os.path.join(base_dir, sequence_file))  # Relative to base dir
+            possible_paths.append(os.path.join(os.getcwd(), sequence_file))  # current working directory
+            if is_base_dir_chains:
+                possible_paths.append(os.path.join(base_dir, sequence_file))  # last-resort: avoid chains/name.json collisions
+        else:
+            possible_paths.extend([
+                os.path.join(base_dir, sequence_file),  # Relative to base dir
+                os.path.join(base_dir, 'sequences', sequence_file),  # sequences subdirectory in base dir
+                os.path.join('sequences', sequence_file),  # sequences subdirectory in cwd
+                os.path.join(os.getcwd(), sequence_file),  # current working directory
+                os.path.join(os.getcwd(), 'sequences', sequence_file),  # cwd/sequences
+                os.path.join(looper_sequences, sequence_file),  # LoOper/sequences
+            ])
         
         # Add frozen build paths if applicable
         if exe_dir:
@@ -275,31 +300,39 @@ class JSONCache:
                 os.path.join(exe_dir, sequence_file),
                 os.path.join(exe_dir, 'sequences', sequence_file),
             ])
-        
-        # Add LoOper/sequences folder paths
-        looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
-        possible_paths.extend([
-            os.path.join(looper_sequences, sequence_file),  # LoOper/sequences folder
-            os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file),  # absolute LoOper/sequences
-        ])
+        possible_paths.append(os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file))
         
         # Add .json extension if missing
         if not sequence_file.endswith('.json'):
-            possible_paths.extend([
-                sequence_file + '.json',
-                os.path.join(base_dir, sequence_file + '.json'),
-                os.path.join(base_dir, 'sequences', sequence_file + '.json'),
-                os.path.join('sequences', sequence_file + '.json'),
-                os.path.join(os.getcwd(), sequence_file + '.json'),
-                os.path.join(os.getcwd(), 'sequences', sequence_file + '.json'),
-                # Add LoOper/sequences paths with .json extension
-                os.path.join(looper_sequences, sequence_file + '.json'),
-                os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file + '.json'),
-            ])
+            json_name = sequence_file + '.json'
+
+            possible_paths.append(json_name)
+            if is_bare_filename:
+                possible_paths.extend([
+                    os.path.join(base_dir, 'sequences', json_name),
+                    os.path.join(os.getcwd(), 'sequences', json_name),
+                    os.path.join('sequences', json_name),
+                    os.path.join(looper_sequences, json_name),
+                ])
+                if not is_base_dir_chains:
+                    possible_paths.append(os.path.join(base_dir, json_name))
+                possible_paths.append(os.path.join(os.getcwd(), json_name))
+                if is_base_dir_chains:
+                    possible_paths.append(os.path.join(base_dir, json_name))
+            else:
+                possible_paths.extend([
+                    os.path.join(base_dir, json_name),
+                    os.path.join(base_dir, 'sequences', json_name),
+                    os.path.join('sequences', json_name),
+                    os.path.join(os.getcwd(), json_name),
+                    os.path.join(os.getcwd(), 'sequences', json_name),
+                    os.path.join(looper_sequences, json_name),
+                    os.path.join(os.getcwd(), 'LoOper', 'sequences', json_name),
+                ])
             if exe_dir:
                 possible_paths.extend([
-                    os.path.join(exe_dir, sequence_file + '.json'),
-                    os.path.join(exe_dir, 'sequences', sequence_file + '.json'),
+                    os.path.join(exe_dir, json_name),
+                    os.path.join(exe_dir, 'sequences', json_name),
                 ])
         nested_sequences = os.path.join(os.getcwd(), 'sequences', 'sequences')
         possible_paths.extend([
