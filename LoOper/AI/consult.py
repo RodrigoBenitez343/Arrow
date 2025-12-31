@@ -81,22 +81,38 @@ class OllamaClient:
     
     def list_models(self) -> List[Dict[str, Any]]:
         """Get list of available models"""
+        models = []
+        # Try Gateway /models first
         try:
             response = self.session.get(f"{self.base_url}/models")
             response.raise_for_status()
             data = response.json()
-            # Extract the models array from the response
             if isinstance(data, dict) and 'models' in data:
-                return data['models']
+                models = data['models']
             elif isinstance(data, list):
-                # Handle case where API returns models directly as a list
-                return data
-            else:
-                print(f"Unexpected response format: {data}")
-                return []
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching models: {e}")
-            return []
+                models = data
+        except Exception as e:
+            if self.debug:
+                print(f"Gateway list_models failed: {e}")
+        
+        # If no models found, try local Ollama /api/tags
+        if not models:
+            try:
+                host = os.getenv('OLLAMA_HOST', 'localhost')
+                port = os.getenv('OLLAMA_PORT', '11434')
+                base = f"http://{host}:{port}"
+                response = self.session.get(f"{base}/api/tags")
+                response.raise_for_status()
+                data = response.json()
+                if isinstance(data, dict) and 'models' in data:
+                    # Convert /api/tags format to simple list or compatible format
+                    # /api/tags returns list of objects with 'name' field
+                    models = [m['name'] for m in data['models']]
+            except Exception as e:
+                if self.debug:
+                    print(f"Local Ollama list_models failed: {e}")
+                    
+        return models
     
     def chat(self, model: str, prompt: str, 
              temperature: Optional[float] = None,

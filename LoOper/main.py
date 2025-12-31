@@ -85,20 +85,22 @@ except Exception:
 
 # Normalize working directory and import path for frozen builds
 if getattr(sys, 'frozen', False):
-    # For PyInstaller, sys._MEIPASS is the root of the bundle
     meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-    # _internal is where all libraries and the LoOper package live
-    internal_dir = os.path.join(meipass, '_internal')
-    
+    exe_dir = os.path.dirname(sys.executable)
+    internal_dir = meipass
+    if os.path.basename(internal_dir).lower() != '_internal':
+        candidate_internal = os.path.join(exe_dir, '_internal')
+        if os.path.isdir(candidate_internal):
+            internal_dir = candidate_internal
+
     try:
-        os.chdir(meipass)
+        os.chdir(exe_dir)
     except Exception:
         pass
-        
-    # Ensure both root and _internal are in path
-    if meipass not in sys.path:
-        sys.path.insert(0, meipass)
-    if internal_dir not in sys.path:
+
+    if exe_dir and exe_dir not in sys.path:
+        sys.path.insert(0, exe_dir)
+    if internal_dir and internal_dir not in sys.path:
         sys.path.insert(0, internal_dir)
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

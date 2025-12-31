@@ -725,12 +725,20 @@ class CodeMixin:
                 self._initialize_chain_runtime()
             py_exe = os.path.join(self._venv_dir, 'Scripts', 'python.exe')
             if not os.path.exists(py_exe):
+                logger.info(f"Creating new venv at {self._venv_dir}")
                 builder = venv.EnvBuilder(with_pip=True)
                 builder.create(self._venv_dir)
             self._venv_python = os.path.join(self._venv_dir, 'Scripts', 'python.exe')
             self._venv_site_packages = os.path.join(self._venv_dir, 'Lib', 'site-packages')
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to ensure chain venv: {e}")
+            # Fallback to system python if venv creation fails (e.g. in frozen app)
+            # This allows execution but dependency installation might fail or affect global state
+            # which is better than crashing
+            if getattr(sys, 'frozen', False):
+                 self._venv_python = sys.executable
+            else:
+                 self._venv_python = sys.executable
 
     def _is_last_code_node(self, node):
         """
@@ -793,56 +801,225 @@ class CodeMixin:
             return ''
 
     def _install_code_dependencies(self, code_str):
+        """
+        Analyzes the code for imports and installs missing packages in the chain's venv.
+        """
         try:
             self._ensure_chain_venv()
             if not self._venv_python:
                 return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
-            import re
+            
+            # Use AST for robust import parsing
+            import ast
             pkgs = set()
-            for line in (code_str or '').splitlines():
-                m1 = re.match(r"\s*import\s+([a-zA-Z0-9_\., ]+)", line)
-                if m1:
-                    names = [n.strip() for n in m1.group(1).split(',') if n.strip()]
-                    for n in names:
-                        base = n.split(' as ')[0].strip()
-                        pkgs.add(base.split('.')[0].strip())
-                    continue
-                m2 = re.match(r"\s*from\s+([a-zA-Z0-9_\.]+)\s+import\s+", line)
-                if m2:
-                    pkgs.add(m2.group(1).split('.')[0])
+            try:
+                tree = ast.parse(code_str)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            pkgs.add(alias.name.split('.')[0])
+                    elif isinstance(node, ast.ImportFrom):
+                        if node.module:
+                            pkgs.add(node.module.split('.')[0])
+            except Exception as e:
+                logger.warning(f"Failed to parse code imports with AST: {e}")
+                # Fallback to simple regex if AST fails (e.g. syntax error in code)
+                import re
+                for line in (code_str or '').splitlines():
+                    m1 = re.match(r"\s*import\s+([a-zA-Z0-9_\., ]+)", line)
+                    if m1:
+                        names = [n.strip() for n in m1.group(1).split(',') if n.strip()]
+                        for n in names:
+                            base = n.split(' as ')[0].strip()
+                            pkgs.add(base.split('.')[0].strip())
+                        continue
+                    m2 = re.match(r"\s*from\s+([a-zA-Z0-9_\.]+)\s+import\s+", line)
+                    if m2:
+                        pkgs.add(m2.group(1).split('.')[0])
+
             stdlib = {
-                'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','tkinter'
+                'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','tkinter',
+                'io', 'contextlib', 'shutil', 'glob', 'platform', 'warnings', 'logging', 'uuid', 'socket', 'urllib', 'http', 'email', 'base64', 'hashlib', 'hmac', 'struct', 'pickle', 'copy', 'weakref', 'enum', 'types', 'inspect', 'traceback', 'gc', 'abc', 'numbers', 'decimal', 'fractions', 'statistics', 'operator', 'unittest', 'doctest', 'pdb', 'profile', 'cProfile', 'timeit', 'venv', 'ensurepip', 'zipfile', 'tarfile', 'csv', 'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'xml', 'html', 'mimetypes', 'argparse', 'optparse', 'getopt', 'getpass', 'curses', 'ctypes', 'multiprocessing', 'concurrent', 'queue', 'select', 'mmap', 'signal', 'termios', 'tty', 'pty', 'fcntl', 'pipes', 'resource', 'nis', 'syslog', 'site', 'builtins'
             }
+            
             wanted = [p for p in pkgs if p and p not in stdlib]
+            
+            if not wanted:
+                return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
+                
+            # Check what's installed
+            installed_output = ""
+            try:
+                # Use list_installed_packages via subprocess to be safe
+                if hasattr(self, '_venv_python') and self._venv_python:
+                    cmd = [self._venv_python, "-m", "pip", "list", "--format=json"]
+                    if os.name == 'nt':
+                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW)
+                    else:
+                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
+                    out, err = p.communicate()
+                    installed_output = out
+            except Exception:
+                pass
+                
+            installed_names = set()
+            try:
+                import json
+                data = json.loads(installed_output)
+                for item in data:
+                    installed_names.add(item['name'].lower())
+            except Exception:
+                pass
+                
+            to_install = []
+            skipped = []
+            
+            # Mapping for common import names vs package names
+            pkg_map = {
+                'cv2': 'opencv-python',
+                'PIL': 'Pillow',
+                'bs4': 'beautifulsoup4',
+                'sklearn': 'scikit-learn',
+                'yaml': 'PyYAML',
+                'dotenv': 'python-dotenv',
+                'dateutil': 'python-dateutil',
+                'jwt': 'PyJWT',
+                'telegram': 'python-telegram-bot',
+                'discord': 'discord.py',
+                'google': 'google-api-python-client',
+                'googleapiclient': 'google-api-python-client',
+                'youtube_dl': 'youtube_dl',
+                'yt_dlp': 'yt-dlp',
+                'git': 'GitPython',
+                'usb': 'pyusb',
+                'serial': 'pyserial',
+                'win32api': 'pywin32',
+                'win32con': 'pywin32',
+                'win32gui': 'pywin32',
+                'cx_Oracle': 'cx_Oracle',
+                'psycopg2': 'psycopg2-binary',
+                'mysqldb': 'mysqlclient',
+                'dns': 'dnspython',
+                'jose': 'python-jose',
+                'xlrd': 'xlrd',
+                'xlsxwriter': 'XlsxWriter',
+                'openpyxl': 'openpyxl',
+                'pandas': 'pandas',
+                'numpy': 'numpy',
+                'requests': 'requests',
+                'flask': 'Flask',
+                'django': 'Django',
+                'fastapi': 'fastapi',
+                'uvicorn': 'uvicorn',
+                'websockets': 'websockets',
+                'engineio': 'python-engineio',
+                'socketio': 'python-socketio',
+                'plotly': 'plotly',
+                'matplotlib': 'matplotlib',
+                'seaborn': 'seaborn',
+                'streamlit': 'streamlit',
+                'gradio': 'gradio',
+                'kivy': 'Kivy',
+                'pygame': 'pygame',
+                'pyglet': 'pyglet',
+                'moviepy': 'moviepy',
+                'pydub': 'pydub',
+                'speech_recognition': 'SpeechRecognition',
+                'gtts': 'gTTS',
+                'playsound': 'playsound',
+                'pyttsx3': 'pyttsx3',
+                'openai': 'openai',
+                'anthropic': 'anthropic',
+                'google.generativeai': 'google-generativeai',
+                'boto3': 'boto3',
+                'docx': 'python-docx',
+                'pptx': 'python-pptx',
+                'fitz': 'pymupdf',
+                'frontend': 'frontend', # Generic, but sometimes used
+                'backend': 'backend'
+            }
+            
+            # Check for explicit requirements in comments
+            # Format: # requirements: package1, package2==1.0.0, package3
+            import re
+            for line in (code_str or '').splitlines():
+                m_req = re.match(r"\s*#\s*requirements\s*:\s*(.+)", line, re.IGNORECASE)
+                if m_req:
+                    reqs = [r.strip() for r in m_req.group(1).split(',') if r.strip()]
+                    for r in reqs:
+                        # Add to wanted directly, bypassing stdlib check as these are explicit user requests
+                        # We still resolve via pkg_map if possible, but usually these are pkg names
+                        # Handle version specifiers
+                        base_pkg = r.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].strip()
+                        resolved = pkg_map.get(base_pkg, base_pkg)
+                        # Re-attach version if present (simple approach)
+                        if base_pkg != r:
+                            # It has version info, use as is but map the name part if needed?
+                            # This is complex. Let's just assume user knows the pkg name if specifying version.
+                            # But if they wrote "cv2==4.5", we want "opencv-python==4.5"
+                            if base_pkg in pkg_map:
+                                r = r.replace(base_pkg, pkg_map[base_pkg], 1)
+                        else:
+                            r = resolved
+                        
+                        if r not in wanted:
+                             wanted.append(r)
+            
+            # Heuristics for implicit dependencies
+            code_lower = (code_str or '').lower()
+            
+            # Pandas Excel support (openpyxl is required for read_excel/to_excel with .xlsx)
+            if 'pandas' in pkgs:
+                 if 'read_excel' in code_lower or '.xlsx' in code_lower or 'to_excel' in code_lower:
+                     if 'openpyxl' not in wanted:
+                         wanted.append('openpyxl')
+            
+            # Matplotlib often needs pillow for image operations
+            if 'matplotlib' in pkgs and ('image' in code_lower or 'imshow' in code_lower):
+                if 'Pillow' not in wanted:
+                    wanted.append('Pillow')
+
+            for w in wanted:
+                real_pkg = pkg_map.get(w, w)
+                # Simple heuristic: if import name is in installed list (case insensitive), skip
+                # This is imperfect but saves time
+                if real_pkg.lower() in installed_names:
+                    skipped.append(real_pkg)
+                else:
+                    to_install.append(real_pkg)
+            
+            if not to_install:
+                 return {"installed": [], "failed": [], "skipped": skipped, "pip_stdout": "", "pip_stderr": ""}
+                 
+            logger.info(f"Installing code dependencies: {to_install}")
+            
+            cmd = [self._venv_python, "-m", "pip", "install"] + to_install
+            
+            if os.name == 'nt':
+                process = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW)
+            else:
+                process = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
+                
+            stdout, stderr = process.communicate()
+            
             installed = []
             failed = []
-            skipped = []
-            pip_out_all = []
-            pip_err_all = []
-            for p in wanted:
-                try:
-                    # Use CREATE_NO_WINDOW on Windows to prevent console popup
-                    cflags = 0x08000000 if sys.platform == "win32" else 0
-                    r = _sp.run([self._venv_python, '-m', 'pip', 'install', p], capture_output=True, text=True, timeout=180, creationflags=cflags)
-                    if r.returncode == 0:
-                        installed.append(p)
-                    else:
-                        failed.append(p)
-                    if r.stdout:
-                        pip_out_all.append(r.stdout)
-                    if r.stderr:
-                        pip_err_all.append(r.stderr)
-                except Exception:
-                    failed.append(p)
-            for p in pkgs:
-                if p in stdlib:
-                    skipped.append(p)
+            
+            if process.returncode == 0:
+                installed = to_install
+            else:
+                # Try to determine which failed? For now assume all failed if non-zero
+                failed = to_install
+                logger.error(f"Pip install failed: {stderr}")
+                
             return {
                 "installed": installed,
                 "failed": failed,
-                "skipped": sorted(set(skipped)),
-                "pip_stdout": "\n".join([s for s in pip_out_all if s]).strip(),
-                "pip_stderr": "\n".join([s for s in pip_err_all if s]).strip(),
+                "skipped": skipped,
+                "pip_stdout": stdout,
+                "pip_stderr": stderr
             }
-        except Exception:
-            return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
+
+        except Exception as e:
+            logger.error(f"Dependency installation error: {e}")
+            return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": str(e)}

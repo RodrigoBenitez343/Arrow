@@ -157,6 +157,17 @@ class LLMExecutor:
         use_advanced_vision = str(llm_config.get('use_advanced_vision', 'false')).lower() in ('true', '1', 'yes', 'on')
         screenshot_enabled = llm_config.get('screenshot_enabled', True)
 
+        def _is_vision_model_name(name: str) -> bool:
+            ml = str(name or "").lower()
+            for v in ('llava', 'bakllava', 'moondream', 'llava-llama3', 'llava-phi3', 'minicpm-v'):
+                if v in ml:
+                    return True
+            return False
+
+        is_vision_model = _is_vision_model_name(model)
+        should_use_vision = use_vision or is_vision_model
+        images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
+
         # Auto-detect concatenation: if this node has any inputs in the workflow graph,
         # treat them as "previous" source and enable direct RAG unless explicitly disabled.
         node_inputs = node.get('inputs', []) or []
@@ -575,15 +586,49 @@ class LLMExecutor:
                     raise e
 
                 # Calculate path to Computer_vision module
-                current_dir = os.path.dirname(os.path.abspath(__file__))
-                # executor.py is in LoOper/player/multi_sequence/llm_executor_resources/
-                # We need LoOper/player/Computer_vision/
-                # Up 3 levels to LoOper/player
-                looper_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
-                cv_dir = os.path.join(looper_root, "player", "Computer_vision")
+                cv_dir = None
+                if getattr(sys, 'frozen', False):
+                    # Frozen mode (PyInstaller)
+                    base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+                    exe_dir = os.path.dirname(sys.executable)
+                    internal_dir = base_path
+                    if os.path.basename(internal_dir).lower() != '_internal':
+                        candidate_internal = os.path.join(exe_dir, '_internal')
+                        if os.path.isdir(candidate_internal):
+                            internal_dir = candidate_internal
+                        else:
+                            candidate_internal = os.path.join(base_path, '_internal')
+                            if os.path.isdir(candidate_internal):
+                                internal_dir = candidate_internal
+
+                    possible_paths = [
+                        os.path.join(internal_dir, 'LoOper', 'player', 'Computer_vision'),
+                        os.path.join(exe_dir, 'LoOper', 'player', 'Computer_vision'),
+                        # Fallback for flattened structures
+                        os.path.join(internal_dir, 'player', 'Computer_vision'),
+                        os.path.join(exe_dir, 'player', 'Computer_vision'),
+                    ]
+                    
+                    for p in possible_paths:
+                        if os.path.exists(p):
+                            cv_dir = p
+                            break
                 
-                if cv_dir not in sys.path:
-                    sys.path.append(cv_dir)
+                if not cv_dir:
+                    # Source mode or fallback
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    # executor.py is in LoOper/player/multi_sequence/llm_executor_resources/
+                    # We need LoOper/player/Computer_vision/
+                    # Up 3 levels to LoOper/player
+                    looper_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+                    cv_dir = os.path.join(looper_root, "player", "Computer_vision")
+                
+                if cv_dir and os.path.exists(cv_dir):
+                    if cv_dir not in sys.path:
+                        sys.path.append(cv_dir)
+                    logger.info(f"Added Computer_vision path: {cv_dir}")
+                else:
+                    logger.warning(f"Could not locate Computer_vision directory. Attempting import anyway.")
                 
                 import model_vision
                 import json as _json
@@ -595,8 +640,18 @@ class LLMExecutor:
                     # Initialize vision
                     vision_instance = model_vision.Vision(model_path)
                     
-                    # Analyze screen (using monitor 1 as default)
-                    vision_data = vision_instance.analyze_single_frame(1)
+                    vision_data = None
+                    try:
+                        if images and images[0] and os.path.exists(images[0]):
+                            import cv2
+                            screen_bgr = cv2.imread(images[0])
+                            if screen_bgr is not None:
+                                vision_data = vision_instance.analyze_frame(screen_bgr)
+                    except Exception:
+                        vision_data = None
+
+                    if vision_data is None:
+                        vision_data = vision_instance.analyze_single_frame(1)
                     advanced_vision_image_path = vision_data.get("image_path")
                     
                     # Serialize to text description
@@ -684,22 +739,9 @@ class LLMExecutor:
                 import traceback
                 logger.error(traceback.format_exc())
 
-        def _is_vision_model_name(name: str) -> bool:
-            ml = str(name or "").lower()
-            for v in ('llava', 'bakllava', 'moondream', 'llava-llama3', 'llava-phi3', 'minicpm-v'):
-                if v in ml:
-                    return True
-            return False
-        is_vision_model = _is_vision_model_name(model)
-        should_use_vision = use_vision or is_vision_model
-        images, _ocr_text = prepare_vision_images(should_use_vision, screenshot_enabled, stop_flag)
-        
         if advanced_vision_image_path and should_use_vision:
-            if images is None:
-                images = []
-            # Insert the annotated image at the beginning
-            images.insert(0, advanced_vision_image_path)
-            logger.info(f"Included Advanced Vision annotation image: {advanced_vision_image_path}")
+            images = [advanced_vision_image_path]
+            logger.info(f"Using Advanced Vision annotated image for vision: {advanced_vision_image_path}")
 
         try:
             if emb_client:

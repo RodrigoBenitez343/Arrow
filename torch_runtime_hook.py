@@ -13,7 +13,8 @@ exe_dir = os.path.dirname(sys.executable)
 candidate_bases = []
 if meipass:
     candidate_bases.append(meipass)
-    candidate_bases.append(os.path.join(meipass, '_internal'))
+    if os.path.basename(meipass).lower() != '_internal':
+        candidate_bases.append(os.path.join(meipass, '_internal'))
 candidate_bases.append(exe_dir)
 candidate_bases.append(os.path.join(exe_dir, '_internal'))
 
@@ -35,12 +36,33 @@ for base in candidate_bases:
     torchvision_path = os.path.join(base, 'torchvision')
     if os.path.isdir(torchvision_path) and torchvision_path not in dll_paths:
         dll_paths.append(torchvision_path)
+    
+    paddle_libs = os.path.join(base, 'paddle', 'libs')
+    if os.path.isdir(paddle_libs) and paddle_libs not in dll_paths:
+        dll_paths.append(paddle_libs)
+    
+    paddle_base = os.path.join(base, 'paddle', 'base')
+    if os.path.isdir(paddle_base) and paddle_base not in dll_paths:
+        dll_paths.append(paddle_base)
+    
+    paddle_site_libs = os.path.join(base, 'paddle.libs')
+    if os.path.isdir(paddle_site_libs) and paddle_site_libs not in dll_paths:
+        dll_paths.append(paddle_site_libs)
+
+    onnxruntime_capi = os.path.join(base, 'onnxruntime', 'capi')
+    if os.path.isdir(onnxruntime_capi) and onnxruntime_capi not in dll_paths:
+        dll_paths.append(onnxruntime_capi)
+
+    onnxruntime_root = os.path.join(base, 'onnxruntime')
+    if os.path.isdir(onnxruntime_root) and onnxruntime_root not in dll_paths:
+        dll_paths.append(onnxruntime_root)
 
 # Add discovered paths to the Windows DLL search path
 if hasattr(os, 'add_dll_directory'):
+    _dll_dir_handles = []
     for p in dll_paths:
         try:
-            os.add_dll_directory(p)
+            _dll_dir_handles.append(os.add_dll_directory(p))
         except Exception:
             pass
 
@@ -80,6 +102,10 @@ load_dll('libiomp5md.dll', dll_paths)
 # Step 3 & 4: Torch core libraries
 load_dll('c10.dll', dll_paths)
 load_dll('torch_cpu.dll', dll_paths)
+
+# Step 5: ONNX Runtime core (providers are often loaded dynamically)
+load_dll('onnxruntime_providers_shared.dll', dll_paths)
+load_dll('onnxruntime.dll', dll_paths)
 
 # Finally, trigger an early import of torch while we are still in the hook
 # to ensure it initializes before the main application starts loading PyQt.
