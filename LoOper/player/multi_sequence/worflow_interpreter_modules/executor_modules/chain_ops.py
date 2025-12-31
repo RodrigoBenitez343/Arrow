@@ -164,7 +164,7 @@ class ChainImportMixin:
                 
                 # Execute the imported chain using the same method as normal chains
                 logger.info(f"Executing imported chain: {resolved_chain_path}")
-                success = imported_player.play_chain(stop_flag)
+                success = imported_player.play_chain(stop_flag, preserve_selection_memory=True)
                 
                 # Check stop flag after chain execution
                 if stop_flag and stop_flag():
