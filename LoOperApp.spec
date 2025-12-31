@@ -460,7 +460,7 @@ for b in binaries:
 binaries = _normalized_binaries
 
 a = Analysis(
-    [os.path.join(base_dir, 'LoOper/main.py')],
+    [os.path.join(base_dir, 'LoOper.py')],
     pathex=pathex,
     binaries=binaries,
     datas=datas,
@@ -489,7 +489,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     icon=os.path.join(looper_dir, 'LoOper.ico'),

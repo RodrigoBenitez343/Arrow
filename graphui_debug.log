@@ -165,3 +165,6 @@
 2025-12-31 05:37:29,988 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
 2025-12-31 05:45:04,167 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
 2025-12-31 06:17:51,661 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-31 09:18:50,858 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-31 10:52:09,481 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2025-12-31 11:04:33,412 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError

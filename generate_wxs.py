@@ -167,5 +167,5 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
 if __name__ == "__main__":
     dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "dist", "LoOper"))
     output_wxs = os.path.abspath(os.path.join(os.path.dirname(__file__), "LoOper.wxs"))
-    create_wxs(dist_path, output_wxs, "LoOper", "0.1.7", "LoOperTeam")
+    create_wxs(dist_path, output_wxs, "LoOper", "1.0.0", "Rodrigo David Benitez")
     print(f"Generated {output_wxs}")
