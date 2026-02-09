@@ -65,9 +65,9 @@ class ConditionalFallbackHandler:
         """Delegate to absence trigger"""
         return self.absence_trigger.check_absence_trigger(trigger_config, timeout, screen_cv)
     
-    def check_ocr_trigger(self, trigger_config, timeout=None, stop_flag=None):
+    def check_ocr_trigger(self, trigger_config, stop_flag=None):
         """Delegate to OCR trigger"""
-        return self.ocr_trigger.check_ocr_trigger(trigger_config, timeout, stop_flag)
+        return self.ocr_trigger.check_ocr_trigger(trigger_config, stop_flag=stop_flag)
     
     def execute_conditional_node(self, node, stop_flag=None):
         """Delegate to node executor"""
@@ -130,8 +130,7 @@ class ConditionalFallbackHandler:
                         return False, f"Pre-sequence absence condition not met: {condition.get('image_path', 'unknown')}"
                 
                 elif condition_type == 'ocr':
-                    timeout = condition.get('timeout', 10)
-                    result = self.ocr_trigger.check_ocr_trigger(condition, timeout, stop_flag)
+                    result = self.ocr_trigger.check_ocr_trigger(condition, stop_flag=stop_flag)
                     if not result:
                         return False, f"Pre-sequence OCR condition not met: {condition.get('target_text', 'unknown')}"
             
@@ -174,8 +173,7 @@ class ConditionalFallbackHandler:
                         return False, f"Post-sequence absence condition not met: {condition.get('image_path', 'unknown')}"
                 
                 elif condition_type == 'ocr':
-                    timeout = condition.get('timeout', 10)
-                    result = self.ocr_trigger.check_ocr_trigger(condition, timeout, stop_flag)
+                    result = self.ocr_trigger.check_ocr_trigger(condition, stop_flag=stop_flag)
                     if not result:
                         return False, f"Post-sequence OCR condition not met: {condition.get('target_text', 'unknown')}"
             

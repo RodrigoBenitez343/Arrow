@@ -45,7 +45,7 @@ class ComoRAGSettings:
 class APISettings:
     """API server settings"""
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8001
     debug: bool = False
     cors_origins: List[str] = field(default_factory=lambda: ["*"])
     max_request_size: int = 10 * 1024 * 1024  # 10MB
@@ -57,7 +57,7 @@ class TailscaleSettings:
     """Tailscale network settings"""
     enabled: bool = False
     server_ip: Optional[str] = None
-    api_port: int = 8000
+    api_port: int = 8001
     auth_key: Optional[str] = None
     hostname: Optional[str] = None
 

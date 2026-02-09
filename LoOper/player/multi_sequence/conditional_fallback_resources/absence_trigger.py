@@ -110,7 +110,7 @@ class AbsenceTrigger:
             logger.error(f"Error checking absence trigger: {e}")
             return False
     
-    def check_absence_immediate(self, trigger_config):
+    def check_absence_immediate(self, trigger_config, screen_cv=None):
         """
         Check if a visual element is immediately absent (single check).
         
@@ -136,8 +136,8 @@ class AbsenceTrigger:
                 logger.info("Stop flag detected during immediate absence check - aborting")
                 return False
             
-            # Capture screen and check for presence
-            screen_cv = self.template_matcher.capture_screen()
+            if screen_cv is None:
+                screen_cv = self.template_matcher.capture_screen()
             
             # Create a temporary presence config for caching
             presence_config = trigger_config.copy()

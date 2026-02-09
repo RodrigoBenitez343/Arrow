@@ -16,7 +16,7 @@ def load_ai_config() -> Dict[str, Any]:
         "API_TIMEOUT": "30",
         "AUTO_START_API": "false",
         "USE_COMORAG": "true",
-        "OVERWATCH_API_URL": ""  # Leave blank to allow user configuration
+        "OVERWATCH_API_URL": "http://localhost:8001"
     }
     
     # Try to load from config file first

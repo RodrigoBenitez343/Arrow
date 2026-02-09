@@ -9,5 +9,5 @@ def get_default_api_url() -> str:
     except Exception:
         pass
     tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
-    port = os.getenv("API_PORT", "8000")
+    port = os.getenv("API_PORT", "8001")
     return f"http://{tailscale_ip}:{port}"
