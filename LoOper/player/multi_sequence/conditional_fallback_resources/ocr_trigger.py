@@ -159,7 +159,7 @@ class OCRTrigger:
             logger.error(f"Error performing OCR detection: {e}")
             return ""
     
-    def check_ocr_immediate(self, trigger_config):
+    def check_ocr_immediate(self, trigger_config, screen_cv=None):
         """
         Check if specific text is immediately present on screen (single check).
         
@@ -192,14 +192,14 @@ class OCRTrigger:
             
             # Check for cached result first
             cached_result = self.validation_cache.get_cached_validation_result(
-                trigger_config, None, self.template_matcher, self.path_resolver
+                trigger_config, screen_cv, self.template_matcher, self.path_resolver
             )
             if cached_result is not None:
                 logger.debug(f"Using cached immediate OCR result: {cached_result}")
                 return cached_result
             
-            # Capture screen and perform OCR
-            screen_cv = self.template_matcher.capture_screen()
+            if screen_cv is None:
+                screen_cv = self.template_matcher.capture_screen()
             found_text = self._perform_ocr_detection(screen_cv, language, region)
             
             if found_text:

@@ -12,16 +12,33 @@ class ConditionalMixin:
         Returns:
             bool: True if condition is met, False otherwise
         """
-        # Extract condition configuration
-        raw_trigger_type = conditional_node.get('trigger_type', 'presence_trigger')
-        condition_type = raw_trigger_type.lower()
+        raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        condition_type_mapping = {
+            'presence': 'presence_trigger',
+            'absence': 'absence_trigger',
+            'ocr': 'ocr_trigger',
+            'presence_trigger': 'presence_trigger',
+            'absence_trigger': 'absence_trigger',
+            'ocr_trigger': 'ocr_trigger'
+        }
+        condition_type = condition_type_mapping.get(raw_trigger_type, 'presence_trigger')
         
-        # Build condition configuration from node data
+        case_sensitive = conditional_node.get('case_sensitive', True)
+        if isinstance(case_sensitive, str):
+            case_sensitive = case_sensitive.strip().lower() in ('true', '1', 'yes', 'y')
+        elif case_sensitive is None:
+            case_sensitive = True
+        else:
+            case_sensitive = bool(case_sensitive)
+        
         condition_config = {
-            'image_path': conditional_node.get('image_path'),
-            'confidence': conditional_node.get('confidence', 0.8),
-            'timeout': conditional_node.get('timeout', 10),
-            'target_text': conditional_node.get('target_text'),
+            'image_path': conditional_node.get('image_path', ''),
+            'confidence': float(conditional_node.get('threshold', conditional_node.get('confidence', 0.8))),
+            'timeout': float(conditional_node.get('wait_time', conditional_node.get('timeout', 10))),
+            'max_loops': int(conditional_node.get('max_loops', 10)),
+            'target_text': conditional_node.get('ocr_text', '') or conditional_node.get('target_text', ''),
+            'case_sensitive': case_sensitive,
+            'language': conditional_node.get('language', 'eng'),
             'region': conditional_node.get('region'),
             'strict_validation': conditional_node.get('strict_validation', False)
         }
@@ -66,7 +83,7 @@ class ConditionalMixin:
         """
         try:
             import json
-            from ...sequence_player import SequencePlayer
+            from ....sequence_player import SequencePlayer
             
             # Reconstruct loop configuration from conditional node data
             loop_type = conditional_data.get('loop_type', 'while_present')

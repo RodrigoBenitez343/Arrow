@@ -72,7 +72,20 @@ class ConditionalLoop:
                     return False
                 
                 # Evaluate loop condition
-                should_continue = self._evaluate_loop_condition(loop_type, condition)
+                try:
+                    self.validation_cache.clear_cache()
+                except Exception:
+                    pass
+                
+                screen_cv = None
+                try:
+                    trigger_type = condition.get('trigger_type', 'presence')
+                    if trigger_type in ['presence', 'absence', 'ocr']:
+                        screen_cv = self.template_matcher.capture_screen()
+                except Exception:
+                    screen_cv = None
+                
+                should_continue = self._evaluate_loop_condition(loop_type, condition, screen_cv)
                 
                 if not should_continue:
                     logger.info(f"Loop condition no longer met after {iteration_count} iterations")
@@ -84,9 +97,7 @@ class ConditionalLoop:
                 try:
                     # Create a temporary sequence player for this iteration
                     temp_player = SequencePlayer(resolved_sequence_file)
-                    # Share selection memory if available
-                    if hasattr(sequence_player, 'selection_memory'):
-                        temp_player.selection_memory = sequence_player.selection_memory
+                    temp_player.selection_memory = {}
                     
                     # Execute the sequence
                     success = temp_player.play_sequence(stop_flag=self.stop_flag, skip_initial_delay=True)
@@ -122,7 +133,7 @@ class ConditionalLoop:
             logger.error(f"Error executing conditional loop: {e}")
             return False
     
-    def _evaluate_loop_condition(self, loop_type, condition):
+    def _evaluate_loop_condition(self, loop_type, condition, screen_cv=None):
         """
         Evaluate the loop condition based on loop type.
         
@@ -142,11 +153,11 @@ class ConditionalLoop:
             
             # Evaluate the condition based on trigger type
             if trigger_type == 'presence':
-                condition_met = self.presence_trigger.check_presence_trigger(condition)
+                condition_met = self.presence_trigger.check_presence_trigger(condition, screen_cv)
             elif trigger_type == 'absence':
-                condition_met = self.absence_trigger.check_absence_immediate(condition)
+                condition_met = self.absence_trigger.check_absence_immediate(condition, screen_cv=screen_cv)
             elif trigger_type == 'ocr':
-                condition_met = self.ocr_trigger.check_ocr_immediate(condition)
+                condition_met = self.ocr_trigger.check_ocr_immediate(condition, screen_cv=screen_cv)
             else:
                 logger.warning(f"Unknown trigger type for loop condition: {trigger_type}")
                 return False
