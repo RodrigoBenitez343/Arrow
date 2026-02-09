@@ -146,7 +146,22 @@ class LLMExecutor:
 
         model = llm_config.get('model', 'llama3.2')
         logger.info(f"Resolved model for execution: '{model}' (Default: 'llama3.2')")
-        api_url = llm_config.get('api_url', get_default_api_url())
+        def _normalize_api_url(value):
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            if raw.startswith("http://") or raw.startswith("https://"):
+                try:
+                    from urllib.parse import urlparse
+                    parsed = urlparse(raw)
+                    if not parsed.hostname:
+                        return None
+                except Exception:
+                    return None
+                return raw.rstrip("/")
+            return f"http://{raw}".rstrip("/")
+
+        api_url = _normalize_api_url(llm_config.get('api_url')) or get_default_api_url()
         system_message = llm_config.get('system_message', '')
         prompt = llm_config.get('prompt', '')
         temperature = llm_config.get('temperature', 0.7)
@@ -295,6 +310,10 @@ class LLMExecutor:
         use_comorag = str(llm_config.get('use_comorag', 'true')).lower() in ('true', '1', 'yes', 'on')
         max_cycles = int(llm_config.get('max_cycles', 5))
         memory_size = int(llm_config.get('memory_size', 1000))
+        if use_comorag:
+            overwatch_url = _normalize_api_url(os.getenv("OVERWATCH_API_URL"))
+            if overwatch_url:
+                api_url = overwatch_url
 
         use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
         # Respect explicit user choice for RAG; do not auto-enable on concatenation.
