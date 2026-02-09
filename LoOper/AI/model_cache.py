@@ -26,7 +26,11 @@ class ModelCache:
     def get_default_api_url(self) -> str:
         """Get the default API URL from environment variables"""
         tailscale_ip = os.getenv('TAILSCALE_SERVER_IP', 'localhost')
+        if not tailscale_ip or not str(tailscale_ip).strip():
+            tailscale_ip = "localhost"
         api_port = os.getenv('API_PORT', '8000')
+        if not api_port or not str(api_port).strip():
+            api_port = "8000"
         return f"http://{tailscale_ip}:{api_port}"
     
     def load_models_async(self, api_url: Optional[str] = None) -> None:

@@ -206,8 +206,15 @@ class MultiSequencePlayer(SeleniumBot):
             try:
                 import requests
                 tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
+                if not tailscale_ip or not str(tailscale_ip).strip():
+                    tailscale_ip = "localhost"
                 port = os.getenv("API_PORT", "8000")
+                if not port or not str(port).strip():
+                    port = "8000"
                 base_url = f"http://{tailscale_ip}:{port}"
+                overwatch_url = os.getenv("OVERWATCH_API_URL")
+                if overwatch_url and str(overwatch_url).strip():
+                    base_url = overwatch_url.strip().rstrip('/')
                 if self._wait_for_comorag_ready(base_url, stop_flag=stop_flag):
                     url = f"{base_url}/comorag/memory"
                     logger.info(f"Clearing ComoRAG memory at {url}...")
