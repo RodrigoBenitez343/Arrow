@@ -1,5 +1,7 @@
 from ....config import logger
 import copy
+import json
+import os
 
 class LLMMixin:
     def _execute_llm_node(self, node, stop_flag, action_handlers=None):
@@ -26,6 +28,67 @@ class LLMMixin:
         write_text = llm_config.get('write_text', True)
         
         node_to_execute = node
+        
+        # Inject chain descriptions for connected tools
+        try:
+            inputs = node.get('inputs', [])
+            tool_descriptions_update = {}
+            
+            for inp in inputs:
+                if str(inp.get('input_port')) == 'tools':
+                    from_node_id = inp.get('from_node')
+                    if from_node_id and from_node_id in self.workflow_graph:
+                        tool_node = self.workflow_graph[from_node_id]
+                        if tool_node.get('type') == 'chain_import':
+                            # Get chain file path
+                            chain_data = tool_node.get('data', {})
+                            chain_file = chain_data.get('chain_file') or chain_data.get('chain_import_config', {}).get('chain_file')
+                            
+                            if chain_file:
+                                try:
+                                    resolved_path = chain_file
+                                    if not os.path.exists(resolved_path):
+                                         base_dir = getattr(self.sequence_executor, 'chain_file_dir', None)
+                                         if base_dir:
+                                             candidate = os.path.join(base_dir, chain_file)
+                                             if os.path.exists(candidate):
+                                                 resolved_path = candidate
+                                    
+                                    if os.path.exists(resolved_path):
+                                        with open(resolved_path, 'r', encoding='utf-8') as f:
+                                            cdata = json.load(f)
+                                            desc = cdata.get('description')
+                                            if desc:
+                                                tool_descriptions_update[from_node_id] = desc
+                                except Exception as e:
+                                    logger.warning(f"Failed to load description for chain tool {chain_file}: {e}")
+            
+            if tool_descriptions_update:
+                if node_to_execute is node:
+                    node_to_execute = copy.deepcopy(node)
+                
+                ndata = node_to_execute.get('data', {})
+                if 'llm_configuration' not in ndata:
+                    ndata['llm_configuration'] = {}
+                
+                llm_conf = ndata['llm_configuration']
+                
+                # Merge with existing tool descriptions
+                existing_td = llm_conf.get('tool_descriptions', {})
+                if isinstance(existing_td, str):
+                    try:
+                        existing_td = json.loads(existing_td)
+                    except:
+                        existing_td = {}
+                
+                if not isinstance(existing_td, dict):
+                    existing_td = {}
+                    
+                existing_td.update(tool_descriptions_update)
+                llm_conf['tool_descriptions'] = existing_td
+                
+        except Exception as e:
+            logger.error(f"Error injecting chain descriptions: {e}")
         
         # Check for LLM -> TTS connection
         # Always redirect output to TTS if connected, regardless of write_text setting

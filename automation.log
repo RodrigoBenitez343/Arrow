@@ -794,3 +794,4 @@
 2025-12-31 08:54:12,966 - INFO - Selection memory cleared
 2025-12-31 08:54:12,966 - INFO - Reset MultiSequencePlayer component states
 2025-12-31 08:54:12,966 - INFO - Chain playback stopped during initial delay
+2026-02-09 13:12:29,679 - DEBUG - mss library available for fast screenshot capture
