@@ -8,6 +8,9 @@ from typing import Dict, Optional, Any
 import requests as _rq
 import subprocess as _sp
 
+# Cache for embedding model to avoid reloading
+_EMBEDDING_MODEL = None
+
 from ...config import logger
 from .config_utils import get_default_api_url
 from .prompt_utils import substitute_variables, assemble_enhanced_prompt
@@ -222,25 +225,8 @@ class LLMExecutor:
                 tool_desc_map = raw_td
         except Exception:
             tool_desc_map = {}
-        if tool_ids:
-            try:
-                lines = ["Available Tools:"]
-                for tid in tool_ids:
-                    desc = tool_desc_map.get(tid, '')
-                    if desc:
-                        lines.append(f"- {tid}: {desc}")
-                    else:
-                        lines.append(f"- {tid}")
-                lines.append("Tool Usage Guide:")
-                lines.append("- Choose exactly one tool id.")
-                lines.append("- Respond ONLY with 'USE_TOOL:<id>' with no other text.")
-                lines.append("- Output must be exactly one line: USE_TOOL:<id>.")
-                lines.append("- Do not include quotes, markdown, code blocks, punctuation, or extra lines.")
-                lines.append("- Do not explain, reason, or justify the choice.")
-                extra = "\n".join(lines)
-                system_message = (system_message + "\n\n" + extra).strip()
-            except Exception:
-                pass
+        # Tool processing moved to after prompt substitution for better context awareness
+
 
         try:
             code_paths = {}
@@ -375,6 +361,78 @@ class LLMExecutor:
         prompt = substitute_variables(prompt, self.variables)
         logger.info(f"Prompt after variable substitution: {prompt}")
 
+        # --- Intelligent Tool Selection ---
+        if tool_ids:
+            try:
+                # Use cached embedding model
+                global _EMBEDDING_MODEL
+                if _EMBEDDING_MODEL is None:
+                    try:
+                        from sentence_transformers import SentenceTransformer
+                        # Use all-MiniLM-L6-v2 as it's fast and effective for this
+                        _EMBEDDING_MODEL = SentenceTransformer('all-MiniLM-L6-v2')
+                    except ImportError:
+                        logger.warning("sentence_transformers not found. Skipping intelligent tool selection.")
+                    except Exception as e:
+                        logger.warning(f"Failed to load embedding model: {e}")
+
+                if _EMBEDDING_MODEL and prompt and prompt.strip():
+                    from sentence_transformers import util
+                    
+                    query_text = prompt.strip()
+                    tool_texts = []
+                    tool_id_list = []
+                    
+                    for tid in tool_ids:
+                        raw_desc = tool_desc_map.get(tid, '')
+                        # Clean description: replace underscores with spaces for better semantic matching
+                        clean_desc = raw_desc.replace('_', ' ')
+                        tool_texts.append(clean_desc)
+                        tool_id_list.append(tid)
+                        
+                    if tool_texts:
+                        logger.info(f"Ranking {len(tool_texts)} tools against query: '{query_text[:50]}...'")
+                        query_emb = _EMBEDDING_MODEL.encode(query_text, convert_to_tensor=True)
+                        tool_embs = _EMBEDDING_MODEL.encode(tool_texts, convert_to_tensor=True)
+                        
+                        scores = util.cos_sim(query_emb, tool_embs)[0]
+                        best_idx = int(scores.argmax())
+                        best_score = float(scores[best_idx])
+                        best_tid = tool_id_list[best_idx]
+                        
+                        logger.info(f"Tool Selection: Best match is {best_tid} with score {best_score:.4f}")
+                        
+                        # If we have a decent match, restrict the tools to just this one
+                        # This forces the LLM to use the semantically correct tool
+                        if best_score > 0.1: # Threshold based on testing (winner ~0.20, loser ~0.14)
+                             tool_ids = [best_tid]
+                             logger.info(f"Tool Selection: Restricted available tools to {best_tid}")
+
+            except Exception as e:
+                logger.warning(f"Tool selection process failed: {e}")
+
+            # Re-generate tool instructions with potentially filtered list
+            try:
+                lines = ["Available Tools:"]
+                for tid in tool_ids:
+                    desc = tool_desc_map.get(tid, '')
+                    if desc:
+                        lines.append(f"- {tid}: {desc}")
+                    else:
+                        lines.append(f"- {tid}")
+                lines.append("Tool Usage Guide:")
+                lines.append("- Choose exactly one tool id.")
+                lines.append("- Respond ONLY with 'USE_TOOL:<id>' with no other text.")
+                lines.append("- Output must be exactly one line: USE_TOOL:<id>.")
+                lines.append("- Do not include quotes, markdown, code blocks, punctuation, or extra lines.")
+                lines.append("- Do not explain, reason, or justify the choice.")
+                extra = "\n".join(lines)
+                system_message = (system_message + "\n\n" + extra).strip()
+            except Exception:
+                pass
+        # ----------------------------------
+
+
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before input processing")
             return None
@@ -388,24 +446,23 @@ class LLMExecutor:
             use_direct_rag,
         )
 
-        # Fallback: If input_source is none/empty but we have OCR confidence configured, 
-        # assume the user wants screen context unless explicitly disabled.
-        if input_text is None and ocr_confidence > 0 and input_source.lower() in ('none', '', 'null'):
-             logger.info(f"Input source is '{input_source}' but ocr_confidence={ocr_confidence}. Attempting fallback OCR.")
-             ocr_text, _ = get_input_text(
-                node,
-                self.variables,
-                "ocr",
-                ocr_confidence,
-                stop_flag,
-                use_direct_rag,
-             )
-             if ocr_text:
-                 input_text = ocr_text
-                 # Update source for prompt assembly
-                 input_source = "SCREEN_CONTEXT"
-                 use_input_text_in_prompt = True
-                 logger.info("Fallback OCR successful. Using extracted text as input.")
+        # Fallback OCR removed to respect explicit 'none' input source
+        # if input_text is None and ocr_confidence > 0 and input_source.lower() in ('none', '', 'null'):
+        #      logger.info(f"Input source is '{input_source}' but ocr_confidence={ocr_confidence}. Attempting fallback OCR.")
+        #      ocr_text, _ = get_input_text(
+        #         node,
+        #         self.variables,
+        #         "ocr",
+        #         ocr_confidence,
+        #         stop_flag,
+        #         use_direct_rag,
+        #      )
+        #      if ocr_text:
+        #          input_text = ocr_text
+        #          # Update source for prompt assembly
+        #          input_source = "SCREEN_CONTEXT"
+        #          use_input_text_in_prompt = True
+        #          logger.info("Fallback OCR successful. Using extracted text as input.")
 
         if input_text is not None:
             if use_input_text_in_prompt:
@@ -1120,35 +1177,95 @@ class LLMExecutor:
                 except Exception:
                     pass
 
-        logger.info("Sending request to LLM API in thread")
         shared: Dict[str, Any] = {}
-        th = threading.Thread(target=_task_runner, args=(shared,), daemon=True)
-        th.start()
+        embedding_selected_tool = None
         
-        # Disable request timeouts for local LLMs
-        timeout_s = 0.0
-        
-        start_t = time.time()
-        while th.is_alive():
-            if stop_flag and stop_flag():
-                logger.info("Stop flag detected. Attempting to stop LLM generation...")
-                if not use_comorag:
-                    try:
-                        for _ in range(2):
-                            _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=2)
-                            time.sleep(0.1)
-                    except Exception:
-                        pass
-                break
-            # No timeout: allow long-running local models to complete
+        # Embedding-based tool selection (User Request: "LLM too small")
+        if tool_ids and tool_desc_map:
             try:
-                time.sleep(0.05)
+                # Construct query from prompt and input
+                query_text = prompt
+                if input_text and not use_input_text_in_prompt:
+                    query_text = f"{input_text}\n\n{query_text}"
+                
+                # Check for cached model preference or default
+                embed_model_name = llm_config.get('tool_embedding_model', 'all-MiniLM-L6-v2')
+                
+                # Only proceed if we can import sentence_transformers
+                try:
+                    from sentence_transformers import SentenceTransformer, util
+                    logger.info(f"Attempting embedding-based tool selection using {embed_model_name}")
+                    
+                    # Initialize model (downloads if needed, checks cache)
+                    embedder = SentenceTransformer(embed_model_name)
+                    
+                    tool_corpus = []
+                    tool_corpus_ids = []
+                    
+                    for tid in tool_ids:
+                        desc = tool_desc_map.get(tid, '')
+                        # Combine ID and description
+                        text_to_embed = f"{tid}: {desc}" if desc else str(tid)
+                        tool_corpus.append(text_to_embed)
+                        tool_corpus_ids.append(tid)
+                    
+                    if tool_corpus:
+                        query_embedding = embedder.encode(query_text, convert_to_tensor=True)
+                        corpus_embeddings = embedder.encode(tool_corpus, convert_to_tensor=True)
+                        
+                        # Find best match
+                        hits = util.semantic_search(query_embedding, corpus_embeddings, top_k=1)
+                        
+                        if hits and hits[0]:
+                            best_hit = hits[0][0]
+                            score = best_hit['score']
+                            idx = best_hit['corpus_id']
+                            
+                            logger.info(f"Embedding tool match: {tool_corpus_ids[idx]} (score={score:.4f})")
+                            
+                            # Threshold for selection
+                            if score > 0.35:
+                                embedding_selected_tool = tool_corpus_ids[idx]
+                                logger.info(f"Auto-selected tool via embeddings: {embedding_selected_tool}")
+                except ImportError:
+                    logger.debug("sentence_transformers not available for tool selection")
+                except Exception as e:
+                    logger.warning(f"Embedding tool selection error: {e}")
             except Exception:
-                break
-        try:
-            th.join(timeout=0.2)
-        except Exception:
-            pass
+                pass
+
+        if embedding_selected_tool:
+            shared["result"] = {"response": f"USE_TOOL:{embedding_selected_tool}"}
+            shared["stream_used"] = False
+        else:
+            logger.info("Sending request to LLM API in thread")
+            th = threading.Thread(target=_task_runner, args=(shared,), daemon=True)
+            th.start()
+            
+            # Disable request timeouts for local LLMs
+            timeout_s = 0.0
+            
+            start_t = time.time()
+            while th.is_alive():
+                if stop_flag and stop_flag():
+                    logger.info("Stop flag detected. Attempting to stop LLM generation...")
+                    if not use_comorag:
+                        try:
+                            for _ in range(2):
+                                _rq.post(f"{_base}/api/stop", json={"model": model}, headers={"Connection": "close"}, timeout=2)
+                                time.sleep(0.1)
+                        except Exception:
+                            pass
+                    break
+                # No timeout: allow long-running local models to complete
+                try:
+                    time.sleep(0.05)
+                except Exception:
+                    break
+            try:
+                th.join(timeout=0.2)
+            except Exception:
+                pass
         result = shared.get("result")
         if result is None and shared.get("error"):
             logger.error(f"LLM request failed: {shared.get('error')}")

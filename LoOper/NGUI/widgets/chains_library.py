@@ -1,9 +1,11 @@
 import logging
 import os
+import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QLabel, QApplication, QScrollArea,
-    QGraphicsDropShadowEffect, QStyleOptionButton, QStyle
+    QGraphicsDropShadowEffect, QStyleOptionButton, QStyle,
+    QMenu, QAction, QInputDialog, QLineEdit
 )
 from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QMimeData
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
@@ -28,7 +30,21 @@ class DraggableChainButton(QPushButton):
         self._drag_start_pos = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setToolTip(self._full_text)
+        
+        # Load description for tooltip
+        self._description = ""
+        try:
+            if os.path.exists(self.file_path):
+                with open(self.file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._description = data.get('description', '')
+        except Exception:
+            pass
+            
+        if self._description:
+            self.setToolTip(f"{self._full_text}\n{self._description}")
+        else:
+            self.setToolTip(self._full_text)
         
         # Set icon (chain_import icon)
         icon = get_node_icon('chain_import', 24)
@@ -67,6 +83,57 @@ class DraggableChainButton(QPushButton):
             text_rect.setLeft(text_rect.left() + option.iconSize.width() + 8)
         fm = self.fontMetrics()
         self.setText(fm.elidedText(self._full_text, Qt.ElideRight, max(0, text_rect.width())))
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        
+        # Add Description action
+        edit_desc_action = QAction("Edit Description", self)
+        edit_desc_action.triggered.connect(self._edit_description)
+        menu.addAction(edit_desc_action)
+        
+        menu.exec_(event.globalPos())
+
+    def _edit_description(self):
+        # Load current description
+        current_desc = ""
+        try:
+            with open(self.file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                current_desc = data.get('description', '')
+        except Exception as e:
+            logger.error(f"Failed to load chain for description: {e}")
+        
+        text, ok = QInputDialog.getText(
+            self, 
+            "Chain Description", 
+            "Enter description for this chain:",
+            QLineEdit.Normal, 
+            current_desc
+        )
+        
+        if ok:
+            try:
+                if os.path.exists(self.file_path):
+                     with open(self.file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                else:
+                    data = {}
+                
+                data['description'] = text
+                self._description = text
+                
+                with open(self.file_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=2)
+                
+                # Update tooltip
+                if text:
+                    self.setToolTip(f"{self._full_text}\n{text}")
+                else:
+                    self.setToolTip(self._full_text)
+                    
+            except Exception as e:
+                logger.error(f"Failed to save chain description: {e}")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

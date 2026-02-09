@@ -35,6 +35,7 @@ class ConfigManager:
         try:
             self.parent_widget = parent_widget
             self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": []}
+            self._current_chain_description = ""
             logger.debug("ConfigManager initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing ConfigManager: {e}")
@@ -58,7 +59,16 @@ class ConfigManager:
         try:
             # Clear current config
             logger.debug("Clearing current configuration")
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": []}
+            self.chain_config = {
+                "sequences": [], 
+                "conditional_nodes": [], 
+                "llm_nodes": [], 
+                "tts_nodes": [], 
+                "chain_import_nodes": [], 
+                "form_filler_nodes": [], 
+                "code_nodes": [],
+                "description": getattr(self, '_current_chain_description', "")
+            }
             
             # Get all nodes
             logger.debug("Getting all nodes from graph")
@@ -159,6 +169,8 @@ class ConfigManager:
                 logger.debug(f"Loading configuration from: {file_path}")
                 with open(file_path, 'r') as f:
                     loaded_config = json.load(f)
+                
+                self._current_chain_description = loaded_config.get("description", "")
                 
                 # Ensure all required keys exist
                 self.chain_config = {
