@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
@@ -1023,7 +1024,6 @@ class CollapsibleToolbar(QWidget):
         # Shadow effect removed to prevent "floating window" artifacts during toggle
         self._toggle_btn_nodes.clicked.connect(self._toggle_nodes_toolbar)
         
-        # Initial position
         QTimer.singleShot(0, self._position_nodes_toggle)
 
     def _toggle_nodes_toolbar(self):
@@ -1057,6 +1057,7 @@ class CollapsibleToolbar(QWidget):
             QTimer.singleShot(50, self._position_nodes_toggle)
         except Exception:
             pass
+
 
     def refresh_sequences_list(self, path=None):
         """Refresh the list of sequences in the toolbar."""
