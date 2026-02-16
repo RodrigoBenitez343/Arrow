@@ -70,21 +70,35 @@ class UIComponents:
                 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             """)
             
-            # Main layout: horizontal, so right bar spans full height to the top
-            logger.debug("Creating main horizontal layout with right sidebar")
-            main_layout = QHBoxLayout(self.parent_widget)
-            main_layout.setContentsMargins(5, 5, 5, 5)
-            main_layout.setSpacing(5)
+            # Main layout uses a splitter so sidebars reserve width and push the graph
+            logger.debug("Creating main splitter layout with sidebars")
+            outer_layout = QHBoxLayout(self.parent_widget)
+            outer_layout.setContentsMargins(5, 5, 5, 5)
+            outer_layout.setSpacing(5)
+            
+            splitter = QSplitter(Qt.Horizontal, self.parent_widget)
+            splitter.setObjectName("graphViewSplitter")
+            try:
+                splitter.setHandleWidth(6)
+            except Exception:
+                pass
             
             # Left-side collapsible chains library
             logger.debug("Creating left-side chains library")
             from ..widgets.chains_library import ChainsLibrary
             self.parent_widget.chains_library = ChainsLibrary(self.parent_widget)
-            main_layout.addWidget(self.parent_widget.chains_library, 0)
+            splitter.addWidget(self.parent_widget.chains_library)
             
-            # Node graph widget (placeholder - will be set by graph manager)
+            # Center container holds actions toolbar (top) and the graph (below)
+            logger.debug("Creating center container for actions toolbar and graph")
+            center_container = QWidget(self.parent_widget)
+            center_container_layout = QVBoxLayout(center_container)
+            center_container_layout.setContentsMargins(0, 0, 0, 0)
+            center_container_layout.setSpacing(5)
+            
+            # Node graph widget (placeholder - will be replaced by GraphManager)
             logger.debug("Creating node graph widget placeholder")
-            self.parent_widget.node_graph_widget = QWidget()
+            self.parent_widget.node_graph_widget = QWidget(center_container)
             self.parent_widget.node_graph_widget.setStyleSheet(f"""
                 QWidget {{
                     background-color: {MEDIUM_GREY};
@@ -93,32 +107,37 @@ class UIComponents:
                 }}
             """)
             
-            # Left column holds actions toolbar on top and the graph below
-            left_column = QVBoxLayout()
-            left_column.setContentsMargins(0, 0, 0, 0)
-            left_column.setSpacing(5)
-
-            from ..widgets.actions_toolbar import ActionsToolbar
+            from ..widgets.actions_toolbar import ActionsToolbar, SearchBarFrame
             actions_toolbar = ActionsToolbar(self.parent_widget)
             self.parent_widget.actions_toolbar = actions_toolbar
             try:
                 actions_toolbar.setMaximumHeight(42)
             except Exception:
                 pass
-            left_column.addWidget(actions_toolbar)
-
-            left_column.addWidget(self.parent_widget.node_graph_widget, 1)
-            main_layout.addLayout(left_column, 1)
-
+            center_container_layout.addWidget(actions_toolbar, 0)
+            search_bar = SearchBarFrame(self.parent_widget, center_container)
+            self.parent_widget.search_bar = search_bar
+            center_container_layout.addWidget(search_bar, 0)
+            center_container_layout.addWidget(self.parent_widget.node_graph_widget, 1)
+            splitter.addWidget(center_container)
+            
             # Right-side collapsible toolbar (spans full height to the top)
             logger.debug("Creating right-side collapsible toolbar")
             control_panel = self.create_control_panel()
             if control_panel is not None:
-                main_layout.addWidget(control_panel, 0)
+                splitter.addWidget(control_panel)
                 self.parent_widget._toolbar_widget = control_panel
             
-            # Store references
-            self.parent_widget._splitter = None
+            # Initial sizes: left=160, center expands, right=160
+            try:
+                splitter.setSizes([160, 900, 160])
+            except Exception:
+                pass
+            
+            outer_layout.addWidget(splitter, 1)
+            
+            # Store references for visibility toggling
+            self.parent_widget._splitter = splitter
             
             logger.info("UI setup completed successfully")
         except Exception as e:

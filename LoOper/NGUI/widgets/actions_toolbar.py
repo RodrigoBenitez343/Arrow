@@ -1,10 +1,15 @@
 import logging
+import os
+import json
+import math
+from difflib import SequenceMatcher
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
-    QFrame, QSizePolicy, QApplication, QGraphicsDropShadowEffect
+    QFrame, QSizePolicy, QApplication, QGraphicsDropShadowEffect,
+    QLineEdit, QComboBox, QScrollArea, QGridLayout
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QTimer
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QIcon
+from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMimeData
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QIcon, QDrag
 
 try:
     from pytablericons import TablerIcons, OutlineIcon
@@ -19,11 +24,91 @@ except Exception:
 
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
-    BLOCK_COLOR, BLOCK_HOVER
+    BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR
 )
 from ..i18n import _
 
 logger = logging.getLogger(__name__)
+
+class SearchResultButton(QPushButton):
+    def __init__(self, item_type: str, title: str, description: str, file_path: str, graph_view, parent=None):
+        super().__init__(title, parent)
+        self.item_type = item_type
+        self.file_path = file_path
+        self.graph_view = graph_view
+        self._drag_start_pos = None
+        self.setCursor(Qt.OpenHandCursor)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        bg_color = BLOCK_COLOR if item_type == "sequence" else CHAIN_IMPORT_COLOR
+        self.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                padding: 2px 8px;
+                border-radius: 10px;
+                min-width: 80px;
+                min-height: 26px;
+                max-width: 220px;
+                font-weight: 600;
+                text-align: center;
+            }}
+            QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
+            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
+            """
+        )
+        if description:
+            self.setToolTip(f"{title}\n{description}")
+        else:
+            self.setToolTip(title)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        return super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start_pos is None:
+            return super().mouseMoveEvent(event)
+        if (event.pos() - self._drag_start_pos).manhattanLength() >= 8:
+            mime = QMimeData()
+            if self.item_type == "sequence":
+                mime.setData('application/x-looper-node-type', b'sequence')
+                mime.setText(self.file_path)
+                mime.setData('application/x-looper-sequence-file', self.file_path.encode('utf-8'))
+            else:
+                mime.setData('application/x-looper-node-type', b'chain_import')
+                mime.setText(self.file_path)
+                mime.setData('application/x-looper-chain-file', self.file_path.encode('utf-8'))
+            pixmap = QPixmap(self.size())
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setBrush(QColor(self.palette().button().color()))
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(self.rect(), 10, 10)
+            painter.end()
+            drag = QDrag(self)
+            drag.setMimeData(mime)
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(event.pos() - self.rect().topLeft())
+            drag.exec_(Qt.CopyAction)
+            return
+        return super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_start_pos is not None and (event.pos() - self._drag_start_pos).manhattanLength() < 8:
+            try:
+                if hasattr(self.graph_view, 'node_operations'):
+                    if self.item_type == "sequence":
+                        self.graph_view.node_operations.add_sequence_from_file(self.file_path)
+                    else:
+                        self.graph_view.node_operations.add_chain_import_from_file(self.file_path)
+            except Exception:
+                pass
+        self._drag_start_pos = None
+        return super().mouseReleaseEvent(event)
 
 def load_tabler_icon(name: str, size: int) -> QIcon:
     try:
@@ -77,6 +162,256 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
         pass
     return QIcon(pix)
 
+class SearchBarFrame(QFrame):
+    def __init__(self, graph_view, parent=None):
+        super().__init__(parent)
+        self.graph_view = graph_view
+        self._search_items = []
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 2, 0, 2)
+        root.setSpacing(4)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        self.search_field = QLineEdit(self)
+        self.search_field.setPlaceholderText(_("Search sequences/chains"))
+        row.addWidget(self.search_field)
+        root.addLayout(row)
+        self._results_frame = QFrame(self)
+        self._results_frame.setObjectName("searchResultsFrame")
+        self._results_frame.setStyleSheet(
+            f"QFrame#searchResultsFrame {{ background-color: {DARK_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+        )
+        results_layout = QVBoxLayout(self._results_frame)
+        results_layout.setContentsMargins(5, 5, 5, 5)
+        results_layout.setSpacing(5)
+        self._results_scroll = QScrollArea(self._results_frame)
+        self._results_scroll.setWidgetResizable(True)
+        self._results_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._results_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._results_container = QFrame(self._results_scroll)
+        self._results_layout = QGridLayout(self._results_container)
+        self._results_layout.setContentsMargins(0, 0, 0, 0)
+        self._results_layout.setHorizontalSpacing(5)
+        self._results_layout.setVerticalSpacing(5)
+        self._results_scroll.setWidget(self._results_container)
+        results_layout.addWidget(self._results_scroll)
+        root.addWidget(self._results_frame)
+        self._results_frame.setVisible(False)
+        self._rebuild_search_index()
+        try:
+            self.search_field.textChanged.connect(self._on_search_changed)
+        except Exception:
+            pass
+
+    def _tokenize_text(self, text: str):
+        tokens = []
+        current = []
+        for ch in str(text).lower():
+            if ch.isalnum():
+                current.append(ch)
+            else:
+                if current:
+                    tokens.append("".join(current))
+                    current = []
+        if current:
+            tokens.append("".join(current))
+        return tokens
+
+    def _text_to_vector(self, text: str):
+        tokens = self._tokenize_text(text)
+        vec = {}
+        for t in tokens:
+            vec[t] = vec.get(t, 0.0) + 1.0
+        norm = math.sqrt(sum(v * v for v in vec.values())) or 1.0
+        for k in list(vec.keys()):
+            vec[k] = vec[k] / norm
+        return vec
+
+    def _cosine_similarity(self, v1, v2):
+        if not v1 or not v2:
+            return 0.0
+        if len(v1) < len(v2):
+            v1, v2 = v2, v1
+        s = 0.0
+        for token, w in v2.items():
+            s += w * v1.get(token, 0.0)
+        return s
+
+    def _string_similarity(self, a: str, b: str):
+        try:
+            return SequenceMatcher(None, a, b).ratio()
+        except Exception:
+            return 0.0
+
+    def _partial_similarity(self, q_tokens, i_tokens):
+        if not q_tokens or not i_tokens:
+            return 0.0
+        total = 0.0
+        for qt in q_tokens:
+            best = 0.0
+            for it in i_tokens:
+                if qt == it:
+                    if 1.0 > best:
+                        best = 1.0
+                    continue
+                if qt in it:
+                    score = len(qt) / max(1, len(it))
+                    if score > best:
+                        best = score
+                else:
+                    ratio = self._string_similarity(qt, it)
+                    if ratio > best:
+                        best = ratio
+            total += best
+        return total / max(1, len(q_tokens))
+    
+    def _ordered_contiguous_similarity(self, q: str, item_text: str):
+        try:
+            ql = str(q).lower()
+            tl = str(item_text).lower()
+            if not ql or not tl:
+                return 0.0
+            if ql in tl:
+                return 1.0
+            m = SequenceMatcher(None, ql, tl).find_longest_match(0, len(ql), 0, len(tl))
+            longest = getattr(m, 'size', 0)
+            return float(longest) / max(1, len(ql))
+        except Exception:
+            return 0.0
+
+    def _rebuild_search_index(self):
+        items = []
+        seen = set()
+        seq_folder = getattr(self.graph_view, 'sequences_folder', None)
+        try:
+            if seq_folder and os.path.isdir(seq_folder):
+                files = [f for f in os.listdir(seq_folder) if f.lower().endswith('.json')]
+                nested = os.path.join(seq_folder, 'sequences')
+                if os.path.isdir(nested):
+                    extra = [f for f in os.listdir(nested) if f.lower().endswith('.json')]
+                    files = sorted(set(files + extra))
+                else:
+                    files = sorted(files)
+                for name in files:
+                    p1 = os.path.join(seq_folder, name)
+                    p2 = os.path.join(seq_folder, 'sequences', name)
+                    full_path = p1 if os.path.exists(p1) else p2
+                    if full_path in seen:
+                        continue
+                    seen.add(full_path)
+                    base_name = os.path.splitext(name)[0]
+                    description = ""
+                    try:
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        base_name = data.get('name', base_name)
+                        description = data.get('description', '')
+                    except Exception:
+                        pass
+                    text = " ".join([str(base_name), str(description), full_path])
+                    vec = self._text_to_vector(text)
+                    toks = self._tokenize_text(text)
+                    items.append(
+                        {
+                            "type": "sequence",
+                            "name": str(base_name),
+                            "description": str(description),
+                            "path": full_path,
+                            "vector": vec,
+                            "tokens": toks,
+                            "text": text.lower(),
+                        }
+                    )
+        except Exception:
+            pass
+        chain_folder = getattr(self.graph_view, 'chains_folder', None)
+        try:
+            if chain_folder and os.path.isdir(chain_folder):
+                files = sorted([f for f in os.listdir(chain_folder) if f.lower().endswith('.json')])
+                for name in files:
+                    full_path = os.path.join(chain_folder, name)
+                    if full_path in seen:
+                        continue
+                    seen.add(full_path)
+                    base_name = os.path.splitext(name)[0]
+                    description = ""
+                    try:
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        base_name = data.get('name', base_name)
+                        description = data.get('description', '')
+                    except Exception:
+                        pass
+                    text = " ".join([str(base_name), str(description), full_path])
+                    vec = self._text_to_vector(text)
+                    toks = self._tokenize_text(text)
+                    items.append(
+                        {
+                            "type": "chain",
+                            "name": str(base_name),
+                            "description": str(description),
+                            "path": full_path,
+                            "vector": vec,
+                            "tokens": toks,
+                            "text": text.lower(),
+                        }
+                    )
+        except Exception:
+            pass
+        self._search_items = items
+
+    def _clear_results(self):
+        if not hasattr(self, "_results_layout") or self._results_layout is None:
+            return
+        while self._results_layout.count():
+            item = self._results_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+    def _on_search_changed(self):
+        try:
+            text = self.search_field.text()
+        except Exception:
+            text = ""
+        mode = "both"
+        self._clear_results()
+        if not str(text).strip():
+            self._results_frame.setVisible(False)
+            return
+        query_vec = self._text_to_vector(text)
+        query_tokens = self._tokenize_text(text)
+        scored = []
+        for item in self._search_items:
+            cos = self._cosine_similarity(item.get("vector"), query_vec)
+            part = self._partial_similarity(query_tokens, item.get("tokens", []))
+            ordered = self._ordered_contiguous_similarity(" ".join(query_tokens), item.get("text", ""))
+            score = 0.5 * ordered + 0.3 * part + 0.2 * cos
+            # Trim weak matches aggressively: require some meaningful alignment
+            min_required = 0.15 if len(" ".join(query_tokens)) <= 3 else 0.25
+            if ordered < min_required and part < min_required and cos < (min_required * 0.8):
+                continue
+            scored.append((score, item))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        max_results = 30
+        columns = 4
+        for index, (score, item) in enumerate(scored[:max_results]):
+            title = f"[{item['type']}]" + " " + item.get("name", "")
+            btn = SearchResultButton(
+                item.get("type"),
+                title,
+                item.get("description", ""),
+                item.get("path", ""),
+                self.graph_view,
+                self._results_container,
+            )
+            row = index // columns
+            col = index % columns
+            self._results_layout.addWidget(btn, row, col)
+        self._results_frame.setVisible(bool(scored))
+
+
 class ActionsToolbar(QWidget):
     def __init__(self, graph_view, parent=None):
         super().__init__(parent)
@@ -95,14 +430,9 @@ class ActionsToolbar(QWidget):
         self._content_frame.setStyleSheet(
             f"QFrame#actionsContent {{ background-color: {DARK_GREY}; border: 1px solid rgba(80, 80, 80, 0.5); border-radius: 10px; }}"
         )
-        try:
-            self._content_frame.setMinimumHeight(40)
-        except Exception:
-            pass
         layout = QHBoxLayout(self._content_frame)
-        layout.setContentsMargins(5, 5, 5, 5)  # Reduced padding to center buttons
+        layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(6)
-
         layout.setAlignment(Qt.AlignVCenter)
         layout.addWidget(self._make_record_icon_button(), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip=_("Load Chain"), label_text=_("Load")), alignment=Qt.AlignVCenter)

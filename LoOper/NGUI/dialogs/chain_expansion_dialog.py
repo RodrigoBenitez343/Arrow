@@ -4,8 +4,9 @@ from .base_dialog import ModernDialog
 import os
 import json
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, 
-                             QDialogButtonBox, QPushButton, QMessageBox)
-from PyQt5.QtCore import Qt
+                             QDialogButtonBox, QPushButton, QMessageBox, QStyle)
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from ..i18n import _
 from ..graph_elements.config_manager import ConfigManager
 from ..constants import TEXT_COLOR
@@ -75,27 +76,12 @@ class ChainExpansionDialog(ModernDialog):
         header_layout.addWidget(header_label)
         header_layout.addStretch()
         
-        # Add maximize button
-        self.maximize_button = QPushButton("⛶")
+        # Add maximize / restore button using standard window icons
+        self.maximize_button = QPushButton(self)
         self.maximize_button.setFixedSize(30, 30)
         self.maximize_button.setToolTip(_("Maximize/Restore"))
-        self.maximize_button.setStyleSheet(f"""
-            QPushButton {{
-                color: {TEXT_COLOR};
-                background-color: #3a3a3a;
-                border: 1px solid #555;
-                border-radius: 4px;
-                font-size: 16px;
-                font-weight: bold;
-            }}
-            QPushButton:hover {{
-                background-color: #4a4a4a;
-                border-color: #666;
-            }}
-            QPushButton:pressed {{
-                background-color: #2a2a2a;
-            }}
-        """)
+        self.maximize_button.setIcon(self._max_icon(16))
+        self.maximize_button.setIconSize(QSize(16, 16))
         self.maximize_button.clicked.connect(self.toggle_maximize)
         header_layout.addWidget(self.maximize_button)
         
@@ -106,10 +92,8 @@ class ChainExpansionDialog(ModernDialog):
         
         # Graph view widget (add directly without extra splitter pane)
         self.graph_view = GraphViewWidget(self)
-        # Hide actions toolbar in expansion dialog as it's not relevant here
         if hasattr(self.graph_view, 'actions_toolbar'):
             self.graph_view.actions_toolbar.hide()
-            # Also hide the floating toggle button
             if hasattr(self.graph_view.actions_toolbar, '_toggle_btn_actions'):
                 self.graph_view.actions_toolbar._toggle_btn_actions.hide()
         layout.addWidget(self.graph_view)
@@ -279,7 +263,46 @@ Node Types:
         """Toggle between maximized and normal window state"""
         if self.isMaximized():
             self.showNormal()
-            self.maximize_button.setToolTip("Maximize")
+            self.maximize_button.setToolTip(_("Maximize/Restore"))
+            self.maximize_button.setIcon(self._max_icon(16))
         else:
             self.showMaximized()
-            self.maximize_button.setToolTip("Restore")
+            self.maximize_button.setToolTip(_("Maximize/Restore"))
+            self.maximize_button.setIcon(self._restore_icon(16))
+
+    def _max_icon(self, size: int) -> QIcon:
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        try:
+            pen.setWidthF(2.0)
+        except Exception:
+            pen.setWidth(2)
+        p.setPen(pen)
+        s = size
+        m = int(s * 0.18)
+        p.drawRoundedRect(m, m, s - 2 * m, s - 2 * m, 3, 3)
+        p.end()
+        return QIcon(pix)
+
+    def _restore_icon(self, size: int) -> QIcon:
+        pix = QPixmap(size, size)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        try:
+            pen.setWidthF(2.0)
+        except Exception:
+            pen.setWidth(2)
+        p.setPen(pen)
+        s = size
+        m = int(s * 0.22)
+        p.drawRoundedRect(m - 2, m, s - 2 * m, s - 2 * m, 3, 3)
+        p.drawRoundedRect(m, m - 2, s - 2 * m, s - 2 * m, 3, 3)
+        p.end()
+        return QIcon(pix)
