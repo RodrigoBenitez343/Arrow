@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
 from ..constants import TEXT_COLOR, DARK_GREY, MEDIUM_GREY, LIGHT_GREY
+from ..i18n import _
 import requests
 import json
 
@@ -109,7 +110,7 @@ class AISettingsDialog(ModernDialog):
     """Dialog for configuring AI settings"""
     
     def __init__(self, parent=None):
-        super().__init__(parent, title="AI Settings")
+        super().__init__(parent, title=_("AI Settings"))
         self.setModal(True)
         self.resize(700, 700)
         self.setMinimumSize(650, 600)
@@ -143,30 +144,30 @@ class AISettingsDialog(ModernDialog):
         api_layout = QVBoxLayout()
         
         # Remote API Configuration
-        remote_group = QGroupBox("Remote API Configuration")
+        remote_group = QGroupBox(_("Remote API Configuration"))
         remote_layout = QFormLayout()
         
         self.tailscale_ip_edit = QLineEdit()
-        self.tailscale_ip_edit.setPlaceholderText("e.g., 100.64.1.2 or localhost")
-        remote_layout.addRow("Tailscale Server IP:", self.tailscale_ip_edit)
+        self.tailscale_ip_edit.setPlaceholderText(_("e.g., 100.64.1.2 or localhost"))
+        remote_layout.addRow(_("Tailscale Server IP:"), self.tailscale_ip_edit)
         
         self.api_port_edit = QSpinBox()
         self.api_port_edit.setRange(1000, 65535)
         self.api_port_edit.setValue(8000)
-        remote_layout.addRow("API Port:", self.api_port_edit)
+        remote_layout.addRow(_("API Port:"), self.api_port_edit)
         
         self.ollama_host_edit = QLineEdit()
-        self.ollama_host_edit.setPlaceholderText("e.g., localhost or 100.64.1.3")
-        remote_layout.addRow("Ollama Host:", self.ollama_host_edit)
+        self.ollama_host_edit.setPlaceholderText(_("e.g., localhost or 100.64.1.3"))
+        remote_layout.addRow(_("Ollama Host:"), self.ollama_host_edit)
         
         self.ollama_port_edit = QSpinBox()
         self.ollama_port_edit.setRange(1000, 65535)
         self.ollama_port_edit.setValue(11434)
-        remote_layout.addRow("Ollama Port:", self.ollama_port_edit)
+        remote_layout.addRow(_("Ollama Port:"), self.ollama_port_edit)
         
         # Test connection button
         test_btn_layout = QHBoxLayout()
-        self.test_connection_btn = QPushButton("Test Connection")
+        self.test_connection_btn = QPushButton(_("Test Connection"))
         self.test_connection_btn.clicked.connect(self.test_connection)
         test_btn_layout.addWidget(self.test_connection_btn)
         test_btn_layout.addStretch()
@@ -176,18 +177,18 @@ class AISettingsDialog(ModernDialog):
         api_layout.addWidget(remote_group)
         
         # Local API Server
-        local_group = QGroupBox("Local API Server")
+        local_group = QGroupBox(_("Local API Server"))
         local_layout = QVBoxLayout()
         
-        info_label = QLabel("Run the API server locally if you have sufficient resources")
+        info_label = QLabel(_("Run the API server locally if you have sufficient resources"))
         info_label.setWordWrap(True)
         local_layout.addWidget(info_label)
         
         server_btn_layout = QHBoxLayout()
-        self.start_server_btn = QPushButton("Start Local Server")
+        self.start_server_btn = QPushButton(_("Start Local Server"))
         self.start_server_btn.clicked.connect(self.start_local_server)
         
-        self.stop_server_btn = QPushButton("Stop Local Server")
+        self.stop_server_btn = QPushButton(_("Stop Local Server"))
         self.stop_server_btn.clicked.connect(self.stop_local_server)
         self.stop_server_btn.setEnabled(False)
         
@@ -200,17 +201,17 @@ class AISettingsDialog(ModernDialog):
         api_layout.addWidget(local_group)
         
         # Status Display
-        status_group = QGroupBox("Connection Status")
+        status_group = QGroupBox(_("Connection Status"))
         status_layout = QVBoxLayout()
         
-        self.status_label = QLabel("Checking connection...")
+        self.status_label = QLabel(_("Checking connection..."))
         self.status_label.setWordWrap(True)
         status_layout.addWidget(self.status_label)
         
         self.models_text = QTextEdit()
         self.models_text.setMaximumHeight(80)  # Reduced height
         self.models_text.setReadOnly(True)
-        status_layout.addWidget(QLabel("Available Models:"))
+        status_layout.addWidget(QLabel(_("Available Models:")))
         status_layout.addWidget(self.models_text)
         
         status_group.setLayout(status_layout)
@@ -224,30 +225,30 @@ class AISettingsDialog(ModernDialog):
         api_tab_layout = QVBoxLayout()
         api_tab_layout.addWidget(api_scroll)
         api_tab.setLayout(api_tab_layout)
-        tab_widget.addTab(api_tab, "API Configuration")
+        tab_widget.addTab(api_tab, _("API Configuration"))
         
         # Advanced Tab
         advanced_tab = QWidget()
         advanced_layout = QVBoxLayout()
         
-        advanced_group = QGroupBox("Advanced Settings")
+        advanced_group = QGroupBox(_("Advanced Settings"))
         advanced_form = QFormLayout()
         
         self.auto_start_checkbox = ModernToggle()
-        advanced_form.addRow("Auto-start local server:", self.auto_start_checkbox)
+        advanced_form.addRow(_("Auto-start local server:"), self.auto_start_checkbox)
         
         self.timeout_edit = QSpinBox()
         self.timeout_edit.setRange(5, 300)
         self.timeout_edit.setValue(30)
-        self.timeout_edit.setSuffix(" seconds")
-        advanced_form.addRow("Connection timeout:", self.timeout_edit)
+        self.timeout_edit.setSuffix(_(" seconds"))
+        advanced_form.addRow(_("Connection timeout:"), self.timeout_edit)
         
         advanced_group.setLayout(advanced_form)
         advanced_layout.addWidget(advanced_group)
         advanced_layout.addStretch()
         
         advanced_tab.setLayout(advanced_layout)
-        tab_widget.addTab(advanced_tab, "Advanced")
+        tab_widget.addTab(advanced_tab, _("Advanced"))
         
         layout.addWidget(tab_widget)
         
@@ -255,6 +256,15 @@ class AISettingsDialog(ModernDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.save_settings)
         self.button_box.rejected.connect(self.reject)
+        try:
+            save_btn = self.button_box.button(QDialogButtonBox.Save)
+            cancel_btn = self.button_box.button(QDialogButtonBox.Cancel)
+            if save_btn:
+                save_btn.setText(_("Save"))
+            if cancel_btn:
+                cancel_btn.setText(_("Cancel"))
+        except Exception:
+            pass
         
         layout.addWidget(self.button_box)
         # self.setLayout(layout) # Removed as we use ModernDialog's layout logic
@@ -325,11 +335,11 @@ class AISettingsDialog(ModernDialog):
                 # Do not block saving if caching fails
                 print(f"Warning: failed to refresh model cache after saving settings: {cache_err}")
 
-            QMessageBox.information(self, "Success", "Settings saved successfully!")
+            QMessageBox.information(self, _("Success"), _("Settings saved successfully!"))
             self.accept()
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to save settings: {str(e)}")
+            QMessageBox.critical(self, _("Error"), _("Failed to save settings: {error}").format(error=str(e)))
     
     def test_connection(self):
         """Test connection to the API server"""
@@ -343,13 +353,13 @@ class AISettingsDialog(ModernDialog):
             
             result = response.json()
             if result.get("status") == "healthy":
-                QMessageBox.information(self, "Success", "Connection successful!")
+                QMessageBox.information(self, _("Success"), _("Connection successful!"))
                 self.check_api_status()  # Refresh status
             else:
-                QMessageBox.warning(self, "Warning", f"API responded but status is: {result.get('status')}")
+                QMessageBox.warning(self, _("Warning"), _("API responded but status is: {status}").format(status=result.get('status')))
                 
         except Exception as e:
-            QMessageBox.critical(self, "Connection Failed", f"Failed to connect: {str(e)}")
+            QMessageBox.critical(self, _("Connection Failed"), _("Failed to connect: {error}").format(error=str(e)))
     
     def check_api_status(self):
         """Check API status and update display"""
@@ -406,10 +416,10 @@ class AISettingsDialog(ModernDialog):
 
             self.start_server_btn.setEnabled(False)
             self.stop_server_btn.setEnabled(True)
-            self.status_label.setText("🔄 Starting local API server...")
+            self.status_label.setText(_("🔄 Starting local API server..."))
 
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, _("Error"), str(e))
             self.start_server_btn.setEnabled(True)
             self.stop_server_btn.setEnabled(False)
     
@@ -426,7 +436,7 @@ class AISettingsDialog(ModernDialog):
         
         self.start_server_btn.setEnabled(True)
         self.stop_server_btn.setEnabled(False)
-        self.status_label.setText("🛑 Local server stopped")
+        self.status_label.setText(_("🛑 Local server stopped"))
     
     def on_server_status_update(self, message):
         """Handle server status updates"""
@@ -440,7 +450,7 @@ class AISettingsDialog(ModernDialog):
     
     def on_server_error(self, error_message):
         """Handle server errors"""
-        QMessageBox.critical(self, "Server Error", error_message)
+        QMessageBox.critical(self, _("Server Error"), error_message)
         self.start_server_btn.setEnabled(True)
         self.stop_server_btn.setEnabled(False)
     

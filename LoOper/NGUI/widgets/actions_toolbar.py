@@ -21,6 +21,7 @@ from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER
 )
+from ..i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -104,17 +105,17 @@ class ActionsToolbar(QWidget):
 
         layout.setAlignment(Qt.AlignVCenter)
         layout.addWidget(self._make_record_icon_button(), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip="Load Chain", label_text="Load"), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_save(), self._save_chain, tooltip="Save Chain", label_text="Save"), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_play(), self._run_chain, tooltip="Run Chain", label_text="Run"), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_delete(), self._delete_selected, tooltip="Delete Selected", label_text="Delete"), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_copy(), self._copy_selected, tooltip="Copy Selected", label_text="Copy"), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip="Paste", label_text="Paste"), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip=_("Load Chain"), label_text=_("Load")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_save(), self._save_chain, tooltip=_("Save Chain"), label_text=_("Save")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_play(), self._run_chain, tooltip=_("Run Chain"), label_text=_("Run")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_delete(), self._delete_selected, tooltip=_("Delete Selected"), label_text=_("Delete")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_copy(), self._copy_selected, tooltip=_("Copy Selected"), label_text=_("Copy")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip=_("Paste"), label_text=_("Paste")), alignment=Qt.AlignVCenter)
         outer.addWidget(self._content_frame)
 
         # Floating toggle button (modern chevron) centered under the actions frame
         self._toggle_btn_actions = QToolButton(self.graph_view)
-        self._toggle_btn_actions.setToolTip("Toggle Actions Toolbar")
+        self._toggle_btn_actions.setToolTip(_("Toggle Actions Toolbar"))
         # Initialize with UP chevron because toolbar starts expanded (visible)
         ico2 = load_tabler_icon('CHEVRON_UP', 14)
         if ico2:
@@ -206,9 +207,9 @@ class ActionsToolbar(QWidget):
         return btn
 
     def _make_record_icon_button(self):
-        btn = QPushButton("Record", self)
+        btn = QPushButton(_("Record"), self)
         btn.clicked.connect(lambda: self.graph_view.record_new_sequence())
-        btn.setToolTip("Record Sequence")
+        btn.setToolTip(_("Record Sequence"))
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         try:
             btn.setFixedHeight(26)

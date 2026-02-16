@@ -2,229 +2,352 @@ from ....config import logger
 import copy
 import json
 import os
+import re
 
 class LLMMixin:
     def _execute_llm_node(self, node, stop_flag, action_handlers=None):
         """
         Executes an LLM node and returns the next node ID.
-        
-        Args:
-            node (dict): The LLM node from the workflow graph
-            stop_flag (callable): Stop flag function
-            action_handlers: Action handlers for text writing
-            
-        Returns:
-            str: Next node ID to execute, or None if workflow should end
+        Supports Agentic Tool Use loop (ReAct pattern).
         """
-        # Lazy initialization: Only set up runtime environment when actually needed
+        # Lazy initialization
         if not self._runtime_initialized:
             self._initialize_chain_runtime()
             self._runtime_initialized = True
         
-        # Check for LLM -> TTS connection with "write automatically" enabled
-        # If found, disable typing and redirect output to TTS node
+        # Check for LLM -> TTS connection (redirect logic)
         llm_data = node.get('data', {})
         llm_config = llm_data.get('llm_configuration', {}) or llm_data
         write_text = llm_config.get('write_text', True)
         
-        node_to_execute = node
+        # --- Tool Discovery & Classification ---
+        agent_tools = {}
+        routing_tools = []
         
-        # Inject chain descriptions for connected tools
+        inputs = node.get('inputs', [])
+        for inp in inputs:
+            if str(inp.get('input_port')) == 'tools':
+                from_id = inp.get('from_node')
+                if from_id and from_id in self.workflow_graph:
+                    target_node = self.workflow_graph[from_id]
+                    if target_node.get('type') == 'code':
+                        # It's a Code Node -> Agentic Tool
+                        agent_tools[from_id] = target_node
+                    else:
+                        # It's likely a Chain Import or other -> Routing Tool
+                        # TODO: In the future, Chain Import nodes could also be treated as agent tools (subroutines)
+                        # For now, we treat them as routing destinations (exit paths) unless we implement _execute_chain_node
+                        routing_tools.append(from_id)
+        
+        # Inject chain descriptions for routing tools (existing logic)
+        self._inject_chain_descriptions(node, routing_tools)
+
+        # Check for TTS redirection (existing logic)
+        output_variable, node_to_execute = self._handle_tts_redirection(node, llm_config, write_text)
+        
+        # --- Execution Strategy ---
+        # If we have agent tools OR we want to enable dynamic python (Approach 2), enter Agent Loop
+        # We enable it by default as per user request to "change the structure"
+        return self._execute_agent_loop(node_to_execute, stop_flag, action_handlers, agent_tools, routing_tools)
+
+    def _inject_chain_descriptions(self, node, routing_tool_ids):
         try:
-            inputs = node.get('inputs', [])
             tool_descriptions_update = {}
-            
-            for inp in inputs:
-                if str(inp.get('input_port')) == 'tools':
-                    from_node_id = inp.get('from_node')
-                    if from_node_id and from_node_id in self.workflow_graph:
-                        tool_node = self.workflow_graph[from_node_id]
-                        if tool_node.get('type') == 'chain_import':
-                            # Get chain file path
-                            chain_data = tool_node.get('data', {})
-                            chain_file = chain_data.get('chain_file') or chain_data.get('chain_import_config', {}).get('chain_file')
-                            
-                            if chain_file:
-                                try:
-                                    resolved_path = chain_file
-                                    if not os.path.exists(resolved_path):
-                                         base_dir = getattr(self.sequence_executor, 'chain_file_dir', None)
-                                         if base_dir:
-                                             candidate = os.path.join(base_dir, chain_file)
-                                             if os.path.exists(candidate):
-                                                 resolved_path = candidate
-                                    
-                                    if os.path.exists(resolved_path):
-                                        with open(resolved_path, 'r', encoding='utf-8') as f:
-                                            cdata = json.load(f)
-                                            desc = cdata.get('description')
-                                            if desc:
-                                                tool_descriptions_update[from_node_id] = desc
-                                except Exception as e:
-                                    logger.warning(f"Failed to load description for chain tool {chain_file}: {e}")
+            for tid in routing_tool_ids:
+                if tid in self.workflow_graph:
+                    tool_node = self.workflow_graph[tid]
+                    if tool_node.get('type') == 'chain_import':
+                        chain_data = tool_node.get('data', {})
+                        chain_file = chain_data.get('chain_file') or chain_data.get('chain_import_config', {}).get('chain_file')
+                        if chain_file:
+                            try:
+                                resolved_path = chain_file
+                                if not os.path.exists(resolved_path):
+                                     base_dir = getattr(self.sequence_executor, 'chain_file_dir', None)
+                                     if base_dir:
+                                         candidate = os.path.join(base_dir, chain_file)
+                                         if os.path.exists(candidate):
+                                             resolved_path = candidate
+                                if os.path.exists(resolved_path):
+                                    with open(resolved_path, 'r', encoding='utf-8') as f:
+                                        cdata = json.load(f)
+                                        desc = cdata.get('description')
+                                        if desc:
+                                            tool_descriptions_update[tid] = desc
+                            except Exception:
+                                pass
             
             if tool_descriptions_update:
-                if node_to_execute is node:
-                    node_to_execute = copy.deepcopy(node)
-                
-                ndata = node_to_execute.get('data', {})
+                ndata = node.get('data', {})
                 if 'llm_configuration' not in ndata:
                     ndata['llm_configuration'] = {}
-                
                 llm_conf = ndata['llm_configuration']
-                
-                # Merge with existing tool descriptions
                 existing_td = llm_conf.get('tool_descriptions', {})
                 if isinstance(existing_td, str):
                     try:
                         existing_td = json.loads(existing_td)
                     except:
                         existing_td = {}
-                
                 if not isinstance(existing_td, dict):
                     existing_td = {}
-                    
                 existing_td.update(tool_descriptions_update)
                 llm_conf['tool_descriptions'] = existing_td
-                
         except Exception as e:
             logger.error(f"Error injecting chain descriptions: {e}")
-        
-        # Check for LLM -> TTS connection
-        # Always redirect output to TTS if connected, regardless of write_text setting
+
+    def _handle_tts_redirection(self, node, llm_config, write_text):
+        node_to_execute = node
+        output_variable = llm_config.get('output_variable', 'llm_output')
         connections = node.get('connections', {}).get('output', [])
         for connection in connections:
             target_node_id = connection.get('node_id')
             if target_node_id and target_node_id in self.workflow_graph:
                 target_node = self.workflow_graph[target_node_id]
                 if target_node.get('type') == 'tts':
-                    # Configure TTS node to use the LLM output variable
-                    output_variable = llm_config.get('output_variable', 'llm_output')
-                    
-                    # Update the TTS node in the graph to use the variable
-                    # This modifies the graph for the rest of this execution
                     target_node['data']['text'] = f"{{{output_variable}}}"
-                    logger.info(f"Updated TTS node {target_node_id} text to use variable {{{output_variable}}}")
-                    
-                    # If write_text is enabled, disable it since we are redirecting to TTS
                     if write_text:
-                        logger.info(f"LLM node {node.get('id', 'unknown')} connected to TTS node {target_node_id}. Disabling write_text.")
-                        
-                        # Create a copy of the node to modify write_text without affecting the graph permanently
                         node_to_execute = copy.deepcopy(node)
-                        
-                        # Disable write_text in the copy
                         node_data_copy = node_to_execute.get('data', {})
                         if 'llm_configuration' in node_data_copy:
                             node_data_copy['llm_configuration']['write_text'] = False
                         else:
                             node_data_copy['write_text'] = False
-                    
-                    # Only handle the first TTS connection found
                     break
+        return output_variable, node_to_execute
 
-        # Use the LLMExecutor to handle LLM execution and return its decision on next node
-        next_node_id = self.llm_executor.execute_llm_node(node_to_execute, stop_flag, action_handlers)
-        try:
-            self._llm_selected_next = None
-            chosen_id = next_node_id if isinstance(next_node_id, str) else None
-            # Fallback: parse tool marker or scan for tool ids/descriptions
-            try:
-                if (not chosen_id) or (chosen_id not in self.workflow_graph):
-                    out_var = None
-                    llm_id = node.get('id') or node.get('data', {}).get('node_id') or node.get('data', {}).get('id')
-                    if llm_id:
-                        out_var = self.llm_executor.get_variable(f"node_{llm_id}_output") or ""
-                    s = str(out_var or "")
-                    if s:
-                        for mk in ("USE_TOOL:", "CALL_TOOL:", "TOOL:"):
-                            idx = s.find(mk)
-                            if idx >= 0:
-                                val = s[idx+len(mk):].strip()
-                                val = val.split()[0].strip()
-                                while val and val[-1] in (":", ",", ";", ".", ")", "]", "}"):
-                                    val = val[:-1]
-                                if val:
-                                    chosen_id = val
-                                    break
-                    if not chosen_id:
-                        tools = []
-                        for inp in (node.get('inputs', []) or []):
-                            if str(inp.get('input_port')) == 'tools':
-                                tools.append(str(inp.get('from_node')))
-                        for tid in tools:
-                            if tid and (tid in s):
-                                chosen_id = tid
-                                break
-                        if not chosen_id:
-                            try:
-                                dmap = node.get('data', {}).get('tool_descriptions', {})
-                            except Exception:
-                                dmap = {}
-                            sl = s.lower()
-                            for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
-                                d = str(desc or '').lower()
-                                if d and d in sl:
-                                    chosen_id = tid
-                                    break
-                                tail = str(desc or '').split(":")[-1].strip().lower()
-                                if tail and tail in sl:
-                                    chosen_id = tid
-                                    break
-                        # Semantic fallback based on previous/context values
-                        if not chosen_id:
-                            try:
-                                prev_text = ""
-                                # prefer context value
-                                for inp in (node.get('inputs', []) or []):
-                                    if str(inp.get('input_port')) == 'context':
-                                        pid = str(inp.get('from_node'))
-                                        v = self.llm_executor.get_variable(f"node_{pid}_context") or ""
-                                        if v:
-                                            prev_text = str(v)
-                                            break
-                                if not prev_text:
-                                    for inp in (node.get('inputs', []) or []):
-                                        if str(inp.get('input_port')) == 'input':
-                                            pid = str(inp.get('from_node'))
-                                            v = self.llm_executor.get_variable(f"node_{pid}_output") or ""
-                                            if v:
-                                                prev_text = str(v)
-                                                break
-                                pl = prev_text.lower()
-                                want_open = False
-                                want_close = False
-                                for w in ("no browser", "not open", "closed", "no visible", "none open"):
-                                    if w in pl:
-                                        want_open = True
-                                        break
-                                if not want_open:
-                                    for w in ("browser is open", "is open", "open window", "visible browser"):
-                                        if w in pl:
-                                            want_close = True
-                                            break
-                                if want_open:
-                                    for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
-                                        dl = str(desc or '').lower()
-                                        if ("open_browser" in dl) or ("open browser" in dl) or dl.endswith("open_browser"):
-                                            chosen_id = tid
-                                            break
-                                elif want_close:
-                                    for tid, desc in (dmap.items() if isinstance(dmap, dict) else []):
-                                        dl = str(desc or '').lower()
-                                        if ("close_browser" in dl) or ("close browser" in dl) or dl.endswith("close_browser"):
-                                            chosen_id = tid
-                                            break
-                            except Exception:
-                                pass
-            except Exception:
-                pass
-            if chosen_id and chosen_id in self.workflow_graph:
-                target_node = self.workflow_graph.get(chosen_id, {})
-                if target_node.get('type') == 'chain_import' and target_node.get('tool_provider'):
-                    target_node['selected_by_llm'] = True
-                self._llm_selected_next = chosen_id
-                logger.info(f"LLM selected next node: {chosen_id}")
-        except Exception:
-            pass
-        return next_node_id
+    def _execute_agent_loop(self, node, stop_flag, action_handlers, agent_tools, routing_tools):
+        """
+        Runs the ReAct loop: Think -> Act -> Observe -> Repeat
+        Follows Dash-inspired mistake reasoning and on-the-fly tool creation.
+        """
+        history = []
+        max_turns = 10
+        current_turn = 0
+        
+        # Prepare Agent Instructions
+        instructions = ["\n\n## AGENTIC CAPABILITIES ENABLED"]
+        instructions.append("You are an autonomous agent. You can Reason, Act (use tools/code), and Observe results.")
+        
+        # Dynamic Python Tool (Always available in Approach 2)
+        instructions.append("\n### 1. Dynamic Python Execution (Preferred for new tasks):")
+        instructions.append("   - Create and execute Python tools on the fly.")
+        instructions.append("   - **Library Support**: You can import any standard or external library (e.g., `requests`, `pandas`, `psutil`).")
+        instructions.append("   - The system will AUTOMATICALLY detect imports and install them in a temporary virtual environment.")
+        instructions.append("   - Use this to calculate values, call external APIs, or process data.")
+        instructions.append("   - **IMPORTANT**: If an API requires a key (like OpenWeatherMap), do NOT ask the user for it. Instead, try to find an alternative way (e.g., using 'wttr.in' with requests, web scraping with BeautifulSoup, or other free libraries).")
+        instructions.append("   - **Format:**")
+        instructions.append("     RUN_PYTHON:")
+        instructions.append("     ```python")
+        instructions.append("     # your code here")
+        instructions.append("     print(result)")
+        instructions.append("     ```")
+        
+        # List connected Code Nodes
+        if agent_tools:
+            instructions.append("\n### 2. Available Code Tools:")
+            for tid, tnode in agent_tools.items():
+                name = tnode.get('data', {}).get('name') or f"Tool_{tid}"
+                desc = tnode.get('data', {}).get('label') or tnode.get('data', {}).get('description') or "Custom Code Node"
+                instructions.append(f"   - **{name}** (ID: {tid})")
+                instructions.append(f"     Description: {desc}")
+                instructions.append(f"     To Call: CALL_TOOL: {tid} {{json_arguments}}")
+                instructions.append(f"     (Arguments are passed as 'args' dictionary to the code)")
+
+        instructions.append("\n### 3. Workflow Routing (Final Action):")
+        if routing_tools:
+            instructions.append("   - Use these to hand off control to a specialized sub-chain.")
+            for tid in routing_tools:
+                 # Try to get description
+                 desc = "Chain/Sub-process"
+                 if tid in self.workflow_graph:
+                     tdata = self.workflow_graph[tid].get('data', {})
+                     desc = tdata.get('label') or tdata.get('description') or desc
+                 instructions.append(f"   - Route to ID {tid}: {desc}")
+            instructions.append("   - To Route: USE_TOOL: {id}")
+        else:
+            instructions.append("   - No specific routing tools available. Provide final answer when done.")
+        
+        instructions.append("\n### EXECUTION STRATEGY:")
+        instructions.append("1. **THOUGHT**: Plan your next step. What do you need to do?")
+        instructions.append("2. **ACTION**: Use RUN_PYTHON (create new tool) or CALL_TOOL (use existing).")
+        instructions.append("   - You MUST start your code block with 'RUN_PYTHON:' to execute it.")
+        instructions.append("   - DO NOT just explain the code. EXECUTE it.")
+        instructions.append("3. **OBSERVATION**: The system will execute and show you the result.")
+        instructions.append("4. **MISTAKE REASONING (CRITICAL)**: If execution fails or gives unexpected results:")
+        instructions.append("   - Analyze the error in the history.")
+        instructions.append("   - EXPLAIN why it failed.")
+        instructions.append("   - MODIFY your code/arguments and try again.")
+        instructions.append("   - **Loop until it behaves as expected.**")
+        instructions.append("5. **FINAL ANSWER**: When satisfied, output the final result directly (do NOT repeat code).")
+        instructions.append("   - If the user asked a question, answer it using the tool results.")
+        instructions.append("   - Do NOT output 'RUN_PYTHON' or 'CALL_TOOL' in your final answer.")
+        
+        base_system_msg_suffix = "\n".join(instructions)
+        
+        node_id = node.get('id') or node.get('data', {}).get('node_id')
+        
+        while current_turn < max_turns:
+            current_turn += 1
+            logger.info(f"Agent Loop Turn {current_turn}/{max_turns} for node {node_id}")
+            
+            # Create a temporary node for this turn
+            temp_node = copy.deepcopy(node)
+            
+            # Filter 'tools' inputs to HIDE agent_tools from executor.py
+            # We only keep routing_tools in the inputs list for the executor to see
+            filtered_inputs = []
+            for inp in temp_node.get('inputs', []):
+                if str(inp.get('input_port')) == 'tools':
+                    if inp.get('from_node') in routing_tools:
+                        filtered_inputs.append(inp)
+                else:
+                    filtered_inputs.append(inp)
+            temp_node['inputs'] = filtered_inputs
+            
+            # Update System Message with Instructions + History
+            llm_conf = temp_node.get('data', {}).get('llm_configuration', {})
+            if not llm_conf:
+                llm_conf = temp_node.get('data', {})
+            
+            sys_msg = llm_conf.get('system_message', '')
+            
+            # Append History
+            history_text = ""
+            if history:
+                history_text = "\n\n## EXECUTION HISTORY (Learn from this):\n"
+                for entry in history:
+                    history_text += f"\n--- Turn {entry['step']} ---\n"
+                    history_text += f"You: {entry['agent_output']}\n"
+                    if entry['tool_output']:
+                        history_text += f"System: {entry['tool_output']}\n"
+            
+            llm_conf['system_message'] = sys_msg + base_system_msg_suffix + history_text
+            
+            # Update prompt to encourage next step
+            if history:
+                 llm_conf['prompt'] = llm_conf.get('prompt', '') + "\n(Analyze the previous history. If you have the answer, provide it directly. If there was an error, FIX it.)"
+            
+            # Execute LLM
+            next_node_id = self.llm_executor.execute_llm_node(temp_node, stop_flag, action_handlers)
+            
+            # Retrieve Output
+            output_var = llm_conf.get('output_variable', 'llm_output')
+            llm_output = self.llm_executor.get_variable(output_var)
+            
+            if not llm_output:
+                logger.warning("LLM produced no output. Ending loop.")
+                return next_node_id
+                
+            # Parse for Actions
+            action_taken = False
+            tool_output_str = ""
+            
+            # Check 1: RUN_PYTHON
+            # Regex to capture "RUN_PYTHON:" then code (maybe in backticks)
+            py_match = re.search(r"RUN_PYTHON:\s*(?:```(?:python)?\s*)?(.*?)(?:```|$)", str(llm_output), re.DOTALL | re.IGNORECASE)
+            
+            # Check 2: CALL_TOOL (Code Node)
+            # CALL_TOOL: <id> {args}
+            tool_match = re.search(r"CALL_TOOL:\s*([^\s\{]+)\s*(.*)", str(llm_output), re.DOTALL | re.IGNORECASE)
+
+            # Check 3: USE_TOOL (Routing - Explicit Exit)
+            route_match = re.search(r"USE_TOOL:\s*([^\s]+)", str(llm_output), re.DOTALL | re.IGNORECASE)
+            
+            if py_match:
+                code = py_match.group(1).strip()
+                logger.info(f"Agent requested Dynamic Python execution")
+                
+                # Execute Dynamic Code
+                # We use a virtual code node
+                virtual_node = {
+                    'id': f"{node_id}_dynamic_{current_turn}",
+                    'type': 'code',
+                    'data': {
+                        'code': code,
+                        'output_variable': f"dynamic_res_{current_turn}"
+                    }
+                }
+                
+                # Run it
+                if hasattr(self, '_execute_code_node'):
+                    self._execute_code_node(virtual_node, stop_flag)
+                    
+                    # Get result
+                    res = self.llm_executor.get_variable(f"node_{virtual_node['id']}_output")
+                    stdout = self.llm_executor.get_variable(f"node_{virtual_node['id']}_stdout")
+                    stderr = self.llm_executor.get_variable(f"node_{virtual_node['id']}_stderr")
+                    err = self.llm_executor.get_variable(f"node_{virtual_node['id']}_error")
+                    
+                    tool_output_str = f"Execution Result:\n{res}\n"
+                    if stdout: tool_output_str += f"Stdout: {stdout}\n"
+                    if stderr: tool_output_str += f"Stderr: {stderr}\n"
+                    if err: tool_output_str += f"ERROR: {err}\n"
+                else:
+                    tool_output_str = "Error: System cannot execute code (CodeMixin not found)."
+                
+                action_taken = True
+                
+            elif tool_match and not action_taken:
+                tid = tool_match.group(1).strip()
+                args_str = tool_match.group(2).strip()
+                
+                if tid.endswith(':'): tid = tid[:-1]
+                
+                if tid in agent_tools:
+                    logger.info(f"Agent requested Tool execution: {tid}")
+                    target_node = agent_tools[tid]
+                    
+                    # Parse Args
+                    args = {}
+                    try:
+                        import json
+                        if args_str.startswith('{'):
+                             idx = args_str.rfind('}')
+                             if idx != -1:
+                                 json_str = args_str[:idx+1]
+                                 args = json.loads(json_str)
+                    except:
+                        pass
+                    
+                    # Execute
+                    if hasattr(self, '_execute_code_node'):
+                        # Pass args as overrides
+                        self._execute_code_node(target_node, stop_flag, arg_overrides=args)
+                        
+                        # Get result
+                        res = self.llm_executor.get_variable(f"node_{tid}_output")
+                        err = self.llm_executor.get_variable(f"node_{tid}_error")
+                        stdout = self.llm_executor.get_variable(f"node_{tid}_stdout")
+                        
+                        tool_output_str = f"Tool '{tid}' Output: {res}"
+                        if stdout: tool_output_str += f"\nStdout: {stdout}"
+                        if err: tool_output_str += f"\nError: {err}"
+                    else:
+                        tool_output_str = "Error: System cannot execute tool (CodeMixin not found)."
+                        
+                    action_taken = True
+                else:
+                    # If not in agent_tools, check routing or just ignore
+                    if tid in routing_tools:
+                         logger.info(f"Agent requested routing to {tid}. Exiting loop.")
+                         return next_node_id # Let executor route
+            
+            elif route_match and not action_taken:
+                 tid = route_match.group(1).strip()
+                 logger.info(f"Agent requested explicit routing to {tid}")
+                 return next_node_id # Exit and route
+
+            if action_taken:
+                history.append({
+                    'step': current_turn,
+                    'agent_output': llm_output,
+                    'tool_output': tool_output_str
+                })
+            else:
+                # No action taken -> Final Answer
+                logger.info("Agent produced final answer (no tool calls detected).")
+                return next_node_id
+
+        # End of Loop
+        logger.warning("Agent Loop max turns reached.")
+        return None

@@ -25,6 +25,7 @@ from ..constants import (
     CODE_NODE_COLOR
 )
 from ..dialogs.base_dialog import ModernDialog
+from ..i18n import _
 
 
 logger = logging.getLogger(__name__)
@@ -669,7 +670,7 @@ class DraggableSequenceButton(QPushButton):
 class ModernDeleteDialog(ModernDialog):
     """A custom modern dialog for delete confirmation."""
     def __init__(self, parent, filename):
-        super().__init__(parent, title="Delete Sequence")
+        super().__init__(parent, title=_("Delete Sequence"))
         self.resize(400, 250)  # Increased height to fit content without scrollbar
         
         # Hide the default title bar close button if desired, but base_dialog has it.
@@ -704,11 +705,11 @@ class ModernDeleteDialog(ModernDialog):
         text_layout.setSpacing(2)
         text_layout.setContentsMargins(0, 10, 0, 10) # Center vertically relative to icon
         
-        title = QLabel(f"Delete '{filename}'?")
+        title = QLabel(_("Delete '{filename}'?").format(filename=filename))
         title.setWordWrap(True)
         title.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold; font-size: 16px;")
         
-        desc = QLabel("This action cannot be undone.")
+        desc = QLabel(_("This action cannot be undone."))
         desc.setWordWrap(True)
         desc.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 13px; opacity: 0.8;")
         
@@ -727,7 +728,7 @@ class ModernDeleteDialog(ModernDialog):
         btn_layout.setSpacing(15)
         btn_layout.addStretch()
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.setCursor(Qt.PointingHandCursor)
         cancel_btn.setFixedWidth(100)
         cancel_btn.setStyleSheet(f"""
@@ -748,7 +749,7 @@ class ModernDeleteDialog(ModernDialog):
         cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(cancel_btn)
         
-        delete_btn = QPushButton("Delete")
+        delete_btn = QPushButton(_("Delete"))
         delete_btn.setCursor(Qt.PointingHandCursor)
         delete_btn.setFixedWidth(100)
         delete_btn.setStyleSheet(f"""
@@ -806,8 +807,8 @@ class TrashBinWidget(QPushButton):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setText("🗑 Drop to Delete")
-        self.setToolTip("Drag sequence files here to delete them")
+        self.setText(_("🗑 Drop to Delete"))
+        self.setToolTip(_("Drag sequence files here to delete them"))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             f"""
@@ -848,7 +849,6 @@ class TrashBinWidget(QPushButton):
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        # Restore original style
         self.setStyleSheet(
             f"""
             QPushButton {{
@@ -886,7 +886,7 @@ class TrashBinWidget(QPushButton):
                         os.remove(file_path)
                         event.accept()
                     except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to delete file: {e}")
+                        QMessageBox.critical(self, _("Error"), _("Failed to delete file: {error}").format(error=e))
             except Exception as e:
                 logger.error(f"Error processing drop in trash bin: {e}")
             finally:
@@ -954,7 +954,7 @@ class CollapsibleToolbar(QWidget):
         content_layout.setSpacing(6)
 
         # Title Label
-        title_label = QLabel("Sequence List")
+        title_label = QLabel(_("Sequence List"))
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setFixedHeight(40)  # Match standard toolbar height
         title_label.setStyleSheet(
@@ -988,11 +988,11 @@ class CollapsibleToolbar(QWidget):
         nodes_col = QVBoxLayout()
         nodes_col.setSpacing(1)
         nodes_col.setContentsMargins(0, 0, 0, 0)
-        nodes_col.addWidget(self._make_node_button("LLM", "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip="Add LLM Node"))
-        nodes_col.addWidget(self._make_node_button("Chain", "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip="Add Chain Import Node"))
-        nodes_col.addWidget(self._make_node_button("Code", "code", CODE_NODE_COLOR, lambda: self.graph_view.add_code_node(), tooltip="Add Code Node"))
-        nodes_col.addWidget(self._make_node_button("TTS", "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip="Add TTS Node"))
-        nodes_col.addWidget(self._make_node_button("Cond", "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip="Add Conditional Node"))
+        nodes_col.addWidget(self._make_node_button(_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip=_("Add LLM Node")))
+        nodes_col.addWidget(self._make_node_button(_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip=_("Add Chain Import Node")))
+        nodes_col.addWidget(self._make_node_button(_("Code"), "code", CODE_NODE_COLOR, lambda: self.graph_view.add_code_node(), tooltip=_("Add Code Node")))
+        nodes_col.addWidget(self._make_node_button(_("TTS"), "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip=_("Add TTS Node")))
+        nodes_col.addWidget(self._make_node_button(_("Cond"), "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip=_("Add Conditional Node")))
         self._top_layout.addLayout(nodes_col)
         content_layout.addWidget(top_cluster)
 
@@ -1006,7 +1006,7 @@ class CollapsibleToolbar(QWidget):
 
         # Floating toggle button (modern chevron), parented to graph_view to float outside
         self._toggle_btn_nodes = QToolButton(self.graph_view)
-        self._toggle_btn_nodes.setToolTip("Toggle Nodes Toolbar")
+        self._toggle_btn_nodes.setToolTip(_("Toggle Nodes Toolbar"))
         ico = load_tabler_icon('CHEVRON_RIGHT', 14)
         if ico:
             self._toggle_btn_nodes.setIcon(ico)
@@ -1162,7 +1162,7 @@ class CollapsibleToolbar(QWidget):
         except Exception:
             files = []
         if not files:
-            placeholder = QLabel("No sequences")
+            placeholder = QLabel(_("No sequences"))
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(
                 f"""

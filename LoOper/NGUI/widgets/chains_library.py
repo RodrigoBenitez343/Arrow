@@ -15,6 +15,7 @@ from ..constants import (
     BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR
 )
 from .collapsible_toolbar import get_node_icon, load_tabler_icon
+from ..i18n import _
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +89,7 @@ class DraggableChainButton(QPushButton):
         menu = QMenu(self)
         
         # Add Description action
-        edit_desc_action = QAction("Edit Description", self)
+        edit_desc_action = QAction(_("Edit Description"), self)
         edit_desc_action.triggered.connect(self._edit_description)
         menu.addAction(edit_desc_action)
         
@@ -106,8 +107,8 @@ class DraggableChainButton(QPushButton):
         
         text, ok = QInputDialog.getText(
             self, 
-            "Chain Description", 
-            "Enter description for this chain:",
+            _("Chain Description"), 
+            _("Enter description for this chain:"),
             QLineEdit.Normal, 
             current_desc
         )
@@ -223,7 +224,7 @@ class ChainsLibrary(QWidget):
         content_layout.setSpacing(6)
 
         # Title
-        title_label = QLabel("Chains Library")
+        title_label = QLabel(_("Chains Library"))
         title_label.setAlignment(Qt.AlignCenter)
         title_label.setFixedHeight(40)
         title_label.setStyleSheet(
@@ -326,7 +327,7 @@ class ChainsLibrary(QWidget):
                 logger.error(f"Error listing chains: {e}")
         
         if self._container_layout.count() == 1: # Only stretch
-            placeholder = QLabel("No chains")
+            placeholder = QLabel(_("No chains"))
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(f"color: {TEXT_COLOR}; opacity: 0.5; padding: 20px;")
             self._container_layout.insertWidget(0, placeholder)
