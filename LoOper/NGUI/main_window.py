@@ -648,12 +648,12 @@ class MainWindow(QMainWindow):
             
             # Show result
             msg = "TRUE" if result else "FALSE"
-            QMessageBox.information(self, "Condition Result", f"Evaluation Result: {msg}")
+            QMessageBox.information(self, _("Condition Result"), _("Evaluation Result: {msg}").format(msg=msg))
             
         except Exception as e:
             logger.error(f"Error testing conditional node: {e}", exc_info=True)
             self._restore_window()
-            QMessageBox.critical(self, "Error", f"Failed to test condition: {str(e)}")
+            QMessageBox.critical(self, _("Error"), _("Failed to test condition: {error}").format(error=str(e)))
 
     def _restore_window(self):
         """Restore window from minimized state (thread-safe)"""
@@ -664,12 +664,12 @@ class MainWindow(QMainWindow):
     def _handle_recording_error(self, error_msg):
         """Handle recording error and restore window (thread-safe)"""
         self._restore_window()
-        QMessageBox.critical(self, "Recording Error", f"Recording failed: {error_msg}")
+        QMessageBox.critical(self, _("Recording Error"), _("Recording failed: {error}").format(error=error_msg))
     
     def _handle_playback_error(self, error_msg):
         """Handle playback error and restore window (thread-safe)"""
         self._restore_window()
-        QMessageBox.critical(self, "Playback Error", f"Failed to run chain: {error_msg}")
+        QMessageBox.critical(self, _("Playback Error"), _("Failed to run chain: {error}").format(error=error_msg))
 
     def open_scheduler_manager(self):
         """Open the Scheduler Manager dialog"""
@@ -678,7 +678,7 @@ class MainWindow(QMainWindow):
             dialog.exec_()
         except Exception as e:
             logger.error(f"Failed to open SchedulerManagerDialog: {e}")
-            QMessageBox.critical(self, "Scheduler Error", f"Failed to open scheduler: {e}")
+            QMessageBox.critical(self, _("Scheduler Error"), _("Failed to open scheduler: {error}").format(error=e))
     
     def open_ai_settings(self):
         """Open the AI Settings dialog"""
@@ -687,7 +687,7 @@ class MainWindow(QMainWindow):
             dialog.exec_()
         except Exception as e:
             logger.error(f"Failed to open AISettingsDialog: {e}")
-            QMessageBox.critical(self, "AI Settings Error", f"Failed to open AI settings: {e}")
+            QMessageBox.critical(self, _("AI Settings Error"), _("Failed to open AI settings: {error}").format(error=e))
 
     def closeEvent(self, event):
         """Ensure background services stop on app close"""

@@ -6,13 +6,15 @@ import time
 import subprocess as _sp
 
 class CodeMixin:
-    def _execute_code_node(self, node, stop_flag):
+    def _execute_code_node(self, node, stop_flag, input_overrides=None, arg_overrides=None):
         """
         Executes a Code node and returns the next node ID.
         
         Args:
             node (dict): The Code node from the workflow graph
             stop_flag (callable): Stop flag function
+            input_overrides (any): Optional input data to inject (bypasses graph inputs)
+            arg_overrides (dict): Optional arguments to inject
             
         Returns:
             str: Next node ID to execute, or None if workflow should end
@@ -39,6 +41,18 @@ class CodeMixin:
         # Resolve inputs
         input_data = []
         args = {}
+        
+        # Inject overrides if provided (for Agentic Tool use)
+        if input_overrides is not None:
+            if isinstance(input_overrides, list):
+                input_data.extend(input_overrides)
+            else:
+                input_data.append(input_overrides)
+                
+        if arg_overrides:
+            if isinstance(arg_overrides, dict):
+                args.update(arg_overrides)
+        
         runtime_code = None
         code_src_llm_id = None
         
@@ -268,15 +282,21 @@ class CodeMixin:
         except Exception:
             pass
 
+
+        dep_error_msg = ""
         try:
             self._ensure_chain_venv()
             if self._venv_site_packages and os.path.isdir(self._venv_site_packages):
                 if self._venv_site_packages not in sys.path:
                     sys.path.insert(0, self._venv_site_packages)
             dep_report = self._install_code_dependencies(code_to_run)
+            dep_error_msg = ""
             try:
                 if node_id and dep_report:
                     self.llm_executor.set_variable(f"node_{node_id}_deps", dep_report)
+                    if dep_report.get('failed'):
+                        dep_error_msg = f"Dependency Installation Failed for {dep_report['failed']}.\nPip Output:\n{dep_report.get('pip_stderr', '')}\n"
+                        logger.warning(dep_error_msg)
             except Exception:
                 pass
         except Exception:
@@ -316,7 +336,7 @@ class CodeMixin:
                 self.llm_executor.set_variable(f"node_{node_id}_output", result)
                 self.llm_executor.set_variable(f"node_{node_id}_result", result)
                 self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
-                self.llm_executor.set_variable(f"node_{node_id}_stderr", stderr_str)
+                self.llm_executor.set_variable(f"node_{node_id}_stderr", (dep_error_msg + "\n" + stderr_str) if dep_error_msg else stderr_str)
                 self.llm_executor.set_variable(f"node_{node_id}_terminal_output", terminal_output)
                 try:
                     if pid:
@@ -347,7 +367,7 @@ class CodeMixin:
                 msg = terminal_output or stderr_str or "Persistent script failed to start"
                 self._set_code_node_error(node, msg)
                 self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
-                self.llm_executor.set_variable(f"node_{node_id}_stderr", stderr_str)
+                self.llm_executor.set_variable(f"node_{node_id}_stderr", (dep_error_msg + "\n" + stderr_str) if dep_error_msg else stderr_str)
                 self.llm_executor.set_variable(f"node_{node_id}_terminal_output", terminal_output)
                 try:
                     node['last_output_port'] = 'error'
@@ -384,6 +404,8 @@ class CodeMixin:
             # Get captured output
             stdout_str = stdout_capture.getvalue()
             stderr_str = stderr_capture.getvalue()
+            if dep_error_msg:
+                stderr_str = dep_error_msg + "\n" + stderr_str
             terminal_output = stdout_str + stderr_str
             
             if stdout_str:
@@ -431,6 +453,8 @@ class CodeMixin:
             # Capture what we have so far
             stdout_str = stdout_capture.getvalue()
             stderr_str = stderr_capture.getvalue()
+            if dep_error_msg:
+                stderr_str = dep_error_msg + "\n" + stderr_str
             
             if stdout_str:
                 logger.info(f"Code node stdout (before error):\n{stdout_str}")
@@ -1008,9 +1032,25 @@ class CodeMixin:
             if process.returncode == 0:
                 installed = to_install
             else:
-                # Try to determine which failed? For now assume all failed if non-zero
-                failed = to_install
-                logger.error(f"Pip install failed: {stderr}")
+                logger.warning(f"Bulk pip install failed, retrying individually. Error: {stderr}")
+                # Retry individually to isolate failures
+                for pkg in to_install:
+                    try:
+                        cmd_single = [self._venv_python, "-m", "pip", "install", pkg]
+                        if os.name == 'nt':
+                            p_single = _sp.Popen(cmd_single, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW)
+                        else:
+                            p_single = _sp.Popen(cmd_single, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
+                        out_s, err_s = p_single.communicate()
+                        
+                        if p_single.returncode == 0:
+                            installed.append(pkg)
+                        else:
+                            failed.append(pkg)
+                            logger.error(f"Failed to install {pkg}: {err_s}")
+                    except Exception as e_single:
+                        failed.append(pkg)
+                        logger.error(f"Exception installing {pkg}: {e_single}")
                 
             return {
                 "installed": installed,

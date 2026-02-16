@@ -9,6 +9,7 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from .base_dialog import ModernDialog
 from ..constants import TEXT_COLOR, LIGHT_GREY, ACCENT_COLOR
 from ..nodes_resources.base_node import get_default_api_url
+from ..i18n import _
 import sys
 import os
 
@@ -71,7 +72,7 @@ class CodeGeneratorThread(QThread):
 
 class CodeNodeDialog(ModernDialog):
     def __init__(self, parent=None, config=None):
-        super().__init__(parent, title="Code Node Configuration")
+        super().__init__(parent, title=_("Code Node Configuration"))
         self.resize(700, 600)
         
         self.config = config or {}
@@ -98,17 +99,17 @@ class CodeNodeDialog(ModernDialog):
         # Tab 1: AI Generator
         self.generator_tab = QWidget()
         self.setup_generator_tab()
-        self.tabs.addTab(self.generator_tab, "AI Generator")
+        self.tabs.addTab(self.generator_tab, _("AI Generator"))
 
         # Tab 2: Code Editor
         self.editor_tab = QWidget()
         self.setup_editor_tab()
-        self.tabs.addTab(self.editor_tab, "Code Editor")
+        self.tabs.addTab(self.editor_tab, _("Code Editor"))
         
         # Tab 3: Settings
         self.settings_tab = QWidget()
         self.setup_settings_tab()
-        self.tabs.addTab(self.settings_tab, "Settings")
+        self.tabs.addTab(self.settings_tab, _("Settings"))
         
         self.content_layout.addWidget(self.tabs)
         self.add_buttons()
@@ -117,11 +118,11 @@ class CodeNodeDialog(ModernDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(_("Cancel"))
         cancel_btn.clicked.connect(self.reject)
         cancel_btn.setStyleSheet(self.get_button_style())
         
-        save_btn = QPushButton("Save")
+        save_btn = QPushButton(_("Save"))
         save_btn.clicked.connect(self.accept)
         save_btn.setStyleSheet(self.get_button_style().replace(LIGHT_GREY, ACCENT_COLOR).replace(TEXT_COLOR, "#121212")) # Accent style
         
@@ -155,10 +156,10 @@ class CodeNodeDialog(ModernDialog):
                     self.model_combo.setCurrentText(models[0])
             else:
                 # If no real models found, don't clear, just show message
-                QMessageBox.information(self, "No Models Found", "Could not detect any downloaded models from Ollama API.")
+                QMessageBox.information(self, _("No Models Found"), _("Could not detect any downloaded models from Ollama API."))
                 
         except Exception as e:
-            QMessageBox.warning(self, "Refresh Failed", f"Failed to refresh models: {str(e)}")
+            QMessageBox.warning(self, _("Refresh Failed"), _("Failed to refresh models: {error}").format(error=str(e)))
 
     def setup_generator_tab(self):
         layout = QVBoxLayout(self.generator_tab)
@@ -166,7 +167,7 @@ class CodeNodeDialog(ModernDialog):
 
         # Model Selection
         model_layout = QVBoxLayout()
-        model_label = QLabel("Model:")
+        model_label = QLabel(_("Model:"))
         model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
         
         model_select_layout = QHBoxLayout()
@@ -175,7 +176,7 @@ class CodeNodeDialog(ModernDialog):
         self.model_combo.setStyleSheet(self.get_input_style())
         
         # Refresh models button
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = QPushButton(_("Refresh"))
         refresh_btn.setStyleSheet(self.get_button_style())
         refresh_btn.clicked.connect(self.refresh_models)
         
@@ -206,11 +207,11 @@ class CodeNodeDialog(ModernDialog):
         
         # Prompt
         prompt_layout = QVBoxLayout()
-        prompt_label = QLabel("Prompt / Instructions:")
+        prompt_label = QLabel(_("Prompt / Instructions:"))
         prompt_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
         
         self.prompt_edit = QPlainTextEdit()
-        self.prompt_edit.setPlaceholderText("Describe what the code should do...")
+        self.prompt_edit.setPlaceholderText(_("Describe what the code should do..."))
         self.prompt_edit.setPlainText(self.config.get('gen_prompt', ''))
         self.prompt_edit.setStyleSheet(f"""
             QPlainTextEdit {{
@@ -227,7 +228,7 @@ class CodeNodeDialog(ModernDialog):
         layout.addLayout(prompt_layout)
         
         # Generate Button
-        self.gen_btn = QPushButton("Generate Code")
+        self.gen_btn = QPushButton(_("Generate Code"))
         self.gen_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {ACCENT_COLOR};
@@ -257,14 +258,14 @@ class CodeNodeDialog(ModernDialog):
     def generate_code(self):
         prompt = self.prompt_edit.toPlainText()
         if not prompt:
-            QMessageBox.warning(self, "Missing Prompt", "Please enter a prompt describing the code you want to generate.")
+            QMessageBox.warning(self, _("Missing Prompt"), _("Please enter a prompt describing the code you want to generate."))
             return
             
         model = self.model_combo.currentText()
         
         self.gen_btn.setEnabled(False)
-        self.gen_btn.setText("Generating...")
-        self.status_label.setText("Generating code... please wait.")
+        self.gen_btn.setText(_("Generating..."))
+        self.status_label.setText(_("Generating code... please wait."))
         
         # Start generation thread
         self.gen_thread = CodeGeneratorThread(model, prompt)
@@ -275,22 +276,22 @@ class CodeNodeDialog(ModernDialog):
     def on_generation_finished(self, code):
         self.code_edit.setPlainText(code)
         self.gen_btn.setEnabled(True)
-        self.gen_btn.setText("Generate Code")
-        self.status_label.setText("Code generated successfully! Switch to 'Code Editor' tab to view/edit.")
+        self.gen_btn.setText(_("Generate Code"))
+        self.status_label.setText(_("Code generated successfully! Switch to 'Code Editor' tab to view/edit."))
         # Optional: Switch tab automatically
         self.tabs.setCurrentWidget(self.editor_tab)
         
     def on_generation_error(self, error_msg):
         self.gen_btn.setEnabled(True)
-        self.gen_btn.setText("Generate Code")
-        self.status_label.setText("Generation failed.")
-        QMessageBox.critical(self, "Generation Error", f"Failed to generate code:\n{error_msg}")
+        self.gen_btn.setText(_("Generate Code"))
+        self.status_label.setText(_("Generation failed."))
+        QMessageBox.critical(self, _("Generation Error"), _("Failed to generate code:\n{error}").format(error=error_msg))
 
     def setup_editor_tab(self):
         layout = QVBoxLayout(self.editor_tab)
         
         # Instructions
-        info_label = QLabel("Write Python code to execute. 'input_data' and 'args' variables are available.")
+        info_label = QLabel(_("Write Python code to execute. 'input_data' and 'args' variables are available."))
         info_label.setStyleSheet(f"color: {TEXT_COLOR}; font-style: italic;")
         layout.addWidget(info_label)
         
@@ -314,7 +315,7 @@ class CodeNodeDialog(ModernDialog):
         
         # File Path (Optional override)
         file_layout = QVBoxLayout()
-        file_label = QLabel("External File Path (Overrides internal code if set):")
+        file_label = QLabel(_("External File Path (Overrides internal code if set):"))
         file_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
         
         path_layout = QHBoxLayout()
@@ -322,7 +323,7 @@ class CodeNodeDialog(ModernDialog):
         self.file_path_edit.setPlaceholderText("/path/to/script.py")
         self.file_path_edit.setStyleSheet(self.get_input_style())
         
-        browse_btn = QPushButton("Browse")
+        browse_btn = QPushButton(_("Browse..."))
         browse_btn.setStyleSheet(self.get_button_style())
         browse_btn.clicked.connect(self.browse_file)
         
@@ -335,9 +336,9 @@ class CodeNodeDialog(ModernDialog):
         
         # Output Variable
         var_layout = QVBoxLayout()
-        var_label = QLabel("Output Variable Name:")
+        var_label = QLabel(_("Output Variable Name:"))
         var_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        var_info = QLabel("The variable name in your code that contains the result to output.")
+        var_info = QLabel(_("The variable name in your code that contains the result to output."))
         var_info.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; margin-bottom: 5px;")
         
         self.output_var_edit = QLineEdit(self.config.get('output_variable', 'result'))
@@ -350,16 +351,16 @@ class CodeNodeDialog(ModernDialog):
         
         # Execution Options
         opts_layout = QVBoxLayout()
-        opts_label = QLabel("Execution Options:")
+        opts_label = QLabel(_("Execution Options:"))
         opts_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
         
-        self.exec_check = QCheckBox("Execute on Input Trigger")
+        self.exec_check = QCheckBox(_("Execute on Input Trigger"))
         self.exec_check.setChecked(self.config.get('execute_on_input', True))
         self.exec_check.setStyleSheet(f"color: {TEXT_COLOR};")
         
         # Timeout
         timeout_layout = QHBoxLayout()
-        timeout_label = QLabel("Timeout (seconds):")
+        timeout_label = QLabel(_("Timeout (seconds):"))
         timeout_label.setStyleSheet(f"color: {TEXT_COLOR};")
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 3600)
@@ -379,7 +380,7 @@ class CodeNodeDialog(ModernDialog):
         
     def browse_file(self):
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Python Script", "", "Python Files (*.py);;All Files (*)"
+            self, _("Select Python Script"), "", _("Python Files (*.py);;All Files (*)")
         )
         if file_path:
             self.file_path_edit.setText(file_path)

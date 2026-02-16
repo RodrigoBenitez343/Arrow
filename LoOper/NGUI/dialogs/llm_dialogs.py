@@ -703,16 +703,15 @@ class LLMPropertiesDialog(ModernDialog):
         """Update template description based on current selection"""
         template_name = self.template_combo.currentText()
         descriptions = {
-            "Custom (no template)": "Use custom configuration without predefined template.",
-            "Information Extraction (OCR + LLM)": "Extract specific information from screen text using OCR + LLM.",
-            "Custom Instructions": "Define your own system message and prompt for the LLM.",
-            "Direct Prompt": "Simple direct prompt without additional configuration.",
-            # "ComoRAG Analysis": "Use ComoRAG for context-aware analysis with memory and reasoning.",
-            "Data Processing Chain": "Process data from previous nodes in a multi-step workflow.",
-            "Text Analysis": "Analyze text content from clipboard with detailed insights.",
-            "Content Summarization": "Summarize content extracted from screen using OCR.",
-            "Tool Selection (LLM Tools)": "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'.",
-            "Python Code Generation": "Generate executable Python code in a single block."
+            "Custom (no template)": _("Use custom configuration without predefined template."),
+            "Information Extraction (OCR + LLM)": _("Extract specific information from screen text using OCR + LLM."),
+            "Custom Instructions": _("Define your own system message and prompt for the LLM."),
+            "Direct Prompt": _("Simple direct prompt without additional configuration."),
+            "Data Processing Chain": _("Process data from previous nodes in a multi-step workflow."),
+            "Text Analysis": _("Analyze text content from clipboard with detailed insights."),
+            "Content Summarization": _("Summarize content extracted from screen using OCR."),
+            "Tool Selection (LLM Tools)": _("Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'."),
+            "Python Code Generation": _("Generate executable Python code in a single block.")
         }
         self.template_description.setText(descriptions.get(template_name, ""))
       

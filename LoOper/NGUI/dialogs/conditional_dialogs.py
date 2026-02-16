@@ -67,31 +67,32 @@ class ConditionItemWidget(QFrame):
                 
             conf = self.config.get('confidence', 0.8)
             timeout = self.config.get('timeout', 0)
-            timeout_str = f", Timeout: {timeout}s" if timeout > 0 else ""
-            info_text = f"<b>{_('Image Trigger')}</b><br>{image_path}<br>Confidence: {conf}{timeout_str}"
+            timeout_str = f", { _('Timeout (s):') } {timeout}" if timeout > 0 else ""
+            info_text = f"<b>{_('Image Trigger')}</b><br>{image_path}<br>{_('Confidence:')} {conf}{timeout_str}"
             
         elif self.condition_type == "ocr":
             preview_label.setText("OCR")
             text = self.config.get('target_text', '')
             conf = self.config.get('confidence', 0.8)
-            info_text = f"<b>{_('OCR Trigger')}</b><br>Text: '{text}'<br>Confidence: {conf}"
+            text_info = _("Text: '{text}' (Confidence: {conf})").format(text=text, conf=conf)
+            info_text = f"<b>{_('OCR Trigger')}</b><br>{text_info}"
             
         elif self.condition_type == "loop":
             preview_label.setText("LOOP")
             loop_type = self.config.get('type', '')
             seq = self.config.get('sequence_file', '')
             max_iter = self.config.get('max_iterations', 10)
-            info_text = f"<b>{_('Conditional Loop')}</b><br>Type: {loop_type}<br>Sequence: {seq}<br>Max Iterations: {max_iter}"
+            info_text = f"<b>{_('Conditional Loop')}</b><br>{_('Loop Type:')} {loop_type}<br>{_('Sequence File:')} {seq}<br>{_('Max Iterations:')} {max_iter}"
             
         elif self.condition_type == "wait":
              preview_label.setText("WAIT")
              wtype = self.config.get('type', 'wait_time')
              if wtype == 'wait_time':
                  duration = self.config.get('duration', 5.0)
-                 info_text = f"<b>{_('Wait Condition')}</b><br>Wait Time: {duration}s"
+                 info_text = f"<b>{_('Wait Condition')}</b><br>{_('Wait Duration (s):')} {duration}"
              else:
                  timeout = self.config.get('timeout', 30)
-                 info_text = f"<b>{_('Wait Condition')}</b><br>Type: {wtype}, Timeout: {timeout}s"
+                 info_text = f"<b>{_('Wait Condition')}</b><br>{_('Wait Type:')} {wtype}, { _('Timeout (s):') } {timeout}"
 
         layout.addWidget(preview_label)
         

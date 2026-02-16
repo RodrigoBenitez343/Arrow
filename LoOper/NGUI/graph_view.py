@@ -19,6 +19,7 @@ from .graph_elements import (
 )
 from .graph_elements.dnd_manager import DragDropManager
 from .graph_elements.clipboard_manager import ClipboardManager
+from .i18n import _
 # Branching is handled automatically during workflow execution
 
 # Set up logger for this module
@@ -369,7 +370,7 @@ class GraphViewWidget(QWidget):
     def add_form_filler_node(self, position=None):
         from PyQt5.QtWidgets import QMessageBox
         try:
-            QMessageBox.information(self, "Deprecated", "Form Filler node is deprecated and cannot be added.")
+            QMessageBox.information(self, _("Deprecated"), _("Form Filler node is deprecated and cannot be added."))
         except Exception:
             pass
         return None

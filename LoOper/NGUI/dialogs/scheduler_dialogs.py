@@ -1,9 +1,9 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QWidget, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit, QFileDialog, QMessageBox, QLineEdit,
-    QGroupBox, QFrame
+    QGroupBox, QFrame, QHeaderView, QSizePolicy
 )
-from PyQt5.QtCore import QTime, QDateTime, Qt
+from PyQt5.QtCore import QTime, QDateTime, Qt, QTimer
 from ..constants import (
     DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, RED_PRIMARY
 )
@@ -29,13 +29,29 @@ class SchedulerManagerDialog(ModernDialog):
             _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Actions")
         ])
         # Set column widths for better visibility
-        self.table.setColumnWidth(0, 60)   # Enabled
+        self.table.setColumnWidth(0, 90)
         self.table.setColumnWidth(1, 120)  # Name
         self.table.setColumnWidth(2, 80)   # Type
         self.table.setColumnWidth(3, 140)  # When
         self.table.setColumnWidth(4, 130)  # Next Run
-        self.table.setColumnWidth(5, 180)  # Chain
-        self.table.setColumnWidth(6, 180)  # Actions
+        self.table.setColumnWidth(5, 220)
+        self.table.setColumnWidth(6, 260)
+        # Header resize behaviour
+        hh = self.table.horizontalHeader()
+        hh.setStretchLastSection(False)
+        for i in range(7):
+            hh.setSectionResizeMode(i, QHeaderView.Interactive)
+        hh.setSectionResizeMode(5, QHeaderView.Stretch)
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.resizeSection(6, 300)
+        hh.setMinimumSectionSize(80)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
+        try:
+            self.table.setCornerButtonEnabled(False)
+        except Exception:
+            pass
         
         # Enable alternating row colors for better readability
         self.table.setAlternatingRowColors(True)
@@ -67,9 +83,14 @@ class SchedulerManagerDialog(ModernDialog):
                 border: 1px solid {LIGHT_GREY};
                 font-weight: bold;
             }}
+            QTableCornerButton::section {{
+                background-color: {BLOCK_COLOR};
+                border: 1px solid {LIGHT_GREY};
+            }}
         """)
         
         layout.addWidget(self.table)
+        QTimer.singleShot(0, self._apply_column_layout)
 
         # Buttons
         btn_frame = QFrame()
@@ -109,10 +130,12 @@ class SchedulerManagerDialog(ModernDialog):
         self.table.setRowCount(0)
         for s in schedules:
             self._add_schedule_row(s)
+        self._apply_column_layout()
 
     def _add_schedule_row(self, s):
         row = self.table.rowCount()
         self.table.insertRow(row)
+        self.table.setRowHeight(row, 44)
 
         # Enabled checkbox
         # Center the checkbox
@@ -148,6 +171,8 @@ class SchedulerManagerDialog(ModernDialog):
 
         # Actions
         actions_widget = QWidget()
+        actions_widget.setMinimumWidth(260)
+        actions_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         actions_widget.setStyleSheet(f"""
             QWidget {{
                 background-color: transparent;
@@ -159,8 +184,7 @@ class SchedulerManagerDialog(ModernDialog):
                 border-radius: 3px;
                 padding: 4px 8px;
                 font-size: 11px;
-                min-width: 50px;
-                max-width: 60px;
+                min-width: 70px;
             }}
             QPushButton:hover {{
                 background-color: {BLOCK_HOVER};
@@ -168,21 +192,27 @@ class SchedulerManagerDialog(ModernDialog):
             }}
         """)
         actions_layout = QHBoxLayout(actions_widget)
-        actions_layout.setContentsMargins(2, 2, 2, 2)
-        actions_layout.setSpacing(3)
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(6)
 
         run_btn = QPushButton(f"▶ {_("Run")}")
         run_btn.setToolTip(_("Run this schedule now"))
+        run_btn.setFixedWidth(78)
+        run_btn.setMinimumHeight(28)
         run_btn.clicked.connect(lambda _, sid=s['id']: self._run_now(sid))
         actions_layout.addWidget(run_btn)
 
         edit_btn = QPushButton(f"✏ {_("Edit")}")
         edit_btn.setToolTip(_("Edit this schedule"))
+        edit_btn.setFixedWidth(78)
+        edit_btn.setMinimumHeight(28)
         edit_btn.clicked.connect(lambda _, sched=s: self._edit_schedule(sched))
         actions_layout.addWidget(edit_btn)
 
         del_btn = QPushButton(f"🗑 {_("Del")}")
         del_btn.setToolTip(_("Delete this schedule"))
+        del_btn.setFixedWidth(90)
+        del_btn.setMinimumHeight(28)
         del_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {RED_PRIMARY};
@@ -199,6 +229,30 @@ class SchedulerManagerDialog(ModernDialog):
 
         actions_layout.addStretch(1)
         self.table.setCellWidget(row, 6, actions_widget)
+
+    def _apply_column_layout(self):
+        try:
+            hh = self.table.horizontalHeader()
+            hh.setStretchLastSection(False)
+            # Fix widths to ensure Actions never gets squeezed
+            fixed_widths = {
+                0: 100,  # Enabled
+                1: 140,  # Name
+                2: 100,  # Type
+                3: 160,  # When
+                4: 140,  # Next Run
+                6: 320,  # Actions
+            }
+            for i in range(7):
+                mode = QHeaderView.Fixed if i in fixed_widths else QHeaderView.Stretch if i == 5 else QHeaderView.Interactive
+                hh.setSectionResizeMode(i, mode)
+                if i in fixed_widths:
+                    hh.resizeSection(i, fixed_widths[i])
+            hh.setMinimumSectionSize(90)
+            self.table.setColumnWidth(6, fixed_widths[6])
+            self.table.setWordWrap(False)
+        except Exception:
+            pass
 
     def _toggle_enabled(self, sid, enabled):
         try:
