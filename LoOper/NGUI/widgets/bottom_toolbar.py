@@ -2,12 +2,13 @@ import logging
 import json
 import os
 import threading
+import time
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QFrame, QSizePolicy,
-    QLabel, QComboBox, QPushButton, QTextEdit, QScrollArea
+    QLabel, QComboBox, QPushButton, QTextEdit, QScrollArea, QApplication
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMetaObject
+from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMetaObject, pyqtSlot
 
 from ..constants import DARK_GREY, LIGHT_GREY, ACCENT_COLOR, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, MEDIUM_GREY
 from ..i18n import _
@@ -22,6 +23,10 @@ class BottomActionsToolbar(QWidget):
         self.graph_view = graph_view
         self._llm_executor = None
         self._ui_queue = []
+        self._processing_bubble = None
+        self._processing_label = None
+        self._processing_timer = None
+        self._processing_dots = 0
         self._build_ui()
 
     def _build_ui(self):
@@ -163,6 +168,7 @@ class BottomActionsToolbar(QWidget):
         super().resizeEvent(event)
         try:
             QTimer.singleShot(0, self._position_bottom_toggle)
+            QTimer.singleShot(0, self._apply_bubble_widths)
         except Exception:
             pass
 
@@ -228,11 +234,12 @@ class BottomActionsToolbar(QWidget):
         except Exception:
             logger.exception("Error sending chat message")
 
-    def _add_chat_bubble(self, text, is_user):
+    def _add_chat_bubble(self, text, is_user, bubble_color=None):
         if self._placeholder_label is not None:
             self._placeholder_label.hide()
         bubble = QFrame(self._chat_container)
-        bubble_color = BLOCK_COLOR if is_user else MEDIUM_GREY
+        if bubble_color is None:
+            bubble_color = BLOCK_COLOR if is_user else MEDIUM_GREY
         bubble.setStyleSheet(
             f"QFrame {{ background-color: {bubble_color}; border: 1px solid {LIGHT_GREY}; border-radius: 12px; }}"
         )
@@ -240,9 +247,15 @@ class BottomActionsToolbar(QWidget):
         bubble_layout.setContentsMargins(10, 8, 10, 8)
         bubble_layout.setSpacing(0)
         label = QLabel(text, bubble)
+        label.setObjectName("chatBubbleLabel")
         label.setWordWrap(True)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        max_width = self._bubble_max_width()
+        self._apply_label_width(label, max_width)
         label.setStyleSheet(f"color: {TEXT_COLOR};")
         bubble_layout.addWidget(label)
+        bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+        bubble.setFixedWidth(label.width() + 24)
         align = Qt.AlignRight if is_user else Qt.AlignLeft
         self._chat_layout.addWidget(bubble, 0, align)
 
@@ -260,6 +273,20 @@ class BottomActionsToolbar(QWidget):
         except Exception:
             pass
 
+    def _post_ui_sync(self, func, timeout=0.5):
+        try:
+            done = threading.Event()
+            def wrapped():
+                try:
+                    func()
+                finally:
+                    done.set()
+            self._post_ui(wrapped)
+            done.wait(timeout=timeout)
+        except Exception:
+            pass
+
+    @pyqtSlot()
     def _drain_ui_queue(self):
         try:
             queue = list(self._ui_queue)
@@ -272,35 +299,129 @@ class BottomActionsToolbar(QWidget):
             except Exception:
                 pass
 
+    def _force_ui_flush(self):
+        try:
+            QApplication.processEvents()
+        except Exception:
+            pass
+
+    def _start_processing_indicator(self, text):
+        def _start():
+            if self._processing_timer:
+                self._processing_timer.stop()
+            self._processing_dots = 0
+            self._processing_bubble = QFrame(self._chat_container)
+            self._processing_bubble.setStyleSheet(
+                f"QFrame {{ background-color: {MEDIUM_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 12px; }}"
+            )
+            layout = QVBoxLayout(self._processing_bubble)
+            layout.setContentsMargins(10, 8, 10, 8)
+            layout.setSpacing(0)
+            self._processing_label = QLabel(text, self._processing_bubble)
+            self._processing_label.setObjectName("chatBubbleLabel")
+            self._processing_label.setWordWrap(True)
+            self._processing_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            max_width = self._bubble_max_width()
+            self._apply_label_width(self._processing_label, max_width)
+            self._processing_label.setStyleSheet(f"color: {TEXT_COLOR};")
+            layout.addWidget(self._processing_label)
+            self._processing_bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self._processing_bubble.setFixedWidth(self._processing_label.width() + 24)
+            self._chat_layout.addWidget(self._processing_bubble, 0, Qt.AlignLeft)
+            self._scroll_to_bottom()
+            self._processing_timer = QTimer(self)
+            self._processing_timer.setInterval(400)
+            self._processing_timer.timeout.connect(self._tick_processing_indicator)
+            self._processing_timer.start()
+        self._post_ui_sync(_start)
+
+    def _tick_processing_indicator(self):
+        if not self._processing_label:
+            return
+        self._processing_dots = (self._processing_dots + 1) % 4
+        base = self._processing_label.text().split("...")[0].split("..")[0].split(".")[0]
+        self._processing_label.setText(base + ("." * self._processing_dots))
+        max_width = self._bubble_max_width()
+        self._apply_label_width(self._processing_label, max_width)
+        if self._processing_bubble:
+            self._processing_bubble.setFixedWidth(self._processing_label.width() + 24)
+
+    def _stop_processing_indicator(self):
+        def _stop():
+            try:
+                if self._processing_timer:
+                    self._processing_timer.stop()
+                if self._processing_bubble:
+                    self._processing_bubble.setParent(None)
+                self._processing_timer = None
+                self._processing_bubble = None
+                self._processing_label = None
+            except Exception:
+                pass
+        self._post_ui_sync(_stop)
+
+    def _bubble_max_width(self):
+        try:
+            viewport = self._chat_scroll.viewport()
+            if viewport:
+                return max(240, int(viewport.width() * 0.78))
+        except Exception:
+            pass
+        return 420
+
+    def _apply_label_width(self, label, max_width):
+        try:
+            fm = label.fontMetrics()
+            text = label.text() or ""
+            text_width = fm.boundingRect(0, 0, 10_000, 10_000, Qt.TextWordWrap, text).width()
+            target = min(max_width, text_width + 6)
+            if target < 160:
+                target = min(max_width, 160)
+            label.setFixedWidth(target)
+        except Exception:
+            pass
+
+    def _apply_bubble_widths(self):
+        try:
+            max_width = self._bubble_max_width()
+            for label in self._chat_container.findChildren(QLabel, "chatBubbleLabel"):
+                self._apply_label_width(label, max_width)
+                parent = label.parentWidget()
+                if parent:
+                    parent.setFixedWidth(label.width() + 24)
+        except Exception:
+            pass
+
     def _dispatch_chat_request(self, text):
         def worker():
             try:
+                self._start_processing_indicator(_("Processing request"))
                 tools = self._load_chain_tools()
                 if not tools:
+                    self._stop_processing_indicator()
                     self._post_ui(lambda: self._add_chat_bubble(_("No chains available."), False))
                     self._post_ui(self._scroll_to_bottom)
                     return
                 selected_id = self._select_chain_tool(text, tools)
                 if not selected_id:
+                    self._stop_processing_indicator()
                     self._post_ui(lambda: self._add_chat_bubble(_("No matching chain found."), False))
                     self._post_ui(self._scroll_to_bottom)
                     return
                 tool = next((t for t in tools if t.get("id") == selected_id), None)
                 if not tool:
+                    self._stop_processing_indicator()
                     self._post_ui(lambda: self._add_chat_bubble(_("No matching chain found."), False))
                     self._post_ui(self._scroll_to_bottom)
                     return
+                self._stop_processing_indicator()
                 chain_name = tool.get("name") or selected_id
-                self._post_ui(lambda: self._add_chat_bubble(_("I will execute {chain_id} to perform the requested action.").format(chain_id=selected_id), False))
-                self._post_ui(self._scroll_to_bottom)
-                self._post_ui(lambda: self._add_chat_bubble(_("Running chain: {name}").format(name=chain_name), False))
-                self._post_ui(self._scroll_to_bottom)
+                response = self._describe_chain_action(text, tool)
+                self._post_ui_sync(lambda: self._add_chat_bubble(response, False, ACCENT_COLOR))
+                self._post_ui_sync(self._scroll_to_bottom)
+                self._post_ui_sync(self._force_ui_flush)
+                time.sleep(0.6)
                 success = self._run_chain_file(tool.get("path"))
-                if success:
-                    self._post_ui(lambda: self._add_chat_bubble(_("Chain finished: {name}").format(name=chain_name), False))
-                else:
-                    self._post_ui(lambda: self._add_chat_bubble(_("Chain failed: {name}").format(name=chain_name), False))
-                self._post_ui(self._scroll_to_bottom)
             except Exception as e:
                 logger.error(f"Chat dispatch error: {e}")
                 self._post_ui(lambda: self._add_chat_bubble(_("Chat execution failed."), False))
@@ -387,6 +508,61 @@ class BottomActionsToolbar(QWidget):
             return selected
         return None
 
+    def _describe_chain_action(self, user_text, tool):
+        try:
+            from player.multi_sequence.llm_executor import LLMExecutor, get_default_api_url
+        except Exception:
+            return _("I will execute {name} ({chain_id}) to perform the requested action.").format(
+                name=tool.get("name") or tool.get("id"),
+                chain_id=tool.get("id")
+            )
+        if self._llm_executor is None:
+            self._llm_executor = LLMExecutor()
+        chain_name = tool.get("name") or tool.get("id")
+        chain_id = tool.get("id")
+        chain_desc = tool.get("description") or ""
+        prompt = (
+            "User request:\n"
+            f"{user_text}\n\n"
+            "Selected chain:\n"
+            f"- Name: {chain_name}\n"
+            f"- ID: {chain_id}\n"
+            f"- Description: {chain_desc}\n\n"
+            "Write one concise sentence explaining what you will do and why. "
+            "Start with: I will execute {name} ({id}) to ...".format(name=chain_name, id=chain_id)
+        )
+        llm_config = {
+            "model": "llama3.2:latest",
+            "api_url": get_default_api_url(),
+            "system_message": "You explain an automation plan in one complete, concise sentence. Do not end with a colon or incomplete phrase.",
+            "prompt": prompt,
+            "temperature": 0.2,
+            "max_tokens": 220,
+            "output_variable": "chat_plan_output",
+            "input_source": "none",
+            "use_comorag": False,
+            "use_async": False,
+            "write_text": False,
+        }
+        node = {
+            "id": "chat_plan_node",
+            "type": "llm",
+            "data": {"llm_configuration": llm_config},
+            "inputs": [],
+        }
+        try:
+            self._llm_executor.execute_llm_node(node, None, None)
+            resp = self._llm_executor.get_variable("chat_plan_output")
+        except Exception:
+            resp = ""
+        resp = str(resp or "").strip()
+        if (not resp) or resp.endswith(":") or resp.endswith(" to") or resp.endswith(" to..."):
+            return _("I will execute {name} ({chain_id}) to perform the requested action.").format(
+                name=chain_name,
+                chain_id=chain_id
+            )
+        return resp
+
     def _run_chain_file(self, chain_path):
         if not chain_path or not os.path.exists(chain_path):
             return False
@@ -403,16 +579,17 @@ class BottomActionsToolbar(QWidget):
             from player.keyboard_monitor import start_global_monitoring, stop_global_monitoring, create_stop_flag
         except Exception:
             return False
+        ran_ok = True
         try:
             player = MultiSequencePlayer(chain_config, chain_file_path=chain_path)
             start_global_monitoring()
             stop_flag = create_stop_flag()
             try:
-                result = player.play_chain(stop_flag=stop_flag)
+                player.play_chain(stop_flag=stop_flag)
             finally:
                 stop_global_monitoring()
         except Exception:
-            result = False
+            ran_ok = False
         if window and hasattr(window, "_restore_window"):
             QTimer.singleShot(0, window._restore_window)
-        return bool(result)
+        return ran_ok
