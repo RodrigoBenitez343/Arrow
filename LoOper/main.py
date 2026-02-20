@@ -106,7 +106,7 @@ else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from NGUI.app import main
-from AI.model_cache import load_models_at_startup
+from AI.model_cache import load_models_at_startup, get_model_cache
 from AI.config_loader import load_ai_config, should_auto_start_api, get_api_url
 import requests
 
@@ -122,6 +122,26 @@ def _wait_for_api(base_url: str, timeout_s: float = 60.0) -> bool:
             pass
         time.sleep(0.5)
     return False
+
+def _verify_and_init_api(api_url: str):
+    """Verify API health and initialize components"""
+    if _wait_for_api(api_url, timeout_s=90):
+        try:
+            url = f"{api_url}/comorag/status?init_if_needed=true"
+            r = requests.get(url, timeout=15)
+            if r.status_code == 200 and r.json().get("ready"):
+                print("✅ ComoRAG engine initialized successfully")
+                try:
+                    print("🔄 Refreshing models cache...")
+                    get_model_cache().refresh_models(api_url)
+                except Exception as e:
+                    print(f"❌ Error refreshing models: {e}")
+            else:
+                print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
+        except Exception as e:
+            print(f"❌ ComoRAG initialization check failed: {e}")
+    else:
+        print(f"❌ API did not become ready in time: {api_url}")
 
 def start_api_server():
     """Start the LLM API server"""
@@ -213,18 +233,7 @@ def start_api_server():
                 t = threading.Thread(target=run_server, daemon=True)
                 t.start()
                 api_url = get_api_url()
-                if _wait_for_api(api_url, timeout_s=90):
-                    try:
-                        url = f"{api_url}/comorag/status?init_if_needed=true"
-                        r = requests.get(url, timeout=15)
-                        if r.status_code == 200 and r.json().get("ready"):
-                            print("✅ ComoRAG engine initialized successfully")
-                        else:
-                            print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
-                    except Exception as e:
-                        print(f"❌ ComoRAG initialization check failed: {e}")
-                else:
-                    print(f"❌ API did not become ready in time: {api_url}")
+                _verify_and_init_api(api_url)
                 print("✅ LLM API server started successfully")
                 return t
             except Exception as e:
@@ -249,18 +258,7 @@ def start_api_server():
             )
             if process.poll() is None:
                 api_url = get_api_url()
-                if _wait_for_api(api_url, timeout_s=90):
-                    try:
-                        url = f"{api_url}/comorag/status?init_if_needed=true"
-                        r = requests.get(url, timeout=15)
-                        if r.status_code == 200 and r.json().get("ready"):
-                            print("✅ ComoRAG engine initialized successfully")
-                        else:
-                            print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
-                    except Exception as e:
-                        print(f"❌ ComoRAG initialization check failed: {e}")
-                else:
-                    print(f"❌ API did not become ready in time: {api_url}")
+                _verify_and_init_api(api_url)
                 print("✅ LLM API server started successfully")
                 
                 def cleanup_api():
@@ -297,21 +295,7 @@ def run_app():
     
     if should_auto_start_api():
         print("🔧 Auto-start API enabled - starting LLM API server...")
-        api_thread = start_api_server_async()
-        api_url = get_api_url()
-        if _wait_for_api(api_url, timeout_s=90):
-            print("✅ API health verified")
-            try:
-                url = f"{api_url}/comorag/status?init_if_needed=true"
-                r = requests.get(url, timeout=15)
-                if r.status_code == 200 and r.json().get("ready"):
-                    print("✅ ComoRAG engine initialized and ready")
-                else:
-                    print(f"⚠️ ComoRAG not ready after startup: {r.status_code} {r.text}")
-            except Exception as e:
-                print(f"❌ ComoRAG status check failed: {e}")
-        else:
-            print(f"❌ API health check failed: {api_url}")
+        start_api_server_async()
     else:
         print("ℹ️  Auto-start API disabled - LLM API server will not be started automatically")
     
