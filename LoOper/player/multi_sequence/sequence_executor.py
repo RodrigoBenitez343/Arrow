@@ -22,6 +22,375 @@ class SequenceExecutor:
         self.chain_file_dir = chain_file_dir  # Directory containing the chain file
         # Shared selection memory to avoid random candidate selection across sequences in a chain run
         self.selection_memory = {}
+
+    def _get_expected_app_context_from_sequence(self, sequence_data):
+        try:
+            actions = (sequence_data or {}).get("actions", [])
+            for a in actions:
+                if not isinstance(a, dict):
+                    continue
+                ctx = a.get("app_context")
+                if isinstance(ctx, dict) and any(ctx.get(k) for k in ("exe", "process_name", "title", "pid")):
+                    return ctx
+        except Exception:
+            pass
+        return None
+
+    def _is_app_in_foreground(self, app_context):
+        try:
+            import psutil
+        except Exception:
+            return True
+
+        try:
+            import pygetwindow as gw
+        except Exception:
+            gw = None
+
+        try:
+            import win32gui
+            import win32process
+        except Exception:
+            win32gui = None
+            win32process = None
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        title_hint = str((app_context or {}).get("title") or "")
+        pid_hint = (app_context or {}).get("pid")
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+
+        hwnd = None
+        title = ""
+        try:
+            if gw is not None:
+                w = gw.getActiveWindow()
+                if w is not None:
+                    title = str(getattr(w, "title", "") or "")
+                    hwnd = getattr(w, "_hWnd", None)
+        except Exception:
+            pass
+
+        try:
+            if hwnd is None and win32gui is not None:
+                hwnd = win32gui.GetForegroundWindow()
+                title = str(win32gui.GetWindowText(hwnd) or "")
+        except Exception:
+            pass
+
+        fg_pid = None
+        try:
+            if hwnd and win32process is not None:
+                _tid, fg_pid = win32process.GetWindowThreadProcessId(int(hwnd))
+        except Exception:
+            fg_pid = None
+
+        if not fg_pid:
+            return False
+
+        if pid_hint and int(pid_hint) == int(fg_pid):
+            return True
+
+        try:
+            p = psutil.Process(int(fg_pid))
+            if exe_norm:
+                try:
+                    if os.path.normcase(str(p.exe() or "")) == exe_norm:
+                        return True
+                except Exception:
+                    pass
+            if proc_name_norm:
+                try:
+                    if str(p.name() or "").lower() == proc_name_norm:
+                        return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        if title_hint:
+            try:
+                if title_hint.strip().lower() in str(title or "").lower():
+                    return True
+            except Exception:
+                pass
+
+        return False
+
+    def _ensure_app_open_and_focused(self, app_context, stop_flag, attempts=3):
+        try:
+            import psutil
+        except Exception:
+            return True
+
+        try:
+            import pygetwindow as gw
+        except Exception:
+            gw = None
+
+        try:
+            import win32gui
+            import win32process
+            import win32con
+        except Exception:
+            win32gui = None
+            win32process = None
+            win32con = None
+
+        try:
+            from pywinauto import Application
+        except Exception:
+            Application = None
+
+        try:
+            import subprocess
+        except Exception:
+            subprocess = None
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        title_hint = str((app_context or {}).get("title") or "")
+        pid_hint = (app_context or {}).get("pid")
+        focus_timeout = float((app_context or {}).get("focus_timeout", 2.0))
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+
+        def _foreground_hwnd():
+            try:
+                if gw is not None:
+                    w = gw.getActiveWindow()
+                    if w is not None:
+                        h = getattr(w, "_hWnd", None)
+                        if h:
+                            return int(h)
+            except Exception:
+                pass
+            try:
+                if win32gui is not None:
+                    return int(win32gui.GetForegroundWindow())
+            except Exception:
+                return None
+            return None
+
+        def _matches_process(p):
+            try:
+                if exe_norm:
+                    pexe = ""
+                    try:
+                        pexe = os.path.normcase(str(p.info.get("exe") or ""))
+                    except Exception:
+                        pexe = ""
+                    if pexe and pexe == exe_norm:
+                        return True
+                if proc_name_norm:
+                    pn = str(p.info.get("name") or "").lower()
+                    if pn and pn == proc_name_norm:
+                        return True
+                return False
+            except Exception:
+                return False
+
+        def _candidate_pids():
+            pids = []
+            try:
+                if pid_hint:
+                    try:
+                        p = psutil.Process(int(pid_hint))
+                        if p.is_running():
+                            pids.append(int(pid_hint))
+                    except Exception:
+                        pass
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    if _matches_process(p):
+                        pids.append(int(p.info["pid"]))
+            except Exception:
+                pass
+            seen = set()
+            out = []
+            for p in pids:
+                if p not in seen:
+                    seen.add(p)
+                    out.append(p)
+            return out
+
+        def _window_candidates_for_pid(pid):
+            wins = []
+            try:
+                if gw is not None:
+                    for w in gw.getAllWindows():
+                        try:
+                            hwnd = getattr(w, "_hWnd", None)
+                            if not hwnd:
+                                continue
+                            hwnd = int(hwnd)
+                            if win32process is None:
+                                continue
+                            _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                            if int(wpid) != int(pid):
+                                continue
+                            if win32gui is not None and not win32gui.IsWindowVisible(hwnd):
+                                continue
+                            t = str(getattr(w, "title", "") or "")
+                            wins.append((hwnd, t))
+                        except Exception:
+                            continue
+            except Exception:
+                wins = []
+
+            if wins:
+                return wins
+
+            try:
+                if win32gui is None or win32process is None:
+                    return wins
+
+                def cb(hwnd, _):
+                    try:
+                        if not win32gui.IsWindowVisible(hwnd):
+                            return
+                        _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                        if int(wpid) != int(pid):
+                            return
+                        t = str(win32gui.GetWindowText(hwnd) or "")
+                        if not t:
+                            return
+                        wins.append((int(hwnd), t))
+                    except Exception:
+                        return
+
+                win32gui.EnumWindows(cb, None)
+            except Exception:
+                pass
+            return wins
+
+        def _pick_window(wins):
+            if not wins:
+                return None
+            if title_hint:
+                th = title_hint.strip().lower()
+                if th:
+                    for hwnd, t in wins:
+                        if th in str(t or "").lower():
+                            return int(hwnd)
+            return int(wins[0][0])
+
+        def _focus_hwnd(hwnd, pid):
+            if not hwnd:
+                return False
+
+            try:
+                if Application is not None:
+                    try:
+                        app = Application(backend="uia").connect(process=int(pid))
+                        w_app = app.top_window()
+                        try:
+                            w_app.set_focus()
+                        except Exception:
+                            w_app.set_focus()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                if win32gui is not None:
+                    try:
+                        if win32con is not None:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                            time.sleep(0.05)
+                    except Exception:
+                        pass
+                    
+                    # Restore window geometry if captured
+                    rect = (app_context or {}).get("rect")
+                    if rect:
+                        try:
+                            l = rect.get("left")
+                            t = rect.get("top")
+                            w_rect = rect.get("width")
+                            h_rect = rect.get("height")
+                            if all(v is not None for v in (l, t, w_rect, h_rect)):
+                                win32gui.MoveWindow(hwnd, int(l), int(t), int(w_rect), int(h_rect), True)
+                                time.sleep(0.05)
+                        except Exception:
+                            pass
+
+                    try:
+                        win32gui.SetForegroundWindow(hwnd)
+                        time.sleep(0.05)
+                    except Exception:
+                        try:
+                            win32gui.BringWindowToTop(hwnd)
+                            time.sleep(0.05)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            fhwnd = _foreground_hwnd()
+            if fhwnd and int(fhwnd) == int(hwnd):
+                return True
+            return False
+
+        def _try_launch_exe():
+            if not exe:
+                return False
+            try:
+                if not os.path.exists(exe):
+                    return False
+            except Exception:
+                return False
+            if subprocess is None:
+                return False
+            try:
+                cwd = os.path.dirname(exe) or None
+                subprocess.Popen([exe], cwd=cwd)
+                return True
+            except Exception:
+                try:
+                    subprocess.Popen(exe, cwd=os.path.dirname(exe) or None)
+                    return True
+                except Exception:
+                    return False
+
+        for attempt in range(int(attempts or 1)):
+            if stop_flag and stop_flag():
+                return False
+
+            if self._is_app_in_foreground(app_context):
+                return True
+
+            start = time.time()
+            while time.time() - start <= focus_timeout:
+                if stop_flag and stop_flag():
+                    return False
+
+                pids = _candidate_pids()
+                if not pids:
+                    break
+
+                for pid in pids:
+                    if stop_flag and stop_flag():
+                        return False
+                    wins = _window_candidates_for_pid(pid)
+                    hwnd = _pick_window(wins)
+                    if hwnd and _focus_hwnd(hwnd, pid):
+                        if self._is_app_in_foreground(app_context):
+                            return True
+
+                time.sleep(0.05)
+
+            pids = _candidate_pids()
+            if not pids:
+                _try_launch_exe()
+                time.sleep(0.25)
+            else:
+                time.sleep(0.1)
+
+        return self._is_app_in_foreground(app_context)
     
     def execute_sequence_node(self, node, stop_flag):
         """
@@ -240,6 +609,28 @@ class SequenceExecutor:
             except Exception as e:
                 logger.error(f"Failed to load sequence {seq_file}: {e}")
                 return False
+
+            expected_app = None
+            try:
+                expected_app = self._get_expected_app_context_from_sequence(sequence_data)
+                if not expected_app and self.fallback_handler is not None:
+                    expected_app = getattr(self.fallback_handler, "last_app_context", None)
+            except Exception:
+                expected_app = None
+
+            if isinstance(expected_app, dict) and any(expected_app.get(k) for k in ("exe", "process_name", "title", "pid")):
+                try:
+                    ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))
+                except Exception:
+                    ok = True
+                if not ok:
+                    logger.error("App focus could not be confirmed; aborting sequence execution")
+                    return False
+                try:
+                    if self.fallback_handler is not None:
+                        self.fallback_handler.last_app_context = expected_app
+                except Exception:
+                    pass
             
             # 1. Chain-level fallback sequences (applied to all click actions)
             if 'fallback_sequences' in item:
@@ -292,6 +683,13 @@ class SequenceExecutor:
                 player.selection_memory = self.selection_memory
                 player.sequence_data = sequence_data  # Use the modified sequence data with fallback
                 player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
+                try:
+                    if self.fallback_handler is not None:
+                        lac = getattr(player, "last_app_context", None)
+                        if lac:
+                            self.fallback_handler.last_app_context = lac
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f"Error playing sequence {seq_file}: {e}")
                 return False

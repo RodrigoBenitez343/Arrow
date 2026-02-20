@@ -107,17 +107,17 @@ class SchedulerManagerDialog(ModernDialog):
         btn_row.setContentsMargins(10, 8, 10, 8)
         btn_row.setSpacing(10)
         
-        add_btn = QPushButton(f"➕ {_("Add Schedule")}")
+        add_btn = QPushButton(f" {_('Add Schedule')}")
         add_btn.clicked.connect(self.add_schedule)
         btn_row.addWidget(add_btn)
 
-        refresh_btn = QPushButton(f"🔄 {_("Refresh")}")
+        refresh_btn = QPushButton(f"🔄 {_('Refresh')}")
         refresh_btn.clicked.connect(self.reload)
         btn_row.addWidget(refresh_btn)
 
         btn_row.addStretch(1)
         
-        close_btn = QPushButton(f"✖ {_("Close")}")
+        close_btn = QPushButton(f"✖ {_('Close')}")
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -195,21 +195,21 @@ class SchedulerManagerDialog(ModernDialog):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(6)
 
-        run_btn = QPushButton(f"▶ {_("Run")}")
+        run_btn = QPushButton(f"▶ {_('Run')}")
         run_btn.setToolTip(_("Run this schedule now"))
         run_btn.setFixedWidth(78)
         run_btn.setMinimumHeight(28)
         run_btn.clicked.connect(lambda _, sid=s['id']: self._run_now(sid))
         actions_layout.addWidget(run_btn)
 
-        edit_btn = QPushButton(f"✏ {_("Edit")}")
+        edit_btn = QPushButton(f"✏ {_('Edit')}")
         edit_btn.setToolTip(_("Edit this schedule"))
         edit_btn.setFixedWidth(78)
         edit_btn.setMinimumHeight(28)
         edit_btn.clicked.connect(lambda _, sched=s: self._edit_schedule(sched))
         actions_layout.addWidget(edit_btn)
 
-        del_btn = QPushButton(f"🗑 {_("Del")}")
+        del_btn = QPushButton(f"🗑 {_('Del')}")
         del_btn.setToolTip(_("Delete this schedule"))
         del_btn.setFixedWidth(90)
         del_btn.setMinimumHeight(28)
@@ -303,7 +303,7 @@ class SchedulerManagerDialog(ModernDialog):
             days = s.get('days_of_week', [])
             return f"{s.get('weekly_time','—')} | {days}"
         if st == 'interval':
-            return f"{_("every")} {s.get('interval_minutes', 0)} {_("min")}"
+            return f"{_('every')} {s.get('interval_minutes', 0)} {_('min')}"
         return '—'
 
 
@@ -348,7 +348,7 @@ class EditScheduleDialog(ModernDialog):
         # Chain file
         chain_row = QHBoxLayout()
         chain_row.addWidget(QLabel(_("Chain File:")))
-        self.chain_btn = QPushButton(f"📁 {_("Select Chain JSON...")}")
+        self.chain_btn = QPushButton(f"📁 {_('Select Chain JSON...')}")
         self.chain_btn.clicked.connect(self._select_chain)
         chain_row.addWidget(self.chain_btn)
         basic_layout.addLayout(chain_row)
@@ -450,11 +450,11 @@ class EditScheduleDialog(ModernDialog):
         
         btn_row.addStretch(1)
         
-        cancel_btn = QPushButton(f"✖ {_("Cancel")}")
+        cancel_btn = QPushButton(f"✖ {_('Cancel')}")
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
         
-        save_btn = QPushButton(f"💾 {_("Save Schedule")}")
+        save_btn = QPushButton(f"💾 {_('Save Schedule')}")
         save_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {RED_PRIMARY};
@@ -552,7 +552,7 @@ class EditScheduleDialog(ModernDialog):
         chain_path = getattr(self, '_selected_chain_path', None) or self._schedule.get('chain_path', '')
         
         data = {
-            'name': self.name_edit.text().strip() or f"{_("Schedule")} {t}",
+            'name': self.name_edit.text().strip() or f"{_('Schedule')} {t}",
             'type': t,
             'chain_path': chain_path,
             'enabled': True,
