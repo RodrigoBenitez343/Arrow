@@ -150,6 +150,7 @@ class SequencePlayer(SeleniumBot):
         self.sequence_data = None
         self.running = True
         self.loop_counter = 0
+        self.last_app_context = None
         
         # Load sequence immediately unless lazy loading is enabled
         if not lazy_load:
@@ -229,6 +230,11 @@ class SequencePlayer(SeleniumBot):
             logger.debug(f"Executing action {idx + 1}/{len(self.sequence_data['actions'])}: {action.get('type', 'unknown')}")
             
             try:
+                try:
+                    if isinstance(action, dict) and action.get("app_context"):
+                        self.last_app_context = action.get("app_context")
+                except Exception:
+                    pass
                 # Use the execute_with_timing method from the base class.
                 success = self.execute_with_timing(idx, action, fallback_callback, stop_flag)
                 logger.debug(f"Action {idx} execution result: {success}")

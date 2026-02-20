@@ -10,6 +10,230 @@ from ...config import logger
 
 class NodeExecutor:
     """Handles conditional node execution and workflow branching"""
+
+    def _get_expected_app_context(self, conditional_node):
+        try:
+            if isinstance(conditional_node, dict):
+                ctx = conditional_node.get("app_context") or conditional_node.get("focus_app") or conditional_node.get("app")
+                if isinstance(ctx, dict) and any(ctx.get(k) for k in ("exe", "process_name", "title", "pid")):
+                    return ctx
+        except Exception:
+            pass
+        return None
+
+    def _ensure_app_open_and_focused(self, app_context, stop_flag, timeout=2.0):
+        try:
+            import time
+            import psutil
+        except Exception:
+            return True
+
+        try:
+            import pygetwindow as gw
+        except Exception:
+            gw = None
+
+        try:
+            import win32gui
+            import win32process
+            import win32con
+        except Exception:
+            win32gui = None
+            win32process = None
+            win32con = None
+
+        try:
+            from pywinauto import Application
+        except Exception:
+            Application = None
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        title_hint = str((app_context or {}).get("title") or "")
+        pid_hint = (app_context or {}).get("pid")
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+
+        deadline = time.time() + float(timeout or 0.0)
+
+        def _foreground_hwnd():
+            try:
+                if gw is not None:
+                    w = gw.getActiveWindow()
+                    if w is not None:
+                        h = getattr(w, "_hWnd", None)
+                        if h:
+                            return int(h)
+            except Exception:
+                pass
+            try:
+                if win32gui is not None:
+                    return int(win32gui.GetForegroundWindow())
+            except Exception:
+                return None
+            return None
+
+        def _matches_process(p):
+            try:
+                if exe_norm:
+                    pexe = ""
+                    try:
+                        pexe = os.path.normcase(str(p.info.get("exe") or ""))
+                    except Exception:
+                        pexe = ""
+                    if pexe and pexe == exe_norm:
+                        return True
+                if proc_name_norm:
+                    pn = str(p.info.get("name") or "").lower()
+                    if pn and pn == proc_name_norm:
+                        return True
+                return False
+            except Exception:
+                return False
+
+        def _candidate_pids():
+            pids = []
+            try:
+                if pid_hint:
+                    try:
+                        p = psutil.Process(int(pid_hint))
+                        if p.is_running():
+                            pids.append(int(pid_hint))
+                    except Exception:
+                        pass
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    if _matches_process(p):
+                        pids.append(int(p.info["pid"]))
+            except Exception:
+                pass
+            seen = set()
+            out = []
+            for p in pids:
+                if p not in seen:
+                    seen.add(p)
+                    out.append(p)
+            return out
+
+        def _window_candidates_for_pid(pid):
+            wins = []
+            try:
+                if gw is not None:
+                    for w in gw.getAllWindows():
+                        try:
+                            hwnd = getattr(w, "_hWnd", None)
+                            if not hwnd:
+                                continue
+                            hwnd = int(hwnd)
+                            if win32process is None:
+                                continue
+                            _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                            if int(wpid) != int(pid):
+                                continue
+                            if win32gui is not None and not win32gui.IsWindowVisible(hwnd):
+                                continue
+                            t = str(getattr(w, "title", "") or "")
+                            wins.append((hwnd, t))
+                        except Exception:
+                            continue
+            except Exception:
+                wins = []
+
+            if wins:
+                return wins
+
+            try:
+                if win32gui is None or win32process is None:
+                    return wins
+
+                def cb(hwnd, _):
+                    try:
+                        if not win32gui.IsWindowVisible(hwnd):
+                            return
+                        _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
+                        if int(wpid) != int(pid):
+                            return
+                        t = str(win32gui.GetWindowText(hwnd) or "")
+                        if not t:
+                            return
+                        wins.append((int(hwnd), t))
+                    except Exception:
+                        return
+
+                win32gui.EnumWindows(cb, None)
+            except Exception:
+                pass
+            return wins
+
+        def _pick_window(wins):
+            if not wins:
+                return None
+            if title_hint:
+                th = title_hint.strip().lower()
+                if th:
+                    for hwnd, t in wins:
+                        if th in str(t or "").lower():
+                            return int(hwnd)
+            return int(wins[0][0])
+
+        def _focus_hwnd(hwnd, pid):
+            if not hwnd:
+                return False
+            try:
+                if Application is not None:
+                    try:
+                        app = Application(backend="uia").connect(process=int(pid))
+                        w = app.top_window()
+                        try:
+                            w.set_focus()
+                        except Exception:
+                            w.set_focus()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            try:
+                if win32gui is not None:
+                    try:
+                        if win32con is not None:
+                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                    except Exception:
+                        pass
+                    try:
+                        win32gui.SetForegroundWindow(hwnd)
+                    except Exception:
+                        try:
+                            win32gui.BringWindowToTop(hwnd)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            fhwnd = _foreground_hwnd()
+            if fhwnd and int(fhwnd) == int(hwnd):
+                return True
+            return False
+
+        while time.time() <= deadline:
+            if stop_flag and stop_flag():
+                return False
+
+            pids = _candidate_pids()
+            if not pids:
+                time.sleep(0.05)
+                continue
+
+            for pid in pids:
+                if stop_flag and stop_flag():
+                    return False
+                wins = _window_candidates_for_pid(pid)
+                hwnd = _pick_window(wins)
+                if hwnd and _focus_hwnd(hwnd, pid):
+                    return True
+            time.sleep(0.05)
+
+        return False
     
     def __init__(self, template_matcher, validation_cache, path_resolver, presence_trigger, absence_trigger, ocr_trigger, conditional_loop, stop_flag=None):
         """
@@ -110,6 +334,16 @@ class NodeExecutor:
         
         logger.info(f"Evaluating conditional with raw trigger type: {raw_trigger_type} -> mapped to: {condition_type}")
         logger.debug(f"Condition config: {condition_config}")
+
+        expected_app = self._get_expected_app_context(conditional_node)
+        if expected_app:
+            try:
+                ok = self._ensure_app_open_and_focused(expected_app, stop_flag, timeout=float(expected_app.get("focus_timeout", 2.0)))
+            except Exception:
+                ok = True
+            if not ok:
+                logger.info("Conditional gated: expected app not open/focused")
+                return False
         
         if condition_type == 'presence_trigger':
             timeout = float(condition_config.get('timeout', 10))
