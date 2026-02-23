@@ -3,6 +3,11 @@ import json
 import os
 import threading
 import time
+import re
+try:
+    import pyautogui
+except ImportError:
+    pyautogui = None
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QFrame, QSizePolicy,
@@ -397,37 +402,169 @@ class BottomActionsToolbar(QWidget):
             try:
                 self._start_processing_indicator(_("Processing request"))
                 tools = self._load_chain_tools()
+                tools.append({
+                    "id": "sys_write_text",
+                    "name": "Write/Type Text",
+                    "description": "Simulates keyboard typing. Use this step whenever you need to enter text, after a previous step has focused an input field.",
+                    "tool_desc": "Write/Type Text: Simulates keyboard typing. Use this step whenever you need to enter text, after a previous step has focused an input field."
+                })
+                
+                tools.append({
+                    "id": "sys_reason",
+                    "name": "Reason/Think",
+                    "description": "Pause to analyze the situation or context before proceeding. Useful for complex workflows.",
+                    "tool_desc": "Reason/Think: Pause to analyze the situation or context before proceeding."
+                })
+
                 if not tools:
                     self._stop_processing_indicator()
                     self._post_ui(lambda: self._add_chat_bubble(_("No chains available."), False))
                     self._post_ui(self._scroll_to_bottom)
                     return
-                selected_id = self._select_chain_tool(text, tools)
-                if not selected_id:
-                    self._stop_processing_indicator()
-                    self._post_ui(lambda: self._add_chat_bubble(_("No matching chain found."), False))
+                
+                self._post_ui(lambda: self._processing_label.setText(_("Generating plan...")) if self._processing_label else None)
+                plan = self._generate_plan(text, tools)
+                
+                if len(plan) > 1:
+                    plan_text = "Plan:\n" + "\n".join([f"{i+1}. {step}" for i, step in enumerate(plan)])
+                    self._post_ui(lambda: self._add_chat_bubble(plan_text, False))
                     self._post_ui(self._scroll_to_bottom)
-                    return
-                tool = next((t for t in tools if t.get("id") == selected_id), None)
-                if not tool:
-                    self._stop_processing_indicator()
-                    self._post_ui(lambda: self._add_chat_bubble(_("No matching chain found."), False))
-                    self._post_ui(self._scroll_to_bottom)
-                    return
+                
+                for i, step in enumerate(plan):
+                    if len(plan) > 1:
+                         self._post_ui(lambda: self._processing_label.setText(_("Executing step {}/{}...").format(i+1, len(plan))) if self._processing_label else None)
+                    
+                    selected_id = self._select_chain_tool(step, tools)
+                    if not selected_id:
+                        self._post_ui(lambda: self._add_chat_bubble(_("No matching chain found for step: {}").format(step), False))
+                        self._post_ui(self._scroll_to_bottom)
+                        continue
+
+                    if selected_id == "sys_write_text":
+                        text_to_type = self._generate_text_content(text, step)
+                        self._post_ui(lambda: self._add_chat_bubble(_("Typing: {}").format(text_to_type), False, ACCENT_COLOR))
+                        self._post_ui(self._scroll_to_bottom)
+                        self._post_ui_sync(self._force_ui_flush)
+                        
+                        success = self._perform_typing(text_to_type)
+                        if not success:
+                             self._post_ui(lambda: self._add_chat_bubble(_("Typing failed."), False))
+                        continue
+
+                    if selected_id == "sys_reason":
+                        self._post_ui(lambda: self._add_chat_bubble(_("Thinking: {}").format(step), False, ACCENT_COLOR))
+                        self._post_ui(self._scroll_to_bottom)
+                        self._post_ui_sync(self._force_ui_flush)
+                        time.sleep(1.5)
+                        continue
+
+                    tool = next((t for t in tools if t.get("id") == selected_id), None)
+                    if not tool:
+                        continue
+
+                    chain_name = tool.get("name") or selected_id
+                    response = self._describe_chain_action(step, tool)
+                    self._post_ui_sync(lambda: self._add_chat_bubble(response, False, ACCENT_COLOR))
+                    self._post_ui_sync(self._scroll_to_bottom)
+                    self._post_ui_sync(self._force_ui_flush)
+                    
+                    time.sleep(0.6)
+                    success = self._run_chain_file(tool.get("path"))
+                    
+                    if not success:
+                         self._post_ui(lambda: self._add_chat_bubble(_("Step failed: {}").format(step), False))
+
                 self._stop_processing_indicator()
-                chain_name = tool.get("name") or selected_id
-                response = self._describe_chain_action(text, tool)
-                self._post_ui_sync(lambda: self._add_chat_bubble(response, False, ACCENT_COLOR))
-                self._post_ui_sync(self._scroll_to_bottom)
-                self._post_ui_sync(self._force_ui_flush)
-                time.sleep(0.6)
-                success = self._run_chain_file(tool.get("path"))
+                if len(plan) > 1:
+                     self._post_ui(lambda: self._add_chat_bubble(_("All tasks completed."), False))
+                self._post_ui(self._scroll_to_bottom)
+
             except Exception as e:
+                self._stop_processing_indicator()
                 logger.error(f"Chat dispatch error: {e}")
                 self._post_ui(lambda: self._add_chat_bubble(_("Chat execution failed."), False))
                 self._post_ui(self._scroll_to_bottom)
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
+
+    def _generate_plan(self, text, tools):
+        try:
+            from player.multi_sequence.llm_executor import LLMExecutor, get_default_api_url
+        except Exception:
+            return [text]
+
+        if self._llm_executor is None:
+            self._llm_executor = LLMExecutor()
+
+        tool_descriptions = "\n".join([f"- {t['name']}: {t.get('description', '')}" for t in tools])
+        
+        prompt = (
+            "You are an expert planner for an automation agent.\n"
+            "Your goal is to create a logical sequence of steps to fulfill the user's request.\n"
+            "Use the provided tools for actions like opening apps, clicking buttons, or navigating.\n"
+            "- If a tool description says it 'clicks' or 'focuses' something, assume it does so.\n"
+            "- Use 'Write/Type Text' when you need to enter text (e.g., search queries, messages) *after* an input field is focused.\n"
+            "- Use 'Reason/Think' if you need a step to analyze the current state or decide on the next move.\n"
+            "- Do not combine multiple distinct actions (like opening an app AND typing) into one step unless a single tool handles both.\n"
+            "- Put each step on its own line, starting with a number.\n\n"
+            f"User Request: {text}\n\n"
+            f"Available Tools:\n{tool_descriptions}\n\n"
+            "Output ONLY a numbered list of steps (e.g., '1. Step one'). Do not include any other text."
+        )
+
+        llm_config = {
+            "model": "llama3.2:latest",
+            "api_url": get_default_api_url(),
+            "system_message": "You are a precise planner. Output only a numbered list of steps.",
+            "prompt": prompt,
+            "temperature": 0.2,
+            "max_tokens": 500,
+            "output_variable": "plan_output",
+            "input_source": "none",
+            "use_comorag": False,
+            "use_async": False,
+            "write_text": False,
+        }
+
+        node = {
+            "id": "chat_planner_node",
+            "type": "llm",
+            "data": {"llm_configuration": llm_config},
+            "inputs": [],
+        }
+
+        try:
+            self._llm_executor.execute_llm_node(node, None, None)
+            resp = self._llm_executor.get_variable("plan_output")
+            if not resp:
+                return [text]
+            
+            raw = str(resp)
+            steps = []
+            matches = list(re.finditer(r'(?:^|\n|\s)\d+[\\.\)]\s+', raw))
+            if matches:
+                for idx, match in enumerate(matches):
+                    start = match.end()
+                    end = matches[idx + 1].start() if idx + 1 < len(matches) else len(raw)
+                    step = raw[start:end].strip().strip(" -;")
+                    if step:
+                        steps.append(step)
+            if not steps:
+                for line in raw.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    match = re.match(r'^\d+[\\.\)]\s*(.+)', line)
+                    if match:
+                        steps.append(match.group(1).strip())
+                    elif line.startswith('- '):
+                        steps.append(line[2:].strip())
+            
+            return steps if steps else [text]
+            
+        except Exception as e:
+            logger.error(f"Plan generation failed: {e}")
+            return [text]
 
     def _load_chain_tools(self):
         tools = []
@@ -483,7 +620,10 @@ class BottomActionsToolbar(QWidget):
         llm_config = {
             "model": "llama3.2:latest",
             "api_url": get_default_api_url(),
-            "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions. When a tool is needed, respond ONLY with 'USE_TOOL:<id>' and nothing else.",
+            "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions.\n"
+                              "If the request is to type, write, search, or enter text, choose the 'Write/Type Text' tool.\n"
+                              "If the request is to think, reason, or analyze, choose the 'Reason/Think' tool.\n"
+                              "Respond ONLY with 'USE_TOOL:<id>' and nothing else.",
             "prompt": text,
             "temperature": 0.1,
             "max_tokens": 150,
@@ -593,3 +733,68 @@ class BottomActionsToolbar(QWidget):
         if window and hasattr(window, "_restore_window"):
             QTimer.singleShot(0, window._restore_window)
         return ran_ok
+
+    def _generate_text_content(self, user_request, step_description):
+        try:
+            from player.multi_sequence.llm_executor import LLMExecutor, get_default_api_url
+        except Exception:
+            return step_description
+
+        if self._llm_executor is None:
+            self._llm_executor = LLMExecutor()
+
+        prompt = (
+            f"User Request: {user_request}\n"
+            f"Current Action Step: {step_description}\n\n"
+            "Based on the user request and the current action step, determine the exact text that needs to be typed.\n"
+            "If the step implies searching for something, output the search term.\n"
+            "If the step implies writing a message, output the full message content.\n"
+            "Output ONLY the text to be typed. Do not include any explanation or quotes unless they are part of the text."
+        )
+
+        llm_config = {
+            "model": "llama3.2:latest",
+            "api_url": get_default_api_url(),
+            "system_message": "You are a text generator for automation. Output only the raw text to be typed.",
+            "prompt": prompt,
+            "temperature": 0.1,
+            "max_tokens": 100,
+            "output_variable": "typing_content",
+            "input_source": "none",
+            "use_comorag": False,
+            "use_async": False,
+            "write_text": False,
+        }
+
+        node = {
+            "id": "chat_typing_generator",
+            "type": "llm",
+            "data": {"llm_configuration": llm_config},
+            "inputs": [],
+        }
+
+        try:
+            self._llm_executor.execute_llm_node(node, None, None)
+            resp = self._llm_executor.get_variable("typing_content")
+            return str(resp).strip() if resp else ""
+        except Exception:
+            return ""
+
+    def _perform_typing(self, text):
+        if not text or pyautogui is None:
+            return False
+        
+        window = self.graph_view.window() if self.graph_view else None
+        if window and hasattr(window, "showMinimized"):
+            QMetaObject.invokeMethod(window, "showMinimized", Qt.QueuedConnection)
+            time.sleep(0.5)
+            
+        try:
+            pyautogui.write(text, interval=0.05)
+            time.sleep(0.5)
+            return True
+        except Exception:
+            return False
+        finally:
+            if window and hasattr(window, "_restore_window"):
+                 QTimer.singleShot(0, window._restore_window)
