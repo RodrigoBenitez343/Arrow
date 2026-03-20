@@ -177,6 +177,72 @@ class ChainImportMixin:
                     continue
                 else:
                     logger.info(f"Imported chain executed successfully: {resolved_chain_path}")
+                    summary = None
+                    if hasattr(imported_player, "workflow_executor") and imported_player.workflow_executor:
+                        summary = getattr(imported_player.workflow_executor, "last_node_summary", None)
+                    if summary and hasattr(self, "llm_executor") and self.llm_executor:
+                        tool_id = node.get('id') or node.get('node_id') or ""
+                        if not tool_id and isinstance(node.get("data"), dict):
+                            tool_id = node.get("data", {}).get("id") or node.get("data", {}).get("node_id") or ""
+                        if not tool_id and resolved_chain_path:
+                            tool_id = os.path.splitext(os.path.basename(resolved_chain_path))[0]
+                        chain_name = ""
+                        chain_desc = ""
+                        try:
+                            if isinstance(chain_config, dict):
+                                chain_name = chain_config.get("name") or ""
+                                chain_desc = chain_config.get("description") or ""
+                        except Exception:
+                            pass
+                        record = {
+                            "tool_id": str(tool_id),
+                            "chain_path": str(resolved_chain_path),
+                            "chain_name": str(chain_name),
+                            "chain_description": str(chain_desc),
+                            "last_node": summary
+                        }
+                        try:
+                            self.llm_executor.set_variable(f"node_{tool_id}_last_chain_result", record)
+                        except Exception:
+                            pass
+                        try:
+                            results = self.llm_executor.get_variable("chain_tool_results") or {}
+                            if not isinstance(results, dict):
+                                results = {}
+                            results[str(tool_id)] = record
+                            self.llm_executor.set_variable("chain_tool_results", results)
+                        except Exception:
+                            pass
+                        try:
+                            parts = []
+                            if tool_id:
+                                parts.append(f"Tool ID: {tool_id}")
+                            if chain_name:
+                                parts.append(f"Chain Name: {chain_name}")
+                            if chain_desc:
+                                parts.append(f"Chain Description: {chain_desc}")
+                            if summary:
+                                parts.append(f"Last Node: {summary.get('node_id')} ({summary.get('type')})")
+                                if summary.get("type") == "code":
+                                    parts.append(f"Code Result: {summary.get('result')}")
+                                elif summary.get("type") == "conditional":
+                                    parts.append(f"Conditional Result: {summary.get('result')}")
+                                    if summary.get("criteria"):
+                                        parts.append(f"Criteria: {summary.get('criteria')}")
+                                elif summary.get("type") == "llm":
+                                    llm_result = summary.get("result") or {}
+                                    if isinstance(llm_result, dict):
+                                        q = llm_result.get("query")
+                                        r = llm_result.get("response")
+                                        if q:
+                                            parts.append(f"LLM Query: {q}")
+                                        if r is not None:
+                                            parts.append(f"LLM Response: {r}")
+                            result_text = "\n".join([p for p in parts if p])
+                            if result_text:
+                                self.llm_executor.set_variable("chain_tool_last_result_text", result_text)
+                        except Exception:
+                            pass
                 
             except Exception as e:
                 logger.error(f"Error during chain import execution: {e}")

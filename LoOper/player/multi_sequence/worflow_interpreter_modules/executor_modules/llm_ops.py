@@ -220,8 +220,16 @@ class LLMMixin:
                     history_text += f"You: {entry['agent_output']}\n"
                     if entry['tool_output']:
                         history_text += f"System: {entry['tool_output']}\n"
+
+            chain_result_text = ""
+            try:
+                recent_result = self.llm_executor.get_variable("chain_tool_last_result_text")
+                if recent_result:
+                    chain_result_text = "\n\n## LAST CHAIN TOOL RESULT:\n" + str(recent_result)
+            except Exception:
+                pass
             
-            llm_conf['system_message'] = sys_msg + base_system_msg_suffix + history_text
+            llm_conf['system_message'] = sys_msg + base_system_msg_suffix + history_text + chain_result_text
             
             # Update prompt to encourage next step
             if history:
