@@ -9,6 +9,7 @@ import time
 import math
 import pyautogui
 import pyperclip
+from pynput import keyboard
 from numpy import random
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
@@ -37,6 +38,23 @@ class ActionHandlers:
         self.bot = bot_instance
         self.template_matcher = TemplateMatching()
         self.typing_lock = threading.Lock()
+        self.keyboard_controller = keyboard.Controller()
+
+    def _tap_key(self, key):
+        self.keyboard_controller.press(key)
+        self.keyboard_controller.release(key)
+
+    def _press_key_combo(self, modifiers, key):
+        pressed_mods = []
+        try:
+            for mod in modifiers:
+                self.keyboard_controller.press(mod)
+                pressed_mods.append(mod)
+            self.keyboard_controller.press(key)
+            self.keyboard_controller.release(key)
+        finally:
+            for mod in reversed(pressed_mods):
+                self.keyboard_controller.release(mod)
 
     def handle_click_action(self, idx, action, fallback_callback=None, stop_flag=None):
         """
@@ -513,7 +531,7 @@ class ActionHandlers:
                 try:
                     pyperclip.copy(text)
                     time.sleep(0.01)  # Reduced from 0.05 - Small delay to ensure clipboard is set
-                    pyautogui.hotkey('ctrl', 'v')
+                    self._press_key_combo([keyboard.Key.ctrl], 'v')
                     logger.info(f"Pasted text via clipboard (Unicode-safe), length={len(text)}")
 
                     # Set completion flag in action for workflow integration
@@ -571,18 +589,18 @@ class ActionHandlers:
                             if segment:  # Only type non-empty segments
                                 # Type character by character with delay to prevent duplicates
                                 for char in segment:
-                                    pyautogui.write(char)
+                                    self.keyboard_controller.type(char)
                                     if keystroke_delay > 0:
                                         time.sleep(keystroke_delay)
                             # Press Enter after each segment except the last one
                             if j < len(segments) - 1:
                                 time.sleep(0.01)  # Small delay before Enter key
-                                pyautogui.press('enter')
+                                self._tap_key(keyboard.Key.enter)
                                 time.sleep(0.01)  # Small delay after Enter key
                     else:
                         # Type the filtered batch character by character with delay
                         for char in filtered_batch:
-                            pyautogui.write(char)
+                            self.keyboard_controller.type(char)
                             if keystroke_delay > 0:
                                 time.sleep(keystroke_delay)
                 except Exception as write_error:
@@ -632,18 +650,27 @@ class ActionHandlers:
             return
         # Clean the key name (e.g., 'Key.enter' -> 'enter').
         key = action['key'].replace('Key.', '')
-        # Map pynput key names to pyautogui key names.
+        # Map pynput key names to pynput keys.
         key_mapping = {
-            'space': 'space', 'enter': 'enter', 'backspace': 'backspace',
-            'tab': 'tab', 'esc': 'escape', 'up': 'up', 'down': 'down',
-            'left': 'left', 'right': 'right', 'delete': 'delete',
-            'shift': 'shift', 'ctrl': 'ctrl', 'alt': 'alt'
+            'space': keyboard.Key.space,
+            'enter': keyboard.Key.enter,
+            'backspace': keyboard.Key.backspace,
+            'tab': keyboard.Key.tab,
+            'esc': keyboard.Key.esc,
+            'up': keyboard.Key.up,
+            'down': keyboard.Key.down,
+            'left': keyboard.Key.left,
+            'right': keyboard.Key.right,
+            'delete': keyboard.Key.delete,
+            'shift': keyboard.Key.shift,
+            'ctrl': keyboard.Key.ctrl,
+            'alt': keyboard.Key.alt
         }
         if key in key_mapping:
             # Get keystroke delay to prevent issues on slow machines
             keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay
             
-            pyautogui.press(key_mapping[key]) # Press the special key.
+            self._tap_key(key_mapping[key])
             logger.info(f"Pressed special key: {key}")
             
             # Add small delay after keystroke to prevent issues on slow machines
@@ -736,27 +763,27 @@ class ActionHandlers:
         # Execute the corresponding hotkey.
         if operation == 'copy' or operation == 'c':
             time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure text is selected before copying.
-            pyautogui.hotkey('ctrl', 'c')
+            self._press_key_combo([keyboard.Key.ctrl], 'c')
             logger.info("Performed Ctrl+C operation")
         elif operation == 'paste' or operation == 'v':
             time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure the input field is focused.
-            pyautogui.hotkey('ctrl', 'v')
+            self._press_key_combo([keyboard.Key.ctrl], 'v')
             logger.info("Performed Ctrl+V operation")
         elif operation == 'cut' or operation == 'x':
             time.sleep(0.01)  # Reduced from 0.02
-            pyautogui.hotkey('ctrl', 'x')
+            self._press_key_combo([keyboard.Key.ctrl], 'x')
             logger.info("Performed Ctrl+X operation")
         elif operation == 'select_all' or operation == 'a':
             time.sleep(0.01)  # Reduced from 0.02
-            pyautogui.hotkey('ctrl', 'a')
+            self._press_key_combo([keyboard.Key.ctrl], 'a')
             logger.info("Performed Ctrl+A operation")
         elif operation == 'undo' or operation == 'z':
             time.sleep(0.01)  # Reduced from 0.02
-            pyautogui.hotkey('ctrl', 'z')
+            self._press_key_combo([keyboard.Key.ctrl], 'z')
             logger.info("Performed Ctrl+Z operation")
         elif operation == 'redo' or operation == 'y':
             time.sleep(0.01)  # Reduced from 0.02
-            pyautogui.hotkey('ctrl', 'y')
+            self._press_key_combo([keyboard.Key.ctrl], 'y')
             logger.info("Performed Ctrl+Y operation")
 
     def handle_drag_actions(self, idx, action):

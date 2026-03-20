@@ -146,6 +146,16 @@ def _verify_and_init_api(api_url: str):
 def start_api_server():
     """Start the LLM API server"""
     try:
+        api_url = get_api_url()
+        print(f"🔍 Checking if API server is already running at {api_url}...")
+        if _wait_for_api(api_url, timeout_s=2):
+            print("✅ LLM API server is already running")
+            # We can still trigger the background initialization
+            def _init_api_bg():
+                _verify_and_init_api(api_url)
+            threading.Thread(target=_init_api_bg, daemon=True).start()
+            return None
+            
         print("🚀 Starting LLM API server...")
         try:
             load_ai_config()
@@ -233,8 +243,12 @@ def start_api_server():
                 t = threading.Thread(target=run_server, daemon=True)
                 t.start()
                 api_url = get_api_url()
-                _verify_and_init_api(api_url)
                 print("✅ LLM API server started successfully")
+
+                def _init_api_bg():
+                    _verify_and_init_api(api_url)
+                
+                threading.Thread(target=_init_api_bg, daemon=True).start()
                 return t
             except Exception as e:
                 print(f"❌ Error starting in-process API server: {e}")
@@ -250,22 +264,33 @@ def start_api_server():
             process = subprocess.Popen(
                 [sys.executable, api_path],
                 cwd=os.path.dirname(os.path.abspath(__file__)),
-                stdout=sys.stdout,
-                stderr=sys.stderr,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
                 env=os.environ.copy(),
                 creationflags=creationflags
             )
+            import time
+            time.sleep(1) # give it a moment to fail if port is bound
             if process.poll() is None:
-                api_url = get_api_url()
-                _verify_and_init_api(api_url)
                 print("✅ LLM API server started successfully")
+                
+                # Check for API readiness in a separate thread so we don't block
+                # but we can still initialize the comorag engine
+                def _init_api_bg():
+                    _verify_and_init_api(api_url)
+                
+                threading.Thread(target=_init_api_bg, daemon=True).start()
                 
                 def cleanup_api():
                     try:
                         print("Stopping LLM API server...")
-                        process.terminate()
-                        process.wait(timeout=2)
+                        # In Windows, we might need taskkill to kill the whole process tree
+                        if sys.platform == "win32":
+                            subprocess.run(['taskkill', '/F', '/T', '/PID', str(process.pid)], capture_output=True)
+                        else:
+                            process.terminate()
+                            process.wait(timeout=2)
                     except Exception:
                         try:
                             process.kill()
@@ -273,6 +298,22 @@ def start_api_server():
                             pass
                             
                 atexit.register(cleanup_api)
+                
+                # We also need a thread to forward the output to stdout/stderr
+                # so it's visible in the console, since we used PIPE
+                def _forward_output(pipe, sys_stream, prefix=""):
+                    try:
+                        for line in iter(pipe.readline, ''):
+                            if not line:
+                                break
+                            sys_stream.write(f"{prefix}{line}")
+                            sys_stream.flush()
+                    except Exception:
+                        pass
+                
+                threading.Thread(target=_forward_output, args=(process.stdout, sys.stdout, "[API] "), daemon=True).start()
+                threading.Thread(target=_forward_output, args=(process.stderr, sys.stderr, "[API ERR] "), daemon=True).start()
+                
                 return process
             else:
                 stdout, stderr = process.communicate()

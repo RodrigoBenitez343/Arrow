@@ -31,12 +31,16 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         self._runtime_initialized = False
         self._runtime_needed = False
         self._llm_selected_next = None
+        self.last_node_summary = None
+        self.last_node_id = None
     
     def reset(self):
         """Resets the executor state for a new run."""
         self.skipped_nodes = set()
         self._llm_selected_next = None
         self._code_retry_counts = {}
+        self.last_node_summary = None
+        self.last_node_id = None
         # We don't reset runtime environment to avoid reloading venv unnecessarily,
         # but we reset the initialization flags to ensure checks happen if needed.
         # actually, keeping runtime initialized is better for performance.
@@ -200,6 +204,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 # Mark node as completed
                 completed_nodes.add(current_node_id)
                 last_completed_node_id = current_node_id
+                self.last_node_id = current_node_id
+                self._record_last_node_summary(current_node_id, node, conditional_result)
                 logger.info(f"Node {current_node_id} completed successfully")
                 chain_logger.info(f"Node {current_node_id} COMPLETED successfully")
                 self._apply_extra_delay(node, stop_flag)
@@ -293,6 +299,85 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         logger.info("Workflow execution completed successfully")
         chain_logger.info("=== CHAIN RUN COMPLETED SUCCESSFULLY ===")
         return True
+
+    def _record_last_node_summary(self, node_id, node, conditional_result):
+        try:
+            summary = {
+                "node_id": str(node_id),
+                "type": str(node.get('type') or ''),
+                "label": "",
+                "description": "",
+                "criteria": None,
+                "result": None
+            }
+            try:
+                data = node.get('data', {}) if isinstance(node, dict) else {}
+                summary["label"] = data.get('name') or data.get('label') or ""
+                summary["description"] = data.get('description') or ""
+            except Exception:
+                pass
+            if summary["type"] == "conditional":
+                summary["result"] = bool(conditional_result)
+                try:
+                    data = node.get('data', {}) if isinstance(node, dict) else {}
+                    criteria = {}
+                    condition_type = data.get('condition_type') or data.get('trigger_type')
+                    if condition_type:
+                        criteria["condition_type"] = condition_type
+                    image_path = data.get('image_path')
+                    if image_path:
+                        criteria["image_path"] = image_path
+                    ocr_text = data.get('ocr_text') or data.get('target_text')
+                    if ocr_text:
+                        criteria["ocr_text"] = ocr_text
+                    threshold = data.get('threshold') or data.get('confidence')
+                    if threshold is not None:
+                        criteria["threshold"] = threshold
+                    timeout = data.get('timeout') or data.get('wait_time')
+                    if timeout is not None:
+                        criteria["timeout"] = timeout
+                    app_ctx = data.get('app_context') or data.get('focus_app') or data.get('app')
+                    if isinstance(app_ctx, dict) and app_ctx:
+                        criteria["app_context"] = app_ctx
+                    summary["criteria"] = criteria if criteria else None
+                except Exception:
+                    pass
+            elif summary["type"] == "code":
+                try:
+                    output = self.llm_executor.get_variable(f"node_{node_id}_output")
+                    summary["result"] = output
+                except Exception:
+                    summary["result"] = None
+            elif summary["type"] == "llm":
+                try:
+                    data = node.get('data', {}) if isinstance(node, dict) else {}
+                    llm_conf = data.get('llm_configuration', {}) or data
+                except Exception:
+                    llm_conf = {}
+                query = ""
+                try:
+                    query = llm_conf.get('prompt') or data.get('prompt') or ""
+                except Exception:
+                    query = ""
+                response = None
+                try:
+                    output_var = llm_conf.get('output_variable', 'llm_output')
+                    response = self.llm_executor.get_variable(output_var)
+                except Exception:
+                    response = None
+                summary["result"] = {
+                    "query": query,
+                    "response": response
+                }
+            else:
+                summary["result"] = None
+            self.last_node_summary = summary
+            try:
+                self.llm_executor.set_variable("chain_last_node_summary", summary)
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def _select_next_node(self, ready_nodes):
         priority_map = {
