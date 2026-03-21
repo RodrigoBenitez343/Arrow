@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QMessageBox
-from ...nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode
+from ...nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +15,7 @@ class NodeManagementMixin:
             elif isinstance(node, ActionNode):
                 logger.debug("Deleting action node")
                 self.delete_action_node(node)
-            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode)):
+            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode)):
                 logger.debug(f"Deleting {type(node).__name__} node")
                 self.parent_widget.graph_manager.delete_node(node)
             else:
@@ -46,6 +46,9 @@ class NodeManagementMixin:
             elif name == "Add Code":
                 logger.debug("Adding Code node from context menu")
                 self.add_code_node(pos)
+            elif name == "Add Container":
+                logger.debug("Adding Container node from context menu")
+                self.add_container_node(pos)
             else:
                 logger.warning(f"Unknown context menu action: {name}")
         except Exception as e:

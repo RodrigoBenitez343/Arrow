@@ -91,6 +91,8 @@ class ChainImportOperationsMixin:
                     config['extra_delay'],
                     config['enabled']
                 )
+                node.set_property('run_in_sandbox', 'true' if config.get('run_in_sandbox') else 'false')
+                node.set_property('show_sandbox_window', 'true' if config.get('show_sandbox_window', True) else 'false')
                 
                 logger.info(f"Successfully updated Chain Import node {node.id}")
                 

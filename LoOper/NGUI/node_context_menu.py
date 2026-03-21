@@ -34,6 +34,8 @@ class NodeContextMenuManager:
             self.add_code_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'form_filler':
             self.add_form_filler_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'container':
+            self.add_container_node_actions(menu, node)
         else:
             # Show graph actions for background clicks or any other case
             self.add_graph_actions(menu, pos)
@@ -109,6 +111,12 @@ class NodeContextMenuManager:
         edit_action.triggered.connect(lambda: self.graph_view.edit_code_node(node))
         menu.addAction(edit_action)
 
+    def add_container_node_actions(self, menu, node):
+        """Add actions for a Container node to the context menu"""
+        edit_action = QAction(_("Edit Container Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_container_node(node))
+        menu.addAction(edit_action)
+
     def add_form_filler_node_actions(self, menu, node):
         deprecated_action = QAction(_("Form Filler is deprecated"), menu)
         deprecated_action.setEnabled(False)
@@ -131,6 +139,10 @@ class NodeContextMenuManager:
         add_code_action = QAction(_("Add Code Node"), menu)
         add_code_action.triggered.connect(lambda: self.graph_view.add_code_node())
         menu.addAction(add_code_action)
+        
+        add_container_action = QAction(_("Add Container Node"), menu)
+        add_container_action.triggered.connect(lambda: self.graph_view.add_container_node())
+        menu.addAction(add_container_action)
         
         # DEPRECATED: Context Builder - add action removed from graph menu
         # add_context_builder_action = QAction("Add Context Builder Node", menu)

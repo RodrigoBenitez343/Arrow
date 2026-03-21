@@ -27,6 +27,7 @@ from ..constants import (
     BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR
 )
 from ..i18n import _
+from ..dialogs.toggle_switch import ModernToggle
 
 logger = logging.getLogger(__name__)
 

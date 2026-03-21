@@ -11,6 +11,8 @@ from ..constants import TEXT_COLOR
 from ..i18n import _
 
 
+from .toggle_switch import ModernToggle
+
 class ChainImportDialog(ModernDialog):
     """Dialog for configuring chain import settings"""
     
@@ -125,6 +127,27 @@ class ChainImportDialog(ModernDialog):
         
         layout.addWidget(config_group)
         
+        # Sandbox execution options
+        sandbox_group = QGroupBox(_("Sandbox Execution"))
+        sandbox_layout = QVBoxLayout()
+        
+        # Run in Sandbox Toggle
+        self.sandbox_toggle = ModernToggle(text=_("Run chain inside Windows Sandbox"))
+        self.sandbox_toggle.setChecked(self.config.get('run_in_sandbox', False))
+        sandbox_layout.addWidget(self.sandbox_toggle)
+        
+        # Show Sandbox Window Toggle
+        self.show_sandbox_window_toggle = ModernToggle(text=_("Show Sandbox Window (for debugging)"))
+        self.show_sandbox_window_toggle.setChecked(self.config.get('show_sandbox_window', True))
+        # Disable if sandbox is not enabled
+        self.show_sandbox_window_toggle.setEnabled(self.sandbox_toggle.isChecked())
+        
+        self.sandbox_toggle.toggled.connect(self.show_sandbox_window_toggle.setEnabled)
+        
+        sandbox_layout.addWidget(self.show_sandbox_window_toggle)
+        sandbox_group.setLayout(sandbox_layout)
+        layout.addWidget(sandbox_group)
+        
         # Button box
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_btn = self.button_box.button(QDialogButtonBox.Ok)
@@ -236,7 +259,9 @@ class ChainImportDialog(ModernDialog):
             'prefix': self.prefix_input.text().strip(),
             'loop_count': loop_count,
             'extra_delay': extra_delay,
-            'enabled': self.enabled_checkbox.isChecked()
+            'enabled': self.enabled_checkbox.isChecked(),
+            'run_in_sandbox': self.sandbox_toggle.isChecked(),
+            'show_sandbox_window': self.show_sandbox_window_toggle.isChecked()
         }
     
     def accept(self):

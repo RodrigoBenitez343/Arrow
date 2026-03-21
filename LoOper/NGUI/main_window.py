@@ -49,7 +49,7 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
         pass
 
 from datetime import datetime
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QFileDialog, QInputDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QFileDialog, QInputDialog, QMessageBox, QLineEdit
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QIcon
 from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR
@@ -209,6 +209,12 @@ class MainWindow(QMainWindow):
         ai_settings_action.triggered.connect(self.open_ai_settings)
         settings_menu.addAction(ai_settings_action)
         
+        # Environment menu
+        env_menu = menu_bar.addMenu(_("&Environment"))
+        
+        # Action to configure Sandbox settings if needed in the future
+        # For now, it's mostly handled per-chain
+        
         # View menu: allow showing/hiding the right toolbar
         view_menu = menu_bar.addMenu(_("&View"))
         toggle_toolbar_action = QAction(_("Show Toolbar"), self)
@@ -237,7 +243,7 @@ class MainWindow(QMainWindow):
             pass
         manage_sched_action.triggered.connect(self.open_scheduler_manager)
         scheduler_menu.addAction(manage_sched_action)
-    
+        
     def new_chain(self):
         """Clears the graph to start a new chain."""
         self.graph_view.clear_graph()
@@ -419,8 +425,9 @@ class MainWindow(QMainWindow):
             tts_nodes = chain_config.get('tts_nodes', [])
             chain_import_nodes = chain_config.get('chain_import_nodes', [])
             code_nodes = chain_config.get('code_nodes', [])
+            container_nodes = chain_config.get('container_nodes', [])
             
-            total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes) + len(code_nodes)
+            total_nodes = len(sequences) + len(conditional_nodes) + len(llm_nodes) + len(tts_nodes) + len(chain_import_nodes) + len(code_nodes) + len(container_nodes)
             if total_nodes == 0:
                 logger.warning("No nodes in chain configuration")
                 QMessageBox.warning(self, _("Empty Chain"), _("No nodes found in the current chain."))

@@ -5,8 +5,46 @@ import signal
 import multiprocessing
 import time
 import logging
+import ctypes
 
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+
+def _is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def _ensure_admin() -> None:
+    if sys.platform != "win32":
+        return
+
+    if "--elevated" in sys.argv:
+        try:
+            sys.argv.remove("--elevated")
+        except Exception:
+            pass
+        return
+
+    if _is_admin():
+        return
+
+    try:
+        if getattr(sys, "frozen", False):
+            params = subprocess.list2cmdline(["--elevated", *sys.argv[1:]])
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+        else:
+            script = os.path.abspath(__file__)
+            params = subprocess.list2cmdline([script, "--elevated", *sys.argv[1:]])
+            ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    except Exception:
+        pass
+
+    sys.exit(0)
+
+
+_ensure_admin()
 
 # Move win32 imports to top for better performance and reliability
 try:

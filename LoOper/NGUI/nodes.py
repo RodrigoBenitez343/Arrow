@@ -8,5 +8,6 @@ from .nodes_resources import (
     TTSNode,
     ChainImportNode,
     FormFillerNode,
-    CodeNode
+    CodeNode,
+    ContainerNode
 )
