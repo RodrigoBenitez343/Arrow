@@ -58,6 +58,8 @@ class ChainImportNode(BaseNode):
         # Add configuration inputs
         # Register properties without rendering inline input widgets
         self.create_property('chain_file', '')
+        self.create_property('run_in_sandbox', 'false')
+        self.create_property('show_sandbox_window', 'true')
         self.create_property('import_mode', 'full')
         self.create_property('prefix', '')
         self.create_property('loop_count', '1')
@@ -118,6 +120,8 @@ class ChainImportNode(BaseNode):
         """Get the chain import configuration for this node"""
         return {
             'chain_file': self.get_property('chain_file'),
+            'run_in_sandbox': self.get_property('run_in_sandbox') == 'true',
+            'show_sandbox_window': self.get_property('show_sandbox_window') == 'true',
             'import_mode': self.get_property('import_mode'),
             'prefix': self.get_property('prefix'),
             'loop_count': int(self.get_property('loop_count') or '1'),

@@ -76,6 +76,9 @@ class MultiSequencePlayer(SeleniumBot):
             self.conditional_nodes = []
             self.llm_nodes = []
             self.tts_nodes = []
+            self.chain_import_nodes = []
+            self.code_nodes = []
+            self.container_nodes = []
             self.workflow_graph = None
             logger.info(f"Loaded legacy chain with {len(chain_config)} sequences")
         else:
@@ -86,11 +89,12 @@ class MultiSequencePlayer(SeleniumBot):
             self.tts_nodes = chain_config.get('tts_nodes', [])
             self.chain_import_nodes = chain_config.get('chain_import_nodes', [])
             self.code_nodes = chain_config.get('code_nodes', [])
+            self.container_nodes = chain_config.get('container_nodes', [])
             
             # Use modularized workflow graph builder
-            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes, self.code_nodes)
+            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes, self.code_nodes, self.container_nodes)
             self.workflow_graph = graph_builder.build_workflow_graph()
-            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, {len(self.chain_import_nodes)} chain import nodes, and {len(self.code_nodes)} code nodes")
+            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, {len(self.chain_import_nodes)} chain import nodes, {len(self.code_nodes)} code nodes, and {len(self.container_nodes)} container nodes")
         
         self.current_sequence_index = 0
         
@@ -257,6 +261,11 @@ class MultiSequencePlayer(SeleniumBot):
             if self.workflow_graph:
                 # New workflow format - use WorkflowExecutor
                 logger.info("Using workflow executor for chain playback")
+                
+                # Pass down any global context overrides (like Sandbox configuration)
+                if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
+                    self.workflow_executor.global_app_context_override = self.global_app_context_override
+                    
                 result = self.workflow_executor.execute_workflow(stop_flag, getattr(self, 'action_handlers', None))
                 logger.info(f"Workflow execution completed with result: {result}")
                 return result

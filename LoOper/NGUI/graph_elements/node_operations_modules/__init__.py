@@ -7,6 +7,7 @@ from .tts import TTSOperationsMixin
 from .chain_import import ChainImportOperationsMixin
 from .form_filler import FormFillerOperationsMixin
 from .code import CodeOperationsMixin
+from .container import ContainerOperationsMixin
 from .node_management import NodeManagementMixin
 
 class NodeOperations(
@@ -19,6 +20,7 @@ class NodeOperations(
     ChainImportOperationsMixin,
     FormFillerOperationsMixin,
     CodeOperationsMixin,
+    ContainerOperationsMixin,
     NodeManagementMixin
 ):
     """Handles all node operations including adding, deleting, and editing."""

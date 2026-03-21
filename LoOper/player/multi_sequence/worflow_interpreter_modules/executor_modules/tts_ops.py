@@ -25,7 +25,7 @@ class TTSMixin:
             if result.get('success', False):
                 logger.info(f"TTS node execution successful: {result.get('message', 'No message')}")
                 
-                # Find next node in the workflow
+                # Find next node in the workflow 
                 connections = node.get('connections', {})
                 if 'output' in connections and connections['output']:
                     next_connection = connections['output'][0]

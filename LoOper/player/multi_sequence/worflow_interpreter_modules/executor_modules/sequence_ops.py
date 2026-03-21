@@ -11,5 +11,9 @@ class SequenceMixin:
             str: Next node ID to execute, or None if workflow should end
         """
         # Use the SequenceExecutor to handle sequence execution
+        # Apply global context override (e.g. for Sandbox)
+        if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
+            self.sequence_executor.global_app_context_override = self.global_app_context_override
+            
         next_node_id = self.sequence_executor.execute_sequence_node(node, stop_flag)
         return next_node_id

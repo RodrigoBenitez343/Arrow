@@ -47,10 +47,16 @@ class NodeExecutor:
         except Exception:
             Application = None
 
+        try:
+            import subprocess
+        except Exception:
+            subprocess = None
+
         exe = str((app_context or {}).get("exe") or "")
         proc_name = str((app_context or {}).get("process_name") or "")
         title_hint = str((app_context or {}).get("title") or "")
         pid_hint = (app_context or {}).get("pid")
+        sandboxed = (app_context or {}).get("sandboxed", False)
 
         exe_norm = os.path.normcase(exe) if exe else ""
         proc_name_norm = proc_name.lower() if proc_name else ""
@@ -215,12 +221,275 @@ class NodeExecutor:
                 return True
             return False
 
+        def _try_launch_exe():
+            if not exe and not sandboxed:
+                return False
+            if exe:
+                try:
+                    import os
+                    if not os.path.exists(exe):
+                        logger.warning(f"Executable not found: {exe}")
+                        return False
+                except Exception as e:
+                    logger.error(f"Error checking exe path: {e}")
+                    return False
+            if subprocess is None:
+                logger.error("subprocess module is not available")
+                return False
+                
+            if sandboxed:
+                try:
+                    logger.info("Launching Concurrent RDP Agent Session for fallback node...")
+                    
+                    temp_dir = "C:\\TempShared"
+                    os.makedirs(temp_dir, exist_ok=True)
+
+                    for name in ("agent_info.json", "agent_error.txt", "agent_log.txt", "agent_status.txt"):
+                        p = os.path.join(temp_dir, name)
+                        try:
+                            if os.path.exists(p):
+                                os.remove(p)
+                        except Exception:
+                            pass
+                    
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
+                    agent_script = os.path.join(project_root, "LoOper", "sandbox_agent.py")
+
+                    import sys
+                    safe_python = ""
+                    candidates = [
+                        os.path.join(project_root, ".venv", "Scripts", "python.exe"),
+                        os.path.join(project_root, ".venv", "scripts", "python.exe"),
+                        sys.executable,
+                    ]
+                    for c in candidates:
+                        try:
+                            if c and os.path.exists(c):
+                                safe_python = c
+                                break
+                        except Exception:
+                            continue
+                    if not safe_python:
+                        safe_python = "python"
+
+                    port = None
+                    try:
+                        import socket
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.bind(("127.0.0.1", 0))
+                            port = int(s.getsockname()[1])
+                    except Exception:
+                        port = 8000
+
+                    task_name = f"LoOperAgentStartAgentFallback_{os.getpid()}"
+                    ps1_path = os.path.join(temp_dir, f"start_agent_task_fallback_{os.getpid()}.ps1")
+                    agent_log = os.path.join(temp_dir, "agent_log.txt")
+                    agent_task_error = os.path.join(temp_dir, "agent_task_error.txt")
+                    exe_dir = os.path.dirname(exe) if exe else ""
+
+                    ps_lines = [
+                        "$ErrorActionPreference = 'Stop'",
+                        f"$env:PYTHONPATH = '{project_root}'",
+                        f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
+                        "try {",
+                    ]
+                    if exe:
+                        ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
+                    ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
+                    ps_lines.extend(
+                        [
+                            "} catch {",
+                            f"  ($_ | Out-String) | Out-File -FilePath '{agent_task_error}' -Encoding utf8",
+                            "  throw",
+                            "}",
+                        ]
+                    )
+                    with open(ps1_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(ps_lines) + "\n")
+
+                    try:
+                        q = subprocess.run(["query", "session"], capture_output=True, text=True)
+                        out = (q.stdout or "") + "\n" + (q.stderr or "")
+                        for line in out.splitlines():
+                            if "LoOperAgent" not in line:
+                                continue
+                            import re as _re
+                            m = _re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
+                            if not m:
+                                continue
+                            try:
+                                sid = int(m.group(1))
+                            except Exception:
+                                continue
+                            subprocess.run(["logoff", str(sid)], capture_output=True, text=True)
+                            time.sleep(1.0)
+                            break
+                    except Exception:
+                        pass
+
+                    subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                    r = subprocess.run(
+                        [
+                            "schtasks",
+                            "/create",
+                            "/tn",
+                            task_name,
+                            "/sc",
+                            "ONLOGON",
+                            "/ru",
+                            "LoOperAgent",
+                            "/rp",
+                            "LoOperPassword123!",
+                            "/rl",
+                            "HIGHEST",
+                            "/it",
+                            "/tr",
+                            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"',
+                            "/f",
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if r.returncode != 0:
+                        logger.error(f"Failed to create scheduled task for agent startup: {r.stdout} {r.stderr}")
+                        return False
+
+                    # Add credentials
+                    os.system('cmdkey /generic:TERMSRV/127.0.0.2 /user:LoOperAgent /pass:LoOperPassword123!')
+                    
+                    # Ensure agent account has full read/write access to the TempShared folder
+                    try:
+                        subprocess.run(["icacls", temp_dir, "/grant", "LoOperAgent:(OI)(CI)F", "/T"], capture_output=True)
+                    except Exception:
+                        pass
+                        
+                    # Create RDP file
+                    rdp_file = os.path.join(temp_dir, "agent_session.rdp")
+                    ctx = app_context if isinstance(app_context, dict) else {}
+                    show_window = ctx.get("show_window", False)
+                    screen_mode = "1" if show_window else "2"
+                    with open(rdp_file, "w") as f:
+                        f.write(f'''screen mode id:i:{screen_mode}
+use multimon:i:0
+desktopwidth:i:1920
+desktopheight:i:1080
+smart sizing:i:1
+session bpp:i:32
+full address:s:127.0.0.2
+username:s:LoOperAgent
+audiomode:i:0
+redirectprinters:i:0
+redirectclipboard:i:1
+autoreconnection enabled:i:1
+authentication level:i:2
+prompt for credentials:i:0
+negotiate security layer:i:1
+enablecredsspsupport:i:1
+''')
+
+                    logger.info(f"Launching {exe or 'Agent Only'} inside RDP Session (Show Window: {show_window})")
+                    if show_window:
+                        subprocess.Popen(["mstsc.exe", rdp_file], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    else:
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        startupinfo.wShowWindow = subprocess.SW_HIDE
+                        subprocess.Popen(["mstsc.exe", rdp_file], startupinfo=startupinfo)
+                    
+                    try:
+                        q = subprocess.run(["query", "session"], capture_output=True, text=True)
+                        out = (q.stdout or "") + "\n" + (q.stderr or "")
+                        for line in out.splitlines():
+                            if "LoOperAgent" not in line:
+                                continue
+                            import re as _re
+                            m = _re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
+                            if not m:
+                                continue
+                            try:
+                                sid = int(m.group(1))
+                            except Exception:
+                                continue
+                            subprocess.run(["logoff", str(sid)], capture_output=True, text=True)
+                            time.sleep(1.0)
+                            break
+                    except Exception:
+                        pass
+
+                    try:
+                        import urllib.request
+                        agent_info_path = os.path.join(temp_dir, "agent_info.json")
+                        agent_url = f"http://127.0.0.2:{int(port)}"
+                        start_deadline = time.time() + 60.0
+                        reachable = False
+                        import socket
+                        while time.time() < start_deadline:
+                            if os.path.exists(agent_info_path):
+                                try:
+                                    with open(agent_info_path, "r", encoding="utf-8") as f:
+                                        info = json.load(f) or {}
+                                    p2 = info.get("port")
+                                    if p2:
+                                        port = int(p2)
+                                        agent_url = f"http://127.0.0.2:{int(port)}"
+                                except Exception:
+                                    pass
+
+                            try:
+                                with socket.create_connection(("127.0.0.2", int(port)), timeout=0.25):
+                                    reachable = True
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(0.25)
+                    except Exception:
+                        pass
+
+                    if not reachable:
+                        try:
+                            if os.path.exists(agent_task_error):
+                                with open(agent_task_error, "r", encoding="utf-8", errors="ignore") as f:
+                                    logger.error(f"RDP agent task error: {f.read()}")
+                        except Exception:
+                            pass
+                        try:
+                            if os.path.exists(agent_log):
+                                with open(agent_log, "r", encoding="utf-8", errors="ignore") as f:
+                                    tail = f.read()[-5000:]
+                                    if tail:
+                                        logger.error(f"RDP agent log tail: {tail}")
+                        except Exception:
+                            pass
+                        subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                        logger.error(f"RDP Agent did not become reachable in time: {agent_url}")
+                        return False
+
+                    subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to launch RDP Session: {e}")
+                    return False
+                    
+            try:
+                cwd = os.path.dirname(exe) or None
+                subprocess.Popen(exe, cwd=cwd, shell=True)
+                return True
+            except Exception:
+                return False
+
+        launched = False
+
         while time.time() <= deadline:
             if stop_flag and stop_flag():
                 return False
 
             pids = _candidate_pids()
             if not pids:
+                if not launched:
+                    ok = _try_launch_exe()
+                    if not ok:
+                        return False
+                    launched = True
                 time.sleep(0.05)
                 continue
 

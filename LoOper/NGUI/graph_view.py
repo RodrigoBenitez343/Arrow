@@ -56,7 +56,7 @@ class GraphViewWidget(QWidget):
             self._paste_counter = 0
             # Track last context menu scene position for paste anchoring
             self._last_context_scene_pos = None
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": []}
             self.sequence_nodes = []
             self.action_nodes = []
             self.conditional_nodes = []
@@ -64,6 +64,7 @@ class GraphViewWidget(QWidget):
             self.tts_nodes = []
             self.form_filler_nodes = []
             self.code_nodes = []
+            self.container_nodes = []
             self.current_view = 'sequence'  # Track current view: 'sequence' or 'action'
             self.current_sequence_idx = None  # Track currently selected sequence
             self.saved_sequence_state = None  # Store sequence view state when switching to action view
@@ -428,6 +429,14 @@ class GraphViewWidget(QWidget):
             self.node_operations.edit_code_node(node)
         except Exception as e:
             logger.error(f"Error editing Code node: {str(e)}", exc_info=True)
+
+    def edit_container_node(self, node):
+        """Edit a Container node's properties"""
+        logger.debug(f"Editing Container node: {node.name()}")
+        try:
+            self.node_operations.edit_container_node(node)
+        except Exception as e:
+            logger.error(f"Error editing Container node: {str(e)}", exc_info=True)
 
     def _resolve_creation_pos(self, position):
         """Resolve a node creation position to scene coordinates list [x, y].

@@ -15,6 +15,19 @@ class ChainImportMixin:
         Returns:
             str: Next node ID to execute, or None if workflow should end
         """
+        # Get sandbox configuration
+        chain_data = node.get('data', {})
+        run_in_sandbox = str(chain_data.get('run_in_sandbox', 'false')).lower() == 'true'
+        show_sandbox_window = str(chain_data.get('show_sandbox_window', 'true')).lower() == 'true'
+        
+        # Build app context override for sandboxing if needed
+        app_context_override = None
+        if run_in_sandbox:
+            app_context_override = {
+                "sandboxed": True,
+                "show_window": show_sandbox_window
+            }
+
         try:
             from ....multi_sequence_player import MultiSequencePlayer
         except ImportError:
@@ -139,6 +152,15 @@ class ChainImportMixin:
                     chain_file_path=resolved_chain_path,
                     variables=self.llm_executor.variables
                 )
+                
+                # Apply sandbox context if configured
+                if app_context_override:
+                    logger.info(f"Applying sandbox override to imported chain: {app_context_override}")
+                    if hasattr(imported_player, 'workflow_executor') and imported_player.workflow_executor:
+                        imported_player.workflow_executor.global_app_context_override = app_context_override
+                    if hasattr(imported_player, 'sequence_executor') and imported_player.sequence_executor:
+                        imported_player.sequence_executor.global_app_context_override = app_context_override
+                        
                 # Share selection memory with imported chain player
                 try:
                     # Ensure the imported player uses the shared selection memory
@@ -271,4 +293,4 @@ class ChainImportMixin:
             next_connection = connections['output'][0]
             return next_connection['node_id']
         
-        return None
+        return "__done__"

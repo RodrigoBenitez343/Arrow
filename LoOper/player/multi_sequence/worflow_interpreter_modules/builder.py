@@ -3,13 +3,14 @@ from ...config import logger
 class WorkflowGraphBuilder:
     """Builds and manages workflow graphs from sequences and conditional nodes"""
     
-    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None, code_nodes=None):
+    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None, code_nodes=None, container_nodes=None):
         self.sequences = sequences or []
         self.conditional_nodes = conditional_nodes or []
         self.llm_nodes = llm_nodes or []
         self.tts_nodes = tts_nodes or []
         self.chain_import_nodes = chain_import_nodes or []
         self.code_nodes = code_nodes or []
+        self.container_nodes = container_nodes or []
     
     def build_workflow_graph(self):
         """
@@ -189,6 +190,28 @@ class WorkflowGraphBuilder:
                 'connections': {
                     'output': output_connections,
                     'error': error_connections
+                }
+            }
+            
+        # Add Container nodes to graph
+        for container_node in self.container_nodes:
+            node_id = str(container_node.get('id') or container_node.get('node_id'))
+            # Convert connections format to outputs format for Container nodes
+            output_connections = []
+            
+            for conn in container_node.get('connections', []):
+                target = {
+                    'node_id': str(conn['target_node_id']),
+                    'input_port': conn.get('input_port')
+                }
+                if conn.get('output_port') == 'output':
+                    output_connections.append(target)
+            
+            graph[node_id] = {
+                'type': 'container',
+                'data': container_node,
+                'connections': {
+                    'output': output_connections
                 }
             }
         

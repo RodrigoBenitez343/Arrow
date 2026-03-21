@@ -9,8 +9,9 @@ from .llm_ops import LLMMixin
 from .tts_ops import TTSMixin
 from .chain_ops import ChainImportMixin
 from .code_ops import CodeMixin
+from .container_ops import ContainerMixin
 
-class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMixin, TTSMixin, ChainImportMixin, CodeMixin):
+class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMixin, TTSMixin, ChainImportMixin, CodeMixin, ContainerMixin):
     """Executes workflow graphs with proper dependency resolution and node execution"""
     
     def __init__(self, workflow_graph, sequence_executor, llm_executor, fallback_handler):
@@ -21,6 +22,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         self.skipped_nodes = set()
         # Shared selection memory reference (to be provided by MultiSequencePlayer)
         self.selection_memory = None
+        self.global_app_context_override = None
         self._runtime_root = None
         self._chain_label = None
         self._chain_runtime_dir = None
@@ -196,6 +198,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 success = self._execute_chain_import_node(node, stop_flag) is not None
             elif node['type'] == 'code':
                 success = self._execute_code_node(node, stop_flag) is not None
+            elif node['type'] == 'container':
+                success = self._execute_container_node(node, stop_flag) is not None
             else:
                 logger.warning(f"Unknown node type: {node['type']}")
                 success = False

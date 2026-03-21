@@ -30,6 +30,8 @@ class ClipboardManager:
             return {"instruction","model","confidence_threshold"}
         if node_type in ("code", "code.CodeNode") or node_type.endswith("CodeNode"):
             return {"code", "file_path", "execute_on_input", "output_variable", "timeout"}
+        if node_type in ("container", "container.ContainerNode") or node_type.endswith("ContainerNode"):
+            return {"iso_path", "memory_mb", "cpu_cores", "hide_window", "execute_on_input", "output_variable", "timeout"}
         return set()
 
     def copy_selected_nodes(self):

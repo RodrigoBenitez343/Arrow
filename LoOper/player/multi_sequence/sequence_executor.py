@@ -154,6 +154,7 @@ class SequenceExecutor:
         title_hint = str((app_context or {}).get("title") or "")
         pid_hint = (app_context or {}).get("pid")
         focus_timeout = float((app_context or {}).get("focus_timeout", 2.0))
+        sandboxed = (app_context or {}).get("sandboxed", False)
 
         exe_norm = os.path.normcase(exe) if exe else ""
         proc_name_norm = proc_name.lower() if proc_name else ""
@@ -336,15 +337,251 @@ class SequenceExecutor:
             return False
 
         def _try_launch_exe():
-            if not exe:
+            # In purely sandboxed mode without an explicit exe, we STILL need to launch the RDP session.
+            # We should only return False early if it's NOT sandboxed AND there's no exe.
+            if not exe and not sandboxed:
                 return False
-            try:
-                if not os.path.exists(exe):
+            if exe:
+                try:
+                    import os
+                    if not os.path.exists(exe):
+                        logger.warning(f"Executable not found: {exe}")
+                        return False
+                except Exception as e:
+                    logger.error(f"Error checking exe path: {e}")
                     return False
-            except Exception:
-                return False
             if subprocess is None:
+                logger.error("subprocess module is not available")
                 return False
+                
+            if sandboxed:
+                try:
+                    logger.info("Initializing Concurrent RDP Agent Session...")
+                    
+                    temp_dir = "C:\\TempShared"
+                    os.makedirs(temp_dir, exist_ok=True)
+                    
+                    for name in ("agent_info.json", "agent_error.txt", "agent_log.txt", "agent_status.txt"):
+                        p = os.path.join(temp_dir, name)
+                        try:
+                            if os.path.exists(p):
+                                os.remove(p)
+                        except Exception:
+                            pass
+                        
+                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                    agent_script = os.path.join(project_root, "LoOper", "sandbox_agent.py")
+                    
+                    safe_python = ""
+                    candidates = [
+                        os.path.join(project_root, ".venv", "Scripts", "python.exe"),
+                        os.path.join(project_root, ".venv", "scripts", "python.exe"),
+                        sys.executable,
+                    ]
+                    for c in candidates:
+                        try:
+                            if c and os.path.exists(c):
+                                safe_python = c
+                                break
+                        except Exception:
+                            continue
+                    if not safe_python:
+                        safe_python = "python"
+
+                    port = None
+                    try:
+                        import socket
+                        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                            s.bind(("127.0.0.1", 0))
+                            port = int(s.getsockname()[1])
+                    except Exception:
+                        port = 8000
+
+                    task_name = f"LoOperAgentStartAgent_{os.getpid()}"
+                    ps1_path = os.path.join(temp_dir, f"start_agent_task_{os.getpid()}.ps1")
+                    agent_log = os.path.join(temp_dir, "agent_log.txt")
+                    agent_task_error = os.path.join(temp_dir, "agent_task_error.txt")
+
+                    exe_dir = os.path.dirname(exe) if exe else ""
+                    ps_lines = [
+                        "$ErrorActionPreference = 'Stop'",
+                        f"$env:PYTHONPATH = '{project_root}'",
+                        f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
+                        "try {",
+                    ]
+                    if exe:
+                        ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
+                    ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
+                    ps_lines.extend(
+                        [
+                            "} catch {",
+                            f"  ($_ | Out-String) | Out-File -FilePath '{agent_task_error}' -Encoding utf8",
+                            "  throw",
+                            "}",
+                        ]
+                    )
+                    with open(ps1_path, "w", encoding="utf-8") as f:
+                        f.write("\n".join(ps_lines) + "\n")
+
+                    try:
+                        q = subprocess.run(["query", "session"], capture_output=True, text=True)
+                        out = (q.stdout or "") + "\n" + (q.stderr or "")
+                        for line in out.splitlines():
+                            if "LoOperAgent" not in line:
+                                continue
+                            import re as _re
+                            m = _re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
+                            if not m:
+                                continue
+                            try:
+                                sid = int(m.group(1))
+                            except Exception:
+                                continue
+                            subprocess.run(["logoff", str(sid)], capture_output=True, text=True)
+                            time.sleep(1.0)
+                            break
+                    except Exception:
+                        pass
+
+                    subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                    r = subprocess.run(
+                        [
+                            "schtasks",
+                            "/create",
+                            "/tn",
+                            task_name,
+                            "/sc",
+                            "ONLOGON",
+                            "/ru",
+                            "LoOperAgent",
+                            "/rp",
+                            "LoOperPassword123!",
+                            "/rl",
+                            "HIGHEST",
+                            "/it",
+                            "/tr",
+                            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"',
+                            "/f",
+                        ],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if r.returncode != 0:
+                        logger.error(f"Failed to create scheduled task for agent startup: {r.stdout} {r.stderr}")
+                        return False
+
+                    # Add credentials to Windows Vault for passwordless MSTSC login
+                    os.system('cmdkey /generic:TERMSRV/127.0.0.2 /user:LoOperAgent /pass:LoOperPassword123!')
+                    
+                    # Ensure agent account has full read/write access to the TempShared folder
+                    try:
+                        subprocess.run(["icacls", temp_dir, "/grant", "LoOperAgent:(OI)(CI)F", "/T"], capture_output=True)
+                    except Exception:
+                        pass
+
+                    # Create RDP file
+                    rdp_file = os.path.join(temp_dir, "agent_session.rdp")
+                    # If app_context is literally a string or None, default to a dict
+                    ctx = app_context if isinstance(app_context, dict) else {}
+                    show_window = ctx.get("show_window", False) or getattr(self, 'global_app_context_override', {}).get("show_window", False)
+                    # Use normal window mode (1) if show_window is True, otherwise use hidden/minimized
+                    screen_mode = "1" if show_window else "2"
+                    with open(rdp_file, "w") as f:
+                        f.write(f'''screen mode id:i:{screen_mode}
+use multimon:i:0
+desktopwidth:i:1920
+desktopheight:i:1080
+smart sizing:i:1
+session bpp:i:32
+full address:s:127.0.0.2
+username:s:LoOperAgent
+audiomode:i:0
+redirectprinters:i:0
+redirectcomports:i:0
+redirectsmartcards:i:0
+redirectclipboard:i:1
+redirectposdevices:i:0
+autoreconnection enabled:i:1
+authentication level:i:2
+prompt for credentials:i:0
+negotiate security layer:i:1
+enablecredsspsupport:i:1
+''')
+
+                    logger.info(f"Launching {exe or 'Agent Only'} via RDP Agent Session (Show Window: {show_window})")
+                    # If show_window is False, we can launch it minimized or completely hidden
+                    if show_window:
+                        # When launching visibly, pass creation flags to make sure it spawns a fresh console/window process
+                        subprocess.Popen(["mstsc.exe", rdp_file], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                    else:
+                        # Launch hidden if not requested to show
+                        startupinfo = subprocess.STARTUPINFO()
+                        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                        startupinfo.wShowWindow = subprocess.SW_HIDE
+                        subprocess.Popen(["mstsc.exe", rdp_file], startupinfo=startupinfo)
+                    
+                    logger.info("Waiting for RDP Agent to become reachable...")
+                    agent_url = f"http://127.0.0.2:{int(port)}"
+                    reachable = False
+                    agent_info_path = os.path.join(temp_dir, "agent_info.json")
+                    start_deadline = time.time() + float(ctx.get("agent_wait_timeout_s", 60.0) if isinstance(ctx, dict) else 60.0)
+                    try:
+                        import socket
+                        while time.time() < start_deadline:
+                            if os.path.exists(agent_info_path):
+                                try:
+                                    with open(agent_info_path, "r", encoding="utf-8") as f:
+                                        info = json.load(f) or {}
+                                    p2 = info.get("port")
+                                    if p2:
+                                        port = int(p2)
+                                        agent_url = f"http://127.0.0.2:{int(port)}"
+                                except Exception:
+                                    pass
+
+                            try:
+                                with socket.create_connection(("127.0.0.2", int(port)), timeout=0.25):
+                                    reachable = True
+                                    break
+                            except Exception:
+                                pass
+                            time.sleep(0.25)
+                    except Exception:
+                        pass
+
+                    if not reachable:
+                        try:
+                            if os.path.exists(agent_task_error):
+                                with open(agent_task_error, "r", encoding="utf-8", errors="ignore") as f:
+                                    logger.error(f"RDP agent task error: {f.read()}")
+                        except Exception:
+                            pass
+                        try:
+                            if os.path.exists(agent_log):
+                                with open(agent_log, "r", encoding="utf-8", errors="ignore") as f:
+                                    tail = f.read()[-5000:]
+                                    if tail:
+                                        logger.error(f"RDP agent log tail: {tail}")
+                        except Exception:
+                            pass
+                        subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                        logger.error(f"RDP Agent did not become reachable in time: {agent_url}")
+                        return False
+
+                    if app_context is not None:
+                        app_context["sandbox_agent_url"] = agent_url
+                        app_context["rdp_agent_url"] = agent_url
+                    if hasattr(self, 'global_app_context_override') and isinstance(self.global_app_context_override, dict):
+                        self.global_app_context_override["sandbox_agent_url"] = agent_url
+                        self.global_app_context_override["rdp_agent_url"] = agent_url
+
+                    subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                        
+                    return True
+                except Exception as e:
+                    logger.error(f"Failed to launch RDP session: {e}")
+                    return False
+                    
             try:
                 cwd = os.path.dirname(exe) or None
                 subprocess.Popen([exe], cwd=cwd)
@@ -360,8 +597,35 @@ class SequenceExecutor:
             if stop_flag and stop_flag():
                 return False
 
-            if self._is_app_in_foreground(app_context):
+            if not sandboxed and self._is_app_in_foreground(app_context):
                 return True
+
+            # If sandboxed, we bypass foreground checks and just launch/rely on the agent
+            if sandboxed:
+                if attempt == 0:
+                    ok = _try_launch_exe()
+                    if not ok:
+                        return False
+                # Wait briefly to let the sandbox spin up
+                time.sleep(1.0)
+                # Assume true for sandboxed as we can't easily check foreground status inside the VM from the host
+                if getattr(app_context, 'sandbox_agent_url', None) or (isinstance(app_context, dict) and app_context.get("sandbox_agent_url")):
+                    return True
+                
+                # Check for RDP concurrent agent URL
+                if getattr(app_context, 'rdp_agent_url', None) or (isinstance(app_context, dict) and app_context.get("rdp_agent_url")):
+                    return True
+                    
+                # Also check global overrides if local context is missing it
+                if hasattr(self, 'global_app_context_override') and isinstance(self.global_app_context_override, dict):
+                    if self.global_app_context_override.get("rdp_agent_url") or self.global_app_context_override.get("sandbox_agent_url"):
+                        return True
+                    
+                # If there's no URL yet, we must wait a bit longer for it to boot on the first loop
+                time.sleep(1.0)
+                if attempt == int(attempts or 1) - 1:
+                    return False
+                continue
 
             start = time.time()
             while time.time() - start <= focus_timeout:
@@ -426,7 +690,7 @@ class SequenceExecutor:
             return next_connection['node_id']
         else:
             logger.info("No output connections found for sequence node, ending workflow")
-            return None
+            return "__done__"
     
     def execute_sequence(self, item, stop_flag):
         """
@@ -615,10 +879,35 @@ class SequenceExecutor:
                 expected_app = self._get_expected_app_context_from_sequence(sequence_data)
                 if not expected_app and self.fallback_handler is not None:
                     expected_app = getattr(self.fallback_handler, "last_app_context", None)
+                    
+                # Apply global overrides (like Sandbox) if present
+                if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
+                    if not expected_app:
+                        expected_app = {}
+                    expected_app.update(self.global_app_context_override)
+                    logger.info(f"Applied global app context override: {self.global_app_context_override}")
             except Exception:
                 expected_app = None
 
-            if isinstance(expected_app, dict) and any(expected_app.get(k) for k in ("exe", "process_name", "title", "pid")):
+            if expected_app and expected_app.get("sandboxed"):
+                # Always attempt to launch/focus if sandboxed
+                try:
+                    ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))
+                except Exception:
+                    ok = True
+                if not ok:
+                    logger.error("Sandbox/RDP App could not be launched; aborting sequence execution")
+                    return False
+            elif expected_app is None and getattr(self, 'global_app_context_override', {}).get("sandboxed"):
+                try:
+                    # In case of pure sandboxed overrides with no specific app expected context (Agent only)
+                    ok = self._ensure_app_open_and_focused(self.global_app_context_override, stop_flag, attempts=3)
+                except Exception:
+                    ok = True
+                if not ok:
+                    logger.error("Sandbox/RDP App could not be launched via global override; aborting sequence execution")
+                    return False
+            elif isinstance(expected_app, dict) and any(expected_app.get(k) for k in ("exe", "process_name", "title", "pid")):
                 try:
                     ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))
                 except Exception:
@@ -626,12 +915,14 @@ class SequenceExecutor:
                 if not ok:
                     logger.error("App focus could not be confirmed; aborting sequence execution")
                     return False
+            
+            if expected_app:
                 try:
                     if self.fallback_handler is not None:
                         self.fallback_handler.last_app_context = expected_app
                 except Exception:
                     pass
-            
+        
             # 1. Chain-level fallback sequences (applied to all click actions)
             if 'fallback_sequences' in item:
                 fallback_sequences = item['fallback_sequences']
@@ -639,7 +930,7 @@ class SequenceExecutor:
                     if action.get('type') in ['click', 'double_click'] and action.get('screenshot'):
                         action['fallback_sequences'] = fallback_sequences
                         logger.info(f"Injected chain-level fallback sequences into click action: {fallback_sequences}")
-            
+        
             # 2. Action-specific fallbacks from UI configuration
             if 'action_fallbacks' in item:
                 action_fallbacks = item['action_fallbacks']
@@ -656,15 +947,15 @@ class SequenceExecutor:
                     except (ValueError, TypeError) as e:
                         logger.warning(f"Invalid action index '{action_idx}' in action_fallbacks: {e}")
                         continue
-            
+        
             # Create fallback callback that handles sequences and aborts current sequence
             def fallback_callback(fallback_seq_name, action_idx):
                 if stop_flag and stop_flag():
                     logger.info("Fallback execution stopped by user request")
                     return
-                    
-                logger.info(f"Visual matching failed for action {action_idx}. Aborting current sequence and executing fallback: {fallback_seq_name}")
                 
+                logger.info(f"Visual matching failed for action {action_idx}. Aborting current sequence and executing fallback: {fallback_seq_name}")
+            
                 try:
                     fallback_player = SequencePlayer(fallback_seq_name)
                     # Share selection memory with fallback player
@@ -672,16 +963,35 @@ class SequenceExecutor:
                     # Skip initial delay for faster fallback execution
                     fallback_player.play_sequence(stop_flag=stop_flag, skip_initial_delay=True)
                     logger.info(f"Fallback sequence completed. Current sequence was aborted.")
-                    
+                
                 except Exception as e:
                     logger.error(f"Fallback sequence failed: {e}")
-            
+        
             # Play the sequence with fallback support
             try:
-                player = SequencePlayer(seq_file)
-                # Share selection memory with the player instance
-                player.selection_memory = self.selection_memory
-                player.sequence_data = sequence_data  # Use the modified sequence data with fallback
+                # We do not want to reuse a cached SequencePlayer if we need to inject the sandbox URL dynamically
+                # because the base class initialization might have happened before we knew the sandbox URL
+                # NOTE: Actually we SHOULD use the player instance we created/configured above (lines 723-739)
+                # because it's already properly initialized with the sequence data and selection memory!
+                # We just need to update its bot configurations.
+                
+                # Pass sandbox/RDP agent URL to bot and action handlers if available
+                # Note: expected_app might be None if using global overrides, so check both
+                app_ctx = expected_app or getattr(self, 'global_app_context_override', {})
+                if app_ctx:
+                    if app_ctx.get("sandbox_agent_url"):
+                        player.sandbox_agent_url = app_ctx.get("sandbox_agent_url")
+                        player.bot = player # player is already a SeleniumBot instance
+                        player.bot.sandbox_agent_url = app_ctx.get("sandbox_agent_url")
+                        if hasattr(player, 'action_handlers'):
+                            player.action_handlers.bot.sandbox_agent_url = app_ctx.get("sandbox_agent_url")
+                    elif app_ctx.get("rdp_agent_url"):
+                        player.sandbox_agent_url = app_ctx.get("rdp_agent_url") # Map to the same variable for ActionHandlers
+                        player.bot = player
+                        player.bot.sandbox_agent_url = app_ctx.get("rdp_agent_url")
+                        if hasattr(player, 'action_handlers'):
+                            player.action_handlers.bot.sandbox_agent_url = app_ctx.get("rdp_agent_url")
+                    
                 player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
                 try:
                     if self.fallback_handler is not None:
@@ -693,7 +1003,7 @@ class SequenceExecutor:
             except Exception as e:
                 logger.error(f"Error playing sequence {seq_file}: {e}")
                 return False
-            
+        
             # Add extra delay between loops if specified
             if i < loops - 1 and extra_delay > 0:
                 logger.info(f"Extra delay between loops: {extra_delay} seconds")
@@ -705,12 +1015,12 @@ class SequenceExecutor:
                     sleep_time = min(0.1, delay_remaining)
                     time.sleep(sleep_time)
                     delay_remaining -= sleep_time
-        
+    
         # Handle post-sequence conditions
         self._handle_post_sequence_conditions(item, stop_flag, advanced_conditions)
         
         return True
-    
+
     def _handle_pre_sequence_conditions(self, item, stop_flag, advanced_conditions):
         """
         Handle conditional checks before executing a sequence

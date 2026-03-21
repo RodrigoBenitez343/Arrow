@@ -39,12 +39,91 @@ class ActionHandlers:
         self.template_matcher = TemplateMatching()
         self.typing_lock = threading.Lock()
         self.keyboard_controller = keyboard.Controller()
+        
+    def _send_agent_action(self, payload):
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if not agent_url: return False
+        try:
+            import urllib.request
+            import json
+            # Ensure the base url doesn't have a trailing slash before appending /action
+            base_url = agent_url.rstrip('/')
+            
+            # Print the actual URL being requested to debug 404s
+            target_url = f"{base_url}/action"
+            
+            req = urllib.request.Request(
+                target_url,
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            timeout_s = float(getattr(self.bot, "sandbox_agent_timeout_s", 10.0) or 10.0)
+            with urllib.request.urlopen(req, timeout=timeout_s) as response:
+                ok = response.status == 200
+            if not ok:
+                raise RuntimeError(f"Agent HTTP status {getattr(response, 'status', None)}")
+            return True
+        except Exception as e:
+            logger.error(f"Agent request failed: {e}")
+            raise
+            
+    def _get_screen_pil(self):
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if agent_url:
+            import urllib.request
+            import json, base64, io
+            from PIL import Image
+            try:
+                base_url = agent_url.rstrip('/')
+                req = urllib.request.Request(
+                    f"{base_url}/action",
+                    data=json.dumps({"action": "screenshot"}).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'}
+                )
+                timeout_s = float(getattr(self.bot, "sandbox_agent_timeout_s", 10.0) or 10.0)
+                with urllib.request.urlopen(req, timeout=timeout_s) as response:
+                    resp = json.loads(response.read().decode('utf-8'))
+                    if isinstance(resp, dict) and resp.get("status") == "error":
+                        raise RuntimeError(resp.get("message") or "Agent screenshot failed")
+                    if "image" in resp:
+                        img_data = base64.b64decode(resp["image"])
+                        return Image.open(io.BytesIO(img_data)).convert("RGB")
+            except Exception as e:
+                logger.error(f"Agent screenshot failed: {e}")
+                raise
+        return pyautogui.screenshot()
+        
+        # Initialize VNC bridge if running in agent environment
+        self.vnc_bridge = None
+        if os.environ.get("LOOPER_ENV") == "agent_computer_01":
+            self.vnc_bridge = VNCBridge(host="127.0.0.1", port=5900)
+            self.vnc_bridge.connect()
 
     def _tap_key(self, key):
+        """Helper to press and release a key with minimal delay."""
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        key_str = key.name if hasattr(key, 'name') else str(key)
+        
+        if agent_url:
+            self._send_agent_action({"action": "hotkey", "keys": [key_str]})
+            return
+            
+        if self.vnc_bridge:
+            self.vnc_bridge.key_press(key_str)
+            time.sleep(0.005)
+            return
+
         self.keyboard_controller.press(key)
+        time.sleep(0.005) # Micro delay for reliability
         self.keyboard_controller.release(key)
 
     def _press_key_combo(self, modifiers, key):
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if agent_url:
+            keys = [mod.name if hasattr(mod, 'name') else str(mod) for mod in modifiers] + [str(key)]
+            self._send_agent_action({"action": "hotkey", "keys": keys})
+            return
+            
         pressed_mods = []
         try:
             for mod in modifiers:
@@ -119,24 +198,26 @@ class ActionHandlers:
         # Capture single screenshot for all search attempts to improve efficiency
         current_screen_cv = None
         temporal_screenshot_path = None
+        current_screen_pil = None
         try:
+            current_screen_pil = self._get_screen_pil()
             if CV2_AVAILABLE:
                 # Capture once and convert for OpenCV operations
-                screen_pil = pyautogui.screenshot()
-                screen_np = np.array(screen_pil)
+                screen_np = np.array(current_screen_pil)
+                if len(screen_np.shape) == 3 and screen_np.shape[2] == 4:
+                    screen_np = cv2.cvtColor(screen_np, cv2.COLOR_RGBA2RGB)
                 current_screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
                 
                 # Save temporal screenshot for debugging
                 temporal_screenshot_path = f"temporal_screen_{idx}_{int(time.time())}.png"
-                screen_pil.save(temporal_screenshot_path)
+                current_screen_pil.save(temporal_screenshot_path)
                 # Register for automatic cleanup
                 register_temporal_screenshot(temporal_screenshot_path)
                 logger.debug(f"Single screenshot captured and converted for all search methods")
             else:
                 # Fallback: capture screenshot for pyautogui methods
-                temporal_screenshot = pyautogui.screenshot()
                 temporal_screenshot_path = f"temporal_screen_{idx}_{int(time.time())}.png"
-                temporal_screenshot.save(temporal_screenshot_path)
+                current_screen_pil.save(temporal_screenshot_path)
                 # Register for automatic cleanup
                 register_temporal_screenshot(temporal_screenshot_path)
                 logger.debug(f"Temporal screenshot captured for pyautogui methods")
@@ -191,11 +272,19 @@ class ActionHandlers:
                     if strategy['method'] == 'template':
                         # Template matching with multiple candidates to avoid random clicks
                         try:
-                            boxes = list(pyautogui.locateAllOnScreen(
-                                screenshot_path,
-                                confidence=strategy['confidence'],
-                                grayscale=strategy['grayscale']
-                            ))
+                            if current_screen_pil:
+                                boxes = list(pyautogui.locateAll(
+                                    screenshot_path,
+                                    current_screen_pil,
+                                    confidence=strategy['confidence'],
+                                    grayscale=strategy['grayscale']
+                                ))
+                            else:
+                                boxes = list(pyautogui.locateAllOnScreen(
+                                    screenshot_path,
+                                    confidence=strategy['confidence'],
+                                    grayscale=strategy['grayscale']
+                                ))
                         except Exception:
                             boxes = []
 
@@ -352,11 +441,23 @@ class ActionHandlers:
                                 location = None
                         else:
                             # Fallback to single best match if multiple candidates not found
-                            location = pyautogui.locateCenterOnScreen(
-                                screenshot_path,
-                                confidence=strategy['confidence'],
-                                grayscale=strategy['grayscale']
-                            )
+                            if current_screen_pil:
+                                try:
+                                    box = pyautogui.locate(
+                                        screenshot_path,
+                                        current_screen_pil,
+                                        confidence=strategy['confidence'],
+                                        grayscale=strategy['grayscale']
+                                    )
+                                    location = pyautogui.center(box) if box else None
+                                except Exception:
+                                    location = None
+                            else:
+                                location = pyautogui.locateCenterOnScreen(
+                                    screenshot_path,
+                                    confidence=strategy['confidence'],
+                                    grayscale=strategy['grayscale']
+                                )
                     
                     elif strategy['method'] == 'multiscale':
                         # Multi-scale template matching with shared screenshot
@@ -414,15 +515,28 @@ class ActionHandlers:
             cleanup_screenshot(temporal_screenshot_path)
 
         if target_coords:
-            self.bot.human_mouse_move(target_coords[0], target_coords[1])
-            time.sleep(0.01)
             button = action.get('button', 'left')
-            if action.get('type') == 'double_click':
-                self.bot.human_click(button=button, double=True)
-                logger.info(f"Double-clicked ({button}) at {target_coords}")
+            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            
+            if agent_url:
+                self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
+                if action.get('type') == 'double_click':
+                    time.sleep(0.1)
+                    self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
+                logger.info(f"Agent Clicked ({button}) at {target_coords}")
+            elif self.vnc_bridge:
+                self.vnc_bridge.click(target_coords[0], target_coords[1], button=1 if button == 'left' else 3)
+                logger.info(f"VNC Clicked ({button}) at {target_coords}")
             else:
-                self.bot.human_click(button=button, double=False)
-                logger.info(f"Clicked ({button}) at {target_coords}")
+                # Move mouse to target coordinates before clicking
+                self.bot.human_mouse_move(target_coords[0], target_coords[1])
+                time.sleep(0.01)
+                if action.get('type') == 'double_click':
+                    self.bot.human_click(button=button, double=True)
+                    logger.info(f"Double-clicked ({button}) at {target_coords}")
+                else:
+                    self.bot.human_click(button=button, double=False)
+                    logger.info(f"Clicked ({button}) at {target_coords}")
             
             self.bot.last_click_time = time.time()
             try:
@@ -513,6 +627,20 @@ class ActionHandlers:
                 except Exception as str_error:
                     logger.error(f"Failed to convert text to string: {str_error}")
                     return False
+
+            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            if agent_url:
+                self._send_agent_action({"action": "type", "text": text})
+                if action.get('press_enter', False):
+                    self._send_agent_action({"action": "hotkey", "keys": ['enter']})
+                action['completed'] = True
+                return True
+            elif self.vnc_bridge:
+                self.vnc_bridge.type_text(text)
+                if action.get('press_enter', False):
+                    self.vnc_bridge.key_press('enter')
+                action['completed'] = True
+                return True
 
             # Determine if we should use clipboard paste for Unicode/special characters
             # Clipboard paste is significantly more reliable for non-ASCII text on Windows
@@ -670,7 +798,12 @@ class ActionHandlers:
             # Get keystroke delay to prevent issues on slow machines
             keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay
             
-            self._tap_key(key_mapping[key])
+            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            if agent_url:
+                self._send_agent_action({"action": "hotkey", "keys": [key]})
+            else:
+                self._tap_key(key_mapping[key])
+                
             logger.info(f"Pressed special key: {key}")
             
             # Add small delay after keystroke to prevent issues on slow machines
@@ -732,7 +865,20 @@ class ActionHandlers:
             accumulated = rounded_target
             
             if step_amount != 0:
-                pyautogui.scroll(step_amount)  # Execute small scroll
+                agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+                if agent_url:
+                    self._send_agent_action({"action": "scroll", "amount": step_amount})
+                    # executed scroll action via agent
+                elif self.vnc_bridge:
+                    # vncdotool might not have native scroll, but we can try to map it if possible
+                    # or simulate pgup/pgdown
+                    clicks = max(1, abs(step_amount) // 100)
+                    if step_amount > 0:
+                        for _ in range(clicks): self.vnc_bridge.key_press('up')
+                    else:
+                        for _ in range(clicks): self.vnc_bridge.key_press('down')
+                else:
+                    pyautogui.scroll(step_amount)  # Execute small scroll
             
             # Pause between steps to match original timing
             if i < num_steps - 1 and step_duration > 0:
@@ -794,25 +940,40 @@ class ActionHandlers:
             idx (int): Action index
             action (dict): Action configuration
         """
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        
         if action['type'] == 'drag_start':
             abs_x = action['coordinates']['x']
             abs_y = action['coordinates']['y']
-            self.bot.human_mouse_move(abs_x, abs_y)
-            pyautogui.mouseDown() # Press and hold the mouse button.
+            if agent_url:
+                self._send_agent_action({"action": "drag_start", "x": abs_x, "y": abs_y})
+            else:
+                self.bot.human_mouse_move(abs_x, abs_y)
+                pyautogui.mouseDown() # Press and hold the mouse button.
             logger.info(f"Started drag at ({abs_x}, {abs_y})")
 
         elif action['type'] == 'drag_end':
             abs_x = action['coordinates']['x']
             abs_y = action['coordinates']['y']
-            self.bot.human_mouse_move(abs_x, abs_y)
-            pyautogui.mouseUp() # Release the mouse button.
+            if agent_url:
+                self._send_agent_action({"action": "drag_end", "x": abs_x, "y": abs_y})
+            else:
+                self.bot.human_mouse_move(abs_x, abs_y)
+                pyautogui.mouseUp() # Release the mouse button.
             logger.info(f"Ended drag at ({abs_x}, {abs_y})")
 
         elif action['type'] == 'drag_drop':
             start_x, start_y = action['from']['x'], action['from']['y']
             end_x, end_y = action['to']['x'], action['to']['y']
-            self.bot.human_mouse_move(start_x, start_y)
-            pyautogui.mouseDown()
-            self.bot.human_mouse_move(end_x, end_y)
-            pyautogui.mouseUp()
+            if agent_url:
+                self._send_agent_action({
+                    "action": "drag_drop", 
+                    "start_x": start_x, "start_y": start_y, 
+                    "end_x": end_x, "end_y": end_y
+                })
+            else:
+                self.bot.human_mouse_move(start_x, start_y)
+                pyautogui.mouseDown()
+                self.bot.human_mouse_move(end_x, end_y)
+                pyautogui.mouseUp()
             logger.info(f"Performed drag_drop from ({start_x}, {start_y}) to ({end_x}, {end_y})")

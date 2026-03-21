@@ -12,6 +12,7 @@ This is the main entry point that launches the GUI application.
 import os
 import sys
 import io
+import ctypes
 
 # Force UTF-8 encoding for stdout and stderr to handle emojis on Windows
 if sys.platform == 'win32':
@@ -38,6 +39,19 @@ import multiprocessing
 
 # Standard PyInstaller support for multiprocessing
 if __name__ == '__main__':
+    if sys.platform == "win32" and "--elevated" not in sys.argv:
+        try:
+            if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
+                params = subprocess.list2cmdline([os.path.abspath(__file__), "--elevated", *sys.argv[1:]])
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                sys.exit(0)
+        except Exception:
+            pass
+    if "--elevated" in sys.argv:
+        try:
+            sys.argv.remove("--elevated")
+        except Exception:
+            pass
     multiprocessing.freeze_support()
 
 # Ensure DLL load path on Windows
