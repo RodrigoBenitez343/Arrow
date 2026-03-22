@@ -10,6 +10,21 @@ from functools import lru_cache
 from .config import logger, CV2_AVAILABLE, OCR_AVAILABLE
 from .ocr_engine import extract_text_elements
 
+_SANDBOX_AGENT_URL = None
+
+def set_sandbox_agent_url(agent_url):
+    global _SANDBOX_AGENT_URL
+    try:
+        if agent_url and str(agent_url).strip():
+            _SANDBOX_AGENT_URL = str(agent_url).strip()
+        else:
+            _SANDBOX_AGENT_URL = None
+    except Exception:
+        _SANDBOX_AGENT_URL = None
+
+def get_sandbox_agent_url():
+    return _SANDBOX_AGENT_URL
+
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
 
@@ -89,6 +104,31 @@ class TemplateMatching:
         Returns:
             numpy.ndarray: Screen image in BGR format for OpenCV
         """
+        if CV2_AVAILABLE and _SANDBOX_AGENT_URL:
+            try:
+                import urllib.request
+                import json as _json
+                import base64 as _base64
+                import io as _io
+                from PIL import Image
+
+                base_url = str(_SANDBOX_AGENT_URL).rstrip('/')
+                req = urllib.request.Request(
+                    f"{base_url}/action",
+                    data=_json.dumps({"action": "screenshot"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    payload = _json.loads(resp.read().decode("utf-8"))
+                if isinstance(payload, dict) and payload.get("status") == "error":
+                    raise RuntimeError(payload.get("message") or "Agent screenshot failed")
+                img_b64 = payload.get("image") if isinstance(payload, dict) else None
+                if img_b64:
+                    img = Image.open(_io.BytesIO(_base64.b64decode(img_b64))).convert("RGB")
+                    screen_np = np.array(img)
+                    return cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
+            except Exception:
+                pass
         if MSS_AVAILABLE and CV2_AVAILABLE:
             # Use mss for faster capture
             with mss.mss() as sct:

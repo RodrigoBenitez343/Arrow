@@ -159,6 +159,52 @@ class SequenceExecutor:
         exe_norm = os.path.normcase(exe) if exe else ""
         proc_name_norm = proc_name.lower() if proc_name else ""
 
+        def _extract_host_port(url):
+            try:
+                from urllib.parse import urlparse
+                p = urlparse(str(url))
+                host = p.hostname
+                port = p.port
+                if not host:
+                    return None, None
+                if not port:
+                    port = 80 if (p.scheme or "").lower() == "http" else 443
+                return host, int(port)
+            except Exception:
+                return None, None
+
+        def _agent_reachable(url, timeout_s=0.35):
+            if not url:
+                return False
+            host, port = _extract_host_port(url)
+            if not host or not port:
+                return False
+            try:
+                import socket
+                with socket.create_connection((host, int(port)), timeout=float(timeout_s or 0.35)):
+                    return True
+            except Exception:
+                return False
+
+        def _clear_agent_urls():
+            try:
+                if isinstance(app_context, dict):
+                    if "sandbox_agent_url" in app_context:
+                        del app_context["sandbox_agent_url"]
+                    if "rdp_agent_url" in app_context:
+                        del app_context["rdp_agent_url"]
+            except Exception:
+                pass
+            try:
+                g = getattr(self, "global_app_context_override", None)
+                if isinstance(g, dict):
+                    if "sandbox_agent_url" in g:
+                        del g["sandbox_agent_url"]
+                    if "rdp_agent_url" in g:
+                        del g["rdp_agent_url"]
+            except Exception:
+                pass
+
         def _foreground_hwnd():
             try:
                 if gw is not None:
@@ -356,6 +402,34 @@ class SequenceExecutor:
                 
             if sandboxed:
                 try:
+                    ctx = app_context if isinstance(app_context, dict) else {}
+                    existing = None
+                    try:
+                        existing = (ctx.get("sandbox_agent_url") or ctx.get("rdp_agent_url"))
+                    except Exception:
+                        existing = None
+                    if not existing:
+                        try:
+                            g = getattr(self, "global_app_context_override", None)
+                            if isinstance(g, dict):
+                                existing = g.get("sandbox_agent_url") or g.get("rdp_agent_url")
+                        except Exception:
+                            existing = None
+                    if existing:
+                        if not _agent_reachable(existing):
+                            _clear_agent_urls()
+                            existing = None
+                        else:
+                            try:
+                                if isinstance(app_context, dict):
+                                    app_context["sandbox_agent_url"] = existing
+                                    app_context["rdp_agent_url"] = existing
+                            except Exception:
+                                pass
+                            return True
+                    if existing:
+                        return True
+
                     logger.info("Initializing Concurrent RDP Agent Session...")
                     
                     temp_dir = "C:\\TempShared"
@@ -403,6 +477,9 @@ class SequenceExecutor:
                     agent_task_error = os.path.join(temp_dir, "agent_task_error.txt")
 
                     exe_dir = os.path.dirname(exe) if exe else ""
+                    agent_username = str(ctx.get("rdp_username") or ctx.get("username") or "LoOperAgent")
+                    agent_password = str(ctx.get("rdp_password") or ctx.get("password") or "LoOperPassword123!")
+
                     ps_lines = [
                         "$ErrorActionPreference = 'Stop'",
                         f"$env:PYTHONPATH = '{project_root}'",
@@ -427,7 +504,7 @@ class SequenceExecutor:
                         q = subprocess.run(["query", "session"], capture_output=True, text=True)
                         out = (q.stdout or "") + "\n" + (q.stderr or "")
                         for line in out.splitlines():
-                            if "LoOperAgent" not in line:
+                            if agent_username not in line:
                                 continue
                             import re as _re
                             m = _re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
@@ -453,9 +530,9 @@ class SequenceExecutor:
                             "/sc",
                             "ONLOGON",
                             "/ru",
-                            "LoOperAgent",
+                            agent_username,
                             "/rp",
-                            "LoOperPassword123!",
+                            agent_password,
                             "/rl",
                             "HIGHEST",
                             "/it",
@@ -471,30 +548,50 @@ class SequenceExecutor:
                         return False
 
                     # Add credentials to Windows Vault for passwordless MSTSC login
-                    os.system('cmdkey /generic:TERMSRV/127.0.0.2 /user:LoOperAgent /pass:LoOperPassword123!')
+                    os.system(f'cmdkey /generic:TERMSRV/127.0.0.2 /user:{agent_username} /pass:{agent_password}')
                     
                     # Ensure agent account has full read/write access to the TempShared folder
                     try:
-                        subprocess.run(["icacls", temp_dir, "/grant", "LoOperAgent:(OI)(CI)F", "/T"], capture_output=True)
+                        subprocess.run(["icacls", temp_dir, "/grant", f"{agent_username}:(OI)(CI)F", "/T"], capture_output=True)
                     except Exception:
                         pass
 
                     # Create RDP file
                     rdp_file = os.path.join(temp_dir, "agent_session.rdp")
                     # If app_context is literally a string or None, default to a dict
-                    ctx = app_context if isinstance(app_context, dict) else {}
                     show_window = ctx.get("show_window", False) or getattr(self, 'global_app_context_override', {}).get("show_window", False)
                     # Use normal window mode (1) if show_window is True, otherwise use hidden/minimized
                     screen_mode = "1" if show_window else "2"
+                    host_w = 1920
+                    host_h = 1080
+                    try:
+                        import ctypes
+                        host_w = int(ctypes.windll.user32.GetSystemMetrics(0))
+                        host_h = int(ctypes.windll.user32.GetSystemMetrics(1))
+                    except Exception:
+                        host_w = 1920
+                        host_h = 1080
+                    desktop_w = host_w
+                    desktop_h = host_h
+                    try:
+                        dw = ctx.get("desktopwidth") or ctx.get("desktop_width") or ctx.get("screen_width")
+                        dh = ctx.get("desktopheight") or ctx.get("desktop_height") or ctx.get("screen_height")
+                        if dw is not None:
+                            desktop_w = int(float(dw))
+                        if dh is not None:
+                            desktop_h = int(float(dh))
+                    except Exception:
+                        desktop_w = host_w
+                        desktop_h = host_h
                     with open(rdp_file, "w") as f:
                         f.write(f'''screen mode id:i:{screen_mode}
 use multimon:i:0
-desktopwidth:i:1920
-desktopheight:i:1080
+desktopwidth:i:{int(desktop_w)}
+desktopheight:i:{int(desktop_h)}
 smart sizing:i:1
 session bpp:i:32
 full address:s:127.0.0.2
-username:s:LoOperAgent
+username:s:{agent_username}
 audiomode:i:0
 redirectprinters:i:0
 redirectcomports:i:0
@@ -512,13 +609,24 @@ enablecredsspsupport:i:1
                     # If show_window is False, we can launch it minimized or completely hidden
                     if show_window:
                         # When launching visibly, pass creation flags to make sure it spawns a fresh console/window process
-                        subprocess.Popen(["mstsc.exe", rdp_file], creationflags=subprocess.CREATE_NEW_CONSOLE)
+                        proc = subprocess.Popen(["mstsc.exe", rdp_file], creationflags=subprocess.CREATE_NEW_CONSOLE)
                     else:
                         # Launch hidden if not requested to show
                         startupinfo = subprocess.STARTUPINFO()
                         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                         startupinfo.wShowWindow = subprocess.SW_HIDE
-                        subprocess.Popen(["mstsc.exe", rdp_file], startupinfo=startupinfo)
+                        proc = subprocess.Popen(["mstsc.exe", rdp_file], startupinfo=startupinfo)
+                    try:
+                        if isinstance(ctx, dict) and getattr(proc, "pid", None):
+                            ctx["__looper_mstsc_pid"] = int(proc.pid)
+                    except Exception:
+                        pass
+                    try:
+                        g = getattr(self, "global_app_context_override", None)
+                        if isinstance(g, dict) and getattr(proc, "pid", None):
+                            g["__looper_mstsc_pid"] = int(proc.pid)
+                    except Exception:
+                        pass
                     
                     logger.info("Waiting for RDP Agent to become reachable...")
                     agent_url = f"http://127.0.0.2:{int(port)}"
@@ -602,6 +710,18 @@ enablecredsspsupport:i:1
 
             # If sandboxed, we bypass foreground checks and just launch/rely on the agent
             if sandboxed:
+                try:
+                    existing = None
+                    if isinstance(app_context, dict):
+                        existing = app_context.get("sandbox_agent_url") or app_context.get("rdp_agent_url")
+                    if not existing and hasattr(self, "global_app_context_override") and isinstance(self.global_app_context_override, dict):
+                        existing = self.global_app_context_override.get("sandbox_agent_url") or self.global_app_context_override.get("rdp_agent_url")
+                    if existing:
+                        if _agent_reachable(existing):
+                            return True
+                        _clear_agent_urls()
+                except Exception:
+                    pass
                 if attempt == 0:
                     ok = _try_launch_exe()
                     if not ok:
@@ -655,6 +775,129 @@ enablecredsspsupport:i:1
                 time.sleep(0.1)
 
         return self._is_app_in_foreground(app_context)
+
+    def begin_chain_sandbox(self, app_context, stop_flag=None):
+        if not isinstance(app_context, dict):
+            return None
+        if not app_context.get("sandboxed"):
+            return None
+        try:
+            ref = int(app_context.get("__looper_sandbox_refcount") or 0)
+        except Exception:
+            ref = 0
+        app_context["__looper_sandbox_refcount"] = ref + 1
+        existing = app_context.get("sandbox_agent_url") or app_context.get("rdp_agent_url")
+        if existing:
+            try:
+                from urllib.parse import urlparse
+                import socket
+                p = urlparse(str(existing))
+                host = p.hostname
+                port = p.port or (80 if (p.scheme or "").lower() == "http" else 443)
+                with socket.create_connection((host, int(port)), timeout=0.35):
+                    return existing
+            except Exception:
+                try:
+                    if "sandbox_agent_url" in app_context:
+                        del app_context["sandbox_agent_url"]
+                except Exception:
+                    pass
+                try:
+                    if "rdp_agent_url" in app_context:
+                        del app_context["rdp_agent_url"]
+                except Exception:
+                    pass
+        ok = True
+        try:
+            ok = self._ensure_app_open_and_focused(app_context, stop_flag, attempts=int(app_context.get("focus_attempts", 3) or 3))
+        except Exception:
+            ok = True
+        if not ok:
+            return None
+        return app_context.get("sandbox_agent_url") or app_context.get("rdp_agent_url")
+
+    def end_chain_sandbox(self, app_context):
+        if not isinstance(app_context, dict):
+            return
+        if not app_context.get("sandboxed"):
+            return
+        try:
+            ref = int(app_context.get("__looper_sandbox_refcount") or 0)
+        except Exception:
+            ref = 0
+        ref = ref - 1
+        if ref < 0:
+            ref = 0
+        app_context["__looper_sandbox_refcount"] = ref
+        if ref > 0:
+            return
+        keep_open = False
+        try:
+            keep_open = app_context.get("keep_session_open")
+            if keep_open is None:
+                keep_open = app_context.get("persist_session")
+            if keep_open is None:
+                keep_open = app_context.get("keep_sandbox_open")
+            if isinstance(keep_open, str):
+                keep_open = keep_open.strip().lower() in ("true", "1", "yes", "y", "on")
+            keep_open = bool(keep_open)
+        except Exception:
+            keep_open = False
+        if keep_open:
+            try:
+                close_mstsc = app_context.get("close_mstsc_on_end")
+                if close_mstsc is None:
+                    close_mstsc = True
+                if isinstance(close_mstsc, str):
+                    close_mstsc = close_mstsc.strip().lower() in ("true", "1", "yes", "y", "on")
+                close_mstsc = bool(close_mstsc)
+            except Exception:
+                close_mstsc = True
+            if close_mstsc:
+                try:
+                    pid = app_context.get("__looper_mstsc_pid")
+                    if pid:
+                        import subprocess
+                        subprocess.run(["taskkill", "/PID", str(int(pid)), "/T", "/F"], capture_output=True, text=True)
+                except Exception:
+                    pass
+            return
+        agent_username = str(app_context.get("rdp_username") or app_context.get("username") or "LoOperAgent")
+        try:
+            import subprocess
+            q = subprocess.run(["query", "session"], capture_output=True, text=True)
+            out = (q.stdout or "") + "\n" + (q.stderr or "")
+            for line in out.splitlines():
+                if agent_username not in line:
+                    continue
+                m = re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
+                if not m:
+                    continue
+                sid = int(m.group(1))
+                subprocess.run(["logoff", str(sid)], capture_output=True, text=True)
+                time.sleep(1.0)
+                break
+        except Exception:
+            pass
+        try:
+            if "sandbox_agent_url" in app_context:
+                del app_context["sandbox_agent_url"]
+        except Exception:
+            pass
+        try:
+            if "rdp_agent_url" in app_context:
+                del app_context["rdp_agent_url"]
+        except Exception:
+            pass
+        try:
+            g = getattr(self, "global_app_context_override", None)
+            if isinstance(g, dict):
+                if "sandbox_agent_url" in g:
+                    del g["sandbox_agent_url"]
+                if "rdp_agent_url" in g:
+                    del g["rdp_agent_url"]
+        except Exception:
+            pass
     
     def execute_sequence_node(self, node, stop_flag):
         """

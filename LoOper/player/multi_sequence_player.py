@@ -199,6 +199,8 @@ class MultiSequencePlayer(SeleniumBot):
         logger.info("Starting chain playback")
         logger.debug(f"Chain playback - workflow_graph exists: {self.workflow_graph is not None}")
         logger.debug(f"Chain playback - sequences count: {len(self.sequences) if self.sequences else 0}")
+        sandbox_ctx = None
+        sandbox_agent_url = None
         
         try:
             if _cleanup_ollama_runners:
@@ -243,6 +245,43 @@ class MultiSequencePlayer(SeleniumBot):
         except Exception as e:
             logger.warning(f"Failed to reset component states: {e}")
 
+        try:
+            if hasattr(self, 'global_app_context_override') and isinstance(self.global_app_context_override, dict) and self.global_app_context_override:
+                sandbox_ctx = self.global_app_context_override
+            elif hasattr(self, 'workflow_executor') and self.workflow_executor and isinstance(getattr(self.workflow_executor, 'global_app_context_override', None), dict):
+                sandbox_ctx = self.workflow_executor.global_app_context_override
+            elif hasattr(self, 'sequence_executor') and self.sequence_executor and isinstance(getattr(self.sequence_executor, 'global_app_context_override', None), dict):
+                sandbox_ctx = self.sequence_executor.global_app_context_override
+        except Exception:
+            sandbox_ctx = None
+
+        if isinstance(sandbox_ctx, dict) and sandbox_ctx.get("sandboxed"):
+            try:
+                self.sequence_executor.global_app_context_override = sandbox_ctx
+            except Exception:
+                pass
+            try:
+                if hasattr(self, 'workflow_executor') and self.workflow_executor:
+                    self.workflow_executor.global_app_context_override = sandbox_ctx
+            except Exception:
+                pass
+            try:
+                sandbox_agent_url = self.sequence_executor.begin_chain_sandbox(sandbox_ctx, stop_flag=stop_flag)
+                if sandbox_agent_url:
+                    self.sandbox_agent_url = sandbox_agent_url
+                    try:
+                        if hasattr(self, 'action_handlers') and self.action_handlers:
+                            self.action_handlers.bot.sandbox_agent_url = sandbox_agent_url
+                    except Exception:
+                        pass
+                    try:
+                        from .computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(sandbox_agent_url)
+                    except Exception:
+                        pass
+            except Exception:
+                sandbox_agent_url = None
+
         # Interruption-friendly initial delay
         initial_delay = 2.0
         elapsed = 0.0
@@ -281,6 +320,20 @@ class MultiSequencePlayer(SeleniumBot):
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
         finally:
+            if isinstance(sandbox_ctx, dict) and sandbox_ctx.get("sandboxed"):
+                try:
+                    self.sequence_executor.end_chain_sandbox(sandbox_ctx)
+                except Exception:
+                    pass
+                try:
+                    from .computer_vision import set_sandbox_agent_url
+                    set_sandbox_agent_url(None)
+                except Exception:
+                    pass
+                try:
+                    self.sandbox_agent_url = None
+                except Exception:
+                    pass
             try:
                 if _cleanup_ollama_runners:
                     _cleanup_ollama_runners()
