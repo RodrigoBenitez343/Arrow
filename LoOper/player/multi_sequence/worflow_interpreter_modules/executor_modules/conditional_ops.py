@@ -27,6 +27,12 @@ class ConditionalMixin:
             import psutil
         except Exception:
             return True
+        try:
+            sandboxed = bool((app_context or {}).get("sandboxed") or (getattr(self, "global_app_context_override", {}) or {}).get("sandboxed"))
+        except Exception:
+            sandboxed = False
+        if sandboxed:
+            return True
 
         try:
             import pygetwindow as gw
@@ -287,6 +293,14 @@ class ConditionalMixin:
         logger.debug(f"Condition config: {condition_config}")
 
         expected_app = self._get_expected_app_context(conditional_node)
+        if hasattr(self, "global_app_context_override") and isinstance(self.global_app_context_override, dict) and self.global_app_context_override:
+            try:
+                if not expected_app:
+                    expected_app = {}
+                if isinstance(expected_app, dict):
+                    expected_app.update(self.global_app_context_override)
+            except Exception:
+                pass
         if expected_app:
             try:
                 ok = self._ensure_app_open_and_focused(expected_app, stop_flag, timeout=float(expected_app.get("focus_timeout", 2.0)))
@@ -379,6 +393,16 @@ class ConditionalMixin:
                 return False
             
             temp_sequence_player = SequencePlayer(sequence_file)
+            try:
+                gctx = getattr(self, "global_app_context_override", None)
+                if isinstance(gctx, dict):
+                    aurl = gctx.get("sandbox_agent_url") or gctx.get("rdp_agent_url")
+                    if aurl:
+                        temp_sequence_player.sandbox_agent_url = aurl
+                        if hasattr(temp_sequence_player, "action_handlers") and temp_sequence_player.action_handlers:
+                            temp_sequence_player.action_handlers.bot.sandbox_agent_url = aurl
+            except Exception:
+                pass
             # Share selection memory with temporary sequence player
             try:
                 temp_sequence_player.selection_memory = self.selection_memory if self.selection_memory is not None else {}

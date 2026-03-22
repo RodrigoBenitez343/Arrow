@@ -39,6 +39,7 @@ class ActionHandlers:
         self.template_matcher = TemplateMatching()
         self.typing_lock = threading.Lock()
         self.keyboard_controller = keyboard.Controller()
+        self.vnc_bridge = None
         
     def _send_agent_action(self, payload):
         agent_url = getattr(self.bot, 'sandbox_agent_url', None)
@@ -92,12 +93,6 @@ class ActionHandlers:
                 logger.error(f"Agent screenshot failed: {e}")
                 raise
         return pyautogui.screenshot()
-        
-        # Initialize VNC bridge if running in agent environment
-        self.vnc_bridge = None
-        if os.environ.get("LOOPER_ENV") == "agent_computer_01":
-            self.vnc_bridge = VNCBridge(host="127.0.0.1", port=5900)
-            self.vnc_bridge.connect()
 
     def _tap_key(self, key):
         """Helper to press and release a key with minimal delay."""
