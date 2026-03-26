@@ -69,9 +69,11 @@ class WorkflowGraphBuilder:
                 true_connections = []
                 false_connections = []
                 for conn in conditional.get('connections', []):
-                    if conn.get('output_port') == 'true':
+                    # Check both string formats and boolean formats
+                    out_port = conn.get('output_port')
+                    if str(out_port).lower() == 'true':
                         true_connections.append({'node_id': str(conn['target_node_id']), 'input_port': conn.get('input_port')})
-                    elif conn.get('output_port') == 'false':
+                    elif str(out_port).lower() == 'false':
                         false_connections.append({'node_id': str(conn['target_node_id']), 'input_port': conn.get('input_port')})
             else:
                 true_connections = []

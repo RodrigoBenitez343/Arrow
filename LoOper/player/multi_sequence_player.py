@@ -238,7 +238,11 @@ class MultiSequencePlayer(SeleniumBot):
                 self.llm_executor.reset()
             if hasattr(self, 'workflow_executor'):
                 self.workflow_executor.reset()
+            
+            # Reset workflow execution state
+            self.current_sequence_index = 0
             self.skipped_nodes = set()
+            
             if not preserve_selection_memory:
                 self.clear_selection_memory()
             logger.info("Reset MultiSequencePlayer component states")
@@ -321,19 +325,31 @@ class MultiSequencePlayer(SeleniumBot):
             return False
         finally:
             if isinstance(sandbox_ctx, dict) and sandbox_ctx.get("sandboxed"):
-                try:
-                    self.sequence_executor.end_chain_sandbox(sandbox_ctx)
-                except Exception:
-                    pass
-                try:
-                    from .computer_vision import set_sandbox_agent_url
-                    set_sandbox_agent_url(None)
-                except Exception:
-                    pass
-                try:
-                    self.sandbox_agent_url = None
-                except Exception:
-                    pass
+                # We should only kill the sandbox session if this is the TOP LEVEL chain
+                # If we have a global app context override that was passed to us,
+                # we are likely an imported chain, and should NOT close the RDP session.
+                is_top_level = True
+                if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
+                    # If we were initialized with a global override, someone else is managing the sandbox
+                    is_top_level = False
+                    
+                if is_top_level:
+                    try:
+                        self.sequence_executor.end_chain_sandbox(sandbox_ctx)
+                    except Exception:
+                        pass
+                    try:
+                        from .computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(None)
+                    except Exception:
+                        pass
+                    try:
+                        self.sandbox_agent_url = None
+                    except Exception:
+                        pass
+                else:
+                    logger.info("Preserving sandbox session for parent chain")
+                    
             try:
                 if _cleanup_ollama_runners:
                     _cleanup_ollama_runners()

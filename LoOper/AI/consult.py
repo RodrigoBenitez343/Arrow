@@ -55,11 +55,22 @@ class OllamaClient:
             self.session.mount('https://', adapter)
         except Exception:
             pass
-        self.context_data = []  # Store context for ComoRAG
+        self.context_data = []
         self.comorag_config = {
             'max_cycles': 5,
             'memory_size': 1000
         }
+        self._honcho = None
+        self._honcho_session = None
+        self._honcho_user_peer = None
+        self._honcho_assistant_peer = None
+        self._honcho_session_id = os.getenv("LOOPER_HONCHO_SESSION_ID", "looper-agent-session")
+        self._honcho_user_peer_id = os.getenv("LOOPER_HONCHO_USER_PEER_ID", "user")
+        self._honcho_assistant_peer_id = os.getenv("LOOPER_HONCHO_ASSISTANT_PEER_ID", "looper_agent")
+        self._honcho_workspace_id = os.getenv("HONCHO_WORKSPACE_ID", "looper")
+        self._honcho_base_url = os.getenv("LOOPER_HONCHO_URL") or os.getenv("HONCHO_URL") or "http://localhost:8000"
+        self._honcho_api_key = os.getenv("HONCHO_API_KEY")
+        self._initialize_honcho()
         
         self.request_queue = queue.Queue(maxsize=max_queue_size)
         self.queue_processing = False
@@ -217,7 +228,7 @@ class OllamaClient:
                 context: Optional[List[Dict]] = None,
                 async_request: bool = False,
                 callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-        """Generate text using the specified model with optional ComoRAG integration
+        """Generate text using the specified model with Honcho-backed memory integration
         
         Args:
             model: Model name to use
@@ -234,13 +245,13 @@ class OllamaClient:
             If async_request is False: The generation result
             If async_request is True: A dict with request_id and status
         """
-        # Use ComoRAG if enabled (context is not required for ComoRAG)
+        # Use Honcho-backed memory when enabled
         if self.use_comorag:
             if async_request:
                 return self._queue_comorag_request(model, prompt, temperature, max_tokens, 
                                                  system, images, context, callback)
             else:
-                return self._comorag_reason(model, prompt, temperature, max_tokens, 
+                return self._honcho_reason(model, prompt, temperature, max_tokens, 
                                            system, images, context)
         
         # For non-ComoRAG requests, we don't use the queue system
@@ -467,7 +478,7 @@ class OllamaClient:
             if self.debug:
                 print(f"ComoRAG request queue full, processing synchronously")
             # If queue is full, process synchronously
-            result = self._comorag_reason(model, prompt, temperature, max_tokens, system, images, context)
+            result = self._honcho_reason(model, prompt, temperature, max_tokens, system, images, context)
             return result
     
     def _ensure_queue_processing(self):
@@ -505,7 +516,7 @@ class OllamaClient:
                 
                 # Process the request
                 try:
-                    result = self._comorag_reason(
+                    result = self._honcho_reason(
                         request["model"], 
                         request["prompt"],
                         request["temperature"],
@@ -635,6 +646,156 @@ class OllamaClient:
                     self.active_requests[req_id] = {"status": "cancelled", "timestamp": time.time()}
         
         return {"status": "success", "cleared_requests": old_size}
+
+    def _initialize_honcho(self) -> None:
+        try:
+            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            sdk_path = os.path.join(repo_root, "utils", "honcho", "sdks", "python", "src")
+            if os.path.isdir(sdk_path):
+                if sdk_path not in sys.path:
+                    sys.path.append(sdk_path)
+            from honcho import Honcho
+
+            self._honcho = Honcho(
+                api_key=self._honcho_api_key,
+                base_url=self._honcho_base_url,
+                workspace_id=self._honcho_workspace_id,
+            )
+            self._honcho_session = self._honcho.session(self._honcho_session_id)
+            self._honcho_user_peer = self._honcho.peer(self._honcho_user_peer_id)
+            self._honcho_assistant_peer = self._honcho.peer(self._honcho_assistant_peer_id)
+        except Exception:
+            self._honcho = None
+            self._honcho_session = None
+            self._honcho_user_peer = None
+            self._honcho_assistant_peer = None
+
+    def _format_honcho_context(self, session_context) -> str:
+        try:
+            parts = []
+            summary = getattr(session_context, "summary", None)
+            if summary and getattr(summary, "content", None):
+                parts.append(f"[Summary]\n{summary.content}".strip())
+            messages = getattr(session_context, "messages", None) or []
+            if messages:
+                lines = []
+                for m in messages:
+                    peer_id = getattr(m, "peer_id", "") or ""
+                    content = getattr(m, "content", "") or ""
+                    if not content:
+                        continue
+                    lines.append(f"{peer_id}: {content}")
+                if lines:
+                    parts.append("[Messages]\n" + "\n".join(lines))
+            return "\n\n".join([p for p in parts if p]).strip()
+        except Exception:
+            return ""
+
+    def _honcho_reason(self, model: str, prompt: str,
+                       temperature: Optional[float] = None,
+                       max_tokens: Optional[int] = None,
+                       system: Optional[str] = None,
+                       images: Optional[List[str]] = None,
+                       context: Optional[List[Dict]] = None) -> Dict[str, Any]:
+        context_str = ""
+        if context or self.context_data:
+            context_items = context or self.context_data
+            context_parts = []
+            for item in context_items:
+                if isinstance(item, dict):
+                    if 'content' in item:
+                        content = item['content']
+                        source = item.get('source', 'unknown')
+                        item_type = item.get('type', 'context')
+                        context_parts.append(f"[{source} - {item_type}]: {content}")
+                    elif 'ocr_text' in item:
+                        ocr_text = item['ocr_text']
+                        if ocr_text and ocr_text.strip():
+                            context_parts.append(f"[Screen Text - OCR]: {ocr_text}")
+                    elif 'text' in item:
+                        context_parts.append(f"[Context]: {item['text']}")
+                    elif 'workflow_state' in item:
+                        workflow_info = item['workflow_state']
+                        context_parts.append(f"[Workflow State]: Current node: {workflow_info.get('current_node', 'unknown')}, Variables: {workflow_info.get('variables', {})}")
+                    elif 'screenshot_path' in item:
+                        screenshot_info = item.get('description', 'Screenshot captured')
+                        context_parts.append(f"[Screenshot Context]: {screenshot_info}")
+                elif isinstance(item, str):
+                    context_parts.append(f"[Context]: {item}")
+            if context_parts:
+                context_str = "\n\n".join(context_parts)
+
+        honcho_context_text = ""
+        honcho_meta: Dict[str, Any] = {"backend": "honcho"}
+        if self._honcho_session:
+            try:
+                tokens = int(self.comorag_config.get("memory_size", 1000) or 1000)
+                session_context = self._honcho_session.context(
+                    summary=True,
+                    tokens=tokens,
+                    search_query=prompt or "",
+                )
+                honcho_context_text = self._format_honcho_context(session_context)
+                honcho_meta["memory_messages"] = len(getattr(session_context, "messages", []) or [])
+                honcho_meta["has_summary"] = bool(getattr(session_context, "summary", None))
+            except Exception:
+                honcho_context_text = ""
+
+        system_parts = []
+        if system:
+            system_parts.append(system)
+        if context_str:
+            system_parts.append(f"[Runtime Context]\n{context_str}")
+        if honcho_context_text:
+            system_parts.append(f"[Honcho Memory]\n{honcho_context_text}")
+        final_system = "\n\n".join([p for p in system_parts if p]).strip() or None
+
+        res = self.chat(model, prompt, temperature, max_tokens, final_system, images, stream=False)
+
+        response_text = ""
+        try:
+            if isinstance(res, dict):
+                response_text = (
+                    res.get("response")
+                    or res.get("text")
+                    or (res.get("message") or {}).get("content")
+                    or ""
+                )
+        except Exception:
+            response_text = ""
+
+        if self._honcho_session and self._honcho_user_peer and self._honcho_assistant_peer:
+            try:
+                msgs = []
+                if prompt is not None:
+                    msgs.append(
+                        self._honcho_user_peer.message(
+                            str(prompt),
+                            metadata={"looper_type": "turn", "model": str(model)},
+                        )
+                    )
+                if response_text:
+                    msgs.append(
+                        self._honcho_assistant_peer.message(
+                            str(response_text),
+                            metadata={"looper_type": "turn", "model": str(model)},
+                        )
+                    )
+                if msgs:
+                    self._honcho_session.add_messages(msgs)
+            except Exception:
+                pass
+
+        if isinstance(res, dict):
+            res["comorag_metadata"] = {
+                "confidence": 0.0,
+                "reasoning_cycles": 1,
+                "memory_items_used": honcho_meta.get("memory_messages", 0),
+                "reasoning_history": [],
+                "vision_analysis": None,
+                "memory_backend": "honcho",
+            }
+        return res if isinstance(res, dict) else {"response": str(res)}
     
     def _comorag_reason(self, model: str, prompt: str, 
                        temperature: Optional[float] = None,

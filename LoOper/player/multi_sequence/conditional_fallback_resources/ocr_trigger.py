@@ -58,9 +58,8 @@ class OCRTrigger:
             logger.info(f"Checking OCR for text: '{target_text}' (case_sensitive: {case_sensitive})")
             
             # Check for cached result first
-            cached_result = self.validation_cache.get_cached_validation_result(
-                trigger_config, None, self.template_matcher, self.path_resolver
-            )
+            # FORCE bypass cache reading to guarantee a real screen check
+            cached_result = None
             if cached_result is not None:
                 logger.debug(f"Using cached OCR trigger result: {cached_result}")
                 return cached_result
@@ -191,9 +190,8 @@ class OCRTrigger:
                 return False
             
             # Check for cached result first
-            cached_result = self.validation_cache.get_cached_validation_result(
-                trigger_config, screen_cv, self.template_matcher, self.path_resolver
-            )
+            # FORCE bypass cache reading to guarantee a real screen check
+            cached_result = None
             if cached_result is not None:
                 logger.debug(f"Using cached immediate OCR result: {cached_result}")
                 return cached_result

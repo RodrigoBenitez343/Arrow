@@ -389,7 +389,6 @@ class SequenceExecutor:
                 return False
             if exe:
                 try:
-                    import os
                     if not os.path.exists(exe):
                         logger.warning(f"Executable not found: {exe}")
                         return False

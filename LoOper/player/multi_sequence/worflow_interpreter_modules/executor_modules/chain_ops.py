@@ -126,19 +126,12 @@ class ChainImportMixin:
                     logger.info("Stop flag detected before loading imported chain - aborting")
                     return None
                 
-                # Load and execute the imported chain directly using MultiSequencePlayer
-                logger.info(f"Loading imported chain: {resolved_chain_path}")
-                
-                # Try to get chain config from cache first for optimal performance
-                chain_config = get_chain(resolved_chain_path)
-                if chain_config:
-                    logger.info(f"Using cached chain config for: {resolved_chain_path}")
-                else:
-                    # Fallback to loading from disk if not in cache
-                    logger.info(f"Loading chain config from disk (not in cache): {resolved_chain_path}")
-                    import json
-                    with open(resolved_chain_path, 'r', encoding='utf-8') as f:
-                        chain_config = json.load(f)
+                # Always load the imported chain directly from disk to ensure we have the full, up-to-date workflow
+                # The embedded nodes in the JSON are only for UI representation and may be incomplete or stale.
+                logger.info(f"Loading imported chain from disk: {resolved_chain_path}")
+                import json
+                with open(resolved_chain_path, 'r', encoding='utf-8') as f:
+                    chain_config = json.load(f)
                 
                 # Check stop flag after loading chain config
                 if stop_flag and stop_flag():
@@ -160,12 +153,31 @@ class ChainImportMixin:
                         imported_player.workflow_executor.global_app_context_override = app_context_override
                     if hasattr(imported_player, 'sequence_executor') and imported_player.sequence_executor:
                         imported_player.sequence_executor.global_app_context_override = app_context_override
+                else:
+                    # Inherit parent's sandbox context if the imported chain is not explicitly sandboxed
+                    parent_sandbox_ctx = None
+                    try:
+                        if hasattr(self, 'workflow_executor') and self.workflow_executor:
+                            parent_sandbox_ctx = getattr(self.workflow_executor, 'global_app_context_override', None)
+                        elif hasattr(self, 'sequence_executor') and self.sequence_executor:
+                            parent_sandbox_ctx = getattr(self.sequence_executor, 'global_app_context_override', None)
+                    except Exception:
+                        pass
+                    
+                    if parent_sandbox_ctx and isinstance(parent_sandbox_ctx, dict) and parent_sandbox_ctx.get("sandboxed"):
+                        logger.info(f"Inheriting parent sandbox override to imported chain: {parent_sandbox_ctx}")
+                        if hasattr(imported_player, 'workflow_executor') and imported_player.workflow_executor:
+                            imported_player.workflow_executor.global_app_context_override = parent_sandbox_ctx
+                        if hasattr(imported_player, 'sequence_executor') and imported_player.sequence_executor:
+                            imported_player.sequence_executor.global_app_context_override = parent_sandbox_ctx
                         
                 # Share selection memory with imported chain player
                 try:
-                    # Ensure the imported player uses the shared selection memory
-                    imported_player.selection_memory = self.selection_memory if self.selection_memory is not None else {}
-                    # Propagate the shared memory to all modular components created during imported_player init
+                    # Do not share selection memory to allow fresh runs on recursive chains/loops.
+                    # This fixes the issue where conditionals keep hitting the same cached elements in loops.
+                    imported_player.selection_memory = {}
+                    
+                    # Propagate the fresh memory to all modular components
                     try:
                         if hasattr(imported_player, 'fallback_handler') and imported_player.fallback_handler:
                             imported_player.fallback_handler.selection_memory = imported_player.selection_memory
@@ -186,7 +198,7 @@ class ChainImportMixin:
                 
                 # Execute the imported chain using the same method as normal chains
                 logger.info(f"Executing imported chain: {resolved_chain_path}")
-                success = imported_player.play_chain(stop_flag, preserve_selection_memory=True)
+                success = imported_player.play_chain(stop_flag, preserve_selection_memory=False)
                 
                 # Check stop flag after chain execution
                 if stop_flag and stop_flag():

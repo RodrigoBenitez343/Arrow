@@ -54,11 +54,16 @@ class AgentHandler(BaseHTTPRequestHandler):
                         pyautogui.keyUp(k)
                         
             elif action == 'screenshot':
+                import uuid
                 img = pyautogui.screenshot()
                 buffered = io.BytesIO()
                 img.save(buffered, format="PNG")
                 img_str = base64.b64encode(buffered.getvalue()).decode()
+                # Adding a timestamp/UUID prevents aggressive caching proxies or 
+                # OS-level network stack caching from returning stale responses
                 result["image"] = img_str
+                result["timestamp"] = time.time()
+                result["id"] = str(uuid.uuid4())
                 
             elif action == 'scroll':
                 amount = req.get('amount', 0)

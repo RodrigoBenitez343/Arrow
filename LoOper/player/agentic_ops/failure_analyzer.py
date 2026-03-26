@@ -8,18 +8,28 @@ class FailureAnalyzer:
         self._log_llm_interaction = log_llm_interaction
         self._get_model = get_model
 
-    def analyze_failure(self, user_text, plan, execution_result):
+    def analyze_failure(self, user_text, plan, execution_result, tools=None):
         last_result = execution_result.get("last_result_text") if execution_result else ""
         failed_steps = execution_result.get("failed_steps") if execution_result else []
         reason_hint = self._detect_focus_issue(last_result, failed_steps)
         learnings = self._learning_store.format_for_prompt(self._learning_store.relevant(user_text))
+        tool_desc_map = {}
+        try:
+            tool_desc_map = {
+                t.get("id"): (t.get("tool_desc") or t.get("description") or t.get("name") or "")
+                for t in (tools or [])
+                if isinstance(t, dict) and t.get("id")
+            }
+        except Exception:
+            tool_desc_map = {}
         llm_payload = {
             "user_request": user_text,
             "plan": plan,
             "failed_steps": failed_steps,
             "last_result": last_result,
             "reason_hint": reason_hint,
-            "known_learnings": learnings
+            "known_learnings": learnings,
+            "available_tools": tool_desc_map,
         }
         llm_response = self._analyze_failure_with_llm(llm_payload)
         if not llm_response and reason_hint:
@@ -70,7 +80,9 @@ class FailureAnalyzer:
             "If the issue is missing preconditions (app not open, window not focused), include steps to open and focus.\n"
             "Return a JSON object with keys: issue, cause, fix, bad_example, good_example, tags, recovery_plan.\n"
             "bad_example and good_example should be short single-sentence examples.\n"
-            "recovery_plan should be a list of numbered steps as plain strings.\n\n"
+            "recovery_plan must be a list of plain strings.\n"
+            "Each recovery_plan item MUST start with USE_TOOL:<id> where <id> is one of available_tools keys.\n"
+            "Format each recovery_plan item like: USE_TOOL:<id> | <short instruction>.\n\n"
             f"Context:\n{json.dumps(payload, ensure_ascii=False)}"
         )
         model_name = None

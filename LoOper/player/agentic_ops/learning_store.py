@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import time
 
 
@@ -8,17 +7,20 @@ class LearningStore:
     def __init__(self, base_dir, log_event):
         self._base_dir = base_dir
         self._log_event = log_event
+        self._honcho = None
+        self._honcho_session = None
+        self._honcho_user_peer = None
+        self._honcho_assistant_peer = None
+        self._honcho_session_id = os.getenv("LOOPER_HONCHO_SESSION_ID", "looper-agent-session")
+        self._honcho_user_peer_id = os.getenv("LOOPER_HONCHO_USER_PEER_ID", "user")
+        self._honcho_assistant_peer_id = os.getenv("LOOPER_HONCHO_ASSISTANT_PEER_ID", "looper_agent")
+        self._honcho_workspace_id = os.getenv("HONCHO_WORKSPACE_ID", "looper")
+        self._honcho_base_url = os.getenv("LOOPER_HONCHO_URL") or os.getenv("HONCHO_URL") or "http://localhost:8000"
+        self._honcho_api_key = os.getenv("HONCHO_API_KEY")
+        self._initialize_honcho()
 
     def load(self):
-        path = self._store_path()
-        if not os.path.exists(path):
-            return []
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
+        return []
 
     def record(self, learning):
         if not learning:
@@ -32,45 +34,55 @@ class LearningStore:
             "tags": learning.get("tags", []),
             "timestamp": time.time()
         }
-        signature = "|".join([entry.get("issue", ""), entry.get("fix", "")]).strip().lower()
-        existing = self.load()
-        seen = set()
-        for item in existing:
-            sig = "|".join([str(item.get("issue", "")), str(item.get("fix", ""))]).strip().lower()
-            seen.add(sig)
-        if signature and signature in seen:
+        if not self._honcho_session or not self._honcho_assistant_peer:
             return
-        existing.append(entry)
-        path = self._store_path()
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, indent=2)
+            content = json.dumps(entry, ensure_ascii=False)
+            msg = self._honcho_assistant_peer.message(
+                content,
+                metadata={
+                    "looper_type": "learning",
+                    "tags": entry.get("tags") or [],
+                },
+            )
+            self._honcho_session.add_messages(msg)
             if self._log_event:
-                self._log_event("learning_recorded", {"path": path, "entry": entry})
+                self._log_event(
+                    "learning_recorded",
+                    {
+                        "backend": "honcho",
+                        "workspace_id": self._honcho_workspace_id,
+                        "session_id": self._honcho_session_id,
+                        "entry": entry,
+                    },
+                )
         except Exception:
-            pass
+            return
 
     def relevant(self, text, limit=5):
-        learnings = self.load()
-        if not text:
-            return learnings[-limit:]
-        tokens = re.findall(r"[a-zA-Z0-9]+", str(text).lower())
-        scored = []
-        for item in learnings:
-            hay = " ".join([
-                str(item.get("issue", "")),
-                str(item.get("cause", "")),
-                str(item.get("fix", "")),
-                " ".join([str(t) for t in (item.get("tags") or [])])
-            ]).lower()
-            score = sum(1 for t in tokens if t in hay)
-            if score:
-                scored.append((score, item))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if scored:
-            return [item for _, item in scored[:limit]]
-        return learnings[-limit:]
+        if not self._honcho_session:
+            return []
+        query = str(text or "").strip()
+        if not query:
+            query = "learning"
+        try:
+            messages = self._honcho_session.search(
+                query=query,
+                filters={"metadata": {"looper_type": "learning"}},
+                limit=int(limit or 5),
+            )
+        except Exception:
+            return []
+        results = []
+        for msg in messages or []:
+            try:
+                raw = getattr(msg, "content", "") or ""
+                item = json.loads(raw) if raw.strip().startswith("{") else {"issue": raw}
+                if isinstance(item, dict):
+                    results.append(item)
+            except Exception:
+                continue
+        return results[: int(limit or 5)]
 
     def format_for_prompt(self, learnings):
         if not learnings:
@@ -86,3 +98,27 @@ class LearningStore:
 
     def _store_path(self):
         return os.path.join(self._base_dir, "AI", "agent_learnings.json")
+
+    def _initialize_honcho(self):
+        try:
+            repo_root = os.path.dirname(self._base_dir.rstrip("\\/"))
+            sdk_path = os.path.join(repo_root, "utils", "honcho", "sdks", "python", "src")
+            if os.path.isdir(sdk_path):
+                import sys
+                if sdk_path not in sys.path:
+                    sys.path.append(sdk_path)
+            from honcho import Honcho
+
+            self._honcho = Honcho(
+                api_key=self._honcho_api_key,
+                base_url=self._honcho_base_url,
+                workspace_id=self._honcho_workspace_id,
+            )
+            self._honcho_session = self._honcho.session(self._honcho_session_id)
+            self._honcho_user_peer = self._honcho.peer(self._honcho_user_peer_id)
+            self._honcho_assistant_peer = self._honcho.peer(self._honcho_assistant_peer_id)
+        except Exception:
+            self._honcho = None
+            self._honcho_session = None
+            self._honcho_user_peer = None
+            self._honcho_assistant_peer = None

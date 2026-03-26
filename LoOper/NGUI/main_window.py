@@ -648,10 +648,48 @@ class MainWindow(QMainWindow):
             from player.multi_sequence.conditional_fallback_handler import ConditionalFallbackHandler
             handler = ConditionalFallbackHandler()
             
-            result = handler.evaluate_conditional_from_node(conditional_data)
-            
-            # Restore window
-            self._restore_window()
+            # Use chain configuration global override to support testing inside sandbox if applicable
+            sandbox_agent_url = None
+            try:
+                chain_config = self.graph_view.get_chain_config()
+                if chain_config and chain_config.get("sequences"):
+                    for seq in chain_config.get("sequences", []):
+                        app_ctx = seq.get("app_context")
+                        if isinstance(app_ctx, dict) and app_ctx.get("sandboxed"):
+                            # The node testing uses the global URL so we must set it
+                            from player.computer_vision import set_sandbox_agent_url
+                            
+                            # Determine the correct URL based on context or running session
+                            url = app_ctx.get("sandbox_agent_url") or app_ctx.get("rdp_agent_url")
+                            if url:
+                                set_sandbox_agent_url(url)
+                                break
+                            
+                            # Fallback check if agent is running and we have URL file
+                            import os
+                            import json
+                            agent_info_path = "C:\\TempShared\\agent_info.json"
+                            if os.path.exists(agent_info_path):
+                                try:
+                                    with open(agent_info_path, "r", encoding="utf-8") as f:
+                                        info = json.load(f) or {}
+                                    port = info.get("port")
+                                    if port:
+                                        url = f"http://127.0.0.2:{int(port)}"
+                                        set_sandbox_agent_url(url)
+                                        break
+                                except Exception:
+                                    pass
+            except Exception:
+                pass
+                
+            try:
+                result = handler.evaluate_conditional_from_node(conditional_data)
+            finally:
+                # Always restore window even if evaluation fails
+                self._restore_window()
+                QApplication.processEvents()
+                time.sleep(0.2)
             
             # Show result
             msg = "TRUE" if result else "FALSE"

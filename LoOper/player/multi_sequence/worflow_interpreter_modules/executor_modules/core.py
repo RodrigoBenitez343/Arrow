@@ -110,27 +110,20 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                         ready_nodes.add(node_id)
                 continue
             if not ready_nodes:
-                try:
-                    vars_snapshot = self.llm_executor.get_all_variables()
-                except Exception:
-                    vars_snapshot = {}
-                typing_active = any(k.endswith('_writing') and vars_snapshot.get(k) for k in vars_snapshot.keys())
-                if typing_active:
-                    try:
-                        time.sleep(0.05)
-                    except Exception:
-                        pass
-                    for node_id, node_data in self.workflow_graph.items():
-                        if node_id in completed_nodes:
-                            continue
-                        if self._are_all_dependencies_satisfied(node_id, completed_nodes):
-                            ready_nodes.add(node_id)
-                    if not ready_nodes:
-                        logger.info("Workflow execution completed successfully")
-                        return True
-                else:
+                remaining = [nid for nid in self.workflow_graph.keys() if nid not in completed_nodes and nid not in self.skipped_nodes]
+                if not remaining:
                     logger.info("Workflow execution completed successfully")
                     return True
+
+                for nid in remaining:
+                    if self._are_all_dependencies_satisfied(nid, completed_nodes):
+                        ready_nodes.add(nid)
+
+                if ready_nodes:
+                    continue
+
+                logger.error(f"Workflow execution stalled. Remaining nodes not ready: {remaining}")
+                return False
             
             current_node_id = self._select_next_node(ready_nodes)
             
@@ -221,23 +214,36 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     if branch_node:
                         # Mark the chosen branch in the conditional node
                         node['chosen_branch_node'] = branch_node
+                        
+                        # Fix: Check if node['data'] needs the update too since _are_all_dependencies_satisfied 
+                        # often looks at the node config from self.workflow_graph directly which may be a copy
+                        if 'data' in node:
+                            node['data']['chosen_branch_node'] = branch_node
+                            
                         # Add the chosen branch node to ready nodes if dependencies are satisfied
                         if self._are_all_dependencies_satisfied(branch_node, completed_nodes):
                             ready_nodes.add(branch_node)
                             logger.info(f"Conditional branch chosen: {branch_node}")
                         
-                        # Mark nodes in the unchosen branch as skipped
-                        unchosen_branch = 'false' if conditional_result else 'true'
-                        self._mark_skipped(current_node_id, unchosen_branch)
-                        
-                        # Ensure the chosen branch node is not marked as skipped
-                        if branch_node in self.skipped_nodes:
-                            logger.warning(f"Chosen branch node {branch_node} was previously marked as skipped. Unskipping it.")
-                            self.skipped_nodes.remove(branch_node)
+                        chosen_port = 'true' if conditional_result else 'false'
+                        unchosen_port = 'false' if conditional_result else 'true'
+                        try:
+                            self._mark_skipped(current_node_id, chosen_port, unchosen_port, completed_nodes)
+                        except Exception:
+                            pass
+                    else:
+                        # No explicit branch connection - this is fine for conditionals with only one output.
+                        # The full graph scan will still discover reachable nodes downstream.
+                        logger.info(f"Conditional {current_node_id} has no explicit branch target, continuing with full scan")
                 
                 # Standard output connection handling
                 next_nodes = []
-                if node['type'] == 'llm':
+                if node['type'] == 'conditional':
+                    # We already handled branch_node above, just make sure it's in next_nodes
+                    # so the fallback/generic readiness check doesn't miss it
+                    if branch_node:
+                        next_nodes.append(branch_node)
+                elif node['type'] == 'llm':
                     # LLM-specific chaining rules
                     next_nodes = self._get_output_connected_nodes(current_node_id)
                     has_pending_non_llm_outputs = False
