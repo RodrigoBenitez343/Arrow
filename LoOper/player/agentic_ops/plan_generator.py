@@ -13,7 +13,13 @@ class PlanGenerator:
         except Exception:
             return [text]
         llm_executor = self._get_llm_executor(LLMExecutor)
-        tool_descriptions = "\n".join([f"- {t['name']}: {t.get('description', '')}" for t in tools])
+        tool_descriptions = "\n".join(
+            [
+                f"- {t.get('id')}: {t.get('tool_desc') or t.get('description') or t.get('name') or ''}"
+                for t in (tools or [])
+                if isinstance(t, dict)
+            ]
+        )
         prompt = (
             "You are an expert planner for an automation agent.\n"
             "Your goal is to create a logical sequence of steps to fulfill the user's request.\n"
@@ -24,11 +30,12 @@ class PlanGenerator:
             "- If the user asks whether something is already open or running, plan a status-check step first and do not open anything until after the check result.\n"
             "- Ground your plan in known learnings. If a prior mistake shows a missing precondition (like app open or window focus), add the missing precondition step.\n"
             "- Do not combine multiple distinct actions (like opening an app AND typing) into one step unless a single tool handles both.\n"
-            "- Put each step on its own line, starting with a number.\n\n"
+            "- Each step MUST start with USE_TOOL:<id> matching one of the Available Tools.\n"
+            "- Format each step exactly like: '1. USE_TOOL:<id> | <short instruction>'.\n\n"
             f"User Request: {text}\n\n"
             f"Known Learnings:\n{known_learnings}\n\n"
             f"Available Tools:\n{tool_descriptions}\n\n"
-            "Output ONLY a numbered list of steps (e.g., '1. Step one'). Do not include any other text."
+            "Output ONLY a numbered list of steps. Do not include any other text."
         )
         model_name = None
         if self._get_model:

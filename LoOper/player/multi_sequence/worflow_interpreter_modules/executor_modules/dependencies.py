@@ -11,7 +11,7 @@ class DependenciesMixin:
         """
         starting_nodes = []
         
-        logger.debug(f"Looking for starting nodes in graph with {len(self.workflow_graph)} nodes")
+        logger.info(f"=== _find_all_starting_nodes called on graph with {len(self.workflow_graph)} nodes ===")
         
         # Debug: Log all nodes and their inputs
         for node_id, node_data in self.workflow_graph.items():
@@ -43,7 +43,7 @@ class DependenciesMixin:
                     logger.debug(f"Skipping tool-provider chain import from starting nodes: {node_id}")
                     continue
                 starting_nodes.append(node_id)
-                logger.debug(f"Found starting node: {node_id} (type: {node_data['type']})")
+                logger.info(f"Found starting node: {node_id} (type: {node_data['type']})")
 
 
         if not starting_nodes:
@@ -132,74 +132,17 @@ class DependenciesMixin:
                                 newly_ready.append(target_node_id)
                                 logger.debug(f"Node {target_node_id} is now ready (output connection from {completed_node_id})")
         
-        # Then check all nodes to see if any are now ready based on input dependencies
+        # Full graph scan: after every node completion, check ALL unvisited nodes.
+        # This ensures conditionals that become reachable later are always discovered.
         for node_id, node_data in self.workflow_graph.items():
             if node_id in completed_nodes or node_id in newly_ready:
                 continue  # Skip already completed or already identified nodes
-            
-            node_inputs = node_data.get('inputs', [])
-            if not node_inputs:
-                continue
-            
-            # Skip nodes that are handled by conditional branching logic
-            # Only skip if ALL inputs are from conditional nodes that haven't chosen this path
-            # and no other non-conditional inputs are satisfied
-            should_skip_conditional_handling = False
-            conditional_inputs = []
-            for input_connection in node_inputs:
-                input_node_id = input_connection['from_node']
-                if input_node_id in self.workflow_graph:
-                    input_node = self.workflow_graph[input_node_id]
-                    if input_node.get('type') == 'conditional':
-                        conditional_inputs.append(input_node_id)
-            
-            # If this node has conditional inputs, check if any of them have chosen this node
-            if conditional_inputs:
-                has_active_conditional_path = False
-                all_conditionals_decided = True
-                
-                for conditional_id in conditional_inputs:
-                    conditional_node = self.workflow_graph[conditional_id]
-                    # Check if this conditional has already been executed
-                    if conditional_id in completed_nodes:
-                        chosen_branch = conditional_node.get('chosen_branch_node')
-                        if chosen_branch == node_id:
-                            has_active_conditional_path = True
-                            break
-                    else:
-                        # This conditional hasn't run yet
-                        all_conditionals_decided = False
-                
-                # If no conditional has chosen this path yet, and it has no other non-conditional inputs
-                # that are satisfied, then skip it.
-                # Actually, we should be even more careful: if ANY conditional leads here
-                # and has NOT chosen this path, we should only skip if there are NO other
-                # paths that COULD be active.
-                
-                if all_conditionals_decided and not has_active_conditional_path:
-                    # Check if there are any non-conditional inputs
-                    has_non_conditional_input = False
-                    for input_connection in node_inputs:
-                        if input_connection['from_node'] not in conditional_inputs:
-                            has_non_conditional_input = True
-                            break
-                    
-                    if not has_non_conditional_input:
-                        should_skip_conditional_handling = True
-                elif not all_conditionals_decided:
-                    # If some conditionals haven't decided yet, we should wait
-                    # unless there's a non-conditional path that is already satisfied.
-                    # This is handled by _are_all_dependencies_satisfied later.
-                    pass
-            
-            if should_skip_conditional_handling:
-                continue  # Skip nodes that haven't been chosen by conditional branching
-            
-            # Use comprehensive dependency check to include upstream-typing deferral and other rules
-            if not self._are_all_dependencies_satisfied(node_id, completed_nodes):
-                continue
-            newly_ready.append(node_id)
-            logger.debug(f"Node {node_id} is now ready (dependencies satisfied)")
+
+            if self._are_all_dependencies_satisfied(node_id, completed_nodes):
+                if node_id not in newly_ready:
+                    newly_ready.append(node_id)
+                    logger.debug(f"Node {node_id} is now ready (full scan after {completed_node_id})")
+
         return newly_ready
 
     def _llm_inputs_have_pending_non_llm_outputs(self, node_id, completed_nodes):
@@ -291,11 +234,57 @@ class DependenciesMixin:
             logger.debug(f"Node {node_id} has no inputs, marking as ready")
             return True
 
-        # Filter out non-blocking inputs (tools, context)
+        # Special logic: If a node has multiple inputs (e.g. it's a merge point after a branch),
+        # it is ready if ANY of its un-skipped conditional branch inputs have completed
+        # AND all of its non-conditional required inputs have completed.
+        
+        has_conditional_input = False
+        conditional_satisfied = False
+        
+        for input_connection in inputs:
+            from_node_id = input_connection['from_node']
+            if from_node_id in self.skipped_nodes:
+                continue
+                
+            from_node = self.workflow_graph.get(from_node_id, {})
+            if from_node.get('type') == 'conditional':
+                has_conditional_input = True
+                if from_node_id in completed_nodes:
+                    # Check if THIS specific conditional path was the one chosen
+                    chosen = from_node.get('chosen_branch_node')
+                    if not chosen and 'data' in from_node:
+                        chosen = from_node['data'].get('chosen_branch_node')
+                    
+                    if not chosen and 'last_conditional_result' in from_node:
+                        res = from_node['last_conditional_result']
+                        branch_name = 'true' if res else 'false'
+                        conns = from_node.get('connections', {})
+                        if isinstance(conns, dict):
+                            b_conns = conns.get(branch_name, [])
+                            if b_conns:
+                                chosen = b_conns[0].get('target_node_id') or b_conns[0].get('node_id')
+                        elif isinstance(conns, list):
+                            for c in conns:
+                                if str(c.get('output_port')).lower() == branch_name:
+                                    chosen = c.get('target_node_id') or c.get('node_id')
+                                    break
+                                    
+                    if chosen == node_id:
+                        conditional_satisfied = True
+        
+        # If it has conditional inputs, and none of them are satisfied yet, it's not ready
+        if has_conditional_input and not conditional_satisfied:
+            return False
+
+        # Filter out non-blocking inputs (tools, context) and inputs from skipped/conditional nodes
         filtered_inputs = []
         for _inp in inputs:
             ip = str(_inp.get('input_port'))
             if ip in ('tools', 'context'):
+                continue
+            if _inp['from_node'] in self.skipped_nodes:
+                continue
+            if self.workflow_graph.get(_inp['from_node'], {}).get('type') == 'conditional':
                 continue
             filtered_inputs.append(_inp)
 

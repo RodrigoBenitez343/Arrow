@@ -6,11 +6,13 @@ Computer vision and template matching functionality for the LocalOperator automa
 import os
 import time
 import pyautogui
+import hashlib
 from functools import lru_cache
 from .config import logger, CV2_AVAILABLE, OCR_AVAILABLE
 from .ocr_engine import extract_text_elements
 
 _SANDBOX_AGENT_URL = None
+_LAST_SANDBOX_HASH = None
 
 def set_sandbox_agent_url(agent_url):
     global _SANDBOX_AGENT_URL
@@ -68,10 +70,10 @@ class TemplateMatching:
         # Convert to absolute path for consistent caching
         abs_path = os.path.abspath(template_path)
         
-        # Check cache first
-        if abs_path in cls._template_cache:
-            logger.debug(f"Template cache hit: {abs_path}")
-            return cls._template_cache[abs_path]
+        # Disable cache check entirely so we always read from disk
+        # if abs_path in cls._template_cache:
+        #     logger.debug(f"Template cache hit: {abs_path}")
+        #     return cls._template_cache[abs_path]
         
         # Load from disk
         template = cv2.imread(abs_path)
@@ -79,15 +81,6 @@ class TemplateMatching:
             logger.debug(f"Failed to load template: {abs_path}")
             return None
         
-        # Add to cache with LRU eviction
-        if len(cls._template_cache) >= cls._cache_max_size:
-            # Remove oldest entry (simple FIFO for now)
-            oldest_key = next(iter(cls._template_cache))
-            del cls._template_cache[oldest_key]
-            logger.debug(f"Template cache evicted: {oldest_key}")
-        
-        cls._template_cache[abs_path] = template.copy()
-        logger.debug(f"Template cached: {abs_path}")
         return template
     
     @classmethod
@@ -111,23 +104,43 @@ class TemplateMatching:
                 import base64 as _base64
                 import io as _io
                 from PIL import Image
-
+                import time as _time
+                import random as _random
+                global _LAST_SANDBOX_HASH
                 base_url = str(_SANDBOX_AGENT_URL).rstrip('/')
+                cache_buster = f"?t={_time.time()}&r={_random.randint(1000, 9999)}"
+                target_url = f"{base_url}/action{cache_buster}"
                 req = urllib.request.Request(
-                    f"{base_url}/action",
+                    target_url,
                     data=_json.dumps({"action": "screenshot"}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache",
+                        "Expires": "0",
+                        "Connection": "close"
+                    },
                 )
-                with urllib.request.urlopen(req, timeout=10.0) as resp:
-                    payload = _json.loads(resp.read().decode("utf-8"))
-                if isinstance(payload, dict) and payload.get("status") == "error":
-                    raise RuntimeError(payload.get("message") or "Agent screenshot failed")
-                img_b64 = payload.get("image") if isinstance(payload, dict) else None
-                if img_b64:
-                    img = Image.open(_io.BytesIO(_base64.b64decode(img_b64))).convert("RGB")
-                    screen_np = np.array(img)
-                    return cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-            except Exception:
+                tries = 0
+                while tries < 2:
+                    with urllib.request.urlopen(req, timeout=10.0) as resp:
+                        payload = _json.loads(resp.read().decode("utf-8"))
+                    if isinstance(payload, dict) and payload.get("status") == "error":
+                        raise RuntimeError(payload.get("message") or "Agent screenshot failed")
+                    img_b64 = payload.get("image") if isinstance(payload, dict) else None
+                    if img_b64:
+                        img = Image.open(_io.BytesIO(_base64.b64decode(img_b64))).convert("RGB")
+                        screen_np = np.array(img)
+                        h = hashlib.md5(screen_np.tobytes()).hexdigest()
+                        if _LAST_SANDBOX_HASH is not None and h == _LAST_SANDBOX_HASH and tries == 0:
+                            _time.sleep(0.08)
+                            tries += 1
+                            continue
+                        _LAST_SANDBOX_HASH = h
+                        return cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
+                    break
+            except Exception as e:
+                logger.error(f"Sandbox capture_screen failed: {e}")
                 pass
         if MSS_AVAILABLE and CV2_AVAILABLE:
             # Use mss for faster capture
@@ -148,6 +161,21 @@ class TemplateMatching:
             # pyautogui returns RGB, convert to BGR for OpenCV
             screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
             return screen_cv
+            
+    @staticmethod
+    def _debug_save_screenshot(screen_cv, prefix="cv_debug"):
+        """Save a screenshot for debugging purposes"""
+        try:
+            import os
+            import time
+            debug_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "screenshots", "debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            timestamp = int(time.time() * 1000)
+            path = os.path.join(debug_dir, f"{prefix}_{timestamp}.png")
+            cv2.imwrite(path, screen_cv)
+            logger.debug(f"Saved debug screenshot to {path}")
+        except Exception as e:
+            logger.debug(f"Failed to save debug screenshot: {e}")
     
     # Adaptive multi-scale tracking
     _template_attempt_counts = {}  # Track attempts per template for adaptive scaling
@@ -189,6 +217,9 @@ class TemplateMatching:
         elif len(screen_cv.shape) == 3 and screen_cv.shape[2] == 4:
             # RGBA to BGR
             screen_cv = cv2.cvtColor(screen_cv, cv2.COLOR_RGBA2BGR)
+            
+        # Optional: uncomment to debug the actual images being evaluated
+        # TemplateMatching._debug_save_screenshot(screen_cv, "eval_screen")
         
         # Adaptive multi-scale strategy
         abs_path = os.path.abspath(template_path)
@@ -229,7 +260,10 @@ class TemplateMatching:
         
         best_match = None
         best_confidence = 0
-        early_exit_threshold = min(0.95, confidence + 0.1)  # Early exit if we get very high confidence
+        
+        # Don't use early exit if we want to ensure we're finding the BEST possible match
+        # across all scales rather than just the FIRST match that passes the threshold
+        # early_exit_threshold = min(0.95, confidence + 0.1)  
         
         for scale in sorted_scales:
             try:
@@ -269,10 +303,7 @@ class TemplateMatching:
                         center_y = max_loc[1] + h // 2
                         best_match = (center_x, center_y)
                         
-                        # Early exit for very high confidence matches
-                        if max_val >= early_exit_threshold:
-                            logger.debug(f"[EARLY EXIT] High confidence {max_val:.3f} >= {early_exit_threshold:.3f}")
-                            break
+                        # Removed early exit to ensure we evaluate all scales and return the truest match
                 
             except Exception as e:
                 logger.debug(f"Scale {scale} failed: {e}")

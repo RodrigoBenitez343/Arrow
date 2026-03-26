@@ -39,13 +39,8 @@ class PresenceTrigger:
             bool: True if element is found
         """
         try:
-            # Check for cached result first
-            cached_result = self.validation_cache.get_cached_validation_result(
-                trigger_config, screen_cv, self.template_matcher, self.path_resolver
-            )
-            if cached_result is not None:
-                logger.debug(f"Using cached presence trigger result: {cached_result}")
-                return cached_result
+            # FORCE bypass cache reading to guarantee a real screen check
+            cached_result = None
             
             image_path = trigger_config.get('image_path')
             # Resolve image path relative to the chain file directory for nested imports
@@ -73,6 +68,9 @@ class PresenceTrigger:
             if current_screen_cv is None:
                 current_screen_cv = self.template_matcher.capture_screen()
                 
+            # We must ignore the cache here too, otherwise the inner loop might just reuse a stale evaluation
+            # from a previous run or manual test.
+            
             # Perform single presence check using the existing method
             found = self._perform_single_presence_check(image_path, confidence, scales, trigger_config, current_screen_cv)
             if found:
@@ -136,7 +134,7 @@ class PresenceTrigger:
             
             found = result is not None
             
-            # Cache the result
+            # Cache the result (temporarily disabled logic inside cache, but we keep the call)
             self.validation_cache.cache_validation_result(
                 trigger_config, found, screen_cv, self.template_matcher, self.path_resolver
             )
@@ -173,12 +171,32 @@ class PresenceTrigger:
         
         logger.info(f"Starting presence check with timeout: {timeout}s, check_interval: {check_interval}s")
         
+        try:
+            from ...computer_vision import get_sandbox_agent_url
+            if get_sandbox_agent_url():
+                init_delay = trigger_config.get('initial_delay')
+                if init_delay is None:
+                    init_delay = trigger_config.get('sandbox_initial_delay', trigger_config.get('rdp_initial_delay'))
+                if init_delay is None:
+                    try:
+                        init_delay = float(trigger_config.get('timeout', 0)) * 0.2
+                    except Exception:
+                        init_delay = 0.6
+                    init_delay = max(0.4, min(1.0, float(init_delay)))
+                time.sleep(float(init_delay))
+        except Exception:
+            pass
+        
         while time.time() - start_time < timeout:
             attempt_count += 1
             
             if self.stop_flag and self.stop_flag():
                 logger.info("Stop flag detected during presence timeout check - aborting")
                 return False
+                
+            # FORCE clear any lingering state/cache inside the validation cache if it's somehow persisting
+            if hasattr(self, 'validation_cache') and hasattr(self.validation_cache, 'clear_cache'):
+                self.validation_cache.clear_cache()
                 
             if self.check_presence_trigger(trigger_config):
                 logger.info(f"Presence found after {attempt_count} attempts ({time.time() - start_time:.2f}s)")

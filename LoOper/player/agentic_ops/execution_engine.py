@@ -128,7 +128,7 @@ class ExecutionEngine:
         }
 
     def handle_execution_failure(self, user_text, plan, tools, execution_result):
-        analysis = self._failure_analyzer.analyze_failure(user_text, plan, execution_result)
+        analysis = self._failure_analyzer.analyze_failure(user_text, plan, execution_result, tools)
         if self._log_event:
             self._log_event("failure_analysis", {"analysis": analysis, "execution_result": execution_result})
         if analysis and analysis.get("recovery_plan"):

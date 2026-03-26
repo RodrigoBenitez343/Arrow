@@ -425,94 +425,123 @@ class ConditionalMixin:
         Returns:
             str: Next node ID, or None if no connection found
         """
+        # Convert the result to a strict boolean first
+        result = bool(result)
+        
         # Determine which branch to follow based on result
         branch = 'true' if result else 'false'
+        logger.info(f"Conditional result evaluated to: {result}, looking for branch: '{branch}'")
         
         # Get connections for this branch
         connections = node.get('connections', {})
-        branch_connections = connections.get(branch, [])
-        
+        if isinstance(connections, list):
+            # Format from older saves or list-based connections
+            branch_connections = [c for c in connections if str(c.get('output_port')).lower() == branch or str(c.get('output_port')).lower() == str(result).lower()]
+        else:
+            if isinstance(connections, str):
+                import json
+                try:
+                    connections = json.loads(connections)
+                except Exception:
+                    connections = {}
+            # Fallback check for flat array format sometimes saved by NGUI
+            if isinstance(connections, list):
+                 branch_connections = [c for c in connections if str(c.get('output_port')).lower() == branch or str(c.get('output_port')).lower() == str(result).lower()]
+            else:
+                 branch_connections = connections.get(branch, [])
+                 if not branch_connections:
+                     branch_connections = connections.get(str(result).lower(), [])
+                 if not branch_connections:
+                     branch_connections = connections.get(str(result).capitalize(), [])
+                 # Additional check if connections are flat inside dict
+                 if not branch_connections:
+                     for c in connections:
+                         if isinstance(c, dict) and (str(c.get('output_port')).lower() == branch or str(c.get('output_port')).lower() == str(result).lower()):
+                             branch_connections.append(c)
+            
         target_node = None
         if branch_connections:
             # Take the first connection in the branch
-            target_node = branch_connections[0].get('node_id')
+            conn = branch_connections[0]
+            target_node = conn.get('target_node_id') or conn.get('node_id')
         
         if target_node:
+            logger.info(f"Following '{branch}' branch to node: {target_node}")
             return target_node
         else:
-            logger.info(f"No connection for '{branch}' branch, ending workflow")
+            logger.info(f"No connection for '{branch}' branch, ending workflow path")
             return None
 
-    def _mark_skipped(self, conditional_id, unchosen_port):
+    def _mark_skipped(self, conditional_id, chosen_port, unchosen_port, completed_nodes=None):
         """
         Mark nodes in the unchosen branch as skipped.
-        Correctly handles merge points (nodes with inputs from multiple branches).
         
         Args:
             conditional_id (str): The conditional node ID
+            chosen_port (str): The chosen branch ('true' or 'false')
             unchosen_port (str): The unchosen branch ('true' or 'false')
+            completed_nodes (set): Nodes already completed (optional)
         """
         import json
         from collections import deque
-        
-        new_skipped = set()
-        conditional_data = self.workflow_graph[conditional_id]
+
+        if completed_nodes is None:
+            completed_nodes = set()
+
+        conditional_data = self.workflow_graph.get(conditional_id, {})
         connections = conditional_data.get('connections', {})
         if isinstance(connections, str):
-            connections = json.loads(connections)
-        
-        # Handle the connections structure - it's organized by branch (true/false)
-        unchosen_starts = []
-        if isinstance(connections, dict) and unchosen_port in connections:
-            unchosen_starts = [conn['node_id'] for conn in connections[unchosen_port]]
-        
-        queue = deque(unchosen_starts)
-        
-        # We process nodes and their descendants. A node is only marked as skipped
-        # if ALL paths leading to it are from skipped nodes or the unchosen branch.
-        while queue:
-            current = queue.popleft()
-            if current in new_skipped:
-                continue
-                
-            current_data = self.workflow_graph.get(current, {})
-            inputs = current_data.get('inputs', [])
-            
-            all_inputs_skippable = True
-            for inp in inputs:
-                from_id = inp['from_node']
-                from_port = inp.get('output_type', inp.get('output_port'))
-                
-                # If the input is from the SAME conditional that triggered this skip:
-                if from_id == conditional_id:
-                    if from_port == unchosen_port:
-                        # This path is the one we are unchoosing
-                        continue
-                    else:
-                        # This path is the ACTIVE path of the same conditional.
-                        # This node is a merge point for the true/false branches of this conditional.
-                        # It should NOT be skipped via this call.
-                        all_inputs_skippable = False
-                        break
-                # If the input is already skipped (globally or in this traversal)
-                elif from_id in new_skipped or from_id in self.skipped_nodes:
+            try:
+                connections = json.loads(connections)
+            except Exception:
+                connections = {}
+
+        def _starts_for(port):
+            if isinstance(connections, dict):
+                branch_conns = connections.get(port, []) or []
+                return [c.get('node_id') or c.get('target_node_id') for c in branch_conns]
+            if isinstance(connections, list):
+                return [c.get('target_node_id') or c.get('node_id') for c in connections if str(c.get('output_port')).lower() == str(port).lower()]
+            return []
+
+        chosen_starts = [s for s in _starts_for(chosen_port) if s]
+        unchosen_starts = [s for s in _starts_for(unchosen_port) if s]
+
+        def _reachable(starts):
+            seen = set()
+            q = deque(starts)
+            while q:
+                nid = q.popleft()
+                if not nid or nid in seen:
                     continue
-                else:
-                    # This input is from a node that is NOT skipped.
-                    # It could be from the active branch or some other part of the graph.
-                    all_inputs_skippable = False
-                    break
-            
-            if all_inputs_skippable:
-                new_skipped.add(current)
-                # Add connected nodes to queue for re-evaluation
-                current_connections = current_data.get('connections', {})
-                if isinstance(current_connections, dict):
-                    for output_type, output_list in current_connections.items():
-                        if isinstance(output_list, list):
-                            for conn in output_list:
-                                queue.append(conn['node_id'])
-        
-        if new_skipped:
-            self.skipped_nodes.update(new_skipped)
-            logger.info(f"Marked {len(new_skipped)} nodes as skipped from unchosen branch {unchosen_port} of {conditional_id}: {new_skipped}")
+                seen.add(nid)
+                nd = self.workflow_graph.get(nid, {})
+                conns = nd.get('connections', {}) or {}
+                
+                # Check for dict-style connections (e.g. {'output': [{'node_id': '...'}]})
+                if isinstance(conns, dict):
+                    for _, lst in conns.items():
+                        if not isinstance(lst, list):
+                            continue
+                        for c in lst:
+                            tid = c.get('node_id') or c.get('target_node_id')
+                            if tid and tid not in seen:
+                                q.append(tid)
+                
+                # Check for list-style connections (e.g. [{'output_port': 'output', 'target_node_id': '...'}] from new JSON format)
+                elif isinstance(conns, list):
+                    for c in conns:
+                        tid = c.get('target_node_id') or c.get('node_id')
+                        if tid and tid not in seen:
+                            q.append(tid)
+                            
+            return seen
+
+        chosen_reach = _reachable(chosen_starts)
+        unchosen_reach = _reachable(unchosen_starts)
+        exclusive = unchosen_reach.difference(chosen_reach)
+        exclusive = {n for n in exclusive if n not in completed_nodes}
+
+        if exclusive:
+            self.skipped_nodes.update(exclusive)
+            logger.info(f"Marked {len(exclusive)} nodes as skipped from unchosen branch '{unchosen_port}' of {conditional_id}")

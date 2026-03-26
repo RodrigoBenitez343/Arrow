@@ -226,7 +226,6 @@ class NodeExecutor:
                 return False
             if exe:
                 try:
-                    import os
                     if not os.path.exists(exe):
                         logger.warning(f"Executable not found: {exe}")
                         return False
@@ -614,9 +613,17 @@ enablecredsspsupport:i:1
                 logger.info("Conditional gated: expected app not open/focused")
                 return False
         
+        # Execute condition checks using appropriate trigger
+        from player.computer_vision import get_sandbox_agent_url
+        if get_sandbox_agent_url():
+            logger.info("Using Sandbox Agent for conditional evaluation")
+            
         if condition_type == 'presence_trigger':
             timeout = float(condition_config.get('timeout', 10))
-            return self.presence_trigger.check_presence_with_timeout(condition_config, timeout=timeout)
+            return self.presence_trigger.check_presence_with_timeout(
+                condition_config,
+                timeout
+            )
         elif condition_type == 'absence_trigger':
             timeout = float(condition_config.get('timeout', 10))
             return self.absence_trigger.check_absence_trigger(condition_config, timeout)

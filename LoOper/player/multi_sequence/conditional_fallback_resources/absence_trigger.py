@@ -72,9 +72,8 @@ class AbsenceTrigger:
                 presence_config['trigger_type'] = 'presence'
                 
                 # Check for cached result first
-                cached_result = self.validation_cache.get_cached_validation_result(
-                    presence_config, screen_cv, self.template_matcher, self.path_resolver
-                )
+                # FORCE bypass cache reading to guarantee a real screen check
+                cached_result = None
                 
                 if cached_result is not None:
                     is_present = cached_result
@@ -144,9 +143,8 @@ class AbsenceTrigger:
             presence_config['trigger_type'] = 'presence'
             
             # Check for cached result first
-            cached_result = self.validation_cache.get_cached_validation_result(
-                presence_config, screen_cv, self.template_matcher, self.path_resolver
-            )
+            # FORCE bypass cache reading to guarantee a real screen check
+            cached_result = None
             
             if cached_result is not None:
                 is_present = cached_result

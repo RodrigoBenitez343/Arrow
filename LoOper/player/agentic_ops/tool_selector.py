@@ -9,6 +9,19 @@ class ToolSelector:
         self._get_model = get_model
 
     def select_tool(self, text, tools, user_text=None):
+        raw = str(text or "").strip()
+        if raw.startswith("USE_TOOL:") or raw.startswith("TOOL:"):
+            marker = "USE_TOOL:" if raw.startswith("USE_TOOL:") else "TOOL:"
+            candidate = raw[len(marker):].strip()
+            for sep in ("|", "-", "\n", "\r", "\t", " "):
+                if sep in candidate:
+                    candidate = candidate.split(sep, 1)[0].strip()
+            if candidate:
+                tool_ids = {t.get("id") for t in (tools or []) if isinstance(t, dict)}
+                tool_ids.add("sys_write_text")
+                tool_ids.add("sys_reason")
+                if candidate in tool_ids:
+                    return candidate
         try:
             from player.multi_sequence.llm_executor import LLMExecutor, get_default_api_url
         except Exception:

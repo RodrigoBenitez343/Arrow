@@ -105,6 +105,12 @@ class ValidationCache:
             bool or None: Cached result if available and valid, None if not cached or expired
         """
         try:
+            # Check for cached result first
+            # TEMPORARY FIX: Ignore cache entirely to force a real screen check
+            # This ensures we don't return True just because the image exists in storage
+            # We will refactor this cache logic later
+            return None
+            
             # Get current screen hash - if we can't get it, skip caching but don't block validation
             current_screen_hash = self.get_screen_hash(screen_cv, template_matcher)
             if not current_screen_hash:
@@ -148,6 +154,7 @@ class ValidationCache:
             template_matcher: TemplateMatching instance for screen capture
             path_resolver: PathResolver instance for resolving paths
         """
+        return
         try:
             # Get current screen hash - if we can't get it, skip caching but don't fail
             current_screen_hash = self.get_screen_hash(screen_cv, template_matcher)

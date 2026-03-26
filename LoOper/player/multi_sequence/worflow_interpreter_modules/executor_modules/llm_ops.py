@@ -46,9 +46,12 @@ class LLMMixin:
         output_variable, node_to_execute = self._handle_tts_redirection(node, llm_config, write_text)
         
         # --- Execution Strategy ---
-        # If we have agent tools OR we want to enable dynamic python (Approach 2), enter Agent Loop
-        # We enable it by default as per user request to "change the structure"
-        return self._execute_agent_loop(node_to_execute, stop_flag, action_handlers, agent_tools, routing_tools)
+        # Use Agent Loop if there are tools connected that require it, 
+        # otherwise use standard execution to respect context options (clipboard, OCR, custom instructions, etc).
+        if agent_tools or routing_tools or llm_config.get('use_agent_loop', False):
+            return self._execute_agent_loop(node_to_execute, stop_flag, action_handlers, agent_tools, routing_tools)
+        else:
+            return self.llm_executor.execute_llm_node(node_to_execute, stop_flag, action_handlers)
 
     def _inject_chain_descriptions(self, node, routing_tool_ids):
         try:
