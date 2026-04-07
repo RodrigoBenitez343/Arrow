@@ -242,7 +242,7 @@ class ConditionalMixin:
 
         return False
 
-    def _evaluate_conditional(self, conditional_node, stop_flag):
+    def _evaluate_conditional(self, conditional_node, stop_flag, node_inputs=None):
         """
         Evaluate a conditional node to determine which branch to take.
         
@@ -254,6 +254,8 @@ class ConditionalMixin:
             bool: True if condition is met, False otherwise
         """
         raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        if str(raw_trigger_type).lower() in ('code', 'code_conditional', 'python'):
+            return self._evaluate_code_condition(conditional_node, stop_flag, node_inputs=node_inputs)
         condition_type_mapping = {
             'presence': 'presence_trigger',
             'absence': 'absence_trigger',
@@ -328,6 +330,183 @@ class ConditionalMixin:
         else:
             logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
             return False
+
+    def _evaluate_code_condition(self, conditional_node, stop_flag, node_inputs=None):
+        import io
+        import contextlib
+        import threading
+        import time
+
+        code_text = conditional_node.get('code') or conditional_node.get('condition_code') or ''
+        if not str(code_text or '').strip():
+            return False
+
+        input_data_list = []
+        args = {}
+        for inp in (node_inputs or []):
+            try:
+                from_node_id = inp.get('from_node')
+                input_port = str(inp.get('input_port') or 'input')
+                output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
+                if output_type == 'context':
+                    val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
+                else:
+                    val = self.llm_executor.get_variable(f"node_{from_node_id}_output")
+                if input_port == 'args':
+                    if isinstance(val, dict):
+                        args.update(val)
+                else:
+                    input_data_list.append(val)
+            except Exception:
+                continue
+
+        if len(input_data_list) == 1:
+            input_data = input_data_list[0]
+        elif len(input_data_list) == 0:
+            input_data = None
+        else:
+            input_data = input_data_list
+
+        node_id = str(conditional_node.get('id') or conditional_node.get('node_id') or '')
+
+        try:
+            timeout_s = float(conditional_node.get('timeout', 5.0) or 5.0)
+        except Exception:
+            timeout_s = 5.0
+
+        stdout_capture = io.StringIO()
+        stderr_capture = io.StringIO()
+        shared_vars = getattr(self.llm_executor, 'variables', {}) if hasattr(self, 'llm_executor') else {}
+
+        try:
+            if hasattr(self, '_runtime_initialized') and not getattr(self, '_runtime_initialized', False):
+                if hasattr(self, '_initialize_chain_runtime'):
+                    self._initialize_chain_runtime()
+                try:
+                    self._runtime_initialized = True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            if hasattr(self, '_ensure_chain_venv'):
+                self._ensure_chain_venv()
+            sp = getattr(self, '_venv_site_packages', None)
+            if sp and isinstance(sp, str) and sp not in __import__('sys').path and os.path.isdir(sp):
+                __import__('sys').path.insert(0, sp)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, '_install_code_dependencies'):
+                self._install_code_dependencies(str(code_text))
+        except Exception:
+            pass
+
+        exec_scope = shared_vars
+        try:
+            exec_scope['input_data'] = input_data
+            exec_scope['args'] = args
+            exec_scope['variables'] = shared_vars
+            exec_scope['get_variable'] = getattr(self.llm_executor, 'get_variable', lambda n, d=None: shared_vars.get(n, d))
+            exec_scope['set_variable'] = getattr(self.llm_executor, 'set_variable', lambda n, v: shared_vars.__setitem__(n, v))
+            exec_scope['os'] = os
+            exec_scope['__name__'] = '__main__'
+        except Exception:
+            pass
+
+        out = {'result': None, 'error': None}
+
+        def _runner():
+            try:
+                try:
+                    exec_scope['result'] = None
+                except Exception:
+                    pass
+                with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
+                    exec(str(code_text), exec_scope, exec_scope)
+                res = exec_scope.get('result', None)
+                if res is None and callable(exec_scope.get('condition')):
+                    res = exec_scope.get('condition')()
+                if res is None:
+                    try:
+                        candidates = {}
+                        for k, v in dict(exec_scope).items():
+                            if not k or str(k).startswith('_'):
+                                continue
+                            if not callable(v):
+                                continue
+                            if k in ('condition', 'get_variable', 'set_variable', 'print'):
+                                continue
+                            try:
+                                if getattr(v, '__module__', None) not in (None, '__main__'):
+                                    continue
+                            except Exception:
+                                pass
+                            candidates[str(k)] = v
+                        preferred = [
+                            'check_system_language',
+                            'evaluate',
+                            'predicate',
+                            'check',
+                            'run',
+                            'main'
+                        ]
+                        picked = None
+                        for name in preferred:
+                            if name in candidates:
+                                picked = candidates[name]
+                                break
+                        if picked is None and len(candidates) == 1:
+                            picked = next(iter(candidates.values()))
+                        if picked is not None:
+                            res = picked()
+                    except Exception:
+                        res = None
+                out['result'] = res
+            except Exception as e:
+                out['error'] = e
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+
+        start = time.time()
+        while t.is_alive():
+            if stop_flag and stop_flag():
+                return False
+            if timeout_s and timeout_s > 0 and (time.time() - start) > timeout_s:
+                logger.warning("Code conditional timed out")
+                return False
+            time.sleep(0.01)
+
+        if out.get('error') is not None:
+            try:
+                import traceback
+                logger.error(f"Code conditional execution failed: {traceback.format_exc()}")
+            except Exception:
+                logger.error("Code conditional execution failed")
+            return False
+
+        res = out.get('result')
+        if isinstance(res, bool):
+            result_bool = res
+        elif isinstance(res, str):
+            s = res.strip().lower()
+            if s in ('true', '1', 'yes', 'y', 'on'):
+                result_bool = True
+            elif s in ('false', '0', 'no', 'n', 'off', ''):
+                result_bool = False
+            else:
+                result_bool = bool(s)
+        else:
+            result_bool = bool(res)
+
+        try:
+            if node_id:
+                self.llm_executor.set_variable(f"node_{node_id}_conditional_result", result_bool)
+        except Exception:
+            pass
+
+        return result_bool
     
     def _execute_conditional_loop(self, conditional_data, stop_flag):
         """

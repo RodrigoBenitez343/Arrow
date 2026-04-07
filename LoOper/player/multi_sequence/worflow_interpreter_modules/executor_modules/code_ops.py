@@ -863,7 +863,7 @@ class CodeMixin:
 
             stdlib = {
                 'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','tkinter',
-                'io', 'contextlib', 'shutil', 'glob', 'platform', 'warnings', 'logging', 'uuid', 'socket', 'urllib', 'http', 'email', 'base64', 'hashlib', 'hmac', 'struct', 'pickle', 'copy', 'weakref', 'enum', 'types', 'inspect', 'traceback', 'gc', 'abc', 'numbers', 'decimal', 'fractions', 'statistics', 'operator', 'unittest', 'doctest', 'pdb', 'profile', 'cProfile', 'timeit', 'venv', 'ensurepip', 'zipfile', 'tarfile', 'csv', 'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'xml', 'html', 'mimetypes', 'argparse', 'optparse', 'getopt', 'getpass', 'curses', 'ctypes', 'multiprocessing', 'concurrent', 'queue', 'select', 'mmap', 'signal', 'termios', 'tty', 'pty', 'fcntl', 'pipes', 'resource', 'nis', 'syslog', 'site', 'builtins'
+                'io', 'contextlib', 'shutil', 'glob', 'platform', 'warnings', 'logging', 'uuid', 'socket', 'urllib', 'http', 'email', 'base64', 'hashlib', 'hmac', 'struct', 'pickle', 'copy', 'weakref', 'enum', 'types', 'inspect', 'traceback', 'gc', 'abc', 'numbers', 'decimal', 'fractions', 'statistics', 'operator', 'unittest', 'doctest', 'pdb', 'profile', 'cProfile', 'timeit', 'venv', 'ensurepip', 'zipfile', 'tarfile', 'csv', 'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'xml', 'html', 'mimetypes', 'argparse', 'optparse', 'getopt', 'getpass', 'curses', 'ctypes', 'multiprocessing', 'concurrent', 'queue', 'select', 'mmap', 'signal', 'termios', 'tty', 'pty', 'fcntl', 'pipes', 'resource', 'nis', 'syslog', 'site', 'builtins', 'locale'
             }
             
             wanted = [p for p in pkgs if p and p not in stdlib]

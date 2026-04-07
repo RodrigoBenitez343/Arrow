@@ -1,0 +1,21 @@
+2026-04-07 12:22:42,335 - DEBUG - mss library available for fast screenshot capture
+2026-04-07 12:22:42,848 - DEBUG - mss library available for fast screenshot capture
+2026-04-07 12:23:13,279 - INFO - Creating new venv at D:\LoOperV2\runtime\venvs\chain
+2026-04-07 12:23:25,029 - WARNING - Failed to parse code imports with AST: unexpected character after line continuation character (<unknown>, line 1)
+2026-04-07 12:23:26,657 - INFO - Installing code dependencies: ['locale']
+2026-04-07 12:23:29,019 - WARNING - Bulk pip install failed, retrying individually. Error: ERROR: Could not find a version that satisfies the requirement locale (from versions: none)
+ERROR: No matching distribution found for locale
+
+[notice] A new release of pip is available: 24.0 -> 26.0.1
+[notice] To update, run: D:\LoOperV2\runtime\venvs\chain\Scripts\python.exe -m pip install --upgrade pip
+
+2026-04-07 12:23:31,080 - ERROR - Failed to install locale: ERROR: Could not find a version that satisfies the requirement locale (from versions: none)
+ERROR: No matching distribution found for locale
+
+[notice] A new release of pip is available: 24.0 -> 26.0.1
+[notice] To update, run: D:\LoOperV2\runtime\venvs\chain\Scripts\python.exe -m pip install --upgrade pip
+
+2026-04-07 12:23:31,092 - ERROR - Code conditional execution failed: NoneType: None
+
+2026-04-07 12:24:31,734 - DEBUG - mss library available for fast screenshot capture
+2026-04-07 12:24:31,925 - DEBUG - mss library available for fast screenshot capture

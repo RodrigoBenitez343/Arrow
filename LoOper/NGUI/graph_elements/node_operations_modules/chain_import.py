@@ -194,6 +194,7 @@ class ChainImportOperationsMixin:
                         cond_node.set_property('wait_time', str(cond_config.get('wait_time', 5)))
                         cond_node.set_property('max_loops', str(cond_config.get('max_loops', 10)))
                         cond_node.set_property('ocr_text', cond_config.get('ocr_text', ''))
+                        cond_node.set_property('code', cond_config.get('code', ''))
                         cond_node.set_property('loop_type', cond_config.get('loop_type', ''))
                         cond_node.set_property('loop_position', cond_config.get('loop_position', ''))
                         cond_node.set_property('sequence_file', cond_config.get('sequence_file', ''))

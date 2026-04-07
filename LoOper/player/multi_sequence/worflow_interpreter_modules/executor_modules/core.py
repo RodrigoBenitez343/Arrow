@@ -178,7 +178,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 if condition_type == 'loop':
                     conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
                 else:
-                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag)
+                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
                 success = True  # Conditional evaluation always succeeds
                 logger.info(f"Conditional evaluation result: {conditional_result}")
                 # Store the result in the node for later reference

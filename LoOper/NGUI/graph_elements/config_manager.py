@@ -449,6 +449,7 @@ class ConfigManager:
                 "wait_time": float(node.get_property('wait_time') or 5),
                 "max_loops": int(node.get_property('max_loops') or 10),
                 "ocr_text": node.get_property('ocr_text') or '',
+                "code": node.get_property('code') or '',
                 # Timeout and retry properties
                 "timeout": float(node.get_property('timeout') or 5.0),
                 "max_attempts": int(node.get_property('max_attempts') or 3),
@@ -771,6 +772,7 @@ class ConfigManager:
                     node.set_property('wait_time', str(cond_data.get('wait_time', 5)))
                     node.set_property('max_loops', str(cond_data.get('max_loops', 10)))
                     node.set_property('ocr_text', cond_data.get('ocr_text', ''))
+                    node.set_property('code', cond_data.get('code', ''))
                     # Timeout and retry properties
                     node.set_property('timeout', str(cond_data.get('timeout', 5.0)))
                     node.set_property('max_attempts', str(cond_data.get('max_attempts', 3)))
