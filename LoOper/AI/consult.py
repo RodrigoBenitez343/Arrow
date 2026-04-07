@@ -32,11 +32,16 @@ class OllamaClient:
     
     def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: Optional[int] = 0):
         """Initialize the client with the API base URL"""
-        # Use environment variable for Tailscale IP, fallback to localhost
         if base_url is None:
-            tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
-            port = os.getenv("API_PORT", "8000")
-            base_url = f"http://{tailscale_ip}:{port}"
+            env_overwatch = os.getenv("OVERWATCH_API_URL")
+            if env_overwatch and str(env_overwatch).strip():
+                base_url = env_overwatch.strip()
+            else:
+                tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "127.0.0.1")
+                port = os.getenv("API_PORT", "8000")
+                if use_comorag and str(port).strip() == "11434":
+                    port = "8000"
+                base_url = f"http://{tailscale_ip}:{port}"
         
         self.base_url = base_url.rstrip('/')
         self.debug = debug
@@ -125,6 +130,35 @@ class OllamaClient:
                     
         return models
     
+    def comorag_reason(self, query: str, context: Optional[str] = None, model: Optional[str] = None, max_cycles: int = 5, images: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Perform a synchronous ComoRAG reason request"""
+        payload = {
+            "query": query,
+            "max_cycles": max_cycles
+        }
+        if context:
+            payload["context"] = context
+        if model:
+            payload["model"] = model
+        if images:
+            # Check if images need to be converted to base64
+            b64_images = []
+            for img in images:
+                if os.path.exists(img):
+                    try:
+                        with open(img, "rb") as f:
+                            b64_images.append(base64.b64encode(f.read()).decode('utf-8'))
+                    except Exception as e:
+                        if self.debug:
+                            print(f"Error encoding image {img}: {e}")
+                else:
+                    b64_images.append(img)
+            if b64_images:
+                payload["images"] = b64_images
+
+        result = self._post_json('/comorag/reason', payload)
+        return result
+
     def chat(self, model: str, prompt: str, 
              temperature: Optional[float] = None,
              max_tokens: Optional[int] = None,
@@ -283,6 +317,11 @@ class OllamaClient:
         last_error: Optional[Exception] = None
         while attempt_count < 2:
             try:
+                # IMPORTANT: If OverWatch is enabled and we are hitting its /embeddings wrapper,
+                # we must send a payload that matches its API schema (inputs, not input)
+                payload["model"] = model
+                payload["inputs"] = inputs if isinstance(inputs, list) else [inputs]
+                
                 # Try standard OverWatch endpoint first
                 data = self._post_json('/embeddings', payload)
                 
@@ -291,33 +330,41 @@ class OllamaClient:
                     err_msg = str(data["error"]).lower()
                     if "404" in err_msg or "not found" in err_msg or "failed" in err_msg:
                         if self.debug:
-                            print(f"OverWatch /embeddings failed ({err_msg}), trying Ollama /api/embed", file=sys.stderr)
+                            print(f"OverWatch /embeddings failed ({err_msg}), trying local Ollama fallback", file=sys.stderr)
                         
                         # Prepare Ollama native payload
                         ollama_payload = {"model": model, "input": inputs}
                         if normalize is not None:
                             ollama_payload["normalize"] = normalize
                         
-                        # Try /api/embed (New Ollama)
-                        data = self._post_json('/api/embed', ollama_payload)
+                        # Send directly to Ollama port (11434) to avoid looping back into the broken wrapper
+                        try:
+                            host = os.getenv('OLLAMA_HOST', '127.0.0.1')
+                            port = os.getenv('OLLAMA_PORT', '11434')
+                            ollama_base = f"http://{host}:{port}"
+                            ollama_resp = self.session.post(f"{ollama_base}/api/embed", json=ollama_payload, timeout=10)
+                            if ollama_resp.status_code == 200:
+                                data = ollama_resp.json()
+                            else:
+                                data = {"error": f"{ollama_resp.status_code} {ollama_resp.text}"}
+                        except Exception as e:
+                            data = {"error": str(e)}
                         
                         # If that failed with 404, try /api/embeddings (Old Ollama)
                         if isinstance(data, dict) and "error" in data:
                             err_msg2 = str(data["error"]).lower()
-                            if "404" in err_msg2:
+                            if "404" in err_msg2 or "failed" in err_msg2:
                                 if self.debug:
                                     print(f"Ollama /api/embed failed ({err_msg2}), trying legacy /api/embeddings", file=sys.stderr)
-                                # Legacy endpoint expects "prompt" instead of "input" sometimes, but "input" usually works or "prompt"
-                                # Let's try matching the legacy signature if needed, but usually 'prompt' is for generation.
-                                # Actually for embeddings, old Ollama used {"model": "...", "prompt": "..."}
-                                legacy_payload = ollama_payload.copy()
-                                # Flatten input for legacy if it's a list (legacy often didn't support batching well, or expects 'prompt')
-                                # But let's try sending 'prompt'
-                                if isinstance(inputs, list) and len(inputs) == 1:
-                                    legacy_payload["prompt"] = inputs[0]
-                                    if "input" in legacy_payload: del legacy_payload["input"]
-                                
-                                data = self._post_json('/api/embeddings', legacy_payload)
+                                try:
+                                    legacy_payload = {"model": model, "prompt": inputs}
+                                    ollama_resp = self.session.post(f"{ollama_base}/api/embeddings", json=legacy_payload, timeout=10)
+                                    if ollama_resp.status_code == 200:
+                                        data = ollama_resp.json()
+                                    else:
+                                        data = {"error": f"{ollama_resp.status_code} {ollama_resp.text}"}
+                                except Exception as e:
+                                    data = {"error": str(e)}
 
                 if not isinstance(data, dict) and not isinstance(data, list):
                     raise ValueError("Invalid embeddings response")
@@ -358,9 +405,22 @@ class OllamaClient:
                     per_vectors: List[List[float]] = []
                     for idx, t in enumerate(inputs):
                         try:
-                            # Add prompt for legacy endpoint compatibility
-                            payload_single = {"model": model, "inputs": [t], "prompt": t}
-                            d2 = self._post_json('/embeddings', payload_single)
+                            # Send directly to local Ollama API for fallback per-input instead of routing back through OverWatch wrapper
+                            try:
+                                host = os.getenv('OLLAMA_HOST', '127.0.0.1')
+                                port = os.getenv('OLLAMA_PORT', '11434')
+                                ollama_base = f"http://{host}:{port}"
+                                sub_payload = {"model": model, "input": t}
+                                sub_resp = self.session.post(f"{ollama_base}/api/embed", json=sub_payload, timeout=10)
+                                if sub_resp.status_code == 200:
+                                    d2 = sub_resp.json()
+                                else:
+                                    # Fallback to legacy
+                                    leg_payload = {"model": model, "prompt": t}
+                                    sub_resp = self.session.post(f"{ollama_base}/api/embeddings", json=leg_payload, timeout=10)
+                                    d2 = sub_resp.json() if sub_resp.status_code == 200 else {}
+                            except Exception as e:
+                                d2 = {"error": str(e)}
                             
                             v = []
                             if isinstance(d2, dict):

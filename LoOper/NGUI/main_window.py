@@ -532,6 +532,12 @@ class MainWindow(QMainWindow):
                             recorder.record_scroll(x, y, dx, dy)
                         except Exception as e:
                             thread_logger.error(f"Error in on_scroll callback: {str(e)}")
+
+                    def on_move(x, y):
+                        try:
+                            recorder.on_mouse_move(x, y)
+                        except Exception as e:
+                            thread_logger.error(f"Error in on_move callback: {str(e)}")
                     
                     def on_press(key):
                         try:
@@ -552,7 +558,7 @@ class MainWindow(QMainWindow):
                     # Start listeners
                     thread_logger.debug("Creating mouse and keyboard listeners")
                     try:
-                        mouse_listener = mouse.Listener(on_click=on_click, on_scroll=on_scroll)
+                        mouse_listener = mouse.Listener(on_move=on_move, on_click=on_click, on_scroll=on_scroll)
                         keyboard_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
                         thread_logger.info("Listeners created successfully")
                     except Exception as e:

@@ -241,10 +241,14 @@ class SeleniumBot:
 
         try:
             # Route actions to appropriate handlers
-            if action['type'] in ['click', 'double_click']:
+            if action['type'] in ['click', 'double_click', 'ctrl_click', 'shift_click']:
                 success = self.action_handlers.handle_click_action(idx, action, fallback_callback, stop_flag)
                 if not success:
                     return False  # Fallback was triggered
+            elif action['type'] == 'move_to':
+                self.action_handlers.handle_move_to_action(idx, action, stop_flag)
+            elif action['type'] == 'absolute_click':
+                self.action_handlers.handle_absolute_click_action(idx, action, stop_flag)
                     
             elif action['type'] == 'type_string':
                 self.action_handlers.handle_type_string_action(idx, action, stop_flag)
@@ -262,7 +266,7 @@ class SeleniumBot:
                 self.action_handlers.handle_drag_actions(idx, action)
             
             # After a click action, add a very short random delay.
-            if action['type'] in ['click', 'double_click']:
+            if action['type'] in ['click', 'double_click', 'ctrl_click', 'shift_click', 'absolute_click']:
                 self.random_delay(0.001, 0.01)  # Reduced from 0.01-0.05
 
             # After every successfully executed action, capture a screenshot of the entire screen

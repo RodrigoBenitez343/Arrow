@@ -512,6 +512,11 @@ class ActionHandlers:
         if target_coords:
             button = action.get('button', 'left')
             agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            modifier_key = None
+            if action.get('type') == 'ctrl_click':
+                modifier_key = keyboard.Key.ctrl_l
+            elif action.get('type') == 'shift_click':
+                modifier_key = keyboard.Key.shift_l
             
             if agent_url:
                 self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
@@ -523,15 +528,26 @@ class ActionHandlers:
                 self.vnc_bridge.click(target_coords[0], target_coords[1], button=1 if button == 'left' else 3)
                 logger.info(f"VNC Clicked ({button}) at {target_coords}")
             else:
-                # Move mouse to target coordinates before clicking
-                self.bot.human_mouse_move(target_coords[0], target_coords[1])
-                time.sleep(0.01)
-                if action.get('type') == 'double_click':
-                    self.bot.human_click(button=button, double=True)
-                    logger.info(f"Double-clicked ({button}) at {target_coords}")
-                else:
-                    self.bot.human_click(button=button, double=False)
-                    logger.info(f"Clicked ({button}) at {target_coords}")
+                pressed_modifier = False
+                try:
+                    if modifier_key is not None:
+                        self.keyboard_controller.press(modifier_key)
+                        pressed_modifier = True
+
+                    self.bot.human_mouse_move(target_coords[0], target_coords[1])
+                    time.sleep(0.01)
+                    if action.get('type') == 'double_click':
+                        self.bot.human_click(button=button, double=True)
+                        logger.info(f"Double-clicked ({button}) at {target_coords}")
+                    else:
+                        self.bot.human_click(button=button, double=False)
+                        logger.info(f"Clicked ({button}) at {target_coords}")
+                finally:
+                    if pressed_modifier:
+                        try:
+                            self.keyboard_controller.release(modifier_key)
+                        except Exception:
+                            pass
             
             self.bot.last_click_time = time.time()
             try:
@@ -584,6 +600,72 @@ class ActionHandlers:
             else:
                 logger.error(f"Visual match for action {idx} failed and no fallback is configured. Aborting playback.")
                 raise Exception("Visual match failed and no fallback configured.")
+
+    def handle_move_to_action(self, idx, action, stop_flag=None):
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before move_to - aborting move_to action")
+            return True
+
+        coords = action.get('coordinates')
+        if isinstance(coords, dict):
+            x = coords.get('x')
+            y = coords.get('y')
+        elif isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            x, y = coords[0], coords[1]
+        else:
+            x = action.get('x')
+            y = action.get('y')
+
+        if x is None or y is None:
+            logger.warning(f"move_to action {idx} missing coordinates, skipping")
+            return True
+
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if agent_url:
+            return True
+        if self.vnc_bridge:
+            return True
+
+        self.bot.human_mouse_move(int(x), int(y))
+        return True
+
+    def handle_absolute_click_action(self, idx, action, stop_flag=None):
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before absolute_click - aborting absolute_click action")
+            return True
+
+        coords = action.get('coordinates')
+        if isinstance(coords, dict):
+            x = coords.get('x')
+            y = coords.get('y')
+        elif isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            x, y = coords[0], coords[1]
+        else:
+            x = action.get('x')
+            y = action.get('y')
+
+        if x is None or y is None:
+            logger.warning(f"absolute_click action {idx} missing coordinates, skipping")
+            return True
+
+        button = action.get('button', 'left')
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if agent_url:
+            self._send_agent_action({"action": "click", "x": int(x), "y": int(y), "button": button})
+            logger.info(f"Agent Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+            return True
+
+        if self.vnc_bridge:
+            self.vnc_bridge.click(int(x), int(y), button=1 if button == 'left' else 3)
+            logger.info(f"VNC Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+            return True
+
+        self.bot.human_mouse_move(int(x), int(y))
+        time.sleep(0.01)
+        self.bot.human_click(button=button, double=False)
+        self.bot.last_click_time = time.time()
+        logger.info(f"Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+        return True
 
     def handle_type_string_action(self, idx, action, stop_flag=None):
         """

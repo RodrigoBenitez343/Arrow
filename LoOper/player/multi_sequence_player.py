@@ -403,7 +403,7 @@ class MultiSequencePlayer(SeleniumBot):
                 # 1. Chain-level fallback (legacy support)
                 if 'fallback_sequence' in item:
                     for action in sequence_data['actions']:
-                        if (action.get('type') in ['click', 'double_click'] and 
+                        if (action.get('type') in ['click', 'double_click', 'ctrl_click', 'shift_click'] and 
                             'screenshot' in action and 
                             'fallback_sequence' not in action):
                             action['fallback_sequence'] = item['fallback_sequence']
@@ -417,7 +417,7 @@ class MultiSequencePlayer(SeleniumBot):
                             action_idx_int = int(action_idx)
                             if action_idx_int < len(sequence_data['actions']):
                                 action = sequence_data['actions'][action_idx_int]
-                            if action.get('type') in ['click', 'double_click'] and action.get('screenshot'):
+                            if action.get('type') in ['click', 'double_click', 'ctrl_click', 'shift_click'] and action.get('screenshot'):
                                 action['fallback_sequence'] = fallback_config['sequence_file']
                                 action['fallback_retry_attempts'] = fallback_config.get('retry_attempts', 3)
                                 action['fallback_retry_delay'] = fallback_config.get('retry_delay', 0.3)

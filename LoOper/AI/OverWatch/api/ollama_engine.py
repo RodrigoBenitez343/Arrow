@@ -44,18 +44,16 @@ class OllamaEngine:
             from config.settings import OllamaSettings
             self.settings = OllamaSettings() if ollama_settings is None else ollama_settings
         
-        self.base_url = getattr(self.settings, 'base_url', 'http://localhost:11434')
+        self.base_url = getattr(self.settings, 'base_url', 'http://127.0.0.1:11434').rstrip('/')
         self.loaded_models: Dict[str, ModelConfig] = {}
         self._initialized = False
         self._session: Optional[aiohttp.ClientSession] = None
+        self._session_loop: Optional[asyncio.AbstractEventLoop] = None
         
     async def initialize(self):
         """Initialize the Ollama engine"""
         logger.info("Initializing Ollama engine...")
-        
-        # Create HTTP session with no timeout for local models
-        timeout = aiohttp.ClientTimeout(total=None)
-        self._session = aiohttp.ClientSession(timeout=timeout)
+        await self._ensure_session()
         
         # Check if Ollama is running
         try:
@@ -95,8 +93,26 @@ class OllamaEngine:
         
         self._initialized = True
         logger.info("Ollama engine initialized successfully")
+    
+    async def _ensure_session(self):
+        try:
+            loop = asyncio.get_running_loop()
+        except Exception:
+            loop = None
+        if self._session is not None and getattr(self._session, "closed", False):
+            try:
+                await self._session.close()
+            except Exception:
+                pass
+            self._session = None
+            self._session_loop = None
+        if self._session is None or (loop is not None and self._session_loop is not loop):
+            timeout = aiohttp.ClientTimeout(total=None)
+            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session_loop = loop
         
     async def _cleanup_runners(self, target_model: Optional[str] = None):
+        await self._ensure_session()
         try:
             async with self._session.get(f"{self.base_url}/api/ps") as r:
                 if r.status != 200:
@@ -136,6 +152,7 @@ class OllamaEngine:
             pass
     async def _check_ollama_status(self):
         """Check if Ollama is running and accessible"""
+        await self._ensure_session()
         async with self._session.get(f"{self.base_url}/api/tags") as response:
             if response.status != 200:
                 raise RuntimeError(f"Ollama returned status {response.status}")
@@ -143,6 +160,7 @@ class OllamaEngine:
     
     async def load_model(self, model_name: str, config: Optional[ModelConfig] = None) -> bool:
         """Load a model into Ollama"""
+        await self._ensure_session()
         if model_name in self.loaded_models:
             logger.info(f"Model {model_name} already loaded")
             return True
@@ -198,6 +216,7 @@ class OllamaEngine:
     
     async def _list_available_models(self) -> List[Dict[str, Any]]:
         """List available models in Ollama"""
+        await self._ensure_session()
         async with self._session.get(f"{self.base_url}/api/tags") as response:
             if response.status == 200:
                 data = await response.json()
@@ -206,6 +225,7 @@ class OllamaEngine:
     
     async def _pull_model(self, model_name: str):
         """Pull a model from Ollama registry"""
+        await self._ensure_session()
         payload = {"name": model_name}
         
         async with self._session.post(
@@ -246,6 +266,7 @@ class OllamaEngine:
             
     async def _generate_test(self, model_name: str) -> bool:
         """Test model with a simple generation"""
+        await self._ensure_session()
         try:
             payload = {
                 "model": model_name,
@@ -270,6 +291,7 @@ class OllamaEngine:
 
     async def _embed_test(self, model_name: str) -> bool:
         """Test model with a simple embedding call (for embedding-only models)"""
+        await self._ensure_session()
         try:
             payload = {"model": model_name, "input": "hello", "keep_alive": 60}
             async with self._session.post(f"{self.base_url}/api/embed", json=payload) as response:
@@ -297,6 +319,7 @@ class OllamaEngine:
     
     async def embeddings(self, model: str, inputs: List[str], normalize: Optional[bool] = None, pooling: Optional[str] = None, ephemeral: bool = False) -> List[List[float]]:
         """Generate embeddings using Ollama"""
+        await self._ensure_session()
         if not self._initialized:
             raise RuntimeError("Ollama engine not initialized")
         
@@ -431,6 +454,7 @@ class OllamaEngine:
 
     async def _query_embeddings_per_input(self, texts: List[str], model: str) -> List[List[float]]:
         """Query embeddings one by one (fallback)"""
+        await self._ensure_session()
         out: List[List[float]] = []
         for t in texts:
             # Fix: Do not send 'prompt' parameter as it breaks newer Ollama versions
@@ -478,6 +502,7 @@ class OllamaEngine:
 
     async def unload_model(self, model_name: str) -> bool:
         """Unload a model from memory (Ollama handles this automatically)"""
+        await self._ensure_session()
         if model_name not in self.loaded_models:
             logger.warning(f"Model {model_name} not loaded")
             return False
@@ -506,6 +531,7 @@ class OllamaEngine:
         ephemeral: bool = False
     ) -> Dict[str, Any]:
         """Generate text using Ollama"""
+        await self._ensure_session()
         if not self._initialized:
             raise RuntimeError("Ollama engine not initialized")
         
@@ -548,6 +574,7 @@ class OllamaEngine:
     
     async def _generate_single(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Generate single response"""
+        await self._ensure_session()
         await self._cleanup_runners(payload.get("model"))
         async with self._session.post(
             f"{self.base_url}/api/generate",
@@ -570,6 +597,7 @@ class OllamaEngine:
     
     async def _generate_stream(self, payload: Dict[str, Any]) -> AsyncGenerator[Dict[str, Any], None]:
         """Generate streaming response"""
+        await self._ensure_session()
         await self._cleanup_runners(payload.get("model"))
         async with self._session.post(
             f"{self.base_url}/api/generate",
@@ -699,6 +727,7 @@ class OllamaEngine:
         if self._session:
             await self._session.close()
             self._session = None
+            self._session_loop = None
         
         # Clear loaded models
         self.loaded_models.clear()

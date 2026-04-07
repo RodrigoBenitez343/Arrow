@@ -1169,7 +1169,7 @@ enablecredsspsupport:i:1
             if 'fallback_sequences' in item:
                 fallback_sequences = item['fallback_sequences']
                 for action in sequence_data['actions']:
-                    if action.get('type') in ['click', 'double_click'] and action.get('screenshot'):
+                    if action.get('type') in ['click', 'double_click', 'ctrl_click', 'shift_click'] and action.get('screenshot'):
                         action['fallback_sequences'] = fallback_sequences
                         logger.info(f"Injected chain-level fallback sequences into click action: {fallback_sequences}")
         
@@ -1181,7 +1181,7 @@ enablecredsspsupport:i:1
                         action_idx_int = int(action_idx)
                         if action_idx_int < len(sequence_data['actions']):
                             action = sequence_data['actions'][action_idx_int]
-                            if action.get('type') in ['click', 'double_click'] and action.get('screenshot'):
+                            if action.get('type') in ['click', 'double_click', 'ctrl_click', 'shift_click'] and action.get('screenshot'):
                                 action['fallback_sequence'] = fallback_config['sequence_file']
                                 action['fallback_retry_attempts'] = fallback_config.get('retry_attempts', 3)
                                 action['fallback_retry_delay'] = fallback_config.get('retry_delay', 0.3)
