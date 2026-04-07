@@ -35,6 +35,15 @@ def start_recording():
             on_click(event)
         elif isinstance(event, mouse.WheelEvent):
             on_scroll(event)
+        elif hasattr(mouse, 'MoveEvent') and isinstance(event, mouse.MoveEvent):
+            try:
+                x = getattr(event, 'x', None)
+                y = getattr(event, 'y', None)
+                if x is None or y is None:
+                    x, y = mouse.get_position()
+                recorder.on_mouse_move(x, y)
+            except Exception:
+                pass
 
     def on_press(key):
         if key == keyboard.Key.esc:

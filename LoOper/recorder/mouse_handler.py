@@ -14,6 +14,13 @@ class MouseHandler:
         self.last_click_button = None # Track button for double-click detection
         self.double_click_threshold = 0.5  # Max time between clicks for double-click (seconds)
         self.double_click_distance = 5     # Max pixel distance for double-click
+
+    def _is_left_button(self, button):
+        if button == mouse.Button.left:
+            return True
+        if isinstance(button, str) and button.lower() == 'left':
+            return True
+        return False
     
     def handle_mouse_press(self, x, y, button, pressed):
         """
@@ -30,7 +37,7 @@ class MouseHandler:
         """
         if pressed and self.pressed_button is None:  # Only start if no other button down
             self.pressed_button = button
-            if button == mouse.Button.left:
+            if self._is_left_button(button):
                 self.drag_start = {'x': x, 'y': y}
                 print(f"📍 Drag start set at ({x}, {y})")
 
@@ -47,7 +54,7 @@ class MouseHandler:
             dict: Action dictionary for the completed mouse operation
         """
         if button == self.pressed_button:
-            if button == mouse.Button.left and self.drag_start is not None:
+            if self._is_left_button(button) and self.drag_start is not None:
                 dx = x - self.drag_start['x']
                 dy = y - self.drag_start['y']
                 distance = (dx ** 2 + dy ** 2) ** 0.5
@@ -68,9 +75,9 @@ class MouseHandler:
                     # Treat as click
                     self.drag_start = None
                     self.pressed_button = None
-                    return self._handle_click_with_double_detection(x, y, 'left', mouse.Button.left)
+                    return self._handle_click_with_double_detection(x, y, 'left', button)
 
-            elif button != mouse.Button.left:
+            elif not self._is_left_button(button):
                 # Handle right/middle clicks as simple clicks
                 self.pressed_button = None
                 button_name = self._get_button_name(button)
@@ -82,6 +89,8 @@ class MouseHandler:
 
     def _get_button_name(self, button):
         """Convert pynput button to string name"""
+        if isinstance(button, str):
+            return button.lower()
         if button == mouse.Button.left:
             return 'left'
         elif button == mouse.Button.right:

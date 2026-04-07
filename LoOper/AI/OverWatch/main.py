@@ -42,42 +42,56 @@ if issues:
 # Global instances
 ollama_engine: Optional[OllamaEngine] = None
 comorag_engine: Optional[ComoRAGEngine] = None
+_init_task: Optional[asyncio.Task] = None
+_init_error: Optional[str] = None
+_init_started_at: Optional[float] = None
+
+
+async def _initialize_engines(app: FastAPI) -> None:
+    global ollama_engine, comorag_engine, _init_error
+    try:
+        oe = OllamaEngine(settings.ollama)
+        await oe.initialize()
+        ce = ComoRAGEngine(settings=settings, ollama_engine=oe)
+        await ce.initialize()
+        ollama_engine = oe
+        comorag_engine = ce
+        app.state.ollama_engine = oe
+        app.state.comorag_engine = ce
+        app.state.settings = settings
+        _init_error = None
+    except Exception as e:
+        _init_error = str(e)
+        try:
+            if comorag_engine:
+                await comorag_engine.cleanup()
+        except Exception:
+            pass
+        try:
+            if ollama_engine:
+                await ollama_engine.cleanup()
+        except Exception:
+            pass
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan events"""
-    global ollama_engine, comorag_engine
-    
-    # Startup
+    global ollama_engine, comorag_engine, _init_task, _init_started_at
     logger.info("Starting OverWatch API server...")
-    
-    try:
-        # Initialize Ollama engine
-        logger.info("Initializing Ollama engine...")
-        ollama_engine = OllamaEngine(settings.ollama)
-        await ollama_engine.initialize()
-        
-        # Initialize ComoRAG engine
-        logger.info("Initializing ComoRAG engine...")
-        comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-        await comorag_engine.initialize()
-        
-        # Store engines in app state
-        app.state.ollama_engine = ollama_engine
-        app.state.comorag_engine = comorag_engine
-        app.state.settings = settings
-        
-        logger.info("OverWatch API server started successfully")
-        
-    except Exception as e:
-        logger.error(f"Failed to initialize engines: {e}")
-        raise
+    _init_started_at = _init_started_at or asyncio.get_event_loop().time()
+    if _init_task is None or _init_task.done():
+        _init_task = asyncio.create_task(_initialize_engines(app))
     
     yield
     
     # Shutdown
     logger.info("Shutting down OverWatch API server...")
+    try:
+        if _init_task and (not _init_task.done()):
+            _init_task.cancel()
+    except Exception:
+        pass
     
     if comorag_engine:
         await comorag_engine.cleanup()
@@ -331,6 +345,8 @@ class HealthResponse(BaseModel):
     comorag_status: str
     models_loaded: int
     memory_usage: Dict[str, Any]
+    init_error: Optional[str] = None
+    init_in_progress: bool = False
 
 
 # API Endpoints
@@ -338,6 +354,7 @@ class HealthResponse(BaseModel):
 async def health_check():
     """Health check endpoint"""
     try:
+        init_in_progress = bool(_init_task is not None and not _init_task.done())
         ollama_status = "healthy" if ollama_engine and ollama_engine.is_ready() else "not_ready"
         comorag_status = "healthy" if comorag_engine and comorag_engine.is_ready() else "not_ready"
         
@@ -356,7 +373,9 @@ async def health_check():
             ollama_status=ollama_status,
             comorag_status=comorag_status,
             models_loaded=models_loaded,
-            memory_usage=memory_usage
+            memory_usage=memory_usage,
+            init_error=_init_error,
+            init_in_progress=init_in_progress
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")

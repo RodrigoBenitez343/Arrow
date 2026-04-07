@@ -23,12 +23,12 @@ def _subprocess_no_window_kwargs():
 
 # Use absolute package imports instead of path hacking
 try:
-    from AI.comorag_engine import ComoRAGEngine
-    from AI.ollama_engine import OllamaEngine
+    from AI.OverWatch.api.comorag_engine import ComoRAGEngine
+    from AI.OverWatch.api.ollama_engine import OllamaEngine
 except ImportError:
     # Fallback for frozen builds if paths are flattened
-    from comorag_engine import ComoRAGEngine
-    from ollama_engine import OllamaEngine
+    from OverWatch.api.comorag_engine import ComoRAGEngine
+    from OverWatch.api.ollama_engine import OllamaEngine
 
 import asyncio
 from typing import Set
@@ -52,9 +52,9 @@ app.add_middleware(
 # Ollama server configuration - use environment variables for Tailscale support
 def get_ollama_base_url():
     """Get Ollama base URL from environment variables"""
-    ollama_host = os.getenv("OLLAMA_HOST", "localhost")
+    ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1")
     ollama_port = os.getenv("OLLAMA_PORT", "11434")
-    return f"http://{ollama_host}:{ollama_port}"
+    return f"http://{ollama_host}:{ollama_port}".rstrip('/')
 
 OLLAMA_BASE_URL = get_ollama_base_url()
 
@@ -909,13 +909,24 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
                 # Try /api/embed first
                 sub_payload = {"model": model_name, "input": t, "keep_alive": 0}
                 sub_url = f"{get_ollama_base_url()}/api/embed"
-                sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"})
+                
+                try:
+                    sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"}, timeout=10)
+                except requests.exceptions.RequestException:
+                    sub_resp = type('obj', (object,), {'status_code': 500, 'json': lambda: {}})()
                 
                 if sub_resp.status_code == 404 or sub_resp.status_code != 200:
                      # Fallback
                      sub_payload["prompt"] = t
+                     # Ensure we don't send 'input' to legacy endpoint as it might break it
+                     if "input" in sub_payload:
+                         del sub_payload["input"]
                      sub_url = f"{get_ollama_base_url()}/api/embeddings"
-                     sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"})
+                     try:
+                         sub_resp = requests.post(sub_url, json=sub_payload, headers={"Connection": "close"}, timeout=10)
+                     except requests.exceptions.RequestException as e:
+                         print(f"[ERROR] Embeddings: Per-input fallback request failed: {e}")
+                         raise HTTPException(status_code=500, detail=f"Per-input fallback request failed: {str(e)}")
                 
                 if sub_resp.status_code != 200:
                     print(f"[ERROR] Embeddings: Per-input request {i} failed: {sub_resp.status_code}")
@@ -1193,15 +1204,18 @@ async def comorag_reason_stream(request: ComoRAGReasonRequest):
             except Exception as e:
                 raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
 
+        ctx = request.context or ""
+        imgs = process_images(request.images) if request.images else None
+
         async def event_generator():
             try:
                 async for step in COMORAG_ENGINE.reason_stream(
                     query=request.query,
-                    context=request.context,
+                    context=ctx,
                     model=request.model,
-                    max_cycles=request.max_cycles,
+                    max_cycles=int(request.max_cycles or 5),
                     memory_size=request.memory_size,
-                    images=process_images(request.images) if request.images else None
+                    images=imgs
                 ):
                     yield json.dumps(step) + "\n"
             except Exception as e:
@@ -1270,7 +1284,8 @@ async def comorag_init(memory_size: Optional[int] = 1000):
     if COMORAG_ENGINE is None:
         raise HTTPException(status_code=503, detail="ComoRAG engine not created")
     try:
-        await COMORAG_ENGINE.initialize(memory_size or 1000)
+        if not COMORAG_ENGINE.is_ready():
+            await COMORAG_ENGINE.initialize()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}")
     return {"ready": COMORAG_ENGINE.is_ready(), "memory_size": COMORAG_ENGINE.memory_workspace.max_size if COMORAG_ENGINE.memory_workspace else 0}
@@ -1281,14 +1296,12 @@ async def comorag_memory():
     if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
         return {"memory_items": 0, "max_memory_size": 0}
     
-    # Adapt to whatever memory workspace structure ComoRAG uses
     try:
-        # Assuming OverWatch's ComoRAG exposes memory_workspace
         ws = COMORAG_ENGINE.memory_workspace
         return {
-            "memory_items": len(ws.memory_pool),
-            "max_memory_size": ws.max_size,
-            "recent_access": list(ws.access_history)[-10:]
+            "memory_items": len(ws.memory_pool) if ws else 0,
+            "max_memory_size": ws.max_size if ws else 0,
+            "recent_access": list(ws.access_history)[-10:] if ws else []
         }
     except Exception:
         # Fallback or different structure

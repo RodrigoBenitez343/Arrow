@@ -7,8 +7,24 @@ class KeyboardHandler:
     """Handles keyboard events and modifier key tracking"""
     
     def __init__(self):
-        self.modifiers = {'ctrl': False, 'shift': False, 'alt': False}
+        self.modifiers = {
+            'ctrl_l': False,
+            'ctrl_r': False,
+            'shift_l': False,
+            'shift_r': False,
+            'alt_l': False,
+            'alt_r': False
+        }
         self.current_string = ""
+
+    def is_ctrl_down(self):
+        return bool(self.modifiers.get('ctrl_l') or self.modifiers.get('ctrl_r'))
+
+    def is_shift_down(self):
+        return bool(self.modifiers.get('shift_l') or self.modifiers.get('shift_r'))
+
+    def is_alt_down(self):
+        return bool(self.modifiers.get('alt_l') or self.modifiers.get('alt_r'))
     
     def handle_keypress(self, key):
         """
@@ -31,18 +47,27 @@ class KeyboardHandler:
                 key_vk = key.vk
 
             # --- Handle modifier keys ---
-            if key == keyboard.Key.ctrl_l or key == keyboard.Key.ctrl_r:
-                self.modifiers['ctrl'] = True
+            if key == keyboard.Key.ctrl_l:
+                self.modifiers['ctrl_l'] = True
                 return None
-            elif key == keyboard.Key.shift_l or key == keyboard.Key.shift_r:
-                self.modifiers['shift'] = True
+            elif key == keyboard.Key.ctrl_r:
+                self.modifiers['ctrl_r'] = True
                 return None
-            elif key == keyboard.Key.alt_l or key == keyboard.Key.alt_r:
-                self.modifiers['alt'] = True
+            elif key == keyboard.Key.shift_l:
+                self.modifiers['shift_l'] = True
+                return None
+            elif key == keyboard.Key.shift_r:
+                self.modifiers['shift_r'] = True
+                return None
+            elif key == keyboard.Key.alt_l:
+                self.modifiers['alt_l'] = True
+                return None
+            elif key == keyboard.Key.alt_r:
+                self.modifiers['alt_r'] = True
                 return None
 
             # --- Handle Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A ---
-            if self.modifiers['ctrl']:
+            if self.is_ctrl_down():
                 detected_key = None
 
                 # Check for ASCII control characters first (most reliable)
@@ -139,12 +164,18 @@ class KeyboardHandler:
         Args:
             key: The released key from pynput
         """
-        if key in (keyboard.Key.ctrl_l, keyboard.Key.ctrl_r):
-            self.modifiers['ctrl'] = False
-        elif key in (keyboard.Key.shift_l, keyboard.Key.shift_r):
-            self.modifiers['shift'] = False
-        elif key in (keyboard.Key.alt_l, keyboard.Key.alt_r):
-            self.modifiers['alt'] = False
+        if key == keyboard.Key.ctrl_l:
+            self.modifiers['ctrl_l'] = False
+        elif key == keyboard.Key.ctrl_r:
+            self.modifiers['ctrl_r'] = False
+        elif key == keyboard.Key.shift_l:
+            self.modifiers['shift_l'] = False
+        elif key == keyboard.Key.shift_r:
+            self.modifiers['shift_r'] = False
+        elif key == keyboard.Key.alt_l:
+            self.modifiers['alt_l'] = False
+        elif key == keyboard.Key.alt_r:
+            self.modifiers['alt_r'] = False
 
     def flush_current_string(self):
         """

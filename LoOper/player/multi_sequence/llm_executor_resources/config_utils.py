@@ -8,6 +8,9 @@ def get_default_api_url() -> str:
         return get_api_url()
     except Exception:
         pass
+    env_overwatch = os.getenv("OVERWATCH_API_URL")
+    if env_overwatch and str(env_overwatch).strip():
+        return env_overwatch.strip().rstrip("/")
     tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
     if not tailscale_ip or not str(tailscale_ip).strip():
         tailscale_ip = "localhost"

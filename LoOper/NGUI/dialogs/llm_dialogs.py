@@ -168,6 +168,7 @@ class LLMPropertiesDialog(ModernDialog):
         self.template_combo.addItems([
             "Custom (no template)",
             "Information Extraction (OCR + LLM)",
+            "Form Filling (Vision + LLM)",
             "Custom Instructions",
             "Direct Prompt",
             # "ComoRAG Analysis",
@@ -374,12 +375,12 @@ class LLMPropertiesDialog(ModernDialog):
 
         # Use advanced vision checkbox
         vision_layout.addWidget(QLabel(_("Use Advanced Vision:")), 3, 0)
-        self.use_advanced_vision_checkbox = ModernToggle(text=_("Enable YOLO object detection + OCR"))
+        self.use_advanced_vision_checkbox = ModernToggle(text=_("Enable multi-model vision pipeline"))
         self.use_advanced_vision_checkbox.setChecked(False)
         vision_layout.addWidget(self.use_advanced_vision_checkbox, 3, 1)
         
         # Add help text
-        help_label = QLabel(_("Note: Vision models can analyze screenshots. Advanced vision uses YOLO+OCR."))
+        help_label = QLabel(_("Note: Vision models can analyze screenshots. Advanced vision runs a multi-model pipeline."))
         help_label.setWordWrap(True)
         help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         vision_layout.addWidget(help_label, 4, 0, 1, 2)
@@ -458,6 +459,7 @@ class LLMPropertiesDialog(ModernDialog):
         self.template_combo.addItems([
             "Custom (no template)",
             "Information Extraction (OCR + LLM)",
+            "Form Filling (Vision + LLM)",
             "Custom Instructions",
             "Direct Prompt",
             # "ComoRAG Analysis",
@@ -535,6 +537,7 @@ class LLMPropertiesDialog(ModernDialog):
             self.vision_model_combo.setCurrentText(self.current_config.get('vision_model', 'minicpm-v:latest'))
             self.use_advanced_vision_checkbox.setChecked(self.current_config.get('use_advanced_vision', False))
             self.screenshot_enabled_checkbox.setChecked(self.current_config.get('screenshot_enabled', True))
+
             self.use_comorag_checkbox.setChecked(self.current_config.get('use_comorag', True))
             self.max_cycles_spin.setValue(self.current_config.get('max_cycles', 5))
             self.memory_size_spin.setValue(self.current_config.get('memory_size', 1000))
@@ -666,6 +669,8 @@ class LLMPropertiesDialog(ModernDialog):
                 self.ocr_preprocessing_combo.setCurrentIndex(index)
         if 'use_comorag' in config:
             self.use_comorag_checkbox.setChecked(config['use_comorag'])
+        if 'use_direct_rag' in config:
+            self.use_direct_rag_checkbox.setChecked(config['use_direct_rag'])
         if 'max_cycles' in config:
             self.max_cycles_spin.setValue(config['max_cycles'])
         if 'memory_size' in config:
@@ -705,6 +710,7 @@ class LLMPropertiesDialog(ModernDialog):
         descriptions = {
             "Custom (no template)": _("Use custom configuration without predefined template."),
             "Information Extraction (OCR + LLM)": _("Extract specific information from screen text using OCR + LLM."),
+            "Form Filling (Vision + LLM)": _("Analyze screen using Vision model to extract form fields, and fill them one by one using LLM & RAG context."),
             "Custom Instructions": _("Define your own system message and prompt for the LLM."),
             "Direct Prompt": _("Simple direct prompt without additional configuration."),
             "Data Processing Chain": _("Process data from previous nodes in a multi-step workflow."),
@@ -731,7 +737,7 @@ class LLMPropertiesDialog(ModernDialog):
             'vision_model': self.vision_model_combo.currentText(),
             'use_advanced_vision': self.use_advanced_vision_checkbox.isChecked(),
             'screenshot_enabled': self.screenshot_enabled_checkbox.isChecked(),
-            
+
             # Typing speed parameters
             'typing_batch_size': self.typing_batch_size_spin.value(),
             'typing_batch_delay': self.typing_batch_delay_spin.value(),
@@ -968,6 +974,17 @@ class LLMPropertiesDialog(ModernDialog):
                 "use_comorag": False,
                 "ocr_confidence": 0.7,
                 "ocr_preprocessing": "Clean formatting"
+            },
+            "Form Filling (Vision + LLM)": {
+                "description": "Fill out on-screen forms by analyzing pruned UI elements and providing answers from context documents.",
+                "input_source": 1,  # We can reuse OCR mode or create a new one. Let's use 1 to trigger screen reading.
+                "system_message": "You are an autonomous Task Planning Agent. Your goal is to achieve the user's objective using the provided RAG document context and the current UI screen state.\n\nYou can execute physical actions on the screen by outputting EXACTLY the following commands on separate lines. You may output a plan containing between 1 and 10 actions:\nCLICK: x, y\nTYPE: exact text to type\nSCROLL: amount (e.g., -500 to scroll down, 500 to scroll up)\nWAIT: seconds (e.g., 0.5)\n\nRULES:\n1. Look at the JSON_SCREEN_MAP object containing the UI fields.\n2. Determine the sequence of actions required to progress the task.\n3. Output a sequential plan of actions (up to 10 steps).\n4. DO NOT click submit or complete unless all necessary preceding steps are done.\n\nTo fill an input:\nCLICK: x, y (use the center_x, center_y coordinates of the input box)\nTYPE: John Doe\n\nTo open a dropdown/combobox:\nCLICK: x, y\nWAIT: 0.5\nCLICK: x, y (coordinates of the option)\n\nTo click a toggle/checkbox/radio:\nCLICK: x, y\n\nIf you cannot see the required fields, use SCROLL: -500 to scroll down.\nIf all fields are filled or the task is done, you may click the final action button. If no further actions are needed, output DONE.\nOnly respond with the sequence of action commands. Do not include markdown blocks, explanations, or quotes.",
+                "prompt": "Analyze the UI elements provided in the JSON_SCREEN_MAP and provide a multi-step plan (1-10 actions) to progress the task.\nUse the attached RAG context for any necessary information. Output only action commands.",
+                "temperature": 0.1,
+                "max_tokens": 512,
+                "use_comorag": True, # Enable RAG to allow loading resumes/documents
+                "use_direct_rag": True,
+                "ocr_confidence": 0.7,
             },
             "Custom Instructions": {
                 "description": "Provide custom instructions for the LLM to follow",

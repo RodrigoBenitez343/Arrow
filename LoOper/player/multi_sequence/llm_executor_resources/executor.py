@@ -297,9 +297,46 @@ class LLMExecutor:
         max_cycles = int(llm_config.get('max_cycles', 5))
         memory_size = int(llm_config.get('memory_size', 1000))
         if use_comorag:
-            overwatch_url = _normalize_api_url(os.getenv("OVERWATCH_API_URL"))
-            if overwatch_url:
-                api_url = overwatch_url
+            try:
+                env_overwatch = _normalize_api_url(os.getenv("OVERWATCH_API_URL"))
+            except Exception:
+                env_overwatch = None
+            if env_overwatch:
+                api_url = env_overwatch
+            else:
+                if api_url and ":11434" in api_url:
+                    api_url = "http://127.0.0.1:8000"
+        if use_comorag:
+            candidates = []
+            try:
+                candidates.append(str(api_url or "").strip())
+            except Exception:
+                pass
+            try:
+                env_url = _normalize_api_url(os.getenv("OVERWATCH_API_URL"))
+                if env_url:
+                    candidates.append(env_url)
+            except Exception:
+                pass
+            candidates.extend(["http://localhost:8000", "http://127.0.0.1:8000"])
+            picked = None
+            for u in candidates:
+                if not u:
+                    continue
+                try:
+                    r = _rq.get(f"{u.rstrip('/')}/health", headers={"Connection": "close"}, timeout=1.5)
+                    if getattr(r, "status_code", 0) == 200:
+                        picked = u.rstrip("/")
+                        break
+                except Exception:
+                    continue
+            if picked:
+                if str(api_url or "").rstrip("/") != picked:
+                    logger.info(f"ComoRAG: using reachable API URL {picked}")
+                api_url = picked
+            else:
+                logger.warning(f"ComoRAG: no reachable API server for {candidates}. Disabling ComoRAG.")
+                use_comorag = False
 
         use_direct_rag = str(llm_config.get('use_direct_rag', 'false')).lower() in ('true', '1', 'yes', 'on')
         # Respect explicit user choice for RAG; do not auto-enable on concatenation.
@@ -325,6 +362,7 @@ class LLMExecutor:
         logger.info(f"  Write Text: {write_text}")
         logger.info(f"  Use Vision: {use_vision}")
         logger.info(f"  Screenshot Enabled: {screenshot_enabled}")
+        logger.info(f"  Advanced Vision: {use_advanced_vision}")
         try:
             if self._rich_console:
                 from rich.table import Table
@@ -433,6 +471,25 @@ class LLMExecutor:
         # ----------------------------------
 
 
+        # Determine if we are using the Form Filling Preset
+        def _is_form_filling_prompt(p: str) -> bool:
+            pl = (p or "").strip().lower()
+            if not pl:
+                return False
+            if "analyze the form fields provided" not in pl:
+                return False
+            if "next empty field" not in pl:
+                return False
+            return True
+
+        is_form_filling_preset = _is_form_filling_prompt(prompt)
+        if is_form_filling_preset and use_comorag:
+            try:
+                if int(max_cycles) > 2:
+                    max_cycles = 2
+            except Exception:
+                pass
+
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before input processing")
             return None
@@ -465,7 +522,29 @@ class LLMExecutor:
         #          logger.info("Fallback OCR successful. Using extracted text as input.")
 
         if input_text is not None:
-            if use_input_text_in_prompt:
+            if is_form_filling_preset:
+                # Add the form field data to the prompt context
+                prompt = f"Current Form Layout & Fields:\n{input_text}\n\n{prompt}"
+                logger.info(f"Enhanced prompt with Vision Form Field input")
+                if use_comorag and api_url and str(api_url).strip():
+                    try:
+                        from AI.consult import OllamaClient as _MemClient
+                        mem_client = _MemClient(base_url=api_url, debug=False, use_comorag=True, timeout=None)
+                        mem_client.add_memory(
+                            content=str(input_text),
+                            source="form_fields",
+                            metadata={
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "type": "vision_pruned_fields",
+                            },
+                        )
+                        try:
+                            mem_client.close()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+            elif use_input_text_in_prompt:
                 prompt = assemble_enhanced_prompt(prompt, input_source, input_text, include_raw=True)
                 logger.info(f"Enhanced prompt with {input_source} input")
             else:
@@ -608,6 +687,9 @@ class LLMExecutor:
                 rag_top_k,
                 rag_max_chars,
             )
+            if rag_docs_context:
+                prompt = f"{rag_docs_context}\n\n{prompt}"
+                logger.info("Injected RAG document context into prompt")
 
         advanced_vision_image_path = None
         if use_advanced_vision:
@@ -813,6 +895,81 @@ class LLMExecutor:
             except Exception as e:
                 logger.error(f"Advanced Vision execution failed: {e}")
                 import traceback
+                logger.error(traceback.format_exc())
+
+        if use_advanced_vision:
+            logger.info("Advanced Vision: running multi-model pipeline...")
+            try:
+                from AI.recursive_vision_reasoner import quick_vision_reason
+
+                vision_context = self.variables.get(f"node_{_node_id}_vision_data", "") or ""
+                if not vision_context:
+                    logger.warning("Advanced Vision pipeline: missing vision_data")
+                else:
+                    pipeline_model = llm_config.get('vision_model') or model
+                    pipeline_cycles = 2
+                    pipeline_conf = 0.85
+
+                    logger.info(f"Advanced Vision pipeline model: {pipeline_model}")
+
+                    reasoner_client = OllamaClient(base_url=api_url, debug=False, use_comorag=False, timeout=None)
+                    quick_result = quick_vision_reason(
+                        ollama_client=reasoner_client,
+                        task=prompt,
+                        vision_context=vision_context,
+                        images=images if (images and os.path.exists(images[0])) else None,
+                        model=pipeline_model,
+                        max_cycles=pipeline_cycles,
+                    )
+                    try:
+                        reasoner_client.close()
+                    except Exception:
+                        pass
+
+                    if isinstance(quick_result, dict) and quick_result.get('final_plan'):
+                        final_plan = quick_result.get('final_plan', []) or []
+                        summary = quick_result.get('summary', '') or ''
+                        cycles_used = int(quick_result.get('cycles_used', 0) or 0)
+                        confidence = float(quick_result.get('confidence', 0.0) or 0.0)
+
+                        logger.info(f"Advanced Vision pipeline completed: {cycles_used} cycles, confidence: {confidence:.2f}")
+
+                        plan_str = "\n".join([f"{i+1}. {step}" for i, step in enumerate(final_plan)])
+                        pipeline_context = (
+                            "=== ADVANCED VISION PIPELINE RESULT ===\n"
+                            f"Analysis Summary: {summary}\n\n"
+                            f"Action Plan ({cycles_used} cycles, confidence: {confidence:.2f}):\n{plan_str}\n"
+                            "======================================\n"
+                        )
+
+                        if use_comorag and api_url and str(api_url).strip():
+                            try:
+                                mem_client = OllamaClient(base_url=api_url, debug=False, use_comorag=True, timeout=None)
+                                try:
+                                    mem_client.set_comorag_config(max_cycles=max_cycles, memory_size=memory_size)
+                                except Exception:
+                                    pass
+                                mem_client.add_memory(
+                                    content=pipeline_context,
+                                    source="advanced_vision_pipeline",
+                                    metadata={
+                                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "type": "advanced_vision_pipeline",
+                                        "cycles": cycles_used,
+                                        "confidence": confidence,
+                                    },
+                                )
+                                try:
+                                    mem_client.close()
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+
+                        prompt = f"{pipeline_context}\n\n{prompt}"
+            except Exception:
+                import traceback
+                logger.error("Advanced Vision pipeline failed", exc_info=True)
                 logger.error(traceback.format_exc())
 
         if advanced_vision_image_path and should_use_vision:
@@ -1289,11 +1446,17 @@ class LLMExecutor:
         # Normalize response
         response_text = None
         if isinstance(result, dict):
-            response_text = (
-                result.get('response')
-                or result.get('text')
-                or (result.get('message') or {}).get('content')
-            )
+            # Try various keys, and explicit dict lookups
+            if 'response' in result:
+                response_text = result['response']
+            elif 'text' in result:
+                response_text = result['text']
+            elif 'message' in result and isinstance(result['message'], dict):
+                response_text = result['message'].get('content')
+                
+            # Convert non-string responses safely
+            if response_text is not None and not isinstance(response_text, str):
+                response_text = str(response_text)
         # If tool selection is expected, extract and sanitize output to the marker only
         selected_tool_id = None
         if tool_ids and isinstance(response_text, str) and response_text:
@@ -1387,6 +1550,63 @@ class LLMExecutor:
                     response_text = f"USE_TOOL:{selected_tool_id}"
             except Exception:
                 pass
+        if is_form_filling_preset and (not tool_ids) and isinstance(response_text, str) and response_text:
+            try:
+                import re as _re
+
+                def _sanitize_action_commands(t: str) -> str:
+                    raw = (t or "").strip()
+                    if not raw:
+                        return ""
+                    m_done = _re.search(r"\bDONE\b", raw, flags=_re.IGNORECASE)
+                    if m_done:
+                        return "DONE"
+
+                    patt = _re.compile(
+                        r"(CLICK:\s*\d+\s*,\s*\d+|TYPE:\s*[^\r\n]+|SCROLL:\s*-?\d+|WAIT:\s*\d+(?:\.\d+)?)",
+                        flags=_re.IGNORECASE,
+                    )
+                    matches = [(m.start(), m.group(1)) for m in patt.finditer(raw)]
+                    if not matches:
+                        lines = []
+                        for ln in raw.splitlines():
+                            ln = ln.strip()
+                            if ln:
+                                lines.append(ln)
+                        return "\n".join(lines[:3])
+
+                    cmds = []
+                    for _, s in sorted(matches, key=lambda x: x[0]):
+                        s2 = s.strip()
+                        up = s2.upper()
+                        if up.startswith("CLICK:"):
+                            s2 = "CLICK:" + s2.split(":", 1)[1]
+                        elif up.startswith("TYPE:"):
+                            s2 = "TYPE:" + s2.split(":", 1)[1]
+                        elif up.startswith("SCROLL:"):
+                            s2 = "SCROLL:" + s2.split(":", 1)[1]
+                        elif up.startswith("WAIT:"):
+                            s2 = "WAIT:" + s2.split(":", 1)[1]
+                        cmds.append(s2.strip())
+
+                    final = []
+                    saw_click = False
+                    saw_type = False
+                    # Allow multiple clicks/types/scrolls in a plan (up to 10)
+                    for c in cmds:
+                        cup = c.upper()
+                        if cup.startswith("CLICK:") or cup.startswith("TYPE:") or cup.startswith("SCROLL:") or cup.startswith("WAIT:"):
+                            final.append(c)
+                            
+                        # Keep it to a reasonable plan size
+                        if len(final) >= 10:
+                            break
+                            
+                    return "\n".join(final).strip()
+
+                response_text = _sanitize_action_commands(response_text)
+            except Exception:
+                pass
         if not response_text:
             logger.error(f"LLM returned unexpected format or empty response: {result}")
             # Proceed with empty text to allow chaining
@@ -1439,7 +1659,55 @@ class LLMExecutor:
             # If ComoRAG was used, streaming is bypassed even if 'stream' is True in config.
             # So we rely on the runtime flag 'stream_used' from the task runner.
             was_streamed = shared.get('stream_used', False)
-            if write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not was_streamed or bool(shared.get('stream_failed'))):
+            
+            # --- Parse and execute Form Filling Preset Actions ---
+            form_action_taken = False
+            if is_form_filling_preset and action_handlers and response_text:
+                logger.info("Parsing LLM response for Form Filling actions...")
+                lines = response_text.split('\n')
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    if stop_flag and stop_flag():
+                        break
+                        
+                    try:
+                        if line.startswith("CLICK:"):
+                            coords = line[6:].strip().split(',')
+                            if len(coords) >= 2:
+                                x = int(float(coords[0].strip()))
+                                y = int(float(coords[1].strip()))
+                                action_handlers.bot.human_mouse_move(x, y)
+                                action_handlers.bot.human_click(button='left')
+                                logger.info(f"LLM clicked at {x}, {y}")
+                                form_action_taken = True
+                        elif line.startswith("TYPE:"):
+                            text = line[5:].strip()
+                            action = {
+                                "text": text,
+                                "force_typing": True,
+                                "batch_size": 5,
+                                "batch_delay": 0.01,
+                                "char_by_char": False,
+                                "keystroke_delay": 0.001
+                            }
+                            action_handlers.handle_type_string_action(0, action, stop_flag)
+                            form_action_taken = True
+                        elif line.startswith("SCROLL:"):
+                            delta = int(float(line[7:].strip()))
+                            action = {"total_delta": delta, "steps": max(1, abs(delta)//100), "duration_sec": 0.2}
+                            action_handlers.handle_scroll_action(0, action, stop_flag)
+                            form_action_taken = True
+                        elif line.startswith("WAIT:"):
+                            delay = float(line[5:].strip())
+                            time.sleep(delay)
+                            form_action_taken = True
+                    except Exception as e:
+                        logger.warning(f"Failed to execute form filling action '{line}': {e}")
+            # --- Standard text writing ---
+            elif write_text and action_handlers and hasattr(action_handlers, 'handle_type_string_action') and response_text and (not was_streamed or bool(shared.get('stream_failed'))):
                 logger.info("Writing LLM output via action handlers")
                 
                 # Prevent repetition if streaming partially succeeded but failed at the end
@@ -1526,9 +1794,33 @@ class LLMExecutor:
                         pass
         except Exception:
             pass
+            
         # Ensure a non-None return to indicate successful execution to the workflow engine
         if not next_node:
             next_node = "__done__"
+            
+        # Adversarial loop for form filling: verify each step recursively
+        if is_form_filling_preset and 'form_action_taken' in locals() and form_action_taken:
+            _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
+            
+            # Keep track of loop count to prevent infinite loops
+            loop_key = f"form_fill_loop_{_node_id}"
+            loop_count = self.variables.get(loop_key, 0)
+            
+            if loop_count < 10:
+                self.variables[loop_key] = loop_count + 1
+                logger.info(f"Form action taken (Step {loop_count + 1}/10). Looping back to same node for recursive verification.")
+                
+                # Make sure ComoRAG re-evaluates the screen state by triggering a new OCR/vision pass
+                # instead of using stale context
+                self.variables[f"node_{_node_id}_force_refresh"] = True
+                
+                if _node_id:
+                    next_node = _node_id
+            else:
+                logger.warning(f"Form filling reached maximum adversarial loop limit (10 steps) for node {_node_id}. Forcing progression.")
+                self.variables[loop_key] = 0 # reset for future executions
+                
         logger.info(f"LLM node execution complete. Next node: {next_node}")
         return next_node
 

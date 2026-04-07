@@ -44,7 +44,7 @@ class OllamaEngine:
             from config.settings import OllamaSettings
             self.settings = OllamaSettings() if ollama_settings is None else ollama_settings
         
-        self.base_url = getattr(self.settings, 'base_url', 'http://localhost:11434')
+        self.base_url = getattr(self.settings, 'base_url', 'http://127.0.0.1:11434').rstrip('/')
         self.loaded_models: Dict[str, ModelConfig] = {}
         self._initialized = False
         self._session: Optional[aiohttp.ClientSession] = None

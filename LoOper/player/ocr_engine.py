@@ -52,7 +52,6 @@ def _get_paddle_ocr(lang: str):
     kwargs = {
         'use_angle_cls': True,
         'lang': lang,
-        'show_log': False,
         'enable_mkldnn': False
     }
 
@@ -146,7 +145,7 @@ def extract_text_elements(image: Any, min_confidence: float = 0.6, language: str
 
         if hasattr(ocr, "ocr"):
             try:
-                result = ocr.ocr(image_arr, cls=True)
+                result = ocr.ocr(image_arr)
                 if not result:
                     return []
                 
@@ -156,7 +155,46 @@ def extract_text_elements(image: Any, min_confidence: float = 0.6, language: str
                 # If nothing found, it might return [None] or similar
                 
                 # Normalize result
+                try:
+                    from .config import logger
+                    logger.debug(f"RAW OCR RESULT: {result}")
+                except:
+                    print(f"RAW OCR RESULT: {result}")
                 if isinstance(result, list) and len(result) > 0:
+                    if isinstance(result[0], dict):
+                        # PaddleX format
+                        for res in result:
+                            rec_texts = res.get("rec_texts", [])
+                            rec_scores = res.get("rec_scores", [])
+                            rec_polys = res.get("rec_polys", [])
+                            
+                            for i, text in enumerate(rec_texts):
+                                score = rec_scores[i] if i < len(rec_scores) else 0.0
+                                poly = rec_polys[i] if i < len(rec_polys) else None
+                                
+                                box = []
+                                if poly is not None:
+                                    if hasattr(poly, "tolist"):
+                                        box = poly.tolist()
+                                    else:
+                                        box = poly
+                                
+                                center_x, center_y = 0, 0
+                                if box:
+                                    xs = [p[0] for p in box]
+                                    ys = [p[1] for p in box]
+                                    if len(xs) > 0 and len(ys) > 0:
+                                        center_x = sum(xs) / len(xs)
+                                        center_y = sum(ys) / len(ys)
+                                
+                                elements.append({
+                                    "text": str(text),
+                                    "confidence": float(score),
+                                    "box": box,
+                                    "center": (center_x, center_y)
+                                })
+                        return elements
+                    
                     # Handle case where result is [ [lines] ] (batch size 1)
                     if isinstance(result[0], list) and len(result[0]) > 0 and isinstance(result[0][0], list):
                         # It's likely [ [line1, line2] ]
@@ -176,8 +214,10 @@ def extract_text_elements(image: Any, min_confidence: float = 0.6, language: str
                     # Calculate center
                     xs = [p[0] for p in box]
                     ys = [p[1] for p in box]
-                    center_x = sum(xs) / len(xs)
-                    center_y = sum(ys) / len(ys)
+                    center_x, center_y = 0, 0
+                    if len(xs) > 0 and len(ys) > 0:
+                        center_x = sum(xs) / len(xs)
+                        center_y = sum(ys) / len(ys)
                     
                     elements.append({
                         "text": text,

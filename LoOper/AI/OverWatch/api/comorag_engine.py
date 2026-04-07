@@ -253,8 +253,12 @@ class ComoRAGEngine:
             console.print(f"[{style}]{message}[/{style}]")
         logger.info(message)
 
-    async def initialize(self):
+    async def initialize(self, memory_size: Optional[int] = None):
         """Initialize ComoRAG engine"""
+        if self._initialized:
+            logger.info("ComoRAG engine already initialized")
+            return
+            
         logger.info("Initializing ComoRAG engine...")
         
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
@@ -273,7 +277,8 @@ class ComoRAGEngine:
                 embedding_dim = 384  # Default dimension
         
         # Initialize memory workspace
-        memory_size = getattr(self.settings, 'comorag_memory_size', 1000)
+        if memory_size is None:
+            memory_size = getattr(self.settings, 'comorag_memory_size', 1000)
         embedding_dim = 384 if self.embedding_model is None else self.embedding_model.get_sentence_embedding_dimension()
         self.memory_workspace = DynamicMemoryWorkspace(max_size=memory_size, embedding_dim=embedding_dim)
         
@@ -368,6 +373,44 @@ class ComoRAGEngine:
             current_query = query
             global_context = context or ""
             
+            # --- NEW: Chunk Massive JSON Context into Memory Pool ---
+            # If the context is a massive JSON string, we should pre-process it into individual memory items
+            # so the RAG retrieval can actually find specific elements without relying on the model's context window.
+            if global_context.startswith("JSON_SCREEN_MAP:"):
+                self._log_step("🗃️ Parsing structured JSON context into memory pool...", "dim")
+                yield {"type": "log", "message": "🗃️ Parsing structured JSON context into memory pool...", "style": "dim"}
+                try:
+                    # Extract the JSON blob
+                    json_str = global_context.split("JSON_SCREEN_MAP:\n")[1].split("\n\nFLATTENED_SCREEN_MAP:")[0]
+                    screen_map = json.loads(json_str)
+                    
+                    # Add context items
+                    for item in screen_map.get("context_items", []):
+                        item_str = f"Context ID: {item.get('context_id')}, Type: {item.get('kind')}, Label: {item.get('label') or item.get('field_label') or 'N/A'}, Value: {item.get('value_text') or 'N/A'}, Coordinates: {item.get('coords')}"
+                        self.memory_workspace.add_memory(MemoryItem(
+                            id=f"ctx_{item.get('context_id')}_{int(time.time()*1000)}",
+                            content=item_str,
+                            embedding=self._get_embedding(item_str),
+                            timestamp=time.time(),
+                            source="structured_context"
+                        ))
+                        
+                    # Add text blocks
+                    for tb in screen_map.get("text_blocks_sample", []):
+                        tb_str = f"Text Block [{tb.get('block_id')}]: '{tb.get('text')}', Coordinates: {tb.get('coords')}"
+                        self.memory_workspace.add_memory(MemoryItem(
+                            id=f"tb_{tb.get('block_id')}_{int(time.time()*1000)}",
+                            content=tb_str,
+                            embedding=self._get_embedding(tb_str),
+                            timestamp=time.time(),
+                            source="structured_context"
+                        ))
+                        
+                    self._log_step(f"✅ Added {len(screen_map.get('context_items', [])) + len(screen_map.get('text_blocks_sample', []))} items to memory pool.", "green")
+                except Exception as e:
+                    logger.warning(f"Failed to parse structured context into memory: {e}")
+            # --------------------------------------------------------
+
             # Process images if provided and vision is enabled
             vision_context = ""
             if images and getattr(self.settings.comorag, 'enable_vision_analysis', False):
@@ -550,15 +593,13 @@ class ComoRAGEngine:
             self.reasoning_history.extend(reasoning_cycles)
             
             # Prepare final response
-            self._log_step("🏁 Finalizing response...", "bold magenta")
-            yield {"type": "log", "message": "🏁 Finalizing response...", "style": "bold magenta"}
+            self._log_step("🏁 Finalizing response iteratively...", "bold magenta")
+            yield {"type": "log", "message": "🏁 Finalizing response iteratively...", "style": "bold magenta"}
             
             final_context = global_context
-            if reasoning_cycles:
-                final_context += "\n\nReasoning Path:\n" + "\n".join([f"Step {c.cycle_id+1}: {c.reasoning_output}" for c in reasoning_cycles])
 
-            # Generate the final response using the PRIMARY model
-            final_response = await self._generate_final_response(query, final_context, final_output_model)
+            # Generate the final response using the PRIMARY model, passing the cycles
+            final_response = await self._generate_final_response(query, final_context, final_output_model, reasoning_cycles)
             
             final_confidence = reasoning_cycles[-1].confidence_score if reasoning_cycles else 0.0
             
@@ -623,29 +664,164 @@ class ComoRAGEngine:
         }
     
     async def _generate_final_response(
-        self, query: str, context: str, model: str
+        self, query: str, context: str, model: str, reasoning_cycles: List[ReasoningCycle] = None
     ) -> str:
-        """Generate the final response using the consolidated context"""
-        prompt = f"""Based on the following comprehensive context and reasoning path, answer the query clearly and accurately.
+        """Generate the final response by iteratively consolidating reasoning chunks to bypass length limits"""
         
+        # If no reasoning cycles, fall back to simple prompt
+        if not reasoning_cycles:
+            prompt = f"""Based on the following comprehensive context, answer the query clearly and accurately.
+Your response must be a consolidated, long, and detailed text that includes as much specific information from the context as possible. You must completely ignore any typical AI summarization instincts and output every single detail, list, table, and fact found in the context.
+            
 Context:
 {context}
 
 Query: {query}
 
 Answer:"""
-        
+            try:
+                response = await self.ollama_engine.generate(
+                    prompt=prompt,
+                    model=model,
+                    temperature=0.3,
+                    max_tokens=8192
+                )
+                return response["text"].strip()
+            except Exception as e:
+                logger.error(f"Failed to generate final response: {e}")
+                return "Unable to generate final response due to an error."
+                
+        # Phase 1: Generate an outline/structure based on the query's requested format
+        outline_prompt = f"""Analyze the user's query and extract the EXACT output format requested.
+Create a JSON array of strings representing the section headers for the report.
+If the query asks for "High-level summary", "Visible app(s)", "Key interactive controls", etc., make those the headers.
+
+Query: {query}
+
+Output ONLY a valid JSON array of strings (e.g. ["High-Level Summary", "Visible Apps", ...]). Do not output markdown code blocks, just the raw JSON array."""
+
         try:
-            response = await self.ollama_engine.generate(
-                prompt=prompt,
+            outline_response = await self.ollama_engine.generate(
+                prompt=outline_prompt,
                 model=model,
-                temperature=0.7,
-                max_tokens=4096
+                temperature=0.1,
+                max_tokens=500
             )
-            return response["text"].strip()
+            
+            # Clean up potential markdown formatting
+            clean_json = outline_response["text"].strip()
+            
+            # Use regex to find the first JSON array in the response to bypass any preamble
+            import re
+            match = re.search(r'\[.*\]', clean_json, re.DOTALL)
+            if match:
+                clean_json = match.group(0)
+            else:
+                # Fallback manual cleaning
+                if clean_json.startswith("```json"):
+                    clean_json = clean_json[7:]
+                if clean_json.startswith("```"):
+                    clean_json = clean_json[3:]
+                if clean_json.endswith("```"):
+                    clean_json = clean_json[:-3]
+                
+            sections = json.loads(clean_json.strip())
+            if not isinstance(sections, list) or not sections:
+                raise ValueError("Invalid outline format")
         except Exception as e:
-            logger.error(f"Failed to generate final response: {e}")
-            return "Unable to generate final response due to an error."
+            logger.warning(f"Failed to generate outline, falling back to default sections: {e}")
+            sections = [
+                "High-Level Summary",
+                "Visible App(s) and Layout Regions",
+                "Key Interactive Controls",
+                "Key Text Content (OCR)",
+                "What the User Can Do Next"
+            ]
+
+        # Phase 2: Recursively populate each section using smaller chunks of evidence to avoid context overflow
+        accumulated_response = ""
+        
+        # Determine a safe context snippet length (lower than before to leave room for evidence)
+        # 3000 chars allows the JSON structure to be partially visible without blowing up the context window
+        safe_context_snippet = context[:3000]
+        
+        for i, section in enumerate(sections):
+            # We will build the section text iteratively if there are many reasoning cycles
+            section_text = ""
+            
+            # Chunk the reasoning cycles into batches of 1 to ensure prompt size stays small
+            chunk_size = 1
+            cycle_chunks = [reasoning_cycles[i:i + chunk_size] for i in range(0, len(reasoning_cycles), chunk_size)]
+            
+            # If no reasoning cycles, we just do one pass
+            if not cycle_chunks:
+                cycle_chunks = [[]]
+                
+            for chunk_idx, chunk in enumerate(cycle_chunks):
+                chunk_evidence = "\n\n".join([f"Cycle {c.cycle_id+1} Discovery:\n{c.reasoning_output}" for c in chunk])
+                
+                if chunk_idx == 0:
+                    section_prompt = f"""You are generating a highly detailed, comprehensive report section by section.
+Your task is to write ONLY the section titled: "{section}".
+
+CRITICAL INSTRUCTIONS:
+- DO NOT output any meta-commentary, introductory remarks, or conversational filler (e.g. "Here is the section", "Based on the context", "I will now list...").
+- DO NOT refer to yourself, the system, the prompt, or the context.
+- START IMMEDIATELY with the data requested.
+- Include every specific detail, coordinate, list item, table row, and fact discovered that belongs in this section.
+- DO NOT summarize or condense. If there is a large table of interactive controls, write out every single row.
+- DO NOT write an introduction or conclusion for the whole report, ONLY write the content for "{section}".
+
+Original Query Instructions:
+{query}
+
+Context Data Snippet:
+{safe_context_snippet}...
+
+Reasoning Discoveries:
+{chunk_evidence}
+
+Section to write: {section}
+Output format: Start with the header **{section}**, followed immediately by the highly detailed content."""
+                else:
+                    section_prompt = f"""You are continuing to build the highly detailed section titled: "{section}".
+Your task is to seamlessly integrate the new discoveries into the existing section text.
+
+CRITICAL INSTRUCTIONS:
+- DO NOT output any meta-commentary, introductory remarks, or conversational filler.
+- DO NOT refer to yourself, the system, the prompt, or the context.
+- DO NOT summarize or condense. Keep all existing tables, coordinates, and details, and add the new ones.
+- DO NOT write an introduction or conclusion.
+- output ONLY the updated text.
+
+Original Query Instructions:
+{query}
+
+Existing Text for this Section:
+{section_text}
+
+New Reasoning Discoveries to integrate:
+{chunk_evidence}
+
+Updated Section Content (Start with **{section}**):"""
+
+                try:
+                    response = await self.ollama_engine.generate(
+                        prompt=section_prompt,
+                        model=model,
+                        temperature=0.2, # Very low temp for factual extraction
+                        max_tokens=2048
+                    )
+                    
+                    section_text = response["text"].strip()
+                except Exception as e:
+                    logger.error(f"Failed to generate chunk {chunk_idx} for section '{section}': {e}")
+                    if chunk_idx == 0:
+                        section_text = f"**{section}**\nFailed to generate this section. Error: {str(e)}"
+            
+            accumulated_response += ("\n\n" if accumulated_response else "") + section_text
+
+        return accumulated_response
 
     async def _generate_probing_queries(
         self, query: str, context: str, model: str, cycle: int
@@ -715,6 +891,13 @@ Probing Questions:"""
         """Consolidate retrieved evidence into coherent context"""
         if not evidence:
             return context
+            
+        try:
+            c = (context or "").lstrip()
+            if (c.startswith("{") or "JSON_SCREEN_MAP:" in c or "FLATTENED_SCREEN_MAP:" in c) and ("\"context_items\"" in c or "\"context_items_sample\"" in c or "\"ocr_texts_sample\"" in c or "AVAILABLE_CONTEXT_IDS" in c):
+                return context
+        except Exception:
+            pass
         
         evidence_text = "\n".join([f"- {item.content}" for item in evidence])
         
