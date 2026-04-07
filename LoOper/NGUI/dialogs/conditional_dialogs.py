@@ -149,6 +149,60 @@ class AdvancedConditionalDialog(ModernDialog):
 
     def setup_unified_conditions(self, parent_layout: QVBoxLayout):
         """Setup a unified layout with the supported options (no tabs)."""
+        # Code condition
+        code_group = QGroupBox(_("Code Condition (must return True/False)"))
+        code_layout = QVBoxLayout(code_group)
+        code_layout.setContentsMargins(10, 15, 10, 10)
+        code_layout.setSpacing(8)
+
+        code_enable_row = QHBoxLayout()
+        code_enable_row.setSpacing(8)
+        code_enable_label = QLabel(_("Enable"))
+        code_enable_label.setStyleSheet(f"color: {TEXT_COLOR};")
+        self.code_enabled_toggle = ModernToggle()
+        code_enable_row.addWidget(code_enable_label)
+        code_enable_row.addWidget(self.code_enabled_toggle)
+        code_enable_row.addStretch()
+        code_layout.addLayout(code_enable_row)
+
+        self.code_edit = QTextEdit()
+        self.code_edit.setMinimumHeight(160)
+        self.code_edit.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #252526;
+                color: {TEXT_COLOR};
+                border: 1px solid #3d3d3d;
+                border-radius: 4px;
+                padding: 6px;
+            }}
+        """)
+        code_layout.addWidget(self.code_edit)
+
+        code_controls = QHBoxLayout()
+        code_controls.setSpacing(8)
+        timeout_label = QLabel(_("Timeout (s):"))
+        timeout_label.setStyleSheet(f"color: {TEXT_COLOR};")
+        self.code_timeout_spin = QDoubleSpinBox()
+        self.code_timeout_spin.setRange(0.0, 3600.0)
+        self.code_timeout_spin.setDecimals(1)
+        self.code_timeout_spin.setSingleStep(1.0)
+        self.code_timeout_spin.setValue(5.0)
+        self.code_timeout_spin.setStyleSheet(f"""
+            QDoubleSpinBox {{
+                background-color: #252526;
+                color: {TEXT_COLOR};
+                border: 1px solid #3d3d3d;
+                border-radius: 4px;
+                padding: 4px;
+            }}
+        """)
+        code_controls.addWidget(timeout_label)
+        code_controls.addWidget(self.code_timeout_spin)
+        code_controls.addStretch()
+        code_layout.addLayout(code_controls)
+
+        parent_layout.addWidget(code_group)
+
         # Presence triggers
         presence_group = QGroupBox(_("Presence Triggers (must be present to execute)"))
         presence_layout = QVBoxLayout(presence_group)
@@ -231,8 +285,55 @@ class AdvancedConditionalDialog(ModernDialog):
         parent_layout.addWidget(pre_loops_group)
 
         # Load existing data for the supported options
+        self.load_code_condition()
         self.load_pre_conditions()
         self.load_conditional_loops()
+
+    def load_code_condition(self):
+        code_cfg = self.current_config.get('code_condition') or {}
+        enabled = bool(code_cfg) and str(code_cfg.get('code', '') or '').strip() != ''
+        try:
+            self.code_enabled_toggle.setChecked(enabled)
+        except Exception:
+            pass
+        try:
+            code_text = code_cfg.get('code', '')
+        except Exception:
+            code_text = ''
+        if code_text:
+            self.code_edit.setPlainText(str(code_text))
+        else:
+            self.code_edit.setPlainText("result = True")
+        try:
+            timeout = float(code_cfg.get('timeout', 5.0) or 5.0)
+        except Exception:
+            timeout = 5.0
+        try:
+            self.code_timeout_spin.setValue(timeout)
+        except Exception:
+            pass
+        try:
+            self.code_enabled_toggle.toggled.connect(self._on_code_condition_toggled)
+        except Exception:
+            try:
+                self.code_enabled_toggle.stateChanged.connect(self._on_code_condition_toggled)
+            except Exception:
+                pass
+        self._on_code_condition_toggled(enabled)
+
+    def _on_code_condition_toggled(self, enabled):
+        try:
+            enabled = bool(enabled)
+        except Exception:
+            enabled = False
+        try:
+            self.code_edit.setEnabled(enabled)
+        except Exception:
+            pass
+        try:
+            self.code_timeout_spin.setEnabled(enabled)
+        except Exception:
+            pass
     
     def setup_pre_conditions_tab(self):
         """Setup the pre-sequence conditions tab"""
@@ -583,6 +684,17 @@ class AdvancedConditionalDialog(ModernDialog):
     def get_config(self):
         """Get the complete configuration from the dialog"""
         config = {}
+
+        try:
+            code_enabled = bool(self.code_enabled_toggle.isChecked()) if hasattr(self, 'code_enabled_toggle') else False
+        except Exception:
+            code_enabled = False
+        if code_enabled:
+            code_text = self.code_edit.toPlainText() if hasattr(self, 'code_edit') else ''
+            config['code_condition'] = {
+                'code': str(code_text),
+                'timeout': float(self.code_timeout_spin.value()) if hasattr(self, 'code_timeout_spin') else 5.0
+            }
         
         # Presence triggers
         presence_triggers = []

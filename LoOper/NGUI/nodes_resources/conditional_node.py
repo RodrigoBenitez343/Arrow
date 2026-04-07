@@ -71,6 +71,7 @@ class ConditionalNode(BaseNode):
         self.create_property('max_loops', '10')
         self.create_property('max_attempts', '3')
         self.create_property('delay_between_attempts', '1.0')
+        self.create_property('code', 'result = True')
         
         # OCR-specific fields (language and region removed - uses full screen with default English)
         self.create_property('target_text', '')
@@ -117,6 +118,8 @@ class ConditionalNode(BaseNode):
         if condition_type in ['while_present', 'while_absent', 'until_present', 'until_absent']:
             self.set_property('max_attempts', str(condition_data.get('max_iterations', 10)))
             self.set_property('delay_between_attempts', str(condition_data.get('iteration_delay', 1.0)))
+        if condition_type == 'code':
+            self.set_property('code', condition_data.get('code', self.get_property('code') or 'result = True'))
     
     def get_condition_config(self):
         """Get the condition configuration for this node"""
@@ -143,6 +146,11 @@ class ConditionalNode(BaseNode):
                 'sequence_file': self.condition_data.get('sequence_file', ''),
                 'max_iterations': self.condition_data.get('max_iterations', 10),
                 'iteration_delay': self.condition_data.get('iteration_delay', 1.0)
+            })
+
+        if self.condition_type == 'code':
+            config.update({
+                'code': self.get_property('code') or self.condition_data.get('code', '')
             })
         
         return config

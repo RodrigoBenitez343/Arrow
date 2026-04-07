@@ -46,6 +46,11 @@ class ConditionalOperationsMixin:
             
             # Convert simple node properties to complex dialog structure
             # Only create config if node has actual data (not just defaults)
+            if condition_type == 'code' and (node.get_property('code') or '').strip():
+                current_config['code_condition'] = {
+                    'code': node.get_property('code') or '',
+                    'timeout': float(node.get_property('timeout') or 5.0)
+                }
             if condition_type == 'presence' and node.get_property('image_path'):
                 current_config['presence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
@@ -125,8 +130,16 @@ class ConditionalOperationsMixin:
                 condition_type = None
                 condition_data = {}
                 
+                if 'code_condition' in config and config['code_condition'] and str(config['code_condition'].get('code', '')).strip():
+                    condition_type = 'code'
+                    condition_data = config['code_condition']
+                    node.set_property('condition_type', 'code')
+                    node.set_property('code', str(condition_data.get('code', '')))
+                    timeout = float(condition_data.get('timeout', 5.0) or 5.0)
+                    node.set_property('timeout', str(timeout))
+                    node.set_name('Code Condition')
                 # Check for presence triggers
-                if 'presence_triggers' in config and config['presence_triggers']:
+                elif 'presence_triggers' in config and config['presence_triggers']:
                     condition_type = 'presence'
                     condition_data = config['presence_triggers'][0]
                     node.set_property('condition_type', 'presence')

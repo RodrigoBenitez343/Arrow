@@ -569,6 +569,161 @@ enablecredsspsupport:i:1
         # Fix: The JSON stores 'trigger_type' with values like 'absence', 'presence', 'ocr'
         # We need to map these to the expected condition types for evaluation
         raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
+        if str(raw_trigger_type).lower() in ('code', 'code_conditional', 'python'):
+            code_text = conditional_node.get('code') or conditional_node.get('condition_code') or ''
+            if not str(code_text or '').strip():
+                return False
+            try:
+                import sys
+                import venv
+                import subprocess as _sp
+                try:
+                    runtime_root = os.path.join(os.getcwd(), 'runtime')
+                    venv_dir = os.path.join(runtime_root, 'venvs', 'conditional_fallback')
+                    os.makedirs(venv_dir, exist_ok=True)
+                    py_exe = os.path.join(venv_dir, 'Scripts', 'python.exe')
+                    if not os.path.exists(py_exe):
+                        builder = venv.EnvBuilder(with_pip=True)
+                        builder.create(venv_dir)
+                    py_exe = os.path.join(venv_dir, 'Scripts', 'python.exe')
+                    sp = os.path.join(venv_dir, 'Lib', 'site-packages')
+                    if os.path.isdir(sp) and sp not in sys.path:
+                        sys.path.insert(0, sp)
+
+                    import ast
+                    pkgs = set()
+                    try:
+                        tree = ast.parse(str(code_text))
+                        for n in ast.walk(tree):
+                            if isinstance(n, ast.Import):
+                                for a in n.names:
+                                    pkgs.add(a.name.split('.')[0])
+                            elif isinstance(n, ast.ImportFrom):
+                                if n.module:
+                                    pkgs.add(n.module.split('.')[0])
+                    except Exception:
+                        pkgs = set()
+
+                    stdlib = {
+                        'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','io',
+                        'contextlib','shutil','glob','platform','warnings','logging','uuid','socket','urllib','http','email','base64','hashlib','hmac','struct','pickle','copy',
+                        'weakref','enum','types','inspect','traceback','gc','abc','numbers','decimal','fractions','statistics','operator','unittest','doctest','pdb','profile',
+                        'cProfile','timeit','venv','ensurepip','zipfile','tarfile','csv','sqlite3','zlib','gzip','bz2','lzma','xml','html','mimetypes','argparse','optparse',
+                        'getopt','getpass','ctypes','multiprocessing','concurrent','queue','select','mmap','signal','site','builtins','locale'
+                    }
+                    wanted = [p for p in pkgs if p and p not in stdlib]
+                    pkg_map = {
+                        'cv2': 'opencv-python',
+                        'PIL': 'Pillow',
+                        'bs4': 'beautifulsoup4',
+                        'sklearn': 'scikit-learn',
+                        'yaml': 'PyYAML',
+                        'dotenv': 'python-dotenv',
+                        'dateutil': 'python-dateutil'
+                    }
+                    wanted = [pkg_map.get(w, w) for w in wanted]
+                    if wanted and os.path.exists(py_exe):
+                        installed_names = set()
+                        try:
+                            cmd = [py_exe, "-m", "pip", "list", "--format=json"]
+                            p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                            out_list, _err_list = p.communicate(timeout=10)
+                            import json as _json
+                            data = _json.loads(out_list or "[]")
+                            for item in data:
+                                try:
+                                    installed_names.add(str(item.get('name', '')).lower())
+                                except Exception:
+                                    continue
+                        except Exception:
+                            installed_names = set()
+                        to_install = []
+                        for w in wanted:
+                            if str(w).lower() not in installed_names:
+                                to_install.append(w)
+                        if to_install:
+                            cmd = [py_exe, "-m", "pip", "install"] + to_install
+                            p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                            p.communicate(timeout=180)
+                except Exception:
+                    pass
+
+                import threading
+                import time
+                exec_scope = {'os': os, '__name__': '__main__'}
+                out = {'result': None, 'error': None}
+                def _runner():
+                    try:
+                        exec(str(code_text), exec_scope, exec_scope)
+                        res = exec_scope.get('result')
+                        if res is None and callable(exec_scope.get('condition')):
+                            res = exec_scope.get('condition')()
+                        if res is None:
+                            try:
+                                candidates = {}
+                                for k, v in dict(exec_scope).items():
+                                    if not k or str(k).startswith('_'):
+                                        continue
+                                    if not callable(v):
+                                        continue
+                                    if k in ('condition',):
+                                        continue
+                                    try:
+                                        if getattr(v, '__module__', None) not in (None, '__main__'):
+                                            continue
+                                    except Exception:
+                                        pass
+                                    candidates[str(k)] = v
+                                preferred = [
+                                    'check_system_language',
+                                    'evaluate',
+                                    'predicate',
+                                    'check',
+                                    'run',
+                                    'main'
+                                ]
+                                picked = None
+                                for name in preferred:
+                                    if name in candidates:
+                                        picked = candidates[name]
+                                        break
+                                if picked is None and len(candidates) == 1:
+                                    picked = next(iter(candidates.values()))
+                                if picked is not None:
+                                    res = picked()
+                            except Exception:
+                                res = None
+                        out['result'] = res
+                    except Exception as e:
+                        out['error'] = e
+                t = threading.Thread(target=_runner, daemon=True)
+                t.start()
+                try:
+                    timeout_s = float(conditional_node.get('timeout', 5.0) or 5.0)
+                except Exception:
+                    timeout_s = 5.0
+                start = time.time()
+                while t.is_alive():
+                    if stop_flag and stop_flag():
+                        return False
+                    if timeout_s and timeout_s > 0 and (time.time() - start) > timeout_s:
+                        return False
+                    time.sleep(0.01)
+                if out.get('error') is not None:
+                    return False
+                res = out.get('result')
+                if isinstance(res, bool):
+                    return res
+                if isinstance(res, str):
+                    s = res.strip().lower()
+                    if s in ('true', '1', 'yes', 'y', 'on'):
+                        return True
+                    if s in ('false', '0', 'no', 'n', 'off', ''):
+                        return False
+                    return bool(s)
+                return bool(res)
+            except Exception:
+                return False
         
         # Map the raw trigger type to the expected condition type format
         condition_type_mapping = {
