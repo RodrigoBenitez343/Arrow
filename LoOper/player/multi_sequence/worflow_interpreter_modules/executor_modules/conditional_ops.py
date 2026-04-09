@@ -532,11 +532,35 @@ class ConditionalMixin:
                     logger.info("Conditional loop gated: expected app not open/focused")
                     return False
             
-            # Reconstruct loop configuration from conditional node data
-            loop_type = conditional_data.get('loop_type', 'while_present')
-            max_iterations = int(conditional_data.get('max_loops', 10))
-            sequence_file = conditional_data.get('sequence_file', '')
-            iteration_delay = float(conditional_data.get('iteration_delay', 0.05))  # Reduced from 0.3
+            condition_type = str(conditional_data.get('condition_type') or conditional_data.get('trigger_type') or '').strip().lower()
+            loop_type = (conditional_data.get('loop_type') or '').strip()
+            if not loop_type and condition_type in ('while_present', 'until_present', 'while_absent', 'until_absent'):
+                loop_type = condition_type
+            if not loop_type:
+                loop_type = 'while_present'
+
+            max_iterations_raw = (
+                conditional_data.get('max_loops')
+                if conditional_data.get('max_loops') is not None
+                else conditional_data.get('max_iterations')
+            )
+            if max_iterations_raw is None:
+                max_iterations_raw = conditional_data.get('max_attempts')
+            try:
+                max_iterations = int(max_iterations_raw if max_iterations_raw is not None else 10)
+            except Exception:
+                max_iterations = 10
+            max_iterations = max(1, max_iterations)
+
+            sequence_file = conditional_data.get('sequence_file', '') or conditional_data.get('sequence', '')
+            try:
+                iteration_delay = float(
+                    conditional_data.get('iteration_delay')
+                    if conditional_data.get('iteration_delay') is not None
+                    else conditional_data.get('delay_between_attempts', 0.05)
+                )
+            except Exception:
+                iteration_delay = 0.05
             
             # Parse the stored loop condition
             loop_condition_json = conditional_data.get('loop_condition', '{}')
@@ -549,6 +573,39 @@ class ConditionalMixin:
                     'image_path': conditional_data.get('image_path', ''),
                     'confidence': float(conditional_data.get('threshold', 0.8))
                 }
+            if not isinstance(condition, dict):
+                condition = {}
+
+            if not condition:
+                ocr_text = conditional_data.get('ocr_text', '') or conditional_data.get('target_text', '')
+                if str(ocr_text or '').strip():
+                    try:
+                        conf = float(conditional_data.get('threshold', conditional_data.get('confidence', 0.8)))
+                    except Exception:
+                        conf = 0.8
+                    case_sensitive = conditional_data.get('case_sensitive', True)
+                    if isinstance(case_sensitive, str):
+                        case_sensitive = case_sensitive.strip().lower() in ('true', '1', 'yes', 'y')
+                    elif case_sensitive is None:
+                        case_sensitive = True
+                    else:
+                        case_sensitive = bool(case_sensitive)
+                    condition = {
+                        'trigger_type': 'ocr',
+                        'target_text': ocr_text,
+                        'confidence': conf,
+                        'case_sensitive': case_sensitive,
+                    }
+                else:
+                    try:
+                        conf = float(conditional_data.get('threshold', conditional_data.get('confidence', 0.8)))
+                    except Exception:
+                        conf = 0.8
+                    condition = {
+                        'trigger_type': 'presence',
+                        'image_path': conditional_data.get('image_path', ''),
+                        'confidence': conf
+                    }
             
             # Build loop configuration
             loop_config = {

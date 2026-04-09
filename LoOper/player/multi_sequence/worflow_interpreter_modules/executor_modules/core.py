@@ -174,8 +174,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
             elif node['type'] == 'conditional':
                 # For conditional nodes, evaluate the condition and store the result
                 conditional_data = node['data']
-                condition_type = conditional_data.get('condition_type', 'presence')
-                if condition_type == 'loop':
+                condition_type = str(conditional_data.get('condition_type', 'presence') or '').strip().lower()
+                if condition_type in ('loop', 'while_present', 'until_present', 'while_absent', 'until_absent'):
                     conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
                 else:
                     conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
