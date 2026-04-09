@@ -9,11 +9,12 @@ class ClipboardManager:
 
     def get_property_whitelist(self, node_type: str):
         if node_type in ("sequence", "sequence.SequenceNode") or node_type.endswith("SequenceNode"):
-            return {"sequence_file", "loop_count", "extra_delay"}
+            return {"sequence_file", "loop_count", "extra_delay", "use_app_opened"}
         if node_type in ("conditional", "conditional.ConditionalNode") or node_type.endswith("ConditionalNode"):
             return {
                 "condition_type","image_path","confidence","threshold","timeout","wait_time",
                 "max_loops","max_attempts","delay_between_attempts","target_text","ocr_text","case_sensitive",
+                "target_x","target_y","target_w","target_h","position_tolerance",
                 "loop_type","loop_position","sequence_file","iteration_delay","loop_condition",
             }
         if node_type in ("llm", "llm.LLMNode") or node_type.endswith("LLMNode"):
@@ -184,6 +185,7 @@ class ClipboardManager:
                         "sequence_file": cfg.get("sequence_file", "") or "",
                         "loop_count": int(cfg.get("loop_count", 1) or 1),
                         "extra_delay": float(cfg.get("extra_delay", 1.0) or 1.0),
+                        "use_app_opened": cfg.get("use_app_opened", True),
                     }
                     new_node.set_sequence_data(0, seq_config)
                     applied_keys = list(whitelist)

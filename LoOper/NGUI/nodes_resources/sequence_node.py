@@ -58,6 +58,7 @@ class SequenceNode(BaseNode):
         self.create_property('sequence_file', '')
         self.create_property('loop_count', '1')
         self.create_property('extra_delay', '1.0')
+        self.create_property('use_app_opened', 'true')
 
         # Visual indicator for editable nodes (border accent)
         try:
@@ -89,6 +90,7 @@ class SequenceNode(BaseNode):
             seq_name = sequence_file or 'unknown'
             loop_count = sequence_config.get('loop_count', 1)
             extra_delay = sequence_config.get('extra_delay', 1.0)
+            use_app_opened = sequence_config.get('use_app_opened', None)
         
         # CRITICAL FIX: Use only the sequence filename to prevent automatic numbering
         # that breaks sequence file references during playback
@@ -100,6 +102,13 @@ class SequenceNode(BaseNode):
         self.set_property('sequence_file', sequence_file)
         self.set_property('loop_count', str(loop_count))
         self.set_property('extra_delay', str(extra_delay))
+        try:
+            if use_app_opened is not None:
+                if isinstance(use_app_opened, str):
+                    use_app_opened = use_app_opened.strip().lower() in ("true", "1", "yes", "y", "on")
+                self.set_property('use_app_opened', 'true' if bool(use_app_opened) else 'false')
+        except Exception:
+            pass
         
         has_fallbacks = any(key.startswith(f"{sequence_idx}_") for key in self.action_fallbacks.keys())
         if has_fallbacks:
@@ -112,5 +121,6 @@ class SequenceNode(BaseNode):
         return {
             'sequence_file': self.get_property('sequence_file'),
             'loop_count': int(self.get_property('loop_count') or 1),
-            'extra_delay': float(self.get_property('extra_delay') or 1.0)
+            'extra_delay': float(self.get_property('extra_delay') or 1.0),
+            'use_app_opened': str(self.get_property('use_app_opened') or 'true').strip().lower() in ("true", "1", "yes", "y", "on"),
         }

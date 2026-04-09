@@ -671,7 +671,7 @@ class DraggableSequenceButton(QPushButton):
 class ModernDeleteDialog(ModernDialog):
     """A custom modern dialog for delete confirmation."""
     def __init__(self, parent, filename):
-        super().__init__(parent, title=_("Delete Sequence"))
+        super().__init__(parent, title=_("Delete"))
         self.resize(400, 250)  # Increased height to fit content without scrollbar
         
         # Hide the default title bar close button if desired, but base_dialog has it.
@@ -809,7 +809,7 @@ class TrashBinWidget(QPushButton):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setText(_("🗑 Drop to Delete"))
-        self.setToolTip(_("Drag sequence files here to delete them"))
+        self.setToolTip(_("Drag sequence/chain files here to delete them"))
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             f"""
@@ -831,7 +831,7 @@ class TrashBinWidget(QPushButton):
         )
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat('application/x-looper-sequence-file'):
+        if event.mimeData().hasFormat('application/x-looper-sequence-file') or event.mimeData().hasFormat('application/x-looper-chain-file'):
             event.accept()
             self.setStyleSheet(
                 f"""
@@ -871,9 +871,10 @@ class TrashBinWidget(QPushButton):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat('application/x-looper-sequence-file'):
+        if event.mimeData().hasFormat('application/x-looper-sequence-file') or event.mimeData().hasFormat('application/x-looper-chain-file'):
             try:
-                file_path_bytes = event.mimeData().data('application/x-looper-sequence-file')
+                file_format = 'application/x-looper-sequence-file' if event.mimeData().hasFormat('application/x-looper-sequence-file') else 'application/x-looper-chain-file'
+                file_path_bytes = event.mimeData().data(file_format)
                 file_path = str(file_path_bytes, 'utf-8')
                 
                 if not os.path.exists(file_path):

@@ -71,6 +71,11 @@ class ConditionalNode(BaseNode):
         self.create_property('max_loops', '10')
         self.create_property('max_attempts', '3')
         self.create_property('delay_between_attempts', '1.0')
+        self.create_property('target_x', '')
+        self.create_property('target_y', '')
+        self.create_property('target_w', '')
+        self.create_property('target_h', '')
+        self.create_property('position_tolerance', '6')
         self.create_property('code', 'result = True')
         
         # OCR-specific fields (language and region removed - uses full screen with default English)
