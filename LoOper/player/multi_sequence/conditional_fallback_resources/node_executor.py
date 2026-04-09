@@ -724,6 +724,9 @@ enablecredsspsupport:i:1
                 return bool(res)
             except Exception:
                 return False
+
+        if str(raw_trigger_type).strip().lower() in ('layout_match', 'layout_match_conditional', 'layout_match_trigger', 'layout_match_condition'):
+            return self._evaluate_layout_match_conditional(conditional_node, stop_flag=stop_flag)
         
         # Map the raw trigger type to the expected condition type format
         condition_type_mapping = {
@@ -787,6 +790,394 @@ enablecredsspsupport:i:1
         else:
             logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
             return False
+
+    def _evaluate_layout_match_conditional(self, conditional_node, stop_flag=None):
+        import time
+        try:
+            import pyautogui
+        except Exception:
+            pyautogui = None
+        try:
+            from player.computer_vision import get_sandbox_agent_url
+        except Exception:
+            get_sandbox_agent_url = None
+
+        image_path = conditional_node.get('image_path', '') or ''
+        if not str(image_path).strip():
+            return False
+
+        try:
+            confidence = float(conditional_node.get('threshold', conditional_node.get('confidence', 0.8)))
+        except Exception:
+            confidence = 0.8
+
+        try:
+            timeout_s = float(conditional_node.get('timeout', 10) or 10)
+        except Exception:
+            timeout_s = 10.0
+        if timeout_s <= 0:
+            timeout_s = 10.0
+
+        try:
+            max_attempts = int(conditional_node.get('max_attempts', 30) or 30)
+        except Exception:
+            max_attempts = 30
+        max_attempts = max(1, max_attempts)
+
+        try:
+            attempt_delay = float(conditional_node.get('delay_between_attempts', 0.05) or 0.05)
+        except Exception:
+            attempt_delay = 0.05
+
+        try:
+            scroll_amount = int(conditional_node.get('scroll_amount', 400) or 400)
+        except Exception:
+            scroll_amount = 400
+        scroll_amount = max(1, scroll_amount)
+
+        def _resolve_image(p):
+            try:
+                rp = self.path_resolver.resolve_path(p, add_json=False)
+                if rp:
+                    return rp
+            except Exception:
+                pass
+            return p
+
+        resolved_image_path = _resolve_image(str(image_path))
+
+        expected_x = conditional_node.get('target_x')
+        expected_y = conditional_node.get('target_y')
+        expected_w = conditional_node.get('target_w')
+        expected_h = conditional_node.get('target_h')
+        use_expected_position = False
+        try:
+            expected_w_i = int(float(expected_w))
+            expected_h_i = int(float(expected_h))
+            use_expected_position = expected_w_i > 0 and expected_h_i > 0
+        except Exception:
+            use_expected_position = False
+        if use_expected_position:
+            try:
+                expected_x_i = int(float(expected_x))
+                expected_y_i = int(float(expected_y))
+            except Exception:
+                use_expected_position = False
+                expected_x_i = 0
+                expected_y_i = 0
+        else:
+            expected_x_i = 0
+            expected_y_i = 0
+
+        try:
+            position_tolerance = int(conditional_node.get('position_tolerance', conditional_node.get('tolerance', 6)) or 6)
+        except Exception:
+            position_tolerance = 6
+        position_tolerance = max(0, position_tolerance)
+        try:
+            region_expand_factor = float(conditional_node.get('region_expand_factor', 2.0) or 2.0)
+        except Exception:
+            region_expand_factor = 2.0
+        region_expand_factor = max(1.0, region_expand_factor)
+
+        agent_url = None
+        try:
+            if callable(get_sandbox_agent_url):
+                agent_url = get_sandbox_agent_url()
+        except Exception:
+            agent_url = None
+
+        def _send_agent_action(payload):
+            if not agent_url:
+                return False
+            try:
+                import urllib.request
+                import json
+                base_url = str(agent_url).rstrip('/')
+                req = urllib.request.Request(
+                    f"{base_url}/action",
+                    data=json.dumps(payload).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'}
+                )
+                with urllib.request.urlopen(req, timeout=10.0) as response:
+                    return int(getattr(response, 'status', 200) or 200) == 200
+            except Exception:
+                return False
+
+        def _check_match(screen_cv=None):
+            if stop_flag and stop_flag():
+                return False
+            try:
+                if use_expected_position and hasattr(self.template_matcher, 'region_based_search'):
+                    loc = self.template_matcher.region_based_search(
+                        resolved_image_path,
+                        expected_x_i,
+                        expected_y_i,
+                        confidence,
+                        region_expand_factor,
+                        True,
+                        screen_cv
+                    )
+                    if not loc:
+                        loc = self.template_matcher.region_based_search(
+                            resolved_image_path,
+                            expected_x_i,
+                            expected_y_i,
+                            confidence,
+                            region_expand_factor,
+                            False,
+                            screen_cv
+                        )
+                else:
+                    loc = None
+                if not loc:
+                    loc = self.template_matcher.multiscale_template_match(
+                        resolved_image_path,
+                        confidence=confidence,
+                        scales=[1.0],
+                        grayscale=True,
+                        screen_cv=screen_cv
+                    )
+                    if not loc:
+                        loc = self.template_matcher.multiscale_template_match(
+                            resolved_image_path,
+                            confidence=confidence,
+                            scales=[1.0],
+                            grayscale=False,
+                            screen_cv=screen_cv
+                        )
+            except Exception:
+                loc = None
+            if not loc:
+                return False
+            if not use_expected_position:
+                return True
+            try:
+                dx = abs(int(loc[0]) - expected_x_i)
+                dy = abs(int(loc[1]) - expected_y_i)
+                return dx <= position_tolerance and dy <= position_tolerance
+            except Exception:
+                return False
+
+        def _do_scroll(amount):
+            if agent_url:
+                _send_agent_action({"action": "scroll", "amount": int(amount)})
+                return
+            if pyautogui is None:
+                return
+            try:
+                pyautogui.scroll(int(amount))
+            except Exception:
+                return
+
+        def _do_hscroll(amount):
+            if agent_url:
+                key = 'right' if amount > 0 else 'left'
+                try:
+                    reps = max(1, abs(int(amount)) // 100)
+                except Exception:
+                    reps = 1
+                for _ in range(reps):
+                    if stop_flag and stop_flag():
+                        return
+                    _send_agent_action({"action": "hotkey", "keys": [key]})
+                return
+            if pyautogui is None:
+                return
+            try:
+                if hasattr(pyautogui, 'hscroll'):
+                    pyautogui.hscroll(int(amount))
+                    return
+            except Exception:
+                pass
+            try:
+                pyautogui.keyDown('shift')
+                pyautogui.scroll(int(amount))
+                pyautogui.keyUp('shift')
+            except Exception:
+                try:
+                    pyautogui.keyUp('shift')
+                except Exception:
+                    pass
+
+        def _do_zoom(zoom_in):
+            if agent_url:
+                if _send_agent_action({"action": "hotkey", "keys": ["ctrl", "=" if zoom_in else "-"]}):
+                    return
+                _send_agent_action({"action": "hotkey", "keys": ["ctrl", "+" if zoom_in else "-"]})
+                return
+            if pyautogui is None:
+                return
+            try:
+                pyautogui.hotkey('ctrl', '=' if zoom_in else '-')
+            except Exception:
+                try:
+                    pyautogui.hotkey('ctrl', '+' if zoom_in else '-')
+                except Exception:
+                    return
+
+        deadline = time.time() + timeout_s
+
+        try:
+            screen_cv0 = self.template_matcher.capture_screen()
+        except Exception:
+            screen_cv0 = None
+        if _check_match(screen_cv0):
+            return True
+        try:
+            import random
+        except Exception:
+            random = None
+
+        try:
+            zoom_prob = float(conditional_node.get('zoom_prob', 0.12) or 0.12)
+        except Exception:
+            zoom_prob = 0.12
+        zoom_prob = max(0.0, min(1.0, zoom_prob))
+
+        try:
+            hscroll_prob = float(conditional_node.get('hscroll_prob', 0.10) or 0.10)
+        except Exception:
+            hscroll_prob = 0.10
+        hscroll_prob = max(0.0, min(1.0, hscroll_prob))
+
+        try:
+            flip_prob = float(conditional_node.get('scroll_flip_prob', 0.06) or 0.06)
+        except Exception:
+            flip_prob = 0.06
+        flip_prob = max(0.0, min(1.0, flip_prob))
+
+        try:
+            hold_steps = int(conditional_node.get('direction_hold_steps', 12) or 12)
+        except Exception:
+            hold_steps = 12
+        hold_steps = max(1, hold_steps)
+
+        try:
+            scroll_step_min = int(conditional_node.get('scroll_step_min', 30) or 30)
+        except Exception:
+            scroll_step_min = 30
+        scroll_step_min = max(1, scroll_step_min)
+        try:
+            scroll_step_max = int(conditional_node.get('scroll_step_max', scroll_amount) or scroll_amount)
+        except Exception:
+            scroll_step_max = scroll_amount
+        scroll_step_max = max(scroll_step_min, scroll_step_max)
+
+        try:
+            settle_min = float(conditional_node.get('settle_min', attempt_delay) or attempt_delay)
+        except Exception:
+            settle_min = attempt_delay
+        settle_min = max(0.01, settle_min)
+        try:
+            settle_max = float(conditional_node.get('settle_max', max(settle_min, 0.18)) or max(settle_min, 0.18))
+        except Exception:
+            settle_max = max(settle_min, 0.18)
+        settle_max = max(settle_min, settle_max)
+
+        if attempt_delay <= 0:
+            attempt_delay = 0.02
+
+        try:
+            min_steps_from_timeout = int((timeout_s / max(0.02, attempt_delay)) * 3)
+        except Exception:
+            min_steps_from_timeout = max_attempts
+        max_attempts = max(max_attempts, min_steps_from_timeout)
+
+        vdir = 1
+        hdir = 1
+        if random is not None:
+            try:
+                vdir = 1 if random.random() < 0.5 else -1
+                hdir = 1 if random.random() < 0.5 else -1
+            except Exception:
+                vdir = 1
+                hdir = 1
+        v_hold = 0
+        h_hold = 0
+
+        step = 0
+        while step < max_attempts and time.time() <= deadline:
+            if stop_flag and stop_flag():
+                return False
+
+            do_zoom = False
+            if random is None:
+                do_zoom = (step % 9 == 0)
+            else:
+                try:
+                    do_zoom = random.random() < zoom_prob
+                except Exception:
+                    do_zoom = False
+
+            if do_zoom:
+                zoom_in = True
+                if random is not None:
+                    try:
+                        zoom_in = random.random() < 0.5
+                    except Exception:
+                        zoom_in = True
+                _do_zoom(bool(zoom_in))
+            else:
+                do_h = False
+                if random is not None:
+                    try:
+                        do_h = random.random() < hscroll_prob
+                    except Exception:
+                        do_h = False
+
+                amt = scroll_step_max
+                if random is not None:
+                    try:
+                        amt = random.randint(scroll_step_min, scroll_step_max)
+                    except Exception:
+                        amt = scroll_step_max
+
+                if do_h:
+                    if h_hold >= hold_steps and random is not None:
+                        try:
+                            if random.random() < flip_prob:
+                                hdir *= -1
+                                h_hold = 0
+                        except Exception:
+                            pass
+                    _do_hscroll(int(hdir * amt))
+                    h_hold += 1
+                else:
+                    if v_hold >= hold_steps and random is not None:
+                        try:
+                            if random.random() < flip_prob:
+                                vdir *= -1
+                                v_hold = 0
+                        except Exception:
+                            pass
+                    _do_scroll(int(vdir * amt))
+                    v_hold += 1
+
+            settle = settle_min
+            if random is not None:
+                try:
+                    settle = random.uniform(settle_min, settle_max)
+                except Exception:
+                    settle = settle_min
+            elapsed = 0.0
+            while elapsed < settle:
+                if stop_flag and stop_flag():
+                    return False
+                st = min(0.05, settle - elapsed)
+                time.sleep(st)
+                elapsed += st
+
+            try:
+                screen_cv = self.template_matcher.capture_screen()
+            except Exception:
+                screen_cv = None
+            if _check_match(screen_cv):
+                return True
+
+            step += 1
+
+        return False
     
     def get_conditional_branch_node(self, node, result):
         """

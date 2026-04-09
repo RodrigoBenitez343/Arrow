@@ -240,6 +240,7 @@ class SequenceOperationsMixin:
                 logger.debug(f"Sequence dialog accepted with properties: {props}")
                 node.set_property('loop_count', str(props.get('loop_count', 1)))
                 node.set_property('extra_delay', str(props.get('extra_delay', 1.0)))
+                node.set_property('use_app_opened', 'true' if props.get('use_app_opened', True) else 'false')
                 logger.info(f"Successfully edited Sequence node: {node.id}")
             else:
                 logger.debug("Sequence dialog cancelled")

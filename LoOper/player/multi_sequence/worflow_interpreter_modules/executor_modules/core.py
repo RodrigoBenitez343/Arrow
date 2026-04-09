@@ -63,6 +63,11 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         if not self.workflow_graph:
             logger.warning("No workflow graph to execute")
             return False
+
+        try:
+            self.action_handlers = action_handlers
+        except Exception:
+            self.action_handlers = None
         
         # Initialize runtime environment immediately but track if we need full setup
         # We'll do minimal initialization first, then full setup only when needed

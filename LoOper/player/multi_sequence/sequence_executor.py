@@ -1116,15 +1116,25 @@ enablecredsspsupport:i:1
                 logger.error(f"Failed to load sequence {seq_file}: {e}")
                 return False
 
+            use_app_opened = True
+            try:
+                raw_use_app_opened = item.get("use_app_opened", True)
+                if isinstance(raw_use_app_opened, str):
+                    raw_use_app_opened = raw_use_app_opened.strip().lower() in ("true", "1", "yes", "y", "on")
+                use_app_opened = bool(raw_use_app_opened)
+            except Exception:
+                use_app_opened = True
+
             expected_app = None
             try:
-                expected_app = self._get_expected_app_context_from_sequence(sequence_data)
-                if not expected_app and self.fallback_handler is not None:
-                    expected_app = getattr(self.fallback_handler, "last_app_context", None)
+                if use_app_opened:
+                    expected_app = self._get_expected_app_context_from_sequence(sequence_data)
+                    if not expected_app and self.fallback_handler is not None:
+                        expected_app = getattr(self.fallback_handler, "last_app_context", None)
                     
                 # Apply global overrides (like Sandbox) if present
                 if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
-                    if not expected_app:
+                    if not isinstance(expected_app, dict):
                         expected_app = {}
                     expected_app.update(self.global_app_context_override)
                     logger.info(f"Applied global app context override: {self.global_app_context_override}")

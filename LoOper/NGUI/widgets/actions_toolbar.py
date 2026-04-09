@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QComboBox, QScrollArea, QGridLayout
 )
 from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMimeData
+from PyQt5.QtCore import QFileSystemWatcher
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QIcon, QDrag
 
 try:
@@ -168,6 +169,9 @@ class SearchBarFrame(QFrame):
         super().__init__(parent)
         self.graph_view = graph_view
         self._search_items = []
+        self._index_dirty = True
+        self._watcher = None
+        self._watched_paths = set()
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 2, 0, 2)
         root.setSpacing(4)
@@ -199,9 +203,74 @@ class SearchBarFrame(QFrame):
         results_layout.addWidget(self._results_scroll)
         root.addWidget(self._results_frame)
         self._results_frame.setVisible(False)
+        self._install_watchers()
         self._rebuild_search_index()
         try:
             self.search_field.textChanged.connect(self._on_search_changed)
+        except Exception:
+            pass
+    
+    def _install_watchers(self):
+        try:
+            self._watcher = QFileSystemWatcher(self)
+            try:
+                self._watcher.directoryChanged.connect(self._on_search_dirs_changed)
+                self._watcher.fileChanged.connect(self._on_search_dirs_changed)
+            except Exception:
+                pass
+            self._sync_watched_paths()
+        except Exception:
+            self._watcher = None
+            self._watched_paths = set()
+    
+    def _sync_watched_paths(self):
+        if self._watcher is None:
+            return
+        desired = set()
+        try:
+            seq_folder = getattr(self.graph_view, 'sequences_folder', None)
+            if seq_folder and os.path.isdir(seq_folder):
+                desired.add(os.path.abspath(seq_folder))
+                nested = os.path.join(seq_folder, 'sequences')
+                if os.path.isdir(nested):
+                    desired.add(os.path.abspath(nested))
+        except Exception:
+            pass
+        try:
+            chain_folder = getattr(self.graph_view, 'chains_folder', None)
+            if chain_folder and os.path.isdir(chain_folder):
+                desired.add(os.path.abspath(chain_folder))
+        except Exception:
+            pass
+
+        to_add = sorted(desired - self._watched_paths)
+        to_remove = sorted(self._watched_paths - desired)
+        for p in to_remove:
+            try:
+                self._watcher.removePath(p)
+            except Exception:
+                pass
+            try:
+                self._watched_paths.discard(p)
+            except Exception:
+                pass
+        for p in to_add:
+            try:
+                ok = self._watcher.addPath(p)
+                if ok:
+                    self._watched_paths.add(p)
+            except Exception:
+                pass
+    
+    def _on_search_dirs_changed(self, path=None):
+        self._index_dirty = True
+        try:
+            self._sync_watched_paths()
+        except Exception:
+            pass
+        try:
+            if str(self.search_field.text()).strip():
+                QTimer.singleShot(0, self._on_search_changed)
         except Exception:
             pass
 
@@ -284,6 +353,10 @@ class SearchBarFrame(QFrame):
     def _rebuild_search_index(self):
         items = []
         seen = set()
+        try:
+            self._sync_watched_paths()
+        except Exception:
+            pass
         seq_folder = getattr(self.graph_view, 'sequences_folder', None)
         try:
             if seq_folder and os.path.isdir(seq_folder):
@@ -361,6 +434,7 @@ class SearchBarFrame(QFrame):
         except Exception:
             pass
         self._search_items = items
+        self._index_dirty = False
 
     def _clear_results(self):
         if not hasattr(self, "_results_layout") or self._results_layout is None:
@@ -377,6 +451,11 @@ class SearchBarFrame(QFrame):
         except Exception:
             text = ""
         mode = "both"
+        if self._index_dirty:
+            try:
+                self._rebuild_search_index()
+            except Exception:
+                pass
         self._clear_results()
         if not str(text).strip():
             self._results_frame.setVisible(False)

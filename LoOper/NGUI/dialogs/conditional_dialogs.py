@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QPixmap
 from ..constants import TEXT_COLOR
-from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog, WaitConditionDialog
+from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog, WaitConditionDialog, LayoutMatchConfigDialog
 from ..i18n import _
 
 
@@ -84,6 +84,21 @@ class ConditionItemWidget(QFrame):
             max_iter = self.config.get('max_iterations', 10)
             info_text = f"<b>{_('Conditional Loop')}</b><br>{_('Loop Type:')} {loop_type}<br>{_('Sequence File:')} {seq}<br>{_('Max Iterations:')} {max_iter}"
             
+        elif self.condition_type == "layout_match":
+            preview_label.setText("LAYOUT")
+            image_path = self.config.get('image_path', '')
+            conf = self.config.get('confidence', 0.8)
+            timeout = self.config.get('timeout', 10)
+            tx = self.config.get('target_x')
+            ty = self.config.get('target_y')
+            tw = self.config.get('target_w')
+            th = self.config.get('target_h')
+            tol = self.config.get('position_tolerance', 6)
+            if tx is not None and ty is not None and tw is not None and th is not None:
+                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}<br>{_('Captured region:')} x={tx}, y={ty}, w={tw}, h={th}, { _('Position Tolerance (px):') } {tol}<br>{ _('Timeout (s):') } {timeout}"
+            else:
+                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}<br>{ _('Timeout (s):') } {timeout}"
+
         elif self.condition_type == "wait":
              preview_label.setText("WAIT")
              wtype = self.config.get('type', 'wait_time')
@@ -229,6 +244,32 @@ class AdvancedConditionalDialog(ModernDialog):
 
         presence_layout.addLayout(presence_buttons)
         parent_layout.addWidget(presence_group)
+
+        layout_match_group = QGroupBox(_("Layout Match Conditionals"))
+        layout_match_layout = QVBoxLayout(layout_match_group)
+        layout_match_layout.setContentsMargins(10, 15, 10, 10)
+        layout_match_layout.setSpacing(8)
+
+        self.layout_match_list = QListWidget()
+        self.layout_match_list.setMinimumHeight(120)
+        self.layout_match_list.itemDoubleClicked.connect(self.edit_layout_match)
+        layout_match_layout.addWidget(self.layout_match_list)
+
+        layout_match_buttons = QHBoxLayout()
+        layout_match_buttons.setSpacing(8)
+        add_layout_match_btn = QPushButton(_("Add Layout Match"))
+        add_layout_match_btn.setMinimumHeight(30)
+        add_layout_match_btn.clicked.connect(self.add_layout_match)
+        layout_match_buttons.addWidget(add_layout_match_btn)
+
+        remove_layout_match_btn = QPushButton(_("Remove Selected"))
+        remove_layout_match_btn.setMinimumHeight(30)
+        remove_layout_match_btn.clicked.connect(lambda: self.remove_selected_item(self.layout_match_list))
+        layout_match_buttons.addWidget(remove_layout_match_btn)
+        layout_match_buttons.addStretch()
+
+        layout_match_layout.addLayout(layout_match_buttons)
+        parent_layout.addWidget(layout_match_group)
 
         # OCR triggers
         ocr_group = QGroupBox(_("OCR Triggers (text must be present to execute)"))
@@ -548,6 +589,15 @@ class AdvancedConditionalDialog(ModernDialog):
             widget = ConditionItemWidget(new_config, "presence")
             self.presence_triggers_list.setItemWidget(item, widget)
 
+    def edit_layout_match(self, item):
+        config = item.data(32)
+        dialog = LayoutMatchConfigDialog(self, config=config)
+        if dialog.exec_() == QDialog.Accepted:
+            new_config = dialog.get_config()
+            item.setData(32, new_config)
+            widget = ConditionItemWidget(new_config, "layout_match")
+            self.layout_match_list.setItemWidget(item, widget)
+
     def edit_absence_trigger(self, item):
         """Edit absence trigger"""
         config = item.data(32)
@@ -610,6 +660,12 @@ class AdvancedConditionalDialog(ModernDialog):
         if dialog.exec_() == QDialog.Accepted:
             config = dialog.get_config()
             self.create_list_item(self.presence_triggers_list, config, "presence")
+
+    def add_layout_match(self):
+        dialog = LayoutMatchConfigDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            config = dialog.get_config()
+            self.create_list_item(self.layout_match_list, config, "layout_match")
     
     def add_absence_trigger(self):
         """Add an absence trigger"""
@@ -665,6 +721,10 @@ class AdvancedConditionalDialog(ModernDialog):
         for trigger in presence_triggers:
             self.create_list_item(self.presence_triggers_list, trigger, "presence")
 
+        layout_match_conditionals = self.current_config.get('layout_match_conditionals', [])
+        for cfg in layout_match_conditionals:
+            self.create_list_item(self.layout_match_list, cfg, "layout_match")
+
         ocr_triggers = self.current_config.get('ocr_triggers', [])
         for trigger in ocr_triggers:
             self.create_list_item(self.ocr_triggers_list, trigger, "ocr")
@@ -711,6 +771,13 @@ class AdvancedConditionalDialog(ModernDialog):
             ocr_triggers.append(item.data(32))
         if ocr_triggers:
             config['ocr_triggers'] = ocr_triggers
+
+        layout_match_conditionals = []
+        for i in range(self.layout_match_list.count()):
+            item = self.layout_match_list.item(i)
+            layout_match_conditionals.append(item.data(32))
+        if layout_match_conditionals:
+            config['layout_match_conditionals'] = layout_match_conditionals
         
         # Pre-conditional loops
         pre_loops = []

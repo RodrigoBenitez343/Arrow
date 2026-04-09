@@ -426,6 +426,9 @@ class ConfigManager:
                 "sequence_file": sequence_file,  # Use cleaned sequence file name
                 "loop_count": int(node.get_property('loop_count') or 1),
                 "extra_delay": float(node.get_property('extra_delay') or 1.0),
+                "use_app_opened": (
+                    str(node.get_property('use_app_opened') or 'true').strip().lower() in ("true", "1", "yes", "y", "on")
+                ),
                 "actions": node.get_property('actions') or [],
                 "node_id": node.id,
                 "position": node.pos(),  # pos() returns [x, y] list directly
@@ -466,6 +469,17 @@ class ConfigManager:
                 "position": node.pos(),  # pos() returns [x, y] list directly
                 "connections": self._get_node_connections(node)
             }
+
+            tx = node.get_property('target_x')
+            ty = node.get_property('target_y')
+            tw = node.get_property('target_w')
+            th = node.get_property('target_h')
+            if str(tx or '').strip() != '' and str(ty or '').strip() != '' and str(tw or '').strip() != '' and str(th or '').strip() != '':
+                conditional_data["target_x"] = int(float(tx))
+                conditional_data["target_y"] = int(float(ty))
+                conditional_data["target_w"] = int(float(tw))
+                conditional_data["target_h"] = int(float(th))
+                conditional_data["position_tolerance"] = int(float(node.get_property('position_tolerance') or 6))
             
             self.chain_config["conditional_nodes"].append(conditional_data)
             logger.debug(f"Successfully saved conditional node with condition type: {conditional_data['condition_type']}")
@@ -724,6 +738,10 @@ class ConfigManager:
                     node.set_property('sequence_file', sequence_file)
                     node.set_property('loop_count', str(seq_data.get('loop_count', 1)))
                     node.set_property('extra_delay', str(seq_data.get('extra_delay', 1.0)))
+                    node.set_property(
+                        'use_app_opened',
+                        'true' if bool(seq_data.get('use_app_opened', True)) else 'false'
+                    )
                     logger.debug(f"Set sequence_file property for sequence node: {sequence_file}")
                     logger.debug(f"Set loop_count property for sequence node: {seq_data.get('loop_count', 1)}")
                     logger.debug(f"Set extra_delay property for sequence node: {seq_data.get('extra_delay', 1.0)}")
@@ -777,6 +795,18 @@ class ConfigManager:
                     node.set_property('timeout', str(cond_data.get('timeout', 5.0)))
                     node.set_property('max_attempts', str(cond_data.get('max_attempts', 3)))
                     node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 1.0)))
+                    if cond_data.get('target_x') is not None and cond_data.get('target_y') is not None and cond_data.get('target_w') is not None and cond_data.get('target_h') is not None:
+                        node.set_property('target_x', str(cond_data.get('target_x')))
+                        node.set_property('target_y', str(cond_data.get('target_y')))
+                        node.set_property('target_w', str(cond_data.get('target_w')))
+                        node.set_property('target_h', str(cond_data.get('target_h')))
+                        node.set_property('position_tolerance', str(cond_data.get('position_tolerance', 6)))
+                    else:
+                        node.set_property('target_x', '')
+                        node.set_property('target_y', '')
+                        node.set_property('target_w', '')
+                        node.set_property('target_h', '')
+                        node.set_property('position_tolerance', '6')
                     # Loop-specific properties
                     node.set_property('loop_type', cond_data.get('loop_type', ''))
                     node.set_property('loop_position', cond_data.get('loop_position', ''))

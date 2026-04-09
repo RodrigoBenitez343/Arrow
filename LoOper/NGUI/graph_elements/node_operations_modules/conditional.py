@@ -51,6 +51,25 @@ class ConditionalOperationsMixin:
                     'code': node.get_property('code') or '',
                     'timeout': float(node.get_property('timeout') or 5.0)
                 }
+            if condition_type == 'layout_match' and node.get_property('image_path'):
+                cfg = {
+                    'image_path': node.get_property('image_path'),
+                    'confidence': float(node.get_property('threshold') or 0.8),
+                    'timeout': int(float(node.get_property('timeout') or 10.0)),
+                    'max_attempts': int(float(node.get_property('max_attempts') or 30)),
+                    'delay_between_attempts': float(node.get_property('delay_between_attempts') or 0.05),
+                }
+                tx = node.get_property('target_x')
+                ty = node.get_property('target_y')
+                tw = node.get_property('target_w')
+                th = node.get_property('target_h')
+                if str(tx or '').strip() != '' and str(ty or '').strip() != '' and str(tw or '').strip() != '' and str(th or '').strip() != '':
+                    cfg['target_x'] = int(float(tx))
+                    cfg['target_y'] = int(float(ty))
+                    cfg['target_w'] = int(float(tw))
+                    cfg['target_h'] = int(float(th))
+                    cfg['position_tolerance'] = int(float(node.get_property('position_tolerance') or 6))
+                current_config['layout_match_conditionals'] = [cfg]
             if condition_type == 'presence' and node.get_property('image_path'):
                 current_config['presence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
@@ -138,6 +157,28 @@ class ConditionalOperationsMixin:
                     timeout = float(condition_data.get('timeout', 5.0) or 5.0)
                     node.set_property('timeout', str(timeout))
                     node.set_name('Code Condition')
+                elif 'layout_match_conditionals' in config and config['layout_match_conditionals']:
+                    condition_type = 'layout_match'
+                    condition_data = config['layout_match_conditionals'][0]
+                    node.set_property('condition_type', 'layout_match')
+                    node.set_property('image_path', condition_data.get('image_path', ''))
+                    node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
+                    node.set_property('timeout', str(condition_data.get('timeout', 10)))
+                    node.set_property('max_attempts', str(condition_data.get('max_attempts', 30)))
+                    node.set_property('delay_between_attempts', str(condition_data.get('delay_between_attempts', 0.05)))
+                    if condition_data.get('target_x') is not None and condition_data.get('target_y') is not None and condition_data.get('target_w') is not None and condition_data.get('target_h') is not None:
+                        node.set_property('target_x', str(condition_data.get('target_x')))
+                        node.set_property('target_y', str(condition_data.get('target_y')))
+                        node.set_property('target_w', str(condition_data.get('target_w')))
+                        node.set_property('target_h', str(condition_data.get('target_h')))
+                        node.set_property('position_tolerance', str(condition_data.get('position_tolerance', 6)))
+                    else:
+                        node.set_property('target_x', '')
+                        node.set_property('target_y', '')
+                        node.set_property('target_w', '')
+                        node.set_property('target_h', '')
+                        node.set_property('position_tolerance', '6')
+                    node.set_name('Layout Match')
                 # Check for presence triggers
                 elif 'presence_triggers' in config and config['presence_triggers']:
                     condition_type = 'presence'

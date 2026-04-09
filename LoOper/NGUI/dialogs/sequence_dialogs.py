@@ -1,7 +1,7 @@
 # dialogs/sequence_dialogs.py
 
 from .base_dialog import ModernDialog
-from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QLineEdit, QDialogButtonBox, QCheckBox
 from ..i18n import _
 
 
@@ -23,6 +23,11 @@ class SequencePropertiesDialog(ModernDialog):
         self.extra_delay_input = QLineEdit(str(sequence_config.get('extra_delay', 1.0)))
         self.layout.addWidget(self.extra_delay_label)
         self.layout.addWidget(self.extra_delay_input)
+
+        use_app_opened = sequence_config.get('use_app_opened', True)
+        self.use_app_opened_checkbox = QCheckBox(_("Use recorded app context (open/focus app)"))
+        self.use_app_opened_checkbox.setChecked(bool(use_app_opened))
+        self.layout.addWidget(self.use_app_opened_checkbox)
         
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         # Localize button texts
@@ -40,5 +45,6 @@ class SequencePropertiesDialog(ModernDialog):
         """Get the properties from the dialog"""
         return {
             'loop_count': int(self.loop_count_input.text()),
-            'extra_delay': float(self.extra_delay_input.text())
+            'extra_delay': float(self.extra_delay_input.text()),
+            'use_app_opened': bool(self.use_app_opened_checkbox.isChecked()),
         }

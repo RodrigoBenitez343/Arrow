@@ -7,14 +7,226 @@ This module contains dialog classes for configuring various types of triggers:
 - ConditionalLoopDialog: Conditional loop configuration
 """
 
+import os
+import time
 from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, 
-    QComboBox, QSpinBox, QDoubleSpinBox, QFileDialog, QGridLayout, QWidget
+    QComboBox, QSpinBox, QDoubleSpinBox, QFileDialog, QGridLayout, QWidget, QApplication, QRubberBand, QDialog
 )
+from PyQt5.QtCore import Qt, QRect, pyqtSignal, QTimer
+from PyQt5.QtGui import QGuiApplication, QPainter, QColor, QCursor, QPen
 from ..constants import TEXT_COLOR
 from ..i18n import _
+
+
+def _get_main_window_from_widget(widget):
+    try:
+        w = widget
+        while w is not None:
+            parent = w.parent()
+            if parent is None:
+                return w
+            w = parent
+    except Exception:
+        pass
+    try:
+        aw = QApplication.instance().activeWindow()
+        if aw is not None:
+            return aw
+    except Exception:
+        pass
+    return None
+
+
+def _find_sequences_folder_from_widget(widget):
+    w = widget
+    while w is not None:
+        if hasattr(w, 'sequences_folder'):
+            return getattr(w, 'sequences_folder')
+        if hasattr(w, 'graph_view') and hasattr(getattr(w, 'graph_view'), 'sequences_folder'):
+            return getattr(getattr(w, 'graph_view'), 'sequences_folder')
+        try:
+            w = w.parent()
+        except Exception:
+            break
+    try:
+        aw = QApplication.instance().activeWindow()
+        if aw is not None and hasattr(aw, 'graph_view') and hasattr(getattr(aw, 'graph_view'), 'sequences_folder'):
+            return getattr(getattr(aw, 'graph_view'), 'sequences_folder')
+    except Exception:
+        pass
+    return os.path.join(os.getcwd(), 'sequences')
+
+
+def _get_capture_screen():
+    try:
+        screen = QGuiApplication.screenAt(QCursor.pos())
+        if screen is not None:
+            return screen
+    except Exception:
+        pass
+    return QGuiApplication.primaryScreen()
+
+
+class SnipCaptureDialog(QDialog):
+    def __init__(self, frozen_pixmap, screen_geometry, parent=None):
+        super().__init__(parent)
+        self._frozen_pixmap = frozen_pixmap
+        self._screen_geometry = screen_geometry
+        self._origin = None
+        self._current = None
+        self._selected_rect = None
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowModality(Qt.ApplicationModal)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CrossCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        try:
+            self.setGeometry(self._screen_geometry)
+        except Exception:
+            pass
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._selected_rect = None
+            self.reject()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        self._origin = event.pos()
+        self._current = event.pos()
+        self.update()
+
+    def mouseMoveEvent(self, event):
+        if self._origin is None:
+            return
+        self._current = event.pos()
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.LeftButton or self._origin is None:
+            return
+        self._current = event.pos()
+        rect = QRect(self._origin, self._current).normalized()
+        self._origin = None
+        self._current = None
+        if rect.width() < 5 or rect.height() < 5:
+            self._selected_rect = None
+            self.reject()
+            return
+        self._selected_rect = rect
+        self.accept()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if self._frozen_pixmap is not None:
+            painter.drawPixmap(0, 0, self._frozen_pixmap)
+
+        overlay = QColor(0, 0, 0, 90)
+        painter.fillRect(self.rect(), overlay)
+
+        rect = None
+        if self._origin is not None and self._current is not None:
+            rect = QRect(self._origin, self._current).normalized()
+        elif self._selected_rect is not None:
+            rect = self._selected_rect
+
+        if rect is not None and rect.width() > 0 and rect.height() > 0 and self._frozen_pixmap is not None:
+            painter.drawPixmap(rect, self._frozen_pixmap, rect)
+            pen = QPen(QColor(0, 170, 255, 255))
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.drawRect(rect)
+
+    def get_result(self):
+        if self._selected_rect is None or self._frozen_pixmap is None:
+            return None, None
+        try:
+            cropped = self._frozen_pixmap.copy(self._selected_rect)
+        except Exception:
+            cropped = None
+        geo = self._screen_geometry or QRect(0, 0, 0, 0)
+        global_rect = QRect(
+            int(geo.x() + self._selected_rect.x()),
+            int(geo.y() + self._selected_rect.y()),
+            int(self._selected_rect.width()),
+            int(self._selected_rect.height())
+        )
+        return cropped, global_rect
+
+
+class FrozenScreenSnipOverlay(QWidget):
+    snip_done = pyqtSignal(object, object)
+    snip_cancelled = pyqtSignal()
+
+    def __init__(self, frozen_pixmap, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground, False)
+        self.setCursor(Qt.CrossCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
+        self.setWindowModality(Qt.ApplicationModal)
+        self._frozen_pixmap = frozen_pixmap
+        self._origin = None
+        self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
+        self._rubber_band.hide()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        if self._frozen_pixmap is not None:
+            painter.drawPixmap(0, 0, self._frozen_pixmap)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            try:
+                self._rubber_band.hide()
+            except Exception:
+                pass
+            self.snip_cancelled.emit()
+            self.close()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            return
+        self._origin = event.pos()
+        self._rubber_band.setGeometry(QRect(self._origin, self._origin))
+        self._rubber_band.show()
+
+    def mouseMoveEvent(self, event):
+        if self._origin is None:
+            return
+        rect = QRect(self._origin, event.pos()).normalized()
+        self._rubber_band.setGeometry(rect)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.LeftButton or self._origin is None:
+            return
+        rect = QRect(self._origin, event.pos()).normalized()
+        self._origin = None
+        try:
+            self._rubber_band.hide()
+        except Exception:
+            pass
+
+        if rect.width() < 5 or rect.height() < 5:
+            self.snip_cancelled.emit()
+            self.close()
+            return
+
+        try:
+            cropped = self._frozen_pixmap.copy(rect)
+            self.snip_done.emit(cropped, rect)
+        except Exception:
+            self.snip_cancelled.emit()
+        self.close()
 
 
 class TriggerConfigDialog(ModernDialog):
@@ -27,6 +239,12 @@ class TriggerConfigDialog(ModernDialog):
         self.config = config
         self.setModal(True)
         self.resize(400, 200)
+        self._snip_overlay = None
+        self._main_window = None
+        self._capture_screen_geo = None
+        self._prev_modality = None
+        self._capture_original_geo = None
+        self._capture_in_progress = False
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -47,6 +265,10 @@ class TriggerConfigDialog(ModernDialog):
         image_layout.addWidget(QLabel(_("Image Path:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
+
+        capture_btn = QPushButton(_("Capture..."))
+        capture_btn.clicked.connect(self.capture_image)
+        image_layout.addWidget(capture_btn)
         
         browse_btn = QPushButton(_("Browse..."))
         browse_btn.clicked.connect(self.browse_image)
@@ -120,6 +342,124 @@ class TriggerConfigDialog(ModernDialog):
         )
         if file_path:
             self.image_path_entry.setText(file_path)
+
+    def capture_image(self):
+        if self._capture_in_progress:
+            return
+        self._capture_in_progress = True
+        self._main_window = _get_main_window_from_widget(self.parent())
+        original_geo = None
+        try:
+            original_geo = self.geometry()
+        except Exception:
+            original_geo = None
+        self._capture_original_geo = original_geo
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(450, self._start_capture)
+
+    def _start_capture(self):
+        accepted_after_capture = False
+        try:
+            screen = _get_capture_screen()
+            if screen is None:
+                return
+            geo = screen.geometry()
+            frozen = screen.grabWindow(0)
+            if frozen is None or frozen.isNull():
+                return
+            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            if dlg.exec_() == QDialog.Accepted:
+                cropped, global_rect = dlg.get_result()
+                if cropped is None or cropped.isNull():
+                    return
+                sequences_dir = _find_sequences_folder_from_widget(self.parent())
+                screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                ts = int(time.time() * 1000)
+                file_path = os.path.join(screenshots_dir, f'trigger_{ts}.png')
+                try:
+                    cropped.save(file_path, 'PNG')
+                except Exception:
+                    cropped.save(file_path)
+                self.image_path_entry.setText(file_path)
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+                try:
+                    accepted_after_capture = True
+                    self.accept()
+                except Exception:
+                    accepted_after_capture = False
+        finally:
+            if not accepted_after_capture:
+                try:
+                    if self._capture_original_geo is not None:
+                        self.setGeometry(self._capture_original_geo)
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                except Exception:
+                    pass
+            try:
+                if self._main_window is not None:
+                    self._main_window.showNormal()
+                    self._main_window.raise_()
+                    self._main_window.activateWindow()
+            except Exception:
+                pass
+            self._capture_in_progress = False
+
+    def _on_snip_cancelled(self):
+        try:
+            if self._prev_modality is not None:
+                self.setWindowModality(self._prev_modality)
+        except Exception:
+            pass
+        try:
+            self.setModal(True)
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showNormal()
+                self._main_window.raise_()
+                self._main_window.activateWindow()
+        except Exception:
+            pass
+        try:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
+    def _on_snip_done(self, pixmap, rect):
+        try:
+            sequences_dir = _find_sequences_folder_from_widget(self.parent())
+            screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+            os.makedirs(screenshots_dir, exist_ok=True)
+            ts = int(time.time() * 1000)
+            file_path = os.path.join(screenshots_dir, f'trigger_{ts}.png')
+            try:
+                pixmap.save(file_path, 'PNG')
+            except Exception:
+                pixmap.save(file_path)
+            self.image_path_entry.setText(file_path)
+        finally:
+            self._on_snip_cancelled()
     
     def get_config(self):
         """Get the trigger configuration"""
@@ -132,6 +472,307 @@ class TriggerConfigDialog(ModernDialog):
         if self.timeout_spin.value() > 0:
             config['timeout'] = self.timeout_spin.value()
         
+        return config
+
+
+class LayoutMatchConfigDialog(ModernDialog):
+    def __init__(self, parent, config=None):
+        super().__init__(parent, title=_("Layout Match Conditional"))
+        self.config = config
+        self.setModal(True)
+        self.resize(560, 330)
+        self._target_x = None
+        self._target_y = None
+        self._target_w = None
+        self._target_h = None
+        self._snip_overlay = None
+        self._main_window = None
+        self._capture_screen_geo = None
+        self._prev_modality = None
+        self._capture_original_geo = None
+        self._capture_in_progress = False
+        self.setup_ui()
+        if self.config:
+            self.load_config()
+
+    def setup_ui(self):
+        layout = self.content_layout
+
+        image_layout = QHBoxLayout()
+        image_layout.addWidget(QLabel(_("Image Path:")))
+        self.image_path_entry = QLineEdit()
+        image_layout.addWidget(self.image_path_entry)
+        capture_btn = QPushButton(_("Capture..."))
+        capture_btn.clicked.connect(self.capture_image)
+        image_layout.addWidget(capture_btn)
+        browse_btn = QPushButton(_("Browse..."))
+        browse_btn.clicked.connect(self.browse_image)
+        image_layout.addWidget(browse_btn)
+        layout.addLayout(image_layout)
+
+        self.capture_info_label = QLabel("")
+        layout.addWidget(self.capture_info_label)
+
+        conf_layout = QHBoxLayout()
+        conf_layout.addWidget(QLabel(_("Confidence:")))
+        self.confidence_spin = QDoubleSpinBox()
+        self.confidence_spin.setRange(0.1, 1.0)
+        self.confidence_spin.setSingleStep(0.05)
+        self.confidence_spin.setValue(0.8)
+        conf_layout.addWidget(self.confidence_spin)
+        conf_layout.addStretch()
+        layout.addLayout(conf_layout)
+
+        tol_layout = QHBoxLayout()
+        tol_layout.addWidget(QLabel(_("Position Tolerance (px):")))
+        self.tolerance_spin = QSpinBox()
+        self.tolerance_spin.setRange(0, 500)
+        self.tolerance_spin.setValue(6)
+        tol_layout.addWidget(self.tolerance_spin)
+        tol_layout.addStretch()
+        layout.addLayout(tol_layout)
+
+        timeout_layout = QHBoxLayout()
+        timeout_layout.addWidget(QLabel(_("Timeout (s):")))
+        self.timeout_spin = QSpinBox()
+        self.timeout_spin.setRange(1, 3600)
+        self.timeout_spin.setValue(10)
+        timeout_layout.addWidget(self.timeout_spin)
+        timeout_layout.addStretch()
+        layout.addLayout(timeout_layout)
+
+        attempts_layout = QHBoxLayout()
+        attempts_layout.addWidget(QLabel(_("Max Attempts:")))
+        self.max_attempts_spin = QSpinBox()
+        self.max_attempts_spin.setRange(1, 10000)
+        self.max_attempts_spin.setValue(30)
+        attempts_layout.addWidget(self.max_attempts_spin)
+        attempts_layout.addStretch()
+        layout.addLayout(attempts_layout)
+
+        delay_layout = QHBoxLayout()
+        delay_layout.addWidget(QLabel(_("Delay Between Attempts (s):")))
+        self.delay_spin = QDoubleSpinBox()
+        self.delay_spin.setRange(0.0, 10.0)
+        self.delay_spin.setDecimals(2)
+        self.delay_spin.setSingleStep(0.05)
+        self.delay_spin.setValue(0.05)
+        delay_layout.addWidget(self.delay_spin)
+        delay_layout.addStretch()
+        layout.addLayout(delay_layout)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        ok_btn = QPushButton(_("OK"))
+        ok_btn.clicked.connect(self.accept)
+        button_layout.addWidget(ok_btn)
+        cancel_btn = QPushButton(_("Cancel"))
+        cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+
+    def load_config(self):
+        self.image_path_entry.setText(self.config.get('image_path', ''))
+        try:
+            self.confidence_spin.setValue(float(self.config.get('confidence', 0.8)))
+        except Exception:
+            self.confidence_spin.setValue(0.8)
+        try:
+            self.tolerance_spin.setValue(int(self.config.get('position_tolerance', 6)))
+        except Exception:
+            self.tolerance_spin.setValue(6)
+        try:
+            self.timeout_spin.setValue(int(self.config.get('timeout', 10)))
+        except Exception:
+            self.timeout_spin.setValue(10)
+        try:
+            self.max_attempts_spin.setValue(int(self.config.get('max_attempts', 30)))
+        except Exception:
+            self.max_attempts_spin.setValue(30)
+        try:
+            self.delay_spin.setValue(float(self.config.get('delay_between_attempts', 0.05)))
+        except Exception:
+            self.delay_spin.setValue(0.05)
+
+        try:
+            self._target_x = int(self.config.get('target_x')) if self.config.get('target_x') is not None else None
+        except Exception:
+            self._target_x = None
+        try:
+            self._target_y = int(self.config.get('target_y')) if self.config.get('target_y') is not None else None
+        except Exception:
+            self._target_y = None
+        try:
+            self._target_w = int(self.config.get('target_w')) if self.config.get('target_w') is not None else None
+        except Exception:
+            self._target_w = None
+        try:
+            self._target_h = int(self.config.get('target_h')) if self.config.get('target_h') is not None else None
+        except Exception:
+            self._target_h = None
+        self._update_capture_label()
+
+    def browse_image(self):
+        file_path, selected_filter = QFileDialog.getOpenFileName(
+            self, _("Select Image File"), "", _("Image Files (*.png *.jpg *.jpeg *.bmp)")
+        )
+        if file_path:
+            self.image_path_entry.setText(file_path)
+
+    def _find_sequences_folder(self):
+        return _find_sequences_folder_from_widget(self.parent())
+
+    def _update_capture_label(self):
+        if self._target_x is None or self._target_y is None or self._target_w is None or self._target_h is None:
+            self.capture_info_label.setText(_("No capture coordinates assigned."))
+            return
+        self.capture_info_label.setText(
+            f"{_('Captured region:')} x={self._target_x}, y={self._target_y}, w={self._target_w}, h={self._target_h}"
+        )
+
+    def capture_image(self):
+        if self._capture_in_progress:
+            return
+        self._capture_in_progress = True
+        self._main_window = _get_main_window_from_widget(self.parent())
+        original_geo = None
+        try:
+            original_geo = self.geometry()
+        except Exception:
+            original_geo = None
+        self._capture_original_geo = original_geo
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(450, self._start_capture)
+
+    def _start_capture(self):
+        accepted_after_capture = False
+        try:
+            screen = _get_capture_screen()
+            if screen is None:
+                return
+            geo = screen.geometry()
+            frozen = screen.grabWindow(0)
+            if frozen is None or frozen.isNull():
+                return
+            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            if dlg.exec_() == QDialog.Accepted:
+                cropped, global_rect = dlg.get_result()
+                if cropped is None or cropped.isNull() or global_rect is None:
+                    return
+                sequences_dir = self._find_sequences_folder()
+                screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                ts = int(time.time() * 1000)
+                file_path = os.path.join(screenshots_dir, f'layout_match_{ts}.png')
+                try:
+                    cropped.save(file_path, 'PNG')
+                except Exception:
+                    cropped.save(file_path)
+                self.image_path_entry.setText(file_path)
+
+                self._target_w = int(global_rect.width())
+                self._target_h = int(global_rect.height())
+                self._target_x = int(global_rect.x() + (self._target_w // 2))
+                self._target_y = int(global_rect.y() + (self._target_h // 2))
+                self._update_capture_label()
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+                try:
+                    self.accept()
+                except Exception:
+                    pass
+        finally:
+            try:
+                if self._capture_original_geo is not None:
+                    self.setGeometry(self._capture_original_geo)
+                self.show()
+                self.raise_()
+                self.activateWindow()
+            except Exception:
+                pass
+            try:
+                if self._main_window is not None:
+                    self._main_window.showNormal()
+                    self._main_window.raise_()
+                    self._main_window.activateWindow()
+            except Exception:
+                pass
+            self._capture_in_progress = False
+
+    def _on_snip_cancelled(self):
+        try:
+            if self._prev_modality is not None:
+                self.setWindowModality(self._prev_modality)
+        except Exception:
+            pass
+        try:
+            self.setModal(True)
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showNormal()
+                self._main_window.raise_()
+                self._main_window.activateWindow()
+        except Exception:
+            pass
+        try:
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+
+    def _on_snip_done(self, pixmap, rect):
+        try:
+            sequences_dir = self._find_sequences_folder()
+            screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+            os.makedirs(screenshots_dir, exist_ok=True)
+            ts = int(time.time() * 1000)
+            file_path = os.path.join(screenshots_dir, f'layout_match_{ts}.png')
+            try:
+                pixmap.save(file_path, 'PNG')
+            except Exception:
+                pixmap.save(file_path)
+            self.image_path_entry.setText(file_path)
+
+            self._target_w = int(rect.width())
+            self._target_h = int(rect.height())
+            geo = self._capture_screen_geo or QRect(0, 0, 0, 0)
+            self._target_x = int(geo.x() + rect.x() + (self._target_w // 2))
+            self._target_y = int(geo.y() + rect.y() + (self._target_h // 2))
+            self._update_capture_label()
+        finally:
+            self._on_snip_cancelled()
+
+    def get_config(self):
+        config = {
+            'image_path': self.image_path_entry.text(),
+            'confidence': float(self.confidence_spin.value()),
+            'position_tolerance': int(self.tolerance_spin.value()),
+            'timeout': int(self.timeout_spin.value()),
+            'max_attempts': int(self.max_attempts_spin.value()),
+            'delay_between_attempts': float(self.delay_spin.value()),
+        }
+        if self._target_x is not None and self._target_y is not None and self._target_w is not None and self._target_h is not None:
+            config['target_x'] = int(self._target_x)
+            config['target_y'] = int(self._target_y)
+            config['target_w'] = int(self._target_w)
+            config['target_h'] = int(self._target_h)
         return config
 
 
@@ -218,6 +859,9 @@ class WaitConditionDialog(ModernDialog):
         self.config = config
         self.setModal(True)
         self.resize(400, 250)
+        self._capture_in_progress = False
+        self._main_window = None
+        self._capture_original_geo = None
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -261,6 +905,10 @@ class WaitConditionDialog(ModernDialog):
         image_layout.addWidget(QLabel(_("Image Path:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
+
+        capture_btn = QPushButton(_("Capture..."))
+        capture_btn.clicked.connect(self.capture_image)
+        image_layout.addWidget(capture_btn)
         
         browse_btn = QPushButton(_("Browse..."))
         browse_btn.clicked.connect(self.browse_image)
@@ -347,6 +995,84 @@ class WaitConditionDialog(ModernDialog):
         )
         if file_path:
             self.image_path_entry.setText(file_path)
+
+    def capture_image(self):
+        if self._capture_in_progress:
+            return
+        if self.type_combo.currentText() == 'ocr':
+            return
+        self._capture_in_progress = True
+        self._main_window = _get_main_window_from_widget(self.parent())
+        try:
+            self._capture_original_geo = self.geometry()
+        except Exception:
+            self._capture_original_geo = None
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(450, self._start_capture)
+
+    def _start_capture(self):
+        try:
+            screen = _get_capture_screen()
+            if screen is None:
+                return
+            geo = screen.geometry()
+            frozen = screen.grabWindow(0)
+            if frozen is None or frozen.isNull():
+                return
+            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            if dlg.exec_() == QDialog.Accepted:
+                cropped, global_rect = dlg.get_result()
+                if cropped is None or cropped.isNull():
+                    return
+                sequences_dir = _find_sequences_folder_from_widget(self.parent())
+                screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                ts = int(time.time() * 1000)
+                file_path = os.path.join(screenshots_dir, f'wait_condition_{ts}.png')
+                try:
+                    cropped.save(file_path, 'PNG')
+                except Exception:
+                    cropped.save(file_path)
+                self.image_path_entry.setText(file_path)
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+                try:
+                    accepted_after_capture = True
+                    self.accept()
+                except Exception:
+                    accepted_after_capture = False
+        finally:
+            if not accepted_after_capture:
+                try:
+                    if self._capture_original_geo is not None:
+                        self.setGeometry(self._capture_original_geo)
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                except Exception:
+                    pass
+            try:
+                if self._main_window is not None:
+                    self._main_window.showNormal()
+                    self._main_window.raise_()
+                    self._main_window.activateWindow()
+            except Exception:
+                pass
+            self._capture_in_progress = False
     
     def get_config(self):
         """Get the wait condition configuration"""
@@ -382,6 +1108,9 @@ class ConditionalLoopDialog(ModernDialog):
         self.config = config
         self.setModal(True)
         self.resize(500, 350)
+        self._capture_in_progress = False
+        self._main_window = None
+        self._capture_original_geo = None
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -449,6 +1178,10 @@ class ConditionalLoopDialog(ModernDialog):
         image_layout.addWidget(QLabel(_("Condition Image:")))
         self.image_path_entry = QLineEdit()
         image_layout.addWidget(self.image_path_entry)
+
+        capture_img_btn = QPushButton(_("Capture..."))
+        capture_img_btn.clicked.connect(self.capture_image)
+        image_layout.addWidget(capture_img_btn)
         
         browse_img_btn = QPushButton(_("Browse..."))
         browse_img_btn.clicked.connect(self.browse_image)
@@ -549,6 +1282,85 @@ class ConditionalLoopDialog(ModernDialog):
         )
         if file_path:
             self.image_path_entry.setText(file_path)
+
+    def capture_image(self):
+        if self._capture_in_progress:
+            return
+        if self.condition_method_combo.currentText() == 'ocr':
+            return
+        self._capture_in_progress = True
+        self._main_window = _get_main_window_from_widget(self.parent())
+        try:
+            self._capture_original_geo = self.geometry()
+        except Exception:
+            self._capture_original_geo = None
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(450, self._start_capture)
+
+    def _start_capture(self):
+        accepted_after_capture = False
+        try:
+            screen = _get_capture_screen()
+            if screen is None:
+                return
+            geo = screen.geometry()
+            frozen = screen.grabWindow(0)
+            if frozen is None or frozen.isNull():
+                return
+            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg.raise_()
+            dlg.activateWindow()
+            if dlg.exec_() == QDialog.Accepted:
+                cropped, global_rect = dlg.get_result()
+                if cropped is None or cropped.isNull():
+                    return
+                sequences_dir = _find_sequences_folder_from_widget(self.parent())
+                screenshots_dir = os.path.join(sequences_dir, 'screenshots')
+                os.makedirs(screenshots_dir, exist_ok=True)
+                ts = int(time.time() * 1000)
+                file_path = os.path.join(screenshots_dir, f'loop_condition_{ts}.png')
+                try:
+                    cropped.save(file_path, 'PNG')
+                except Exception:
+                    cropped.save(file_path)
+                self.image_path_entry.setText(file_path)
+                try:
+                    QApplication.processEvents()
+                except Exception:
+                    pass
+                try:
+                    accepted_after_capture = True
+                    self.accept()
+                except Exception:
+                    accepted_after_capture = False
+        finally:
+            if not accepted_after_capture:
+                try:
+                    if self._capture_original_geo is not None:
+                        self.setGeometry(self._capture_original_geo)
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                except Exception:
+                    pass
+            try:
+                if self._main_window is not None:
+                    self._main_window.showNormal()
+                    self._main_window.raise_()
+                    self._main_window.activateWindow()
+            except Exception:
+                pass
+            self._capture_in_progress = False
     
     def get_config(self):
         """Get the conditional loop configuration"""
