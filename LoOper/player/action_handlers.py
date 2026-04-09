@@ -518,36 +518,37 @@ class ActionHandlers:
             elif action.get('type') == 'shift_click':
                 modifier_key = keyboard.Key.shift_l
             
-            if agent_url:
-                self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
-                if action.get('type') == 'double_click':
-                    time.sleep(0.1)
+            with self.typing_lock:
+                if agent_url:
                     self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
-                logger.info(f"Agent Clicked ({button}) at {target_coords}")
-            elif self.vnc_bridge:
-                self.vnc_bridge.click(target_coords[0], target_coords[1], button=1 if button == 'left' else 3)
-                logger.info(f"VNC Clicked ({button}) at {target_coords}")
-            else:
-                pressed_modifier = False
-                try:
-                    if modifier_key is not None:
-                        self.keyboard_controller.press(modifier_key)
-                        pressed_modifier = True
-
-                    self.bot.human_mouse_move(target_coords[0], target_coords[1])
-                    time.sleep(0.01)
                     if action.get('type') == 'double_click':
-                        self.bot.human_click(button=button, double=True)
-                        logger.info(f"Double-clicked ({button}) at {target_coords}")
-                    else:
-                        self.bot.human_click(button=button, double=False)
-                        logger.info(f"Clicked ({button}) at {target_coords}")
-                finally:
-                    if pressed_modifier:
-                        try:
-                            self.keyboard_controller.release(modifier_key)
-                        except Exception:
-                            pass
+                        time.sleep(0.1)
+                        self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
+                    logger.info(f"Agent Clicked ({button}) at {target_coords}")
+                elif self.vnc_bridge:
+                    self.vnc_bridge.click(target_coords[0], target_coords[1], button=1 if button == 'left' else 3)
+                    logger.info(f"VNC Clicked ({button}) at {target_coords}")
+                else:
+                    pressed_modifier = False
+                    try:
+                        if modifier_key is not None:
+                            self.keyboard_controller.press(modifier_key)
+                            pressed_modifier = True
+
+                        self.bot.human_mouse_move(target_coords[0], target_coords[1])
+                        time.sleep(0.01)
+                        if action.get('type') == 'double_click':
+                            self.bot.human_click(button=button, double=True)
+                            logger.info(f"Double-clicked ({button}) at {target_coords}")
+                        else:
+                            self.bot.human_click(button=button, double=False)
+                            logger.info(f"Clicked ({button}) at {target_coords}")
+                    finally:
+                        if pressed_modifier:
+                            try:
+                                self.keyboard_controller.release(modifier_key)
+                            except Exception:
+                                pass
             
             self.bot.last_click_time = time.time()
             try:
@@ -649,23 +650,26 @@ class ActionHandlers:
             return True
 
         button = action.get('button', 'left')
-        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
-        if agent_url:
-            self._send_agent_action({"action": "click", "x": int(x), "y": int(y), "button": button})
-            logger.info(f"Agent Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
-            return True
+        with self.typing_lock:
+            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            if agent_url:
+                self._send_agent_action({"action": "click", "x": int(x), "y": int(y), "button": button})
+                self.bot.last_click_time = time.time()
+                logger.info(f"Agent Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+                return True
 
-        if self.vnc_bridge:
-            self.vnc_bridge.click(int(x), int(y), button=1 if button == 'left' else 3)
-            logger.info(f"VNC Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
-            return True
+            if self.vnc_bridge:
+                self.vnc_bridge.click(int(x), int(y), button=1 if button == 'left' else 3)
+                self.bot.last_click_time = time.time()
+                logger.info(f"VNC Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+                return True
 
-        self.bot.human_mouse_move(int(x), int(y))
-        time.sleep(0.01)
-        self.bot.human_click(button=button, double=False)
-        self.bot.last_click_time = time.time()
-        logger.info(f"Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
-        return True
+            self.bot.human_mouse_move(int(x), int(y))
+            time.sleep(0.01)
+            self.bot.human_click(button=button, double=False)
+            self.bot.last_click_time = time.time()
+            logger.info(f"Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+            return True
 
     def handle_type_string_action(self, idx, action, stop_flag=None):
         """
@@ -681,145 +685,142 @@ class ActionHandlers:
         """
         if 'text' in action:
             with self.typing_lock:
-                # Check stop flag before starting typing
                 if stop_flag and stop_flag():
                     logger.info("Stop flag detected before typing - aborting type string action")
                     return False
-            
-            # Check if a specific delay is required after a click before typing
-            if 'delay_after_click' in action:
-                time_since_click = time.time() - self.bot.last_click_time
-                required_delay = action['delay_after_click']
-                if time_since_click < required_delay:
-                    wait_time = required_delay - time_since_click
-                    logger.debug(f"Waiting {wait_time:.2f}s after click before typing")
-                    time.sleep(wait_time)
-            
-            # Get text to type and ensure it's a string
-            text = action['text']
-            if not isinstance(text, str):
+
                 try:
-                    text = str(text)
-                    logger.warning(f"Converted non-string text to string: {type(action['text'])} -> {text[:50]}...")
-                except Exception as str_error:
-                    logger.error(f"Failed to convert text to string: {str_error}")
-                    return False
+                    post_type_delay = float(action.get('post_type_delay', 0.02))
+                except Exception:
+                    post_type_delay = 0.02
 
-            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
-            if agent_url:
-                self._send_agent_action({"action": "type", "text": text})
-                if action.get('press_enter', False):
-                    self._send_agent_action({"action": "hotkey", "keys": ['enter']})
-                action['completed'] = True
-                return True
-            elif self.vnc_bridge:
-                self.vnc_bridge.type_text(text)
-                if action.get('press_enter', False):
-                    self.vnc_bridge.key_press('enter')
-                action['completed'] = True
-                return True
+                if 'delay_after_click' in action:
+                    time_since_click = time.time() - self.bot.last_click_time
+                    required_delay = action['delay_after_click']
+                    if time_since_click < required_delay:
+                        wait_time = required_delay - time_since_click
+                        logger.debug(f"Waiting {wait_time:.2f}s after click before typing")
+                        time.sleep(wait_time)
 
-            # Determine if we should use clipboard paste for Unicode/special characters
-            # Clipboard paste is significantly more reliable for non-ASCII text on Windows
-            try:
-                # Allow explicit override from action config
-                force_clipboard = bool(action.get('use_clipboard', False))
-            except Exception:
-                force_clipboard = False
+                text = action['text']
+                if not isinstance(text, str):
+                    try:
+                        text = str(text)
+                        logger.warning(f"Converted non-string text to string: {type(action['text'])} -> {text[:50]}...")
+                    except Exception as str_error:
+                        logger.error(f"Failed to convert text to string: {str_error}")
+                        return False
 
-            # Auto-detect presence of non-ASCII characters (e.g., accented letters, smart quotes)
-            contains_non_ascii = any(ord(c) > 126 for c in text)
-            force_typing = bool(action.get('force_typing', False))
-            use_clipboard = False if force_typing else (force_clipboard or contains_non_ascii or len(text) > 1000)
-
-            if use_clipboard:
-                try:
-                    pyperclip.copy(text)
-                    time.sleep(0.01)  # Reduced from 0.05 - Small delay to ensure clipboard is set
-                    self._press_key_combo([keyboard.Key.ctrl], 'v')
-                    logger.info(f"Pasted text via clipboard (Unicode-safe), length={len(text)}")
-
-                    # Set completion flag in action for workflow integration
+                agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+                if agent_url:
+                    self._send_agent_action({"action": "type", "text": text})
+                    if action.get('press_enter', False):
+                        self._send_agent_action({"action": "hotkey", "keys": ['enter']})
+                    if post_type_delay > 0:
+                        time.sleep(post_type_delay)
                     action['completed'] = True
                     return True
-                except Exception as clip_error:
-                    logger.warning(f"Clipboard paste failed, falling back to keyboard typing: {clip_error}")
+                elif self.vnc_bridge:
+                    self.vnc_bridge.type_text(text)
+                    if action.get('press_enter', False):
+                        self.vnc_bridge.key_press('enter')
+                    if post_type_delay > 0:
+                        time.sleep(post_type_delay)
+                    action['completed'] = True
+                    return True
 
-            # Get typing speed configuration
-            # Check if we should use character-by-character typing for maximum reliability
-            char_by_char = action.get('char_by_char', False)  # Default to batch mode
-            
-            # Get keystroke delay for preventing duplicate characters on slow machines
-            keystroke_delay = action.get('keystroke_delay', 0.001)  # Reduced from 0.01 - Default 1ms delay between keystrokes
-            
-            if char_by_char:
-                # Character-by-character typing for maximum reliability
-                batch_size = 1  # One character at a time
-                batch_delay = action.get('char_delay', 0.01)  # Reduced from 0.05 - Default to 0.01s between characters
-                logger.info(f"Typing text character-by-character with delay={batch_delay}s, keystroke_delay={keystroke_delay}s")
-            else:
-                # Batch typing mode
-                batch_size = action.get('batch_size', 5)  # Default to 5 chars per batch
-                batch_delay = action.get('batch_delay', 0.01)  # Reduced from 0.05 - Default to 0.01s between batches
-                logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}, keystroke_delay={keystroke_delay}s")
-            
-            # Type text in batches for significantly improved speed
-            for i in range(0, len(text), batch_size):
-                # Check stop flag during typing
-                if stop_flag and stop_flag():
-                    logger.info("Stop flag detected during typing - aborting type string action")
-                    return False
-                
-                # Get the next batch of characters
-                batch = text[i:i+batch_size]
-                
                 try:
-                    # Filter out non-typeable characters that might cause issues with pyautogui
-                    # Keep only printable ASCII characters and common whitespace
-                    filtered_batch = ''.join(c for c in batch if c.isprintable() or c in '\n\t\r ')
-                    
-                    if filtered_batch != batch:
-                        logger.warning(f"Filtered out non-printable characters from batch")
-                    
-                    # Handle line breaks specially to ensure they're properly processed
-                    if '\n' in filtered_batch:
-                        # Split by newlines and type each segment separately with proper Enter key presses
-                        segments = filtered_batch.split('\n')
-                        for j, segment in enumerate(segments):
-                            # Check stop flag before each segment
-                            if stop_flag and stop_flag():
-                                logger.info("Stop flag detected during line break typing - aborting type string action")
-                                return False
-                            
-                            if segment:  # Only type non-empty segments
-                                # Type character by character with delay to prevent duplicates
-                                for char in segment:
-                                    self.keyboard_controller.type(char)
-                                    if keystroke_delay > 0:
-                                        time.sleep(keystroke_delay)
-                            # Press Enter after each segment except the last one
-                            if j < len(segments) - 1:
-                                time.sleep(0.01)  # Small delay before Enter key
-                                self._tap_key(keyboard.Key.enter)
-                                time.sleep(0.01)  # Small delay after Enter key
-                    else:
-                        # Type the filtered batch character by character with delay
-                        for char in filtered_batch:
-                            self.keyboard_controller.type(char)
-                            if keystroke_delay > 0:
-                                time.sleep(keystroke_delay)
-                except Exception as write_error:
-                    logger.error(f"Error writing batch: {write_error}")
-                    logger.error(f"Problematic batch content: {repr(batch)}")
-                    return False
-                
-                # Small delay between batches for natural typing feel
-                if i + batch_size < len(text):
-                    time.sleep(batch_delay)
-            
-            logger.info(f"Typed text ({len(text)} chars) using optimized batching")
-            action['completed'] = True
-            return True
+                    force_clipboard = bool(action.get('use_clipboard', False))
+                except Exception:
+                    force_clipboard = False
+
+                contains_non_ascii = any(ord(c) > 126 for c in text)
+                force_typing = bool(action.get('force_typing', False))
+                use_clipboard = False if force_typing else (force_clipboard or contains_non_ascii or len(text) > 1000)
+
+                if use_clipboard:
+                    try:
+                        pyperclip.copy(text)
+                        time.sleep(0.01)
+                        self._press_key_combo([keyboard.Key.ctrl], 'v')
+                        logger.info(f"Pasted text via clipboard (Unicode-safe), length={len(text)}")
+
+                        try:
+                            paste_settle = min(1.0, max(post_type_delay, 0.02 + (len(text) * 0.0002)))
+                        except Exception:
+                            paste_settle = max(post_type_delay, 0.02)
+                        if paste_settle > 0:
+                            time.sleep(paste_settle)
+
+                        action['completed'] = True
+                        return True
+                    except Exception as clip_error:
+                        logger.warning(f"Clipboard paste failed, falling back to keyboard typing: {clip_error}")
+
+                char_by_char = action.get('char_by_char', False)
+
+                keystroke_delay = action.get('keystroke_delay', 0.001)
+
+                if char_by_char:
+                    batch_size = 1
+                    batch_delay = action.get('char_delay', 0.01)
+                    logger.info(f"Typing text character-by-character with delay={batch_delay}s, keystroke_delay={keystroke_delay}s")
+                else:
+                    batch_size = action.get('batch_size', 5)
+                    batch_delay = action.get('batch_delay', 0.01)
+                    logger.info(f"Typing text with batch_size={batch_size}, batch_delay={batch_delay}, keystroke_delay={keystroke_delay}s")
+
+                for i in range(0, len(text), batch_size):
+                    if stop_flag and stop_flag():
+                        logger.info("Stop flag detected during typing - aborting type string action")
+                        return False
+
+                    batch = text[i:i+batch_size]
+
+                    try:
+                        filtered_batch = ''.join(c for c in batch if c.isprintable() or c in '\n\t\r ')
+
+                        if filtered_batch != batch:
+                            logger.warning(f"Filtered out non-printable characters from batch")
+
+                        if '\n' in filtered_batch:
+                            segments = filtered_batch.split('\n')
+                            for j, segment in enumerate(segments):
+                                if stop_flag and stop_flag():
+                                    logger.info("Stop flag detected during line break typing - aborting type string action")
+                                    return False
+
+                                if segment:
+                                    for char in segment:
+                                        self.keyboard_controller.type(char)
+                                        if keystroke_delay > 0:
+                                            time.sleep(keystroke_delay)
+                                if j < len(segments) - 1:
+                                    time.sleep(0.01)
+                                    self._tap_key(keyboard.Key.enter)
+                                    time.sleep(0.01)
+                        else:
+                            for char in filtered_batch:
+                                self.keyboard_controller.type(char)
+                                if keystroke_delay > 0:
+                                    time.sleep(keystroke_delay)
+                    except Exception as write_error:
+                        logger.error(f"Error writing batch: {write_error}")
+                        logger.error(f"Problematic batch content: {repr(batch)}")
+                        return False
+
+                    if i + batch_size < len(text):
+                        time.sleep(batch_delay)
+
+                if action.get('press_enter', False):
+                    self._tap_key(keyboard.Key.enter)
+
+                if post_type_delay > 0:
+                    time.sleep(post_type_delay)
+
+                logger.info(f"Typed text ({len(text)} chars) using optimized batching")
+                action['completed'] = True
+                return True
         
         return False
 
@@ -833,66 +834,63 @@ class ActionHandlers:
             stop_flag (callable): Function to check if execution should stop
         """
         with self.typing_lock:
-            # Similar to typing, check for a required delay after a click.
             if 'delay_after_click' in action:
                 time_since_click = time.time() - self.bot.last_click_time
                 required_delay = action['delay_after_click']
                 if time_since_click < required_delay:
                     wait_time = required_delay - time_since_click
                     logger.debug(f"Waiting {wait_time:.2f}s after click before keystroke")
-                    # Sleep in small increments to allow interruption
                     elapsed = 0.0
-                while elapsed < wait_time:
-                    if stop_flag and stop_flag():
-                        logger.info("Stop flag detected before keystroke - aborting keystroke action")
-                        return
-                    sleep_time = min(0.05, wait_time - elapsed)
-                    time.sleep(sleep_time)
-                    elapsed += sleep_time
-        # Check stop flag before performing keystroke
-        if stop_flag and stop_flag():
-            logger.info("Stop flag detected before keystroke - aborting keystroke action")
-            return
-        # Clean the key name (e.g., 'Key.enter' -> 'enter').
-        key = action['key'].replace('Key.', '')
-        # Map pynput key names to pynput keys.
-        key_mapping = {
-            'space': keyboard.Key.space,
-            'enter': keyboard.Key.enter,
-            'backspace': keyboard.Key.backspace,
-            'tab': keyboard.Key.tab,
-            'esc': keyboard.Key.esc,
-            'up': keyboard.Key.up,
-            'down': keyboard.Key.down,
-            'left': keyboard.Key.left,
-            'right': keyboard.Key.right,
-            'delete': keyboard.Key.delete,
-            'shift': keyboard.Key.shift,
-            'ctrl': keyboard.Key.ctrl,
-            'alt': keyboard.Key.alt
-        }
-        if key in key_mapping:
-            # Get keystroke delay to prevent issues on slow machines
-            keystroke_delay = action.get('keystroke_delay', 0.01)  # Default 10ms delay
-            
-            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
-            if agent_url:
-                self._send_agent_action({"action": "hotkey", "keys": [key]})
-            else:
-                self._tap_key(key_mapping[key])
-                
-            logger.info(f"Pressed special key: {key}")
-            
-            # Add small delay after keystroke to prevent issues on slow machines
-            if keystroke_delay > 0:
-                elapsed = 0.0
-                while elapsed < keystroke_delay:
-                    if stop_flag and stop_flag():
-                        logger.info("Stop flag detected after keystroke - aborting keystroke action")
-                        return
-                    sleep_time = min(0.05, keystroke_delay - elapsed)
-                    time.sleep(sleep_time)
-                    elapsed += sleep_time
+                    while elapsed < wait_time:
+                        if stop_flag and stop_flag():
+                            logger.info("Stop flag detected before keystroke - aborting keystroke action")
+                            return
+                        sleep_time = min(0.05, wait_time - elapsed)
+                        time.sleep(sleep_time)
+                        elapsed += sleep_time
+
+            if stop_flag and stop_flag():
+                logger.info("Stop flag detected before keystroke - aborting keystroke action")
+                return
+
+            key = action['key'].replace('Key.', '')
+            key_mapping = {
+                'space': keyboard.Key.space,
+                'enter': keyboard.Key.enter,
+                'backspace': keyboard.Key.backspace,
+                'tab': keyboard.Key.tab,
+                'esc': keyboard.Key.esc,
+                'up': keyboard.Key.up,
+                'down': keyboard.Key.down,
+                'left': keyboard.Key.left,
+                'right': keyboard.Key.right,
+                'delete': keyboard.Key.delete,
+                'shift': keyboard.Key.shift,
+                'ctrl': keyboard.Key.ctrl,
+                'alt': keyboard.Key.alt
+            }
+            if key in key_mapping:
+                keystroke_delay = action.get('keystroke_delay', 0.01)
+
+                agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+                if agent_url:
+                    self._send_agent_action({"action": "hotkey", "keys": [key]})
+                elif self.vnc_bridge:
+                    self.vnc_bridge.key_press(key)
+                else:
+                    self._tap_key(key_mapping[key])
+
+                logger.info(f"Pressed special key: {key}")
+
+                if keystroke_delay > 0:
+                    elapsed = 0.0
+                    while elapsed < keystroke_delay:
+                        if stop_flag and stop_flag():
+                            logger.info("Stop flag detected after keystroke - aborting keystroke action")
+                            return
+                        sleep_time = min(0.05, keystroke_delay - elapsed)
+                        time.sleep(sleep_time)
+                        elapsed += sleep_time
 
     def handle_scroll_action(self, idx, action, stop_flag=None):
         """
@@ -942,20 +940,20 @@ class ActionHandlers:
             accumulated = rounded_target
             
             if step_amount != 0:
-                agent_url = getattr(self.bot, 'sandbox_agent_url', None)
-                if agent_url:
-                    self._send_agent_action({"action": "scroll", "amount": step_amount})
-                    # executed scroll action via agent
-                elif self.vnc_bridge:
-                    # vncdotool might not have native scroll, but we can try to map it if possible
-                    # or simulate pgup/pgdown
-                    clicks = max(1, abs(step_amount) // 100)
-                    if step_amount > 0:
-                        for _ in range(clicks): self.vnc_bridge.key_press('up')
+                with self.typing_lock:
+                    agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+                    if agent_url:
+                        self._send_agent_action({"action": "scroll", "amount": step_amount})
+                    elif self.vnc_bridge:
+                        clicks = max(1, abs(step_amount) // 100)
+                        if step_amount > 0:
+                            for _ in range(clicks):
+                                self.vnc_bridge.key_press('up')
+                        else:
+                            for _ in range(clicks):
+                                self.vnc_bridge.key_press('down')
                     else:
-                        for _ in range(clicks): self.vnc_bridge.key_press('down')
-                else:
-                    pyautogui.scroll(step_amount)  # Execute small scroll
+                        pyautogui.scroll(step_amount)
             
             # Pause between steps to match original timing
             if i < num_steps - 1 and step_duration > 0:
@@ -983,31 +981,31 @@ class ActionHandlers:
         else:
             operation = action['type']
         
-        # Execute the corresponding hotkey.
-        if operation == 'copy' or operation == 'c':
-            time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure text is selected before copying.
-            self._press_key_combo([keyboard.Key.ctrl], 'c')
-            logger.info("Performed Ctrl+C operation")
-        elif operation == 'paste' or operation == 'v':
-            time.sleep(0.01) # Reduced from 0.02 - Small delay to ensure the input field is focused.
-            self._press_key_combo([keyboard.Key.ctrl], 'v')
-            logger.info("Performed Ctrl+V operation")
-        elif operation == 'cut' or operation == 'x':
-            time.sleep(0.01)  # Reduced from 0.02
-            self._press_key_combo([keyboard.Key.ctrl], 'x')
-            logger.info("Performed Ctrl+X operation")
-        elif operation == 'select_all' or operation == 'a':
-            time.sleep(0.01)  # Reduced from 0.02
-            self._press_key_combo([keyboard.Key.ctrl], 'a')
-            logger.info("Performed Ctrl+A operation")
-        elif operation == 'undo' or operation == 'z':
-            time.sleep(0.01)  # Reduced from 0.02
-            self._press_key_combo([keyboard.Key.ctrl], 'z')
-            logger.info("Performed Ctrl+Z operation")
-        elif operation == 'redo' or operation == 'y':
-            time.sleep(0.01)  # Reduced from 0.02
-            self._press_key_combo([keyboard.Key.ctrl], 'y')
-            logger.info("Performed Ctrl+Y operation")
+        with self.typing_lock:
+            if operation == 'copy' or operation == 'c':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'c')
+                logger.info("Performed Ctrl+C operation")
+            elif operation == 'paste' or operation == 'v':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'v')
+                logger.info("Performed Ctrl+V operation")
+            elif operation == 'cut' or operation == 'x':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'x')
+                logger.info("Performed Ctrl+X operation")
+            elif operation == 'select_all' or operation == 'a':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'a')
+                logger.info("Performed Ctrl+A operation")
+            elif operation == 'undo' or operation == 'z':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'z')
+                logger.info("Performed Ctrl+Z operation")
+            elif operation == 'redo' or operation == 'y':
+                time.sleep(0.01)
+                self._press_key_combo([keyboard.Key.ctrl], 'y')
+                logger.info("Performed Ctrl+Y operation")
 
     def handle_drag_actions(self, idx, action):
         """
@@ -1022,35 +1020,38 @@ class ActionHandlers:
         if action['type'] == 'drag_start':
             abs_x = action['coordinates']['x']
             abs_y = action['coordinates']['y']
-            if agent_url:
-                self._send_agent_action({"action": "drag_start", "x": abs_x, "y": abs_y})
-            else:
-                self.bot.human_mouse_move(abs_x, abs_y)
-                pyautogui.mouseDown() # Press and hold the mouse button.
+            with self.typing_lock:
+                if agent_url:
+                    self._send_agent_action({"action": "drag_start", "x": abs_x, "y": abs_y})
+                else:
+                    self.bot.human_mouse_move(abs_x, abs_y)
+                    pyautogui.mouseDown()
             logger.info(f"Started drag at ({abs_x}, {abs_y})")
 
         elif action['type'] == 'drag_end':
             abs_x = action['coordinates']['x']
             abs_y = action['coordinates']['y']
-            if agent_url:
-                self._send_agent_action({"action": "drag_end", "x": abs_x, "y": abs_y})
-            else:
-                self.bot.human_mouse_move(abs_x, abs_y)
-                pyautogui.mouseUp() # Release the mouse button.
+            with self.typing_lock:
+                if agent_url:
+                    self._send_agent_action({"action": "drag_end", "x": abs_x, "y": abs_y})
+                else:
+                    self.bot.human_mouse_move(abs_x, abs_y)
+                    pyautogui.mouseUp()
             logger.info(f"Ended drag at ({abs_x}, {abs_y})")
 
         elif action['type'] == 'drag_drop':
             start_x, start_y = action['from']['x'], action['from']['y']
             end_x, end_y = action['to']['x'], action['to']['y']
-            if agent_url:
-                self._send_agent_action({
-                    "action": "drag_drop", 
-                    "start_x": start_x, "start_y": start_y, 
-                    "end_x": end_x, "end_y": end_y
-                })
-            else:
-                self.bot.human_mouse_move(start_x, start_y)
-                pyautogui.mouseDown()
-                self.bot.human_mouse_move(end_x, end_y)
-                pyautogui.mouseUp()
+            with self.typing_lock:
+                if agent_url:
+                    self._send_agent_action({
+                        "action": "drag_drop", 
+                        "start_x": start_x, "start_y": start_y, 
+                        "end_x": end_x, "end_y": end_y
+                    })
+                else:
+                    self.bot.human_mouse_move(start_x, start_y)
+                    pyautogui.mouseDown()
+                    self.bot.human_mouse_move(end_x, end_y)
+                    pyautogui.mouseUp()
             logger.info(f"Performed drag_drop from ({start_x}, {start_y}) to ({end_x}, {end_y})")
