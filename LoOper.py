@@ -9,6 +9,15 @@ import ctypes
 
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
+if sys.platform == "win32":
+    try:
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 def _is_admin() -> bool:
     try:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())

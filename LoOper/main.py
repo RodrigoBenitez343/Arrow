@@ -14,15 +14,26 @@ import sys
 import io
 import ctypes
 
-# Force UTF-8 encoding for stdout and stderr to handle emojis on Windows
 if sys.platform == 'win32':
     try:
-        if sys.stdout and hasattr(sys.stdout, 'buffer') and sys.stdout.buffer:
-            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-        if sys.stderr and hasattr(sys.stderr, 'buffer') and sys.stderr.buffer:
-            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-    except (AttributeError, io.UnsupportedOperation):
-        # Fallback for environments where stdout/stderr are replaced or don't have buffers (like some GUI wrappers)
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, 'w', encoding='utf-8', errors='replace')
+        else:
+            try:
+                if hasattr(sys.stdout, 'reconfigure'):
+                    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            except Exception:
+                pass
+
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, 'w', encoding='utf-8', errors='replace')
+        else:
+            try:
+                if hasattr(sys.stderr, 'reconfigure'):
+                    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+            except Exception:
+                pass
+    except Exception:
         pass
 
 # Fix for Intel OpenMP runtime duplicate error

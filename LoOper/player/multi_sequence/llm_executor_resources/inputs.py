@@ -27,26 +27,51 @@ def _ocr_input(ocr_confidence: int, stop_flag) -> str:
         if screen_cv is None:
             logger.error("Failed to capture screen for OCR")
             return ""
+        try:
+            logger.debug(f"OCR capture: type={type(screen_cv)} shape={getattr(screen_cv, 'shape', None)}")
+        except Exception:
+            pass
 
         screenshots_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "screenshots")
         os.makedirs(screenshots_dir, exist_ok=True)
         timestamp = int(time.time())
         screenshot_path = os.path.join(screenshots_dir, f"llm_ocr_{timestamp}.png")
         
-        # Save the EXACT image we are about to process
+        saved_screenshot = False
         if CV2_AVAILABLE:
             try:
                 cv2.imwrite(screenshot_path, screen_cv)
                 register_temporal_screenshot(screenshot_path)
+                saved_screenshot = True
                 logger.debug(f"Saved OCR screenshot to {screenshot_path}")
             except Exception as e:
                 logger.warning(f"Failed to save debug screenshot: {e}")
         else:
-            # Fallback if cv2 is not available (e.g. using PIL if possible, but screen_cv is numpy array)
-            # If CV2 is not available, TemplateMatching might return something else or fail?
-            # Assuming if CV2_AVAILABLE is False, we might not have numpy either.
-            # But TemplateMatching depends on CV2/Numpy.
-            pass
+            try:
+                from PIL import Image
+                if hasattr(screen_cv, "convert"):
+                    img = screen_cv.convert("RGB")
+                else:
+                    try:
+                        import numpy as np
+                    except Exception:
+                        np = None
+                    if np is None:
+                        img = None
+                    else:
+                        arr = np.array(screen_cv)
+                        if arr is None or len(arr.shape) != 3 or arr.shape[2] < 3:
+                            img = None
+                        else:
+                            rgb = arr[:, :, ::-1]
+                            img = Image.fromarray(rgb.astype("uint8"), "RGB")
+                if img is not None:
+                    img.save(screenshot_path)
+                    register_temporal_screenshot(screenshot_path)
+                    saved_screenshot = True
+                    logger.debug(f"Saved OCR screenshot to {screenshot_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save debug screenshot: {e}")
 
         # Pass the captured image directly to OCR engine to avoid re-capture
         ocr_results = TemplateMatching.ocr_extract_all_text(
@@ -54,7 +79,7 @@ def _ocr_input(ocr_confidence: int, stop_flag) -> str:
             screen_cv=screen_cv, 
             stop_flag=stop_flag
         )
-        if CV2_AVAILABLE:
+        if saved_screenshot:
             cleanup_screenshot(screenshot_path)
 
         if not ocr_results:

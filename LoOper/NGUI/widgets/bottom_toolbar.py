@@ -42,6 +42,14 @@ class BottomActionsToolbar(QWidget):
             on_restore=self._restore_window,
             get_model=self._get_selected_model
         )
+        try:
+            self.hide()
+            if hasattr(self, "_content_frame") and self._content_frame is not None:
+                self._content_frame.hide()
+            if hasattr(self, "_toggle_btn_bottom") and self._toggle_btn_bottom is not None:
+                self._toggle_btn_bottom.hide()
+        except Exception:
+            pass
 
     def _build_ui(self):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)

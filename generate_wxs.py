@@ -1,17 +1,52 @@
 import os
 import uuid
 import shutil
+import zipfile
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
 def generate_guid():
     return str(uuid.uuid4()).upper()
 
+def download_and_extract_rdpwrap(extract_to):
+    rdpwrap_bin = os.path.join(extract_to, "RDPWrap")
+    if os.path.exists(rdpwrap_bin):
+        return rdpwrap_bin
+
+    os.makedirs(rdpwrap_bin, exist_ok=True)
+    zip_path = os.path.join(extract_to, "RDPWrap-v1.6.2.zip")
+
+    if not os.path.exists(zip_path):
+        import urllib.request
+        url = "https://github.com/stascorp/rdpwrap/releases/download/v1.6.2/RDPWrap-v1.6.2.zip"
+        print(f"Downloading RDPWrap from {url}...")
+        urllib.request.urlretrieve(url, zip_path)
+        print("Download complete.")
+
+    print(f"Extracting RDPWrap to {rdpwrap_bin}...")
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(rdpwrap_bin)
+
+    os.remove(zip_path)
+
+    bin_dir = os.path.join(rdpwrap_bin, "bin")
+    if os.path.exists(bin_dir):
+        for f in os.listdir(bin_dir):
+            src = os.path.join(bin_dir, f)
+            dst = os.path.join(rdpwrap_bin, f)
+            if not os.path.exists(dst):
+                shutil.move(src, dst)
+        if os.path.exists(bin_dir) and not os.listdir(bin_dir):
+            os.rmdir(bin_dir)
+
+    return rdpwrap_bin
+
 def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
     # Ensure install_dependencies.ps1 is in the dist directory
     script_src = os.path.join(os.path.dirname(__file__), "install_dependencies.ps1")
     script_dest = os.path.join(dist_dir, "install_dependencies.ps1")
     if os.path.exists(script_src):
+        os.makedirs(dist_dir, exist_ok=True)
         shutil.copy2(script_src, script_dest)
 
     product_code = generate_guid()
@@ -86,49 +121,47 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
     desktop_dir = ET.SubElement(package, "StandardDirectory", Id="DesktopFolder")
 
     components = []
-    
-    # Function to recursively add files and directories
-    def add_files(current_dir, parent_element, relative_path=""):
+
+    def add_files(current_dir, parent_element, relative_path="", output_file_rel_base=None):
+        nonlocal components
+        if output_file_rel_base is None:
+            output_file_rel_base = os.path.dirname(output_file)
         for item in os.listdir(current_dir):
             item_path = os.path.join(current_dir, item)
             item_rel_path = os.path.join(relative_path, item)
-            
+
             if os.path.isdir(item_path):
-                # Avoid harvesting some dirs if necessary
                 if item in ("__pycache__", ".git"):
                     continue
                 dir_id = "dir_" + generate_guid().replace("-", "_")
                 new_dir = ET.SubElement(parent_element, "Directory", Id=dir_id, Name=item)
-                add_files(item_path, new_dir, item_rel_path)
+                add_files(item_path, new_dir, item_rel_path, output_file_rel_base)
             else:
-                # Exclude development files, large unnecessary libs, and log files
                 if item.lower().endswith(('.lib', '.pdb', '.obj', '.exp', '.ilk', '.log', '.wixpdb')):
                     continue
-                
+
                 comp_id = "comp_" + generate_guid().replace("-", "_")
                 file_id = "file_" + generate_guid().replace("-", "_")
-                
+
+                source_rel_path = os.path.relpath(item_path, output_file_rel_base).replace(os.sep, '/')
                 comp = ET.SubElement(parent_element, "Component", Id=comp_id, Guid=generate_guid())
-                file_node = ET.SubElement(comp, "File", Id=file_id, Source=item_path, KeyPath="yes")
-                
-                # Add shortcut for the main executable
+                file_node = ET.SubElement(comp, "File", Id=file_id, Source=source_rel_path, KeyPath="yes")
+
                 if item == "LoOper.exe" and relative_path == "":
-                    # Start Menu Shortcut
-                    ET.SubElement(comp, "Shortcut", 
+                    ET.SubElement(comp, "Shortcut",
                                              Id="MainShortcut",
                                              Name=app_name,
                                              Directory="InstallProgramMenuFolder",
                                              Target=f"[!{file_id}]",
                                              WorkingDirectory="INSTALLFOLDER")
-                    
-                    # Desktop Shortcut
-                    ET.SubElement(comp, "Shortcut", 
+
+                    ET.SubElement(comp, "Shortcut",
                                              Id="DesktopShortcut",
                                              Name=app_name,
                                              Directory="DesktopFolder",
                                              Target=f"[!{file_id}]",
                                              WorkingDirectory="INSTALLFOLDER")
-                
+
                 components.append(comp_id)
 
     add_files(dist_dir, install_dir)
@@ -148,15 +181,25 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
     # Custom Action to run dependency installer
     # We run it at the end of the installation
     custom_action_id = "RunDependencyInstaller"
-    ET.SubElement(package, "CustomAction", 
-                  Id=custom_action_id, 
-                  Directory="INSTALLFOLDER", 
+    ET.SubElement(package, "CustomAction",
+                  Id=custom_action_id,
+                  Directory="INSTALLFOLDER",
                   ExeCommand='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "[INSTALLFOLDER]install_dependencies.ps1"',
+                  Execute="immediate",
+                  Return="asyncNoWait")
+
+    # Custom Action to install RDPWrap
+    rdpwrap_install_action_id = "InstallRDPWrap"
+    ET.SubElement(package, "CustomAction",
+                  Id=rdpwrap_install_action_id,
+                  Directory="INSTALLFOLDER",
+                  ExeCommand='powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& { if (Test-Path \\"[INSTALLFOLDER]RDPWrap\\") { \\"& \\"[INSTALLFOLDER]RDPWrap\\RDPWInst.exe\\" -i -o; & \\"[INSTALLFOLDER]RDPWrap\\RDPWInst.exe\\" -w; if (Test-Path \\"C:\\Program Files\\RDP Wrapper\\rdpwrap.ini\\") { Invoke-WebRequest -Uri \\"https://raw.githubusercontent.com/sebaxakerhtc/rdpwrap.ini/master/rdpwrap.ini\\" -OutFile \\"C:\\Program Files\\RDP Wrapper\\rdpwrap.ini\\" -UseBasicParsing }; Stop-Service TermService -ErrorAction SilentlyContinue; Start-Service TermService -ErrorAction SilentlyContinue } }"',
                   Execute="immediate",
                   Return="asyncNoWait")
 
     install_exec_seq = ET.SubElement(package, "InstallExecuteSequence")
     ET.SubElement(install_exec_seq, "Custom", Action=custom_action_id, After="InstallFinalize", Condition="NOT Installed")
+    ET.SubElement(install_exec_seq, "Custom", Action=rdpwrap_install_action_id, After="RunDependencyInstaller", Condition="NOT Installed")
 
     # Pretty print
     xml_str = ET.tostring(wix, encoding='utf-8')
@@ -167,5 +210,14 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
 if __name__ == "__main__":
     dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "dist", "LoOper"))
     output_wxs = os.path.abspath(os.path.join(os.path.dirname(__file__), "LoOper.wxs"))
-    create_wxs(dist_path, output_wxs, "LoOper", "1.0.0", "Rodrigo David Benitez")
+
+    print("Preparing RDPWrap for installer...")
+    rdpwrap_src = download_and_extract_rdpwrap(os.path.dirname(dist_path))
+    rdpwrap_dest = os.path.join(dist_path, "RDPWrap")
+    if os.path.exists(rdpwrap_dest):
+        shutil.rmtree(rdpwrap_dest)
+    shutil.copytree(rdpwrap_src, rdpwrap_dest)
+    print(f"RDPWrap prepared at {rdpwrap_dest}")
+
+    create_wxs(dist_path, output_wxs, "LoOper", "1.5.0", "Rodrigo David Benitez")
     print(f"Generated {output_wxs}")
