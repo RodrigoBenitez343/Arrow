@@ -1,0 +1,5 @@
+2026-04-10 08:39:28,202 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2026-04-10 10:03:17,878 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2026-04-10 10:40:57,473 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2026-04-10 11:58:17,502 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError
+2026-04-10 13:07:36,617 - NGUI.graph_elements.graph_manager - INFO - Applied monkey patch for NodeGraph._on_nodes_moved to fix KeyError

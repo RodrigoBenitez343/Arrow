@@ -5,13 +5,51 @@ $AppName = "LoOper"
 $DistDir = Join-Path $PSScriptRoot "dist\LoOper"
 $WxsFile = Join-Path $PSScriptRoot "LoOper.wxs"
 $MsiFile = Join-Path $PSScriptRoot "LoOper.msi"
+$SpecFile = Join-Path $PSScriptRoot "LoOperApp.spec"
+$VenvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$PythonExe = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
+$AppExe = Join-Path $DistDir "LoOper.exe"
+$ReqFile = Join-Path $PSScriptRoot "requirements.txt"
 
 Write-Host "--- LoOper MSI Builder ---" -ForegroundColor Cyan
 
-# 1. Verify dist directory
-if (-not (Test-Path $DistDir)) {
-    Write-Error "Directory $DistDir not found. Please compile the app first."
-    exit 1
+if (-not (Test-Path $VenvPython)) {
+    Write-Host "Creating virtual environment (.venv)..." -ForegroundColor Green
+    Push-Location $PSScriptRoot
+    python -m venv ".venv"
+    $VenvExitCode = $LASTEXITCODE
+    Pop-Location
+    if ($VenvExitCode -ne 0 -or -not (Test-Path $VenvPython)) {
+        Write-Error "Failed to create .venv"
+        exit 1
+    }
+    $PythonExe = $VenvPython
+}
+
+if (Test-Path $ReqFile) {
+    Write-Host "Installing Python dependencies into .venv..." -ForegroundColor Green
+    & $PythonExe -m pip install --upgrade pip
+    & $PythonExe -m pip install -r $ReqFile
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to install Python dependencies from $ReqFile"
+        exit 1
+    }
+}
+
+if (-not (Test-Path $AppExe)) {
+    if (-not (Test-Path $SpecFile)) {
+        Write-Error "Spec file not found: $SpecFile"
+        exit 1
+    }
+    Write-Host "Building LoOper executable (PyInstaller)..." -ForegroundColor Green
+    Push-Location $PSScriptRoot
+    & $PythonExe -m PyInstaller -y $SpecFile
+    $BuildExitCode = $LASTEXITCODE
+    Pop-Location
+    if ($BuildExitCode -ne 0 -or -not (Test-Path $AppExe)) {
+        Write-Error "Failed to build LoOper.exe into $DistDir"
+        exit 1
+    }
 }
 
 # 2. Check for WiX Toolset
@@ -39,7 +77,7 @@ if (-not $WixInstalled) {
 
 # 3. Generate .wxs file using Python
 Write-Host "Generating WiX source file (.wxs)..."
-python generate_wxs.py
+& $PythonExe generate_wxs.py
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Failed to generate .wxs file."
     exit 1
@@ -48,7 +86,9 @@ if ($LASTEXITCODE -ne 0) {
 # 4. Build MSI
 if ($WixInstalled) {
     Write-Host "Building MSI..." -ForegroundColor Green
-    wix build -arch x64 $WxsFile -ext WixToolset.UI.wixext -o $MsiFile
+    wix eula accept wix7 *> $null
+    wix extension add -g WixToolset.UI.wixext *> $null
+    wix build -acceptEula wix7 -arch x64 $WxsFile -ext WixToolset.UI.wixext -o $MsiFile
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Successfully created $MsiFile" -ForegroundColor Green
     } else {

@@ -97,7 +97,7 @@ class TemplateMatching:
         Returns:
             numpy.ndarray: Screen image in BGR format for OpenCV
         """
-        if CV2_AVAILABLE and _SANDBOX_AGENT_URL:
+        if _SANDBOX_AGENT_URL:
             try:
                 import urllib.request
                 import json as _json
@@ -130,37 +130,51 @@ class TemplateMatching:
                     img_b64 = payload.get("image") if isinstance(payload, dict) else None
                     if img_b64:
                         img = Image.open(_io.BytesIO(_base64.b64decode(img_b64))).convert("RGB")
-                        screen_np = np.array(img)
+                        try:
+                            import numpy as _np
+                        except Exception:
+                            _np = None
+                        if _np is None:
+                            return img
+                        screen_np = _np.array(img)
                         h = hashlib.md5(screen_np.tobytes()).hexdigest()
                         if _LAST_SANDBOX_HASH is not None and h == _LAST_SANDBOX_HASH and tries == 0:
                             _time.sleep(0.08)
                             tries += 1
                             continue
                         _LAST_SANDBOX_HASH = h
-                        return cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
+                        return screen_np[:, :, ::-1]
                     break
             except Exception as e:
                 logger.error(f"Sandbox capture_screen failed: {e}")
                 pass
-        if MSS_AVAILABLE and CV2_AVAILABLE:
-            # Use mss for faster capture
+        if MSS_AVAILABLE:
             with mss.mss() as sct:
-                # Capture the entire screen
-                monitor = sct.monitors[0]  # All monitors combined
+                monitor = sct.monitors[0]
                 screenshot = sct.grab(monitor)
-                
-                # Convert to numpy array and BGR format
-                screen_np = np.array(screenshot)
-                # mss returns BGRA, convert to BGR for OpenCV
-                screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_BGRA2BGR)
-                return screen_cv
-        else:
-            # Fallback to pyautogui
-            screen = pyautogui.screenshot()
-            screen_np = np.array(screen)
-            # pyautogui returns RGB, convert to BGR for OpenCV
-            screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-            return screen_cv
+                try:
+                    import numpy as _np
+                except Exception:
+                    _np = None
+                if _np is not None:
+                    screen_np = _np.array(screenshot)
+                    return screen_np[:, :, :3]
+                try:
+                    from PIL import Image
+                    img = Image.frombytes("RGB", screenshot.size, screenshot.bgra, "raw", "BGRX")
+                    return img
+                except Exception:
+                    return pyautogui.screenshot()
+
+        screen = pyautogui.screenshot()
+        try:
+            import numpy as _np
+        except Exception:
+            _np = None
+        if _np is None:
+            return screen
+        rgb = _np.array(screen.convert("RGB"))
+        return rgb[:, :, ::-1]
             
     @staticmethod
     def _debug_save_screenshot(screen_cv, prefix="cv_debug"):

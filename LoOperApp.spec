@@ -83,6 +83,7 @@ hiddenimports = [
     'cv2',
     'decorator',
     'astor',
+    'lap',
 ]
 
 datas = []

@@ -4,7 +4,9 @@ venv/
 # Log files
 automation.log
 graphui_debug.log
-
+/dist/
+/build/
+/.wix/
 # json files
 *.json
 
