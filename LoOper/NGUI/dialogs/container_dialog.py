@@ -11,7 +11,7 @@ class ContainerNodeDialog(ModernDialog):
     
     def __init__(self, parent=None, config=None):
         self.config = config or {}
-        super().__init__(parent, "Container (VM) Node Configuration")
+        super().__init__(parent, "Container (VM) Node Configuration", help_topic="container-node")
         self.resize(600, 450)
         
     def setup_ui(self):

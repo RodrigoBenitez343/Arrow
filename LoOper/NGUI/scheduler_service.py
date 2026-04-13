@@ -191,9 +191,19 @@ class SchedulerService:
         if not os.path.exists(chain_path):
             raise FileNotFoundError(f'Chain file not found: {chain_path}')
 
+        # Get sandbox configuration from schedule
+        run_in_sandbox = schedule.get('run_in_sandbox', False)
+        show_sandbox_window = schedule.get('show_sandbox_window', True)
+
         # Launch player as a subprocess (non-blocking)
         python_exe = sys.executable or 'python'
         cmd = [python_exe, '-m', 'player.main', chain_path]
+        
+        # Add sandbox arguments if enabled
+        if run_in_sandbox:
+            cmd.append('--sandbox')
+            if not show_sandbox_window:
+                cmd.append('--hide-sandbox-window')
         
         # On Linux, use xvfb-run to provide virtual display for GUI automation
         import platform

@@ -3,7 +3,7 @@
 import os
 import subprocess
 import sys
-from .base_dialog import ModernDialog
+from .base_dialog import ModernDialog, UserGuideDialog
 from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, 
@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
-from ..constants import TEXT_COLOR, DARK_GREY, MEDIUM_GREY, LIGHT_GREY
+from ..constants import TEXT_COLOR, DARK_GREY, MEDIUM_GREY, LIGHT_GREY, ACCENT_COLOR
 from ..i18n import _
 import requests
 import json
@@ -110,7 +110,7 @@ class AISettingsDialog(ModernDialog):
     """Dialog for configuring AI settings"""
     
     def __init__(self, parent=None):
-        super().__init__(parent, title=_("AI Settings"))
+        super().__init__(parent, title=_("AI Settings"), help_topic="general")
         self.setModal(True)
         self.resize(700, 700)
         self.setMinimumSize(650, 600)
@@ -128,6 +128,32 @@ class AISettingsDialog(ModernDialog):
         
         # Check API status
         QTimer.singleShot(100, self.check_api_status)
+
+    def _open_user_guide(self, topic):
+        dlg = UserGuideDialog(self, topic=topic)
+        dlg.exec_()
+
+    def _make_help_button(self, topic):
+        btn = QPushButton("?")
+        btn.setFixedSize(24, 24)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                color: {TEXT_COLOR};
+                background: transparent;
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 12px;
+                font-size: 12px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+                border: 1px solid {ACCENT_COLOR};
+            }}
+        """)
+        btn.clicked.connect(lambda: self._open_user_guide(topic))
+        return btn
     
     def setup_ui(self):
         # Use content_layout from ModernDialog
@@ -142,6 +168,11 @@ class AISettingsDialog(ModernDialog):
         api_scroll.setWidgetResizable(True)
         api_scroll_widget = QWidget()
         api_layout = QVBoxLayout()
+
+        api_help_row = QHBoxLayout()
+        api_help_row.addStretch()
+        api_help_row.addWidget(self._make_help_button("sandboxing"))
+        api_layout.addLayout(api_help_row)
         
         # Remote API Configuration
         remote_group = QGroupBox(_("Remote API Configuration"))
@@ -230,6 +261,11 @@ class AISettingsDialog(ModernDialog):
         # Advanced Tab
         advanced_tab = QWidget()
         advanced_layout = QVBoxLayout()
+
+        adv_help_row = QHBoxLayout()
+        adv_help_row.addStretch()
+        adv_help_row.addWidget(self._make_help_button("sandboxing"))
+        advanced_layout.addLayout(adv_help_row)
         
         advanced_group = QGroupBox(_("Advanced Settings"))
         advanced_form = QFormLayout()

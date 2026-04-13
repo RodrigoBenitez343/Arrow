@@ -234,7 +234,7 @@ class TriggerConfigDialog(ModernDialog):
     
     def __init__(self, parent, is_absence_trigger=False, config=None):
         title = _("Absence Trigger Configuration") if is_absence_trigger else _("Trigger Configuration")
-        super().__init__(parent, title=title)
+        super().__init__(parent, title=title, help_topic="conditional-dialog")
         self.is_absence_trigger = is_absence_trigger
         self.config = config
         self.setModal(True)
@@ -477,10 +477,10 @@ class TriggerConfigDialog(ModernDialog):
 
 class LayoutMatchConfigDialog(ModernDialog):
     def __init__(self, parent, config=None):
-        super().__init__(parent, title=_("Layout Match Conditional"))
+        super().__init__(parent, title=_("Layout Match Conditional"), help_topic="conditional-dialog")
         self.config = config
         self.setModal(True)
-        self.resize(560, 330)
+        self.resize(560, 380)  # Increased height for new fields
         self._target_x = None
         self._target_y = None
         self._target_w = None
@@ -532,20 +532,11 @@ class LayoutMatchConfigDialog(ModernDialog):
         tol_layout.addStretch()
         layout.addLayout(tol_layout)
 
-        timeout_layout = QHBoxLayout()
-        timeout_layout.addWidget(QLabel(_("Timeout (s):")))
-        self.timeout_spin = QSpinBox()
-        self.timeout_spin.setRange(1, 3600)
-        self.timeout_spin.setValue(10)
-        timeout_layout.addWidget(self.timeout_spin)
-        timeout_layout.addStretch()
-        layout.addLayout(timeout_layout)
-
         attempts_layout = QHBoxLayout()
         attempts_layout.addWidget(QLabel(_("Max Attempts:")))
         self.max_attempts_spin = QSpinBox()
         self.max_attempts_spin.setRange(1, 10000)
-        self.max_attempts_spin.setValue(30)
+        self.max_attempts_spin.setValue(500)
         attempts_layout.addWidget(self.max_attempts_spin)
         attempts_layout.addStretch()
         layout.addLayout(attempts_layout)
@@ -554,12 +545,34 @@ class LayoutMatchConfigDialog(ModernDialog):
         delay_layout.addWidget(QLabel(_("Delay Between Attempts (s):")))
         self.delay_spin = QDoubleSpinBox()
         self.delay_spin.setRange(0.0, 10.0)
-        self.delay_spin.setDecimals(2)
-        self.delay_spin.setSingleStep(0.05)
-        self.delay_spin.setValue(0.05)
+        self.delay_spin.setDecimals(3)
+        self.delay_spin.setSingleStep(0.01)
+        self.delay_spin.setValue(0.01)
         delay_layout.addWidget(self.delay_spin)
         delay_layout.addStretch()
         layout.addLayout(delay_layout)
+
+        # Timeout (0 = disabled, search until found)
+        timeout_layout = QHBoxLayout()
+        timeout_layout.addWidget(QLabel(_("Timeout (s) [0=disabled]:")))
+        self.timeout_spin = QDoubleSpinBox()
+        self.timeout_spin.setRange(0, 3600)
+        self.timeout_spin.setDecimals(1)
+        self.timeout_spin.setSingleStep(1.0)
+        self.timeout_spin.setValue(0)  # Disabled by default
+        timeout_layout.addWidget(self.timeout_spin)
+        timeout_layout.addStretch()
+        layout.addLayout(timeout_layout)
+
+        # Scroll direction
+        scroll_layout = QHBoxLayout()
+        scroll_layout.addWidget(QLabel(_("Scroll Direction:")))
+        self.scroll_combo = QComboBox()
+        self.scroll_combo.addItems([_("Up"), _("Down")])
+        self.scroll_combo.setCurrentIndex(0)  # Up by default
+        scroll_layout.addWidget(self.scroll_combo)
+        scroll_layout.addStretch()
+        layout.addLayout(scroll_layout)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -572,27 +585,53 @@ class LayoutMatchConfigDialog(ModernDialog):
         layout.addLayout(button_layout)
 
     def load_config(self):
-        self.image_path_entry.setText(self.config.get('image_path', ''))
+        if not self.config:
+            return
         try:
-            self.confidence_spin.setValue(float(self.config.get('confidence', 0.8)))
+            if hasattr(self, 'image_path_entry'):
+                self.image_path_entry.setText(self.config.get('image_path', ''))
         except Exception:
-            self.confidence_spin.setValue(0.8)
+            pass
         try:
-            self.tolerance_spin.setValue(int(self.config.get('position_tolerance', 6)))
+            if hasattr(self, 'confidence_spin'):
+                self.confidence_spin.setValue(float(self.config.get('confidence', 0.8)))
         except Exception:
-            self.tolerance_spin.setValue(6)
+            if hasattr(self, 'confidence_spin'):
+                self.confidence_spin.setValue(0.8)
         try:
-            self.timeout_spin.setValue(int(self.config.get('timeout', 10)))
+            if hasattr(self, 'tolerance_spin'):
+                self.tolerance_spin.setValue(int(self.config.get('position_tolerance', 6)))
         except Exception:
-            self.timeout_spin.setValue(10)
+            if hasattr(self, 'tolerance_spin'):
+                self.tolerance_spin.setValue(6)
         try:
-            self.max_attempts_spin.setValue(int(self.config.get('max_attempts', 30)))
+            if hasattr(self, 'max_attempts_spin'):
+                max_attempts_val = int(self.config.get('max_attempts', 500)) if self.config.get('max_attempts') is not None else 500
+                self.max_attempts_spin.setValue(max_attempts_val)
         except Exception:
-            self.max_attempts_spin.setValue(30)
+            if hasattr(self, 'max_attempts_spin'):
+                self.max_attempts_spin.setValue(500)
         try:
-            self.delay_spin.setValue(float(self.config.get('delay_between_attempts', 0.05)))
+            if hasattr(self, 'delay_spin'):
+                delay_val = float(self.config.get('delay_between_attempts', 0.01)) if self.config.get('delay_between_attempts') is not None else 0.01
+                self.delay_spin.setValue(delay_val)
         except Exception:
-            self.delay_spin.setValue(0.05)
+            if hasattr(self, 'delay_spin'):
+                self.delay_spin.setValue(0.01)
+        try:
+            if hasattr(self, 'timeout_spin'):
+                timeout_val = float(self.config.get('timeout', 0)) if self.config.get('timeout') is not None else 0
+                self.timeout_spin.setValue(timeout_val)
+        except Exception:
+            if hasattr(self, 'timeout_spin'):
+                self.timeout_spin.setValue(0)
+        try:
+            if hasattr(self, 'scroll_combo'):
+                scroll_dir = int(self.config.get('scroll_direction', 1)) if self.config.get('scroll_direction') is not None else 1
+                self.scroll_combo.setCurrentIndex(0 if scroll_dir >= 0 else 1)
+        except Exception:
+            if hasattr(self, 'scroll_combo'):
+                self.scroll_combo.setCurrentIndex(0)
 
         try:
             self._target_x = int(self.config.get('target_x')) if self.config.get('target_x') is not None else None
@@ -610,7 +649,10 @@ class LayoutMatchConfigDialog(ModernDialog):
             self._target_h = int(self.config.get('target_h')) if self.config.get('target_h') is not None else None
         except Exception:
             self._target_h = None
-        self._update_capture_label()
+        try:
+            self._update_capture_label()
+        except Exception:
+            pass
 
     def browse_image(self):
         file_path, selected_filter = QFileDialog.getOpenFileName(
@@ -760,27 +802,40 @@ class LayoutMatchConfigDialog(ModernDialog):
             self._on_snip_cancelled()
 
     def get_config(self):
-        config = {
-            'image_path': self.image_path_entry.text(),
-            'confidence': float(self.confidence_spin.value()),
-            'position_tolerance': int(self.tolerance_spin.value()),
-            'timeout': int(self.timeout_spin.value()),
-            'max_attempts': int(self.max_attempts_spin.value()),
-            'delay_between_attempts': float(self.delay_spin.value()),
-        }
-        if self._target_x is not None and self._target_y is not None and self._target_w is not None and self._target_h is not None:
-            config['target_x'] = int(self._target_x)
-            config['target_y'] = int(self._target_y)
-            config['target_w'] = int(self._target_w)
-            config['target_h'] = int(self._target_h)
-        return config
+        try:
+            config = {
+                'image_path': self.image_path_entry.text() if hasattr(self, 'image_path_entry') else '',
+                'confidence': float(self.confidence_spin.value()) if hasattr(self, 'confidence_spin') else 0.8,
+                'position_tolerance': int(self.tolerance_spin.value()) if hasattr(self, 'tolerance_spin') else 6,
+                'max_attempts': int(self.max_attempts_spin.value()) if hasattr(self, 'max_attempts_spin') else 500,
+                'delay_between_attempts': float(self.delay_spin.value()) if hasattr(self, 'delay_spin') else 0.01,
+                'timeout': float(self.timeout_spin.value()) if hasattr(self, 'timeout_spin') else 0,
+                'scroll_direction': 1 if (hasattr(self, 'scroll_combo') and self.scroll_combo.currentIndex() == 0) else -1,
+            }
+            if self._target_x is not None and self._target_y is not None and self._target_w is not None and self._target_h is not None:
+                config['target_x'] = int(self._target_x)
+                config['target_y'] = int(self._target_y)
+                config['target_w'] = int(self._target_w)
+                config['target_h'] = int(self._target_h)
+            return config
+        except Exception as e:
+            # Return minimal config if there's an error
+            return {
+                'image_path': '',
+                'confidence': 0.8,
+                'position_tolerance': 6,
+                'max_attempts': 500,
+                'delay_between_attempts': 0.01,
+                'timeout': 0,
+                'scroll_direction': 1,
+            }
 
 
 class OCRTriggerConfigDialog(ModernDialog):
     """Dialog for configuring OCR-based triggers"""
     
     def __init__(self, parent, config=None):
-        super().__init__(parent, title=_("OCR Trigger Configuration"))
+        super().__init__(parent, title=_("OCR Trigger Configuration"), help_topic="conditional-dialog")
         self.config = config
         self.setModal(True)
         self.resize(450, 350)
@@ -855,7 +910,7 @@ class WaitConditionDialog(ModernDialog):
     """Dialog for configuring wait conditions"""
     
     def __init__(self, parent, config=None):
-        super().__init__(parent, title=_("Wait Condition"))
+        super().__init__(parent, title=_("Wait Condition"), help_topic="conditional-dialog")
         self.config = config
         self.setModal(True)
         self.resize(400, 250)
@@ -1104,7 +1159,7 @@ class ConditionalLoopDialog(ModernDialog):
     """Dialog for configuring conditional loops"""
     
     def __init__(self, parent, config=None):
-        super().__init__(parent, title=_("Conditional Loop"))
+        super().__init__(parent, title=_("Conditional Loop"), help_topic="conditional-dialog")
         self.config = config
         self.setModal(True)
         self.resize(500, 350)

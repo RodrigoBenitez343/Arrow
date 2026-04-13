@@ -18,7 +18,7 @@ class FormFillerDialog(ModernDialog):
     """Dialog for configuring Form Filler node properties"""
     
     def __init__(self, parent, current_config=None):
-        super().__init__(parent, title=_("Form Filler Configuration"))
+        super().__init__(parent, title=_("Form Filler Configuration"), help_topic="form-filler-node")
         self.current_config = current_config or {}
         
         self.setModal(True)

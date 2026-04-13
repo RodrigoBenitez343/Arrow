@@ -1,15 +1,96 @@
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QWidget, QLabel, QPushButton, 
                              QHBoxLayout, QGraphicsDropShadowEffect, QSizeGrip,
-                             QScrollArea, QFrame)
+                             QScrollArea, QFrame, QTextBrowser)
 from PyQt5.QtCore import Qt, QPoint
 from PyQt5.QtGui import QColor, QFont
 from ..constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, ACCENT_COLOR
+import os
+
+
+_USER_GUIDE_TOPIC_TO_HEADING = {
+    "getting-started": "## Getting Started",
+    "playback": "## Playback and Execution",
+    "schedules": "## Schedules",
+    "nodes": "## Node Types",
+    "node-dialogs": "## Node Dialogs Reference",
+    "sandboxing": "## Sandboxing",
+    "sequence-dialog": "### Sequence Node Dialog",
+    "conditional-dialog": "### Conditional Node Dialog",
+    "llm-dialog": "### LLM Node Dialog",
+    "chain-import-dialog": "### Chain Import Dialog",
+    "code-node-dialog": "### Code Node Dialog",
+    "tts-dialog": "### TTS Node Dialog",
+    "form-filler-node": "### 7. Form Filler Node",
+    "container-node": "### 8. Container (VM) Node",
+}
+
+
+def _extract_markdown_section(markdown_text, heading_line):
+    if not heading_line:
+        return markdown_text
+
+    lines = markdown_text.splitlines()
+    start_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() == heading_line.strip():
+            start_idx = i
+            break
+
+    if start_idx is None:
+        return markdown_text
+
+    current_level = len(heading_line) - len(heading_line.lstrip("#"))
+    end_idx = len(lines)
+
+    for j in range(start_idx + 1, len(lines)):
+        candidate = lines[j].lstrip()
+        if not candidate.startswith("#"):
+            continue
+        candidate_level = len(candidate) - len(candidate.lstrip("#"))
+        if candidate_level <= current_level:
+            end_idx = j
+            break
+
+    section = "\n".join(lines[start_idx:end_idx]).strip()
+    return section if section else markdown_text
+
+
+class UserGuideDialog(QDialog):
+    def __init__(self, parent=None, topic="general", title="LoOper User Guide"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(900, 700)
+
+        layout = QVBoxLayout(self)
+        self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(True)
+        layout.addWidget(self.browser)
+
+        guide_text = self._load_user_guide_markdown()
+        heading = _USER_GUIDE_TOPIC_TO_HEADING.get(topic) if topic else None
+        section_text = _extract_markdown_section(guide_text, heading) if guide_text else ""
+
+        set_markdown = getattr(self.browser, "setMarkdown", None)
+        if callable(set_markdown):
+            set_markdown(section_text)
+        else:
+            self.browser.setPlainText(section_text)
+
+    def _load_user_guide_markdown(self):
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        guide_path = os.path.join(project_root, "docs", "USER_GUIDE.md")
+        try:
+            with open(guide_path, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            return "docs/USER_GUIDE.md not found."
 
 class ModernDialog(QDialog):
-    def __init__(self, parent=None, title="Dialog"):
+    def __init__(self, parent=None, title="Dialog", help_topic="general", show_help_button=True):
         super().__init__(parent)
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.help_topic = help_topic
         
         # Initialize drag position
         self.old_pos = None
@@ -63,6 +144,32 @@ class ModernDialog(QDialog):
         self.title_label = QLabel(title)
         self.title_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
         self.title_label.setStyleSheet(f"color: {TEXT_COLOR}; border: none; background: transparent;")
+
+        self.help_btn = None
+        if show_help_button:
+            self.help_btn = QPushButton("?")
+            self.help_btn.setFixedSize(30, 30)
+            self.help_btn.setCursor(Qt.PointingHandCursor)
+            self.help_btn.setStyleSheet(f"""
+                QPushButton {{
+                    color: {TEXT_COLOR};
+                    background: transparent;
+                    border: none;
+                    border-radius: 15px;
+                    font-size: 14px;
+                    padding: 0px;
+                    margin: 0px;
+                    min-width: 30px;
+                    max-width: 30px;
+                    min-height: 30px;
+                    max-height: 30px;
+                }}
+                QPushButton:hover {{
+                    background-color: {ACCENT_COLOR};
+                    color: {DARK_GREY};
+                }}
+            """)
+            self.help_btn.clicked.connect(self.open_help)
         
         self.close_btn = QPushButton("✕")
         self.close_btn.setFixedSize(30, 30)
@@ -92,6 +199,8 @@ class ModernDialog(QDialog):
         
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
+        if self.help_btn is not None:
+            title_layout.addWidget(self.help_btn, 0, Qt.AlignVCenter)
         title_layout.addWidget(self.close_btn, 0, Qt.AlignVCenter) # Explicitly center vertically
         
         self.container_layout.addWidget(self.title_bar)
@@ -257,6 +366,10 @@ class ModernDialog(QDialog):
             self.move(self.pos() + delta)
             self.old_pos = event.globalPos()
         super().mouseMoveEvent(event)
+
+    def open_help(self):
+        dlg = UserGuideDialog(self, topic=self.help_topic)
+        dlg.exec_()
 
     def mouseReleaseEvent(self, event):
         self.old_pos = None

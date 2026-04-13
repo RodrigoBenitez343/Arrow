@@ -14,7 +14,7 @@ from .toggle_switch import ModernToggle
 
 class SchedulerManagerDialog(ModernDialog):
     def __init__(self, parent, scheduler_service):
-        super().__init__(parent, title=_("Manage Schedules"))
+        super().__init__(parent, title=_("Manage Schedules"), help_topic="schedules")
         self.scheduler = scheduler_service
         self.resize(800, 500)  # Slightly larger default
         self.setMinimumSize(600, 400)
@@ -24,9 +24,9 @@ class SchedulerManagerDialog(ModernDialog):
         # layout.setSpacing(15)
 
         # Table
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels([
-            _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Actions")
+            _("Enabled"), _("Name"), _("Type"), _("When"), _("Next Run"), _("Chain"), _("Sandbox"), _("Actions")
         ])
         # Set column widths for better visibility
         self.table.setColumnWidth(0, 90)
@@ -34,16 +34,16 @@ class SchedulerManagerDialog(ModernDialog):
         self.table.setColumnWidth(2, 80)   # Type
         self.table.setColumnWidth(3, 140)  # When
         self.table.setColumnWidth(4, 130)  # Next Run
-        self.table.setColumnWidth(5, 220)
-        self.table.setColumnWidth(6, 260)
+        self.table.setColumnWidth(5, 180)  # Chain
+        self.table.setColumnWidth(6, 80)   # Sandbox
+        self.table.setColumnWidth(7, 260)  # Actions
         # Header resize behaviour
         hh = self.table.horizontalHeader()
         hh.setStretchLastSection(False)
-        for i in range(7):
+        for i in range(8):
             hh.setSectionResizeMode(i, QHeaderView.Interactive)
         hh.setSectionResizeMode(5, QHeaderView.Stretch)
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        hh.resizeSection(6, 300)
         hh.setMinimumSectionSize(80)
         self.table.setWordWrap(False)
         self.table.verticalHeader().setVisible(False)
@@ -169,6 +169,23 @@ class SchedulerManagerDialog(ModernDialog):
         chain_item = QTableWidgetItem(s.get('chain_path', '—'))
         self.table.setItem(row, 5, chain_item)
 
+        # Sandbox indicator
+        run_in_sandbox = s.get('run_in_sandbox', False)
+        show_sandbox_window = s.get('show_sandbox_window', True)
+        if run_in_sandbox:
+            if show_sandbox_window:
+                sandbox_text = "🖥 Visible"
+                sandbox_tooltip = _("Runs in RDP sandbox with visible window")
+            else:
+                sandbox_text = "🖥 Hidden"
+                sandbox_tooltip = _("Runs in RDP sandbox (hidden window)")
+        else:
+            sandbox_text = "—"
+            sandbox_tooltip = _("Runs directly on desktop")
+        sandbox_item = QTableWidgetItem(sandbox_text)
+        sandbox_item.setToolTip(sandbox_tooltip)
+        self.table.setItem(row, 6, sandbox_item)
+
         # Actions
         actions_widget = QWidget()
         actions_widget.setMinimumWidth(260)
@@ -228,7 +245,7 @@ class SchedulerManagerDialog(ModernDialog):
         actions_layout.addWidget(del_btn)
 
         actions_layout.addStretch(1)
-        self.table.setCellWidget(row, 6, actions_widget)
+        self.table.setCellWidget(row, 7, actions_widget)
 
     def _apply_column_layout(self):
         try:
@@ -241,15 +258,16 @@ class SchedulerManagerDialog(ModernDialog):
                 2: 100,  # Type
                 3: 160,  # When
                 4: 140,  # Next Run
-                6: 320,  # Actions
+                6: 80,   # Sandbox
+                7: 320,  # Actions
             }
-            for i in range(7):
+            for i in range(8):
                 mode = QHeaderView.Fixed if i in fixed_widths else QHeaderView.Stretch if i == 5 else QHeaderView.Interactive
                 hh.setSectionResizeMode(i, mode)
                 if i in fixed_widths:
                     hh.resizeSection(i, fixed_widths[i])
-            hh.setMinimumSectionSize(90)
-            self.table.setColumnWidth(6, fixed_widths[6])
+            hh.setMinimumSectionSize(80)
+            self.table.setColumnWidth(7, fixed_widths[7])
             self.table.setWordWrap(False)
         except Exception:
             pass
@@ -309,9 +327,9 @@ class SchedulerManagerDialog(ModernDialog):
 
 class EditScheduleDialog(ModernDialog):
     def __init__(self, parent, schedule=None):
-        super().__init__(parent, title=_("Schedule Configuration"))
-        self.resize(580, 500)
-        self.setMinimumSize(500, 450)
+        super().__init__(parent, title=_("Schedule Configuration"), help_topic="schedules")
+        self.resize(580, 580)
+        self.setMinimumSize(500, 520)
         self._schedule = schedule or {}
         
         layout = self.content_layout
@@ -432,6 +450,36 @@ class EditScheduleDialog(ModernDialog):
         timing_layout.addWidget(self.interval_row_w)
         
         layout.addWidget(timing_group)
+
+        # Sandbox Execution Options Group
+        sandbox_group = QGroupBox(_("🖥 Sandbox Execution (RDP Session)"))
+        sandbox_layout = QVBoxLayout(sandbox_group)
+        sandbox_layout.setSpacing(10)
+
+        # Run in Sandbox Toggle
+        self.sandbox_toggle = ModernToggle(_("Run in Sandbox (RDP Session)"))
+        self.sandbox_toggle.setChecked(self._schedule.get('run_in_sandbox', False))
+        sandbox_layout.addWidget(self.sandbox_toggle)
+
+        # Show Sandbox Window Toggle
+        self.show_sandbox_window_toggle = ModernToggle(_("Show Sandbox Window (for debugging)"))
+        self.show_sandbox_window_toggle.setChecked(self._schedule.get('show_sandbox_window', True))
+        # Disable if sandbox is not enabled
+        self.show_sandbox_window_toggle.setEnabled(self.sandbox_toggle.isChecked())
+
+        # Connect sandbox toggle to enable/disable show window toggle
+        self.sandbox_toggle.toggled.connect(self.show_sandbox_window_toggle.setEnabled)
+
+        sandbox_layout.addWidget(self.show_sandbox_window_toggle)
+
+        # Add a help label explaining sandbox mode
+        sandbox_help = QLabel(_("When enabled, the chain will run in an isolated RDP session.\n"
+                               "This allows background automation without interfering with your work."))
+        sandbox_help.setStyleSheet(f"color: {TEXT_COLOR}; font-style: italic; font-size: 11px;")
+        sandbox_help.setWordWrap(True)
+        sandbox_layout.addWidget(sandbox_help)
+
+        layout.addWidget(sandbox_group)
 
         # Buttons
         btn_frame = QFrame()
@@ -556,6 +604,8 @@ class EditScheduleDialog(ModernDialog):
             'type': t,
             'chain_path': chain_path,
             'enabled': True,
+            'run_in_sandbox': self.sandbox_toggle.isChecked(),
+            'show_sandbox_window': self.show_sandbox_window_toggle.isChecked(),
         }
         if t == 'once':
             dt = self.once_dt.dateTime().toString(Qt.ISODate)

@@ -71,6 +71,7 @@ class ConditionalNode(BaseNode):
         self.create_property('max_loops', '10')
         self.create_property('max_attempts', '3')
         self.create_property('delay_between_attempts', '1.0')
+        self.create_property('scroll_direction', '1')  # 1 = up, -1 = down
         self.create_property('target_x', '')
         self.create_property('target_y', '')
         self.create_property('target_w', '')
@@ -113,6 +114,7 @@ class ConditionalNode(BaseNode):
         # Region removed - OCR now uses full screen
         self.set_property('max_attempts', str(condition_data.get('max_attempts', 3)))
         self.set_property('delay_between_attempts', str(condition_data.get('delay_between_attempts', 1.0)))
+        self.set_property('scroll_direction', str(condition_data.get('scroll_direction', 1)))  # 1 = up, -1 = down
         
         # OCR-specific properties
         self.set_property('target_text', condition_data.get('target_text', ''))

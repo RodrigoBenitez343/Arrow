@@ -9,7 +9,7 @@ class SequencePropertiesDialog(ModernDialog):
     """Dialog for editing sequence properties"""
     
     def __init__(self, sequence_config, parent=None):
-        super().__init__(parent, title=_("Sequence Properties"))
+        super().__init__(parent, title=_("Sequence Properties"), help_topic="sequence-dialog")
         
         # Use content_layout from ModernDialog
         self.layout = self.content_layout

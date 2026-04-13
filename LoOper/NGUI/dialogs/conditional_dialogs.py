@@ -88,16 +88,15 @@ class ConditionItemWidget(QFrame):
             preview_label.setText("LAYOUT")
             image_path = self.config.get('image_path', '')
             conf = self.config.get('confidence', 0.8)
-            timeout = self.config.get('timeout', 10)
             tx = self.config.get('target_x')
             ty = self.config.get('target_y')
             tw = self.config.get('target_w')
             th = self.config.get('target_h')
             tol = self.config.get('position_tolerance', 6)
             if tx is not None and ty is not None and tw is not None and th is not None:
-                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}<br>{_('Captured region:')} x={tx}, y={ty}, w={tw}, h={th}, { _('Position Tolerance (px):') } {tol}<br>{ _('Timeout (s):') } {timeout}"
+                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}<br>{_('Captured region:')} x={tx}, y={ty}, w={tw}, h={th}, { _('Position Tolerance (px):') } {tol}"
             else:
-                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}<br>{ _('Timeout (s):') } {timeout}"
+                info_text = f"<b>{_('Layout Match')}</b><br>{image_path}<br>{_('Confidence:')} {conf}"
 
         elif self.condition_type == "wait":
              preview_label.setText("WAIT")
@@ -122,7 +121,7 @@ class AdvancedConditionalDialog(ModernDialog):
     
     def __init__(self, parent, sequence_idx, chain_config, current_config=None):
         title = _("Advanced Conditions - Sequence {num}").format(num=sequence_idx + 1)
-        super().__init__(parent, title=title)
+        super().__init__(parent, title=title, help_topic="conditional-dialog")
         self.sequence_idx = sequence_idx
         self.chain_config = chain_config
         self.current_config = current_config or {}
