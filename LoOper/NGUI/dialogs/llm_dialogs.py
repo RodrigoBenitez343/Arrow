@@ -31,7 +31,7 @@ class LLMPropertiesDialog(ModernDialog):
     """Dialog for configuring LLM node properties"""
     
     def __init__(self, parent, current_config=None):
-        super().__init__(parent, title=_("LLM Node Configuration"))
+        super().__init__(parent, title=_("LLM Node Configuration"), help_topic="llm-dialog")
         self.current_config = current_config or {}
         
         self.setModal(True)

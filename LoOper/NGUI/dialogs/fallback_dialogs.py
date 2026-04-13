@@ -14,7 +14,7 @@ class ActionFallbackConfigDialog(ModernDialog):
     
     def __init__(self, parent, sequence_idx, action_idx, chain_config, current_fallback=None):
         title = _("Configure Fallback - Sequence {seq}, Action {action}").format(seq=sequence_idx + 1, action=action_idx + 1)
-        super().__init__(parent, title=title)
+        super().__init__(parent, title=title, help_topic="playback")
         self.sequence_idx = sequence_idx
         self.action_idx = action_idx
         self.chain_config = chain_config

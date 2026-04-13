@@ -17,7 +17,7 @@ class TTSPropertiesDialog(ModernDialog):
     """Dialog for configuring TTS node properties"""
     
     def __init__(self, parent=None, config=None):
-        super().__init__(parent, title=_("TTS Properties"))
+        super().__init__(parent, title=_("TTS Properties"), help_topic="tts-dialog")
         self.setModal(True)
         self.resize(400, 250)
         

@@ -17,7 +17,7 @@ class ChainImportDialog(ModernDialog):
     """Dialog for configuring chain import settings"""
     
     def __init__(self, chain_import_config=None, parent=None):
-        super().__init__(parent, title=_("Chain Import Configuration"))
+        super().__init__(parent, title=_("Chain Import Configuration"), help_topic="chain-import-dialog")
         self.setModal(True)
         self.resize(600, 450)
         self.setMinimumSize(600, 450)

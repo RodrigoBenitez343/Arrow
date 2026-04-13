@@ -440,7 +440,35 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error saving sequence node {node.id}: {e}")
             raise
-        
+
+    def _safe_get_int(self, node, prop_name, default):
+        """Safely get an integer property from a node."""
+        try:
+            val = node.get_property(prop_name)
+            if val is None:
+                return default
+            if isinstance(val, str):
+                if val.strip() == '':
+                    return default
+                return int(float(val))
+            return int(val)
+        except Exception:
+            return default
+
+    def _safe_get_float(self, node, prop_name, default):
+        """Safely get a float property from a node."""
+        try:
+            val = node.get_property(prop_name)
+            if val is None:
+                return default
+            if isinstance(val, str):
+                if val.strip() == '':
+                    return default
+                return float(val)
+            return float(val)
+        except Exception:
+            return default
+
     def _save_conditional_node(self, node):
         """Save a conditional node to configuration."""
         logger.debug(f"Saving conditional node {node.id} to configuration")
@@ -448,20 +476,22 @@ class ConfigManager:
             conditional_data = {
                 "condition_type": node.get_property('condition_type') or 'presence',
                 "image_path": node.get_property('image_path') or '',
-                "threshold": float(node.get_property('threshold') or 0.8),
-                "wait_time": float(node.get_property('wait_time') or 5),
-                "max_loops": int(node.get_property('max_loops') or 10),
+                "threshold": self._safe_get_float(node, 'threshold', 0.8),
+                "wait_time": self._safe_get_float(node, 'wait_time', 5),
+                "max_loops": self._safe_get_int(node, 'max_loops', 10),
                 "ocr_text": node.get_property('ocr_text') or '',
                 "code": node.get_property('code') or '',
                 # Timeout and retry properties
-                "timeout": float(node.get_property('timeout') or 5.0),
-                "max_attempts": int(node.get_property('max_attempts') or 3),
-                "delay_between_attempts": float(node.get_property('delay_between_attempts') or 1.0),
+                "timeout": self._safe_get_float(node, 'timeout', 0),  # 0 = disabled for layout match
+                "max_attempts": self._safe_get_int(node, 'max_attempts', 500),
+                "delay_between_attempts": self._safe_get_float(node, 'delay_between_attempts', 0.01),
+                # Layout match-specific properties
+                "scroll_direction": self._safe_get_int(node, 'scroll_direction', 1),  # 1 = up, -1 = down
                 # Loop-specific properties
                 "loop_type": node.get_property('loop_type') or '',
                 "loop_position": node.get_property('loop_position') or '',
                 "sequence_file": node.get_property('sequence_file') or '',
-                "iteration_delay": float(node.get_property('iteration_delay') or 1.0),
+                "iteration_delay": self._safe_get_float(node, 'iteration_delay', 1.0),
                 "loop_condition": node.get_property('loop_condition') or '',
                 # OCR-specific properties
                 "case_sensitive": node.get_property('case_sensitive') or 'true',
@@ -475,11 +505,11 @@ class ConfigManager:
             tw = node.get_property('target_w')
             th = node.get_property('target_h')
             if str(tx or '').strip() != '' and str(ty or '').strip() != '' and str(tw or '').strip() != '' and str(th or '').strip() != '':
-                conditional_data["target_x"] = int(float(tx))
-                conditional_data["target_y"] = int(float(ty))
-                conditional_data["target_w"] = int(float(tw))
-                conditional_data["target_h"] = int(float(th))
-                conditional_data["position_tolerance"] = int(float(node.get_property('position_tolerance') or 6))
+                conditional_data["target_x"] = self._safe_get_int(node, 'target_x', 0)
+                conditional_data["target_y"] = self._safe_get_int(node, 'target_y', 0)
+                conditional_data["target_w"] = self._safe_get_int(node, 'target_w', 0)
+                conditional_data["target_h"] = self._safe_get_int(node, 'target_h', 0)
+                conditional_data["position_tolerance"] = self._safe_get_int(node, 'position_tolerance', 6)
             
             self.chain_config["conditional_nodes"].append(conditional_data)
             logger.debug(f"Successfully saved conditional node with condition type: {conditional_data['condition_type']}")
@@ -792,9 +822,11 @@ class ConfigManager:
                     node.set_property('ocr_text', cond_data.get('ocr_text', ''))
                     node.set_property('code', cond_data.get('code', ''))
                     # Timeout and retry properties
-                    node.set_property('timeout', str(cond_data.get('timeout', 5.0)))
-                    node.set_property('max_attempts', str(cond_data.get('max_attempts', 3)))
-                    node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 1.0)))
+                    node.set_property('timeout', str(cond_data.get('timeout', 0)))  # 0 = disabled for layout match
+                    node.set_property('max_attempts', str(cond_data.get('max_attempts', 500)))
+                    node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 0.01)))
+                    # Layout match-specific properties
+                    node.set_property('scroll_direction', str(cond_data.get('scroll_direction', 1)))  # 1 = up, -1 = down
                     if cond_data.get('target_x') is not None and cond_data.get('target_y') is not None and cond_data.get('target_w') is not None and cond_data.get('target_h') is not None:
                         node.set_property('target_x', str(cond_data.get('target_x')))
                         node.set_property('target_y', str(cond_data.get('target_y')))

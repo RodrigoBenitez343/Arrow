@@ -25,7 +25,7 @@ class ChainExpansionDialog(ModernDialog):
     """Dialog for expanding and editing imported chains in a separate graph view"""
     
     def __init__(self, chain_import_node, parent_graph_view, parent=None):
-        super().__init__(parent, title=_("Edit Imported Chain"))
+        super().__init__(parent, title=_("Edit Imported Chain"), help_topic="chain-import-dialog")
         self.chain_import_node = chain_import_node
         self.parent_graph_view = parent_graph_view
         self.config_manager = None  # Will be initialized after graph_view is created

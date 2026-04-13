@@ -334,48 +334,31 @@ class ConditionalMixin:
             return False
 
     def _evaluate_layout_match_conditional(self, conditional_node, stop_flag):
+        """
+        Layout Match Conditional - Pixel-by-pixel alignment.
+        
+        Scans the screen line by line by scrolling one pixel at a time,
+        trying to find the sample image at the exact expected position
+        with no pixel tolerance.
+        
+        This is useful for aligning UI elements to specific positions
+        to make automation tasks easier.
+        """
         import time
+        import os
         try:
             import pyautogui
         except Exception:
             pyautogui = None
         try:
-            from pynput import keyboard
+            from PIL import Image
         except Exception:
-            keyboard = None
+            Image = None
 
         image_path = conditional_node.get('image_path', '') or ''
         if not str(image_path).strip():
+            logger.warning("Layout match: no image path provided")
             return False
-
-        try:
-            confidence = float(conditional_node.get('threshold', conditional_node.get('confidence', 0.8)))
-        except Exception:
-            confidence = 0.8
-
-        try:
-            timeout_s = float(conditional_node.get('timeout', 10) or 10)
-        except Exception:
-            timeout_s = 10.0
-        if timeout_s <= 0:
-            timeout_s = 10.0
-
-        try:
-            max_attempts = int(conditional_node.get('max_attempts', 30) or 30)
-        except Exception:
-            max_attempts = 30
-        max_attempts = max(1, max_attempts)
-
-        try:
-            attempt_delay = float(conditional_node.get('delay_between_attempts', 0.05) or 0.05)
-        except Exception:
-            attempt_delay = 0.05
-
-        try:
-            scroll_amount = int(conditional_node.get('scroll_amount', 400) or 400)
-        except Exception:
-            scroll_amount = 400
-        scroll_amount = max(1, scroll_amount)
 
         def _resolve_image(p):
             try:
@@ -389,335 +372,204 @@ class ConditionalMixin:
             return p
 
         resolved_image_path = _resolve_image(str(image_path))
+        if not os.path.exists(resolved_image_path):
+            logger.warning(f"Layout match: image file not found: {resolved_image_path}")
+            return False
 
         expected_x = conditional_node.get('target_x')
         expected_y = conditional_node.get('target_y')
         expected_w = conditional_node.get('target_w')
         expected_h = conditional_node.get('target_h')
-        use_expected_position = False
+
         try:
+            expected_x_i = int(float(expected_x))
+            expected_y_i = int(float(expected_y))
             expected_w_i = int(float(expected_w))
             expected_h_i = int(float(expected_h))
-            use_expected_position = expected_w_i > 0 and expected_h_i > 0
         except Exception:
-            use_expected_position = False
-        if use_expected_position:
+            logger.warning("Layout match: invalid target coordinates")
+            return False
+        if expected_w_i <= 0 or expected_h_i <= 0:
+            logger.warning("Layout match: invalid target dimensions")
+            return False
+
+        try:
+            max_attempts = int(conditional_node.get('max_attempts', 500) or 500)
+        except Exception:
+            max_attempts = 500
+        max_attempts = max(1, max_attempts)
+
+        try:
+            attempt_delay = float(conditional_node.get('delay_between_attempts', 0.01) or 0.01)
+        except Exception:
+            attempt_delay = 0.01
+        if attempt_delay < 0:
+            attempt_delay = 0.01
+
+        try:
+            scroll_direction = int(conditional_node.get('scroll_direction', 1) or 1)  # 1 = up, -1 = down
+        except Exception:
+            scroll_direction = 1
+
+        # Timeout is disabled by default (0) - search continues until match found
+        # Set timeout > 0 to limit search time in seconds
+        try:
+            timeout = float(conditional_node.get('timeout', 0) or 0)
+        except Exception:
+            timeout = 0
+        if timeout < 0:
+            timeout = 0
+
+        if Image is None:
+            logger.warning("Layout match: PIL not available")
+            return False
+
+        try:
+            template_img = Image.open(resolved_image_path).convert("RGB")
+        except Exception as e:
+            logger.warning(f"Layout match: failed to load template image: {e}")
+            return False
+
+        template_size = template_img.size
+        try:
+            template_bytes = template_img.tobytes()
+        except Exception as e:
+            logger.warning(f"Layout match: failed to get template bytes: {e}")
+            return False
+
+        logger.info(f"Layout match: starting pixel-by-pixel alignment for {resolved_image_path}")
+        logger.info(f"Layout match: target position ({expected_x_i}, {expected_y_i}), size {template_size}")
+        logger.info(f"Layout match: max_attempts={max_attempts}, scroll_direction={'up' if scroll_direction > 0 else 'down'}, timeout={'disabled' if timeout <= 0 else f'{timeout}s'}")
+
+        start_time = time.time()
+
+        def _capture_region():
+            """Capture the screen region at the expected position."""
             try:
-                expected_x_i = int(float(expected_x))
-                expected_y_i = int(float(expected_y))
+                screen = self.fallback_handler.template_matcher.capture_screen()
             except Exception:
-                use_expected_position = False
-                expected_x_i = 0
-                expected_y_i = 0
-        else:
-            expected_x_i = 0
-            expected_y_i = 0
+                screen = None
+            if screen is None:
+                if pyautogui is None:
+                    return None
+                try:
+                    screen = pyautogui.screenshot()
+                except Exception:
+                    return None
 
-        try:
-            position_tolerance = int(conditional_node.get('position_tolerance', conditional_node.get('tolerance', 6)) or 6)
-        except Exception:
-            position_tolerance = 6
-        position_tolerance = max(0, position_tolerance)
-        try:
-            region_expand_factor = float(conditional_node.get('region_expand_factor', 2.0) or 2.0)
-        except Exception:
-            region_expand_factor = 2.0
-        region_expand_factor = max(1.0, region_expand_factor)
-
-        def _check_match(screen_cv=None):
-            if stop_flag and stop_flag():
-                return False
             try:
-                if use_expected_position and hasattr(self.fallback_handler.template_matcher, 'region_based_search'):
-                    loc = self.fallback_handler.template_matcher.region_based_search(
-                        resolved_image_path,
-                        expected_x_i,
-                        expected_y_i,
-                        confidence,
-                        region_expand_factor,
-                        True,
-                        screen_cv
-                    )
-                    if not loc:
-                        loc = self.fallback_handler.template_matcher.region_based_search(
-                            resolved_image_path,
-                            expected_x_i,
-                            expected_y_i,
-                            confidence,
-                            region_expand_factor,
-                            False,
-                            screen_cv
-                        )
+                if hasattr(screen, "convert"):
+                    screen_img = screen.convert("RGB")
                 else:
-                    loc = None
-                if not loc:
-                    loc = self.fallback_handler.template_matcher.multiscale_template_match(
-                        resolved_image_path,
-                        confidence=confidence,
-                        scales=[1.0],
-                        grayscale=True,
-                        screen_cv=screen_cv
-                    )
-                    if not loc:
-                        loc = self.fallback_handler.template_matcher.multiscale_template_match(
-                            resolved_image_path,
-                            confidence=confidence,
-                            scales=[1.0],
-                            grayscale=False,
-                            screen_cv=screen_cv
-                        )
-            except Exception:
-                loc = None
-            if not loc:
-                return False
-            if not use_expected_position:
-                return True
-            try:
-                dx = abs(int(loc[0]) - expected_x_i)
-                dy = abs(int(loc[1]) - expected_y_i)
-                return dx <= position_tolerance and dy <= position_tolerance
-            except Exception:
-                return False
-
-        def _do_scroll(amount):
-            ah = getattr(self, 'action_handlers', None)
-            if ah is not None and getattr(getattr(ah, 'bot', None), 'sandbox_agent_url', None):
-                try:
-                    ah._send_agent_action({"action": "scroll", "amount": int(amount)})
-                    return
-                except Exception:
-                    return
-            if pyautogui is None:
-                return
-            try:
-                pyautogui.scroll(int(amount))
-            except Exception:
-                return
-
-        def _do_hscroll(amount):
-            ah = getattr(self, 'action_handlers', None)
-            if ah is not None and getattr(getattr(ah, 'bot', None), 'sandbox_agent_url', None):
-                try:
-                    reps = max(1, abs(int(amount)) // 100)
-                except Exception:
-                    reps = 1
-                key = 'right' if amount > 0 else 'left'
-                for _ in range(reps):
-                    if stop_flag and stop_flag():
-                        return
                     try:
-                        ah._send_agent_action({"action": "hotkey", "keys": [key]})
+                        import numpy as _np
                     except Exception:
-                        return
-                return
-            if pyautogui is None:
-                return
-            try:
-                if hasattr(pyautogui, 'hscroll'):
-                    pyautogui.hscroll(int(amount))
-                    return
+                        _np = None
+                    if _np is None:
+                        return None
+                    arr = _np.asarray(screen)
+                    if arr is None or getattr(arr, "ndim", 0) < 2:
+                        return None
+                    if arr.ndim == 3 and arr.shape[2] >= 3:
+                        rgb = arr[:, :, :3][:, :, ::-1]
+                        screen_img = Image.fromarray(rgb.astype("uint8"), "RGB")
+                    else:
+                        return None
             except Exception:
-                pass
+                return None
+
+            # Calculate region bounds centered on expected position
+            left = int(expected_x_i - (expected_w_i // 2))
+            top = int(expected_y_i - (expected_h_i // 2))
+            right = int(left + expected_w_i)
+            bottom = int(top + expected_h_i)
+
+            if left < 0 or top < 0:
+                return None
             try:
-                pyautogui.keyDown('shift')
-                pyautogui.scroll(int(amount))
-                pyautogui.keyUp('shift')
+                sw, sh = screen_img.size
             except Exception:
+                return None
+            if right > sw or bottom > sh:
+                return None
+
+            try:
+                region = screen_img.crop((left, top, right, bottom))
+            except Exception:
+                return None
+            return region
+
+        def _region_matches_exactly(region_img):
+            """Check if region matches template exactly (no tolerance)."""
+            if region_img is None:
+                return False
+            try:
+                if region_img.size != template_size:
+                    return False
+                # Exact byte comparison - no tolerance
+                return region_img.tobytes() == template_bytes
+            except Exception:
+                return False
+
+        def _do_scroll_one_pixel():
+            """Scroll one pixel in the configured direction."""
+            # Scroll amount: positive = scroll up (content moves down), negative = scroll down
+            # scroll_direction: 1 = up, -1 = down
+            # pyautogui.scroll positive = scroll up, negative = scroll down
+            scroll_amt = scroll_direction  # +1 for up, -1 for down
+            
+            ah = getattr(self, 'action_handlers', None)
+            if ah is not None and getattr(getattr(ah, 'bot', None), 'sandbox_agent_url', None):
                 try:
-                    pyautogui.keyUp('shift')
+                    ah._send_agent_action({"action": "scroll", "amount": int(scroll_amt)})
+                    return
                 except Exception:
                     pass
-
-        def _do_zoom(zoom_in):
-            ah = getattr(self, 'action_handlers', None)
-            if ah is not None:
-                if getattr(getattr(ah, 'bot', None), 'sandbox_agent_url', None):
-                    try:
-                        ah._send_agent_action({"action": "hotkey", "keys": ["ctrl", "=" if zoom_in else "-"]})
-                        return
-                    except Exception:
-                        try:
-                            ah._send_agent_action({"action": "hotkey", "keys": ["ctrl", "+" if zoom_in else "-"]})
-                            return
-                        except Exception:
-                            return
-                if keyboard is not None:
-                    try:
-                        ah._press_key_combo([keyboard.Key.ctrl], '=' if zoom_in else '-')
-                        return
-                    except Exception:
-                        pass
             if pyautogui is None:
                 return
             try:
-                pyautogui.hotkey('ctrl', '=' if zoom_in else '-')
+                pyautogui.scroll(int(scroll_amt))
             except Exception:
-                try:
-                    pyautogui.hotkey('ctrl', '+' if zoom_in else '-')
-                except Exception:
-                    return
+                return
 
-        deadline = time.time() + timeout_s
-
-        try:
-            screen_cv0 = self.fallback_handler.template_matcher.capture_screen()
-        except Exception:
-            screen_cv0 = None
-        if _check_match(screen_cv0):
-            return True
-        try:
-            import random
-        except Exception:
-            random = None
-
-        try:
-            zoom_prob = float(conditional_node.get('zoom_prob', 0.12) or 0.12)
-        except Exception:
-            zoom_prob = 0.12
-        zoom_prob = max(0.0, min(1.0, zoom_prob))
-
-        try:
-            hscroll_prob = float(conditional_node.get('hscroll_prob', 0.10) or 0.10)
-        except Exception:
-            hscroll_prob = 0.10
-        hscroll_prob = max(0.0, min(1.0, hscroll_prob))
-
-        try:
-            flip_prob = float(conditional_node.get('scroll_flip_prob', 0.06) or 0.06)
-        except Exception:
-            flip_prob = 0.06
-        flip_prob = max(0.0, min(1.0, flip_prob))
-
-        try:
-            hold_steps = int(conditional_node.get('direction_hold_steps', 12) or 12)
-        except Exception:
-            hold_steps = 12
-        hold_steps = max(1, hold_steps)
-
-        try:
-            scroll_step_min = int(conditional_node.get('scroll_step_min', 30) or 30)
-        except Exception:
-            scroll_step_min = 30
-        scroll_step_min = max(1, scroll_step_min)
-        try:
-            scroll_step_max = int(conditional_node.get('scroll_step_max', scroll_amount) or scroll_amount)
-        except Exception:
-            scroll_step_max = scroll_amount
-        scroll_step_max = max(scroll_step_min, scroll_step_max)
-
-        try:
-            settle_min = float(conditional_node.get('settle_min', attempt_delay) or attempt_delay)
-        except Exception:
-            settle_min = attempt_delay
-        settle_min = max(0.01, settle_min)
-        try:
-            settle_max = float(conditional_node.get('settle_max', max(settle_min, 0.18)) or max(settle_min, 0.18))
-        except Exception:
-            settle_max = max(settle_min, 0.18)
-        settle_max = max(settle_min, settle_max)
-
-        if attempt_delay <= 0:
-            attempt_delay = 0.02
-
-        try:
-            min_steps_from_timeout = int((timeout_s / max(0.02, attempt_delay)) * 3)
-        except Exception:
-            min_steps_from_timeout = max_attempts
-        max_attempts = max(max_attempts, min_steps_from_timeout)
-
-        vdir = 1
-        hdir = 1
-        if random is not None:
-            try:
-                vdir = 1 if random.random() < 0.5 else -1
-                hdir = 1 if random.random() < 0.5 else -1
-            except Exception:
-                vdir = 1
-                hdir = 1
-        v_hold = 0
-        h_hold = 0
-
-        step = 0
-        while step < max_attempts and time.time() <= deadline:
-            if stop_flag and stop_flag():
-                return False
-
-            do_zoom = False
-            if random is None:
-                do_zoom = (step % 9 == 0)
-            else:
-                try:
-                    do_zoom = random.random() < zoom_prob
-                except Exception:
-                    do_zoom = False
-
-            if do_zoom:
-                zoom_in = True
-                if random is not None:
-                    try:
-                        zoom_in = random.random() < 0.5
-                    except Exception:
-                        zoom_in = True
-                _do_zoom(bool(zoom_in))
-            else:
-                do_h = False
-                if random is not None:
-                    try:
-                        do_h = random.random() < hscroll_prob
-                    except Exception:
-                        do_h = False
-
-                amt = scroll_step_max
-                if random is not None:
-                    try:
-                        amt = random.randint(scroll_step_min, scroll_step_max)
-                    except Exception:
-                        amt = scroll_step_max
-
-                if do_h:
-                    if h_hold >= hold_steps and random is not None:
-                        try:
-                            if random.random() < flip_prob:
-                                hdir *= -1
-                                h_hold = 0
-                        except Exception:
-                            pass
-                    _do_hscroll(int(hdir * amt))
-                    h_hold += 1
-                else:
-                    if v_hold >= hold_steps and random is not None:
-                        try:
-                            if random.random() < flip_prob:
-                                vdir *= -1
-                                v_hold = 0
-                        except Exception:
-                            pass
-                    _do_scroll(int(vdir * amt))
-                    v_hold += 1
-
-            settle = settle_min
-            if random is not None:
-                try:
-                    settle = random.uniform(settle_min, settle_max)
-                except Exception:
-                    settle = settle_min
+        def _settle():
+            """Wait for screen to settle after scroll."""
+            if attempt_delay <= 0:
+                return
             elapsed = 0.0
-            while elapsed < settle:
+            while elapsed < attempt_delay:
                 if stop_flag and stop_flag():
-                    return False
-                st = min(0.05, settle - elapsed)
+                    return
+                st = min(0.01, attempt_delay - elapsed)
                 time.sleep(st)
                 elapsed += st
 
-            try:
-                screen_cv = self.fallback_handler.template_matcher.capture_screen()
-            except Exception:
-                screen_cv = None
-            if _check_match(screen_cv):
+        # Main loop: scan line by line with 1-pixel scrolling
+        for attempt in range(max_attempts):
+            if stop_flag and stop_flag():
+                logger.info("Layout match: stopped by flag")
+                return False
+
+            # Check timeout if enabled
+            if timeout > 0:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    logger.info(f"Layout match: timeout ({timeout}s) reached after {attempt} attempts")
+                    return False
+
+            # Capture the region at expected position
+            region = _capture_region()
+            
+            # Check for exact match
+            if _region_matches_exactly(region):
+                logger.info(f"Layout match: found exact match at attempt {attempt}")
                 return True
 
-            step += 1
+            # Scroll one pixel and try again
+            _do_scroll_one_pixel()
+            _settle()
 
+        logger.info(f"Layout match: no match found after {max_attempts} attempts")
         return False
 
     def _evaluate_code_condition(self, conditional_node, stop_flag, node_inputs=None):

@@ -21,6 +21,11 @@ def main():
     """
     parser = argparse.ArgumentParser(description="Desktop Automation Player")
     parser.add_argument("file", help="Path to sequence file (.json) or chain config file (.json)")
+    parser.add_argument("--sandbox", action="store_true", help="Run the chain in a sandboxed RDP session")
+    parser.add_argument("--show-sandbox-window", action="store_true", default=True, 
+                        help="Show the RDP sandbox window (for debugging). Default: True")
+    parser.add_argument("--hide-sandbox-window", action="store_true",
+                        help="Hide the RDP sandbox window (run in background)")
     args = parser.parse_args()
 
     # Clear the JSON cache to ensure we have the most updated version of all chains
@@ -55,6 +60,17 @@ def main():
     print("\n[START] Playback started. Press ESC to cancel.")
     logger.info("Keyboard listener started for ESC cancellation")
 
+    # Build sandbox context from CLI arguments
+    sandbox_context = None
+    if args.sandbox:
+        # If hide-sandbox-window is specified, show_window should be False
+        show_window = not args.hide_sandbox_window
+        sandbox_context = {
+            "sandboxed": True,
+            "show_window": show_window
+        }
+        logger.info(f"Sandbox mode enabled. Show window: {show_window}")
+
     try:
         # Check if the file exists
         if not os.path.exists(args.file):
@@ -75,11 +91,15 @@ def main():
             # It's a legacy chain config file (list format)
             logger.info(f"Playing legacy chain configuration: {args.file}")
             player = MultiSequencePlayer(data, args.file)
+            if sandbox_context:
+                player.global_app_context_override = sandbox_context
             player.play_chain(stop_flag=stop_flag)
         elif isinstance(data, dict) and "sequences" in data:
             # It's a new chain config file (dict format with sequences and conditional_nodes)
             logger.info(f"Playing workflow chain configuration: {args.file}")
             player = MultiSequencePlayer(data, args.file)
+            if sandbox_context:
+                player.global_app_context_override = sandbox_context
             player.play_chain(stop_flag=stop_flag)
         else:
             logger.error("Invalid file format. Expected sequence file with 'actions', legacy chain config (list), or workflow chain config (dict with 'sequences').")

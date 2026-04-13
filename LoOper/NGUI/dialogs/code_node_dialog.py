@@ -72,7 +72,7 @@ class CodeGeneratorThread(QThread):
 
 class CodeNodeDialog(ModernDialog):
     def __init__(self, parent=None, config=None):
-        super().__init__(parent, title=_("Code Node Configuration"))
+        super().__init__(parent, title=_("Code Node Configuration"), help_topic="code-node-dialog")
         self.resize(700, 600)
         
         self.config = config or {}

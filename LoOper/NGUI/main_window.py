@@ -60,6 +60,7 @@ from recorder.element_recorder import ElementRecorder
 from .scheduler_service import SchedulerService
 from .dialogs.scheduler_dialogs import SchedulerManagerDialog
 from .dialogs import AISettingsDialog
+from .dialogs.base_dialog import UserGuideDialog
 
 # Configure logging to output to both file and stdout
 # Use a specific logger name to avoid conflicts with recorder module
@@ -243,6 +244,16 @@ class MainWindow(QMainWindow):
             pass
         manage_sched_action.triggered.connect(self.open_scheduler_manager)
         scheduler_menu.addAction(manage_sched_action)
+
+        docs_menu = menu_bar.addMenu(_("&Documentation"))
+        user_guide_action = QAction(_("&User Guide"), self)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            user_guide_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.BOOK, size=16, color=TEXT_COLOR).toqpixmap()))
+        except Exception:
+            pass
+        user_guide_action.triggered.connect(self.open_user_guide)
+        docs_menu.addAction(user_guide_action)
         
     def new_chain(self):
         """Clears the graph to start a new chain."""
@@ -739,6 +750,14 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Failed to open AISettingsDialog: {e}")
             QMessageBox.critical(self, _("AI Settings Error"), _("Failed to open AI settings: {error}").format(error=e))
+
+    def open_user_guide(self):
+        try:
+            dialog = UserGuideDialog(self, topic="general", title=_("LoOper User Guide"))
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Failed to open UserGuideDialog: {e}")
+            QMessageBox.critical(self, _("Documentation Error"), _("Failed to open user guide: {error}").format(error=e))
 
     def closeEvent(self, event):
         """Ensure background services stop on app close"""
