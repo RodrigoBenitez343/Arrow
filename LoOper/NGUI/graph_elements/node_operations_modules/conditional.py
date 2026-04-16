@@ -57,7 +57,7 @@ class ConditionalOperationsMixin:
                     'confidence': float(node.get_property('threshold') or 0.8),
                     'timeout': float(node.get_property('timeout') or 0),  # 0 = disabled, search until found
                     'max_attempts': int(float(node.get_property('max_attempts') or 500)),
-                    'delay_between_attempts': float(node.get_property('delay_between_attempts') or 0.01),
+                    # Note: delay_between_attempts removed - layout match now runs at max speed
                     'scroll_direction': int(node.get_property('scroll_direction') or 1),  # 1 = up, -1 = down
                 }
                 tx = node.get_property('target_x')
@@ -166,7 +166,7 @@ class ConditionalOperationsMixin:
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
                     node.set_property('timeout', str(condition_data.get('timeout', 0)))  # 0 = disabled
                     node.set_property('max_attempts', str(condition_data.get('max_attempts', 500)))
-                    node.set_property('delay_between_attempts', str(condition_data.get('delay_between_attempts', 0.01)))
+                    # Note: delay_between_attempts no longer used - runs at max speed
                     node.set_property('scroll_direction', str(condition_data.get('scroll_direction', 1)))  # 1 = up, -1 = down
                     if condition_data.get('target_x') is not None and condition_data.get('target_y') is not None and condition_data.get('target_w') is not None and condition_data.get('target_h') is not None:
                         node.set_property('target_x', str(condition_data.get('target_x')))

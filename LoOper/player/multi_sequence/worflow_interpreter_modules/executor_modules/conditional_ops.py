@@ -400,13 +400,6 @@ class ConditionalMixin:
         max_attempts = max(1, max_attempts)
 
         try:
-            attempt_delay = float(conditional_node.get('delay_between_attempts', 0.01) or 0.01)
-        except Exception:
-            attempt_delay = 0.01
-        if attempt_delay < 0:
-            attempt_delay = 0.01
-
-        try:
             scroll_direction = int(conditional_node.get('scroll_direction', 1) or 1)  # 1 = up, -1 = down
         except Exception:
             scroll_direction = 1
@@ -440,8 +433,6 @@ class ConditionalMixin:
         logger.info(f"Layout match: starting pixel-by-pixel alignment for {resolved_image_path}")
         logger.info(f"Layout match: target position ({expected_x_i}, {expected_y_i}), size {template_size}")
         logger.info(f"Layout match: max_attempts={max_attempts}, scroll_direction={'up' if scroll_direction > 0 else 'down'}, timeout={'disabled' if timeout <= 0 else f'{timeout}s'}")
-
-        start_time = time.time()
 
         def _capture_region():
             """Capture the screen region at the expected position."""
@@ -532,19 +523,8 @@ class ConditionalMixin:
             except Exception:
                 return
 
-        def _settle():
-            """Wait for screen to settle after scroll."""
-            if attempt_delay <= 0:
-                return
-            elapsed = 0.0
-            while elapsed < attempt_delay:
-                if stop_flag and stop_flag():
-                    return
-                st = min(0.01, attempt_delay - elapsed)
-                time.sleep(st)
-                elapsed += st
-
-        # Main loop: scan line by line with 1-pixel scrolling
+        # Main loop: scan line by line with 1-pixel scrolling at MAX SPEED
+        # No artificial delays - the system's speed depends on host PC performance
         for attempt in range(max_attempts):
             if stop_flag and stop_flag():
                 logger.info("Layout match: stopped by flag")
@@ -565,9 +545,8 @@ class ConditionalMixin:
                 logger.info(f"Layout match: found exact match at attempt {attempt}")
                 return True
 
-            # Scroll one pixel and try again
+            # Scroll one pixel and immediately retry - no delay between attempts
             _do_scroll_one_pixel()
-            _settle()
 
         logger.info(f"Layout match: no match found after {max_attempts} attempts")
         return False

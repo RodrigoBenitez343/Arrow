@@ -252,16 +252,43 @@ class NodeExecutor:
                             pass
                     
                     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".."))
-                    agent_script = os.path.join(project_root, "LoOper", "sandbox_agent.py")
 
+                    # --- Resolve sandbox_agent.py (same logic as sequence_executor.py) ---
                     import sys
+                    agent_script = os.path.join(project_root, "LoOper", "sandbox_agent.py")
+                    if not os.path.exists(agent_script):
+                        _meipass = getattr(sys, '_MEIPASS', None)
+                        if _meipass:
+                            for _cdir in ('LoOper', '.'):
+                                _bp = os.path.join(_meipass, _cdir, 'sandbox_agent.py')
+                                if os.path.exists(_bp):
+                                    agent_script = _bp
+                                    break
+
+                    _deployed_agent = os.path.join(temp_dir, 'sandbox_agent.py')
+                    try:
+                        if os.path.exists(agent_script):
+                            import shutil
+                            shutil.copy2(agent_script, _deployed_agent)
+                            agent_script = _deployed_agent
+                        else:
+                            logger.error(f"sandbox_agent.py not found (searched {agent_script})")
+                            return False
+                    except Exception as _copy_err:
+                        logger.error(f"Failed to deploy sandbox_agent.py to {temp_dir}: {_copy_err}")
+                        return False
+
+                    # --- Resolve Python interpreter (same logic as sequence_executor.py) ---
                     safe_python = ""
-                    candidates = [
+                    _py_candidates = [
                         os.path.join(project_root, ".venv", "Scripts", "python.exe"),
                         os.path.join(project_root, ".venv", "scripts", "python.exe"),
-                        sys.executable,
                     ]
-                    for c in candidates:
+                    if getattr(sys, 'frozen', False):
+                        _py_candidates.append(sys.executable)
+                    else:
+                        _py_candidates.append(sys.executable)
+                    for c in _py_candidates:
                         try:
                             if c and os.path.exists(c):
                                 safe_python = c
@@ -288,10 +315,12 @@ class NodeExecutor:
 
                     ps_lines = [
                         "$ErrorActionPreference = 'Stop'",
-                        f"$env:PYTHONPATH = '{project_root}'",
                         f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
-                        "try {",
                     ]
+                    # Only set PYTHONPATH in source mode; compiled mode interpreter already knows its modules.
+                    if not getattr(sys, 'frozen', False):
+                        ps_lines.append(f"$env:PYTHONPATH = '{project_root}'")
+                    ps_lines.append("try {")
                     if exe:
                         ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
                     ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
@@ -367,11 +396,19 @@ class NodeExecutor:
                     ctx = app_context if isinstance(app_context, dict) else {}
                     show_window = ctx.get("show_window", False)
                     screen_mode = "1" if show_window else "2"
+                    # Get current screen resolution dynamically for RDP session
+                    try:
+                        import ctypes
+                        desktop_w = int(ctypes.windll.user32.GetSystemMetrics(0))
+                        desktop_h = int(ctypes.windll.user32.GetSystemMetrics(1))
+                    except Exception:
+                        desktop_w = 1920
+                        desktop_h = 1080
                     with open(rdp_file, "w") as f:
                         f.write(f'''screen mode id:i:{screen_mode}
 use multimon:i:0
-desktopwidth:i:1920
-desktopheight:i:1080
+desktopwidth:i:{desktop_w}
+desktopheight:i:{desktop_h}
 smart sizing:i:1
 session bpp:i:32
 full address:s:127.0.0.2
@@ -394,26 +431,9 @@ enablecredsspsupport:i:1
                         startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                         startupinfo.wShowWindow = subprocess.SW_HIDE
                         subprocess.Popen(["mstsc.exe", rdp_file], startupinfo=startupinfo)
-                    
-                    try:
-                        q = subprocess.run(["query", "session"], capture_output=True, text=True)
-                        out = (q.stdout or "") + "\n" + (q.stderr or "")
-                        for line in out.splitlines():
-                            if "LoOperAgent" not in line:
-                                continue
-                            import re as _re
-                            m = _re.search(r"\s(\d+)\s+(Active|Disc|Conn|Listen)\b", line)
-                            if not m:
-                                continue
-                            try:
-                                sid = int(m.group(1))
-                            except Exception:
-                                continue
-                            subprocess.run(["logoff", str(sid)], capture_output=True, text=True)
-                            time.sleep(1.0)
-                            break
-                    except Exception:
-                        pass
+                    # DO NOT log off the session after launching MSTSC — that closes the
+                    # RDP session that was just established. Only clean stale sessions
+                    # before the ONLOGON scheduled task is created (see block above).
 
                     try:
                         import urllib.request
@@ -860,13 +880,6 @@ enablecredsspsupport:i:1
         max_attempts = max(1, max_attempts)
     
         try:
-            attempt_delay = float(conditional_node.get('delay_between_attempts', 0.01) or 0.01)
-        except Exception:
-            attempt_delay = 0.01
-        if attempt_delay < 0:
-            attempt_delay = 0.01
-    
-        try:
             scroll_direction = int(conditional_node.get('scroll_direction', 1) or 1)  # 1 = up, -1 = down
         except Exception:
             scroll_direction = 1
@@ -1012,19 +1025,8 @@ enablecredsspsupport:i:1
             except Exception:
                 return
     
-        def _settle():
-            """Wait for screen to settle after scroll."""
-            if attempt_delay <= 0:
-                return
-            elapsed = 0.0
-            while elapsed < attempt_delay:
-                if stop_flag and stop_flag():
-                    return
-                st = min(0.01, attempt_delay - elapsed)
-                time.sleep(st)
-                elapsed += st
-    
-        # Main loop: scan line by line with 1-pixel scrolling
+        # Main loop: scan line by line with 1-pixel scrolling at MAX SPEED
+        # No artificial delays - the system's speed depends on host PC performance
         for attempt in range(max_attempts):
             if stop_flag and stop_flag():
                 logger.info("Layout match: stopped by flag")
@@ -1045,9 +1047,8 @@ enablecredsspsupport:i:1
                 logger.info(f"Layout match: found exact match at attempt {attempt}")
                 return True
     
-            # Scroll one pixel and try again
+            # Scroll one pixel and immediately retry - no delay between attempts
             _do_scroll_one_pixel()
-            _settle()
     
         logger.info(f"Layout match: no match found after {max_attempts} attempts")
         return False

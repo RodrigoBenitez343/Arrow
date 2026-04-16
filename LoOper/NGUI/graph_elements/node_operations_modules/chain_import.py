@@ -197,7 +197,7 @@ class ChainImportOperationsMixin:
                         cond_node.set_property('code', cond_config.get('code', ''))
                         cond_node.set_property('timeout', str(cond_config.get('timeout', 5.0)))
                         cond_node.set_property('max_attempts', str(cond_config.get('max_attempts', 3)))
-                        cond_node.set_property('delay_between_attempts', str(cond_config.get('delay_between_attempts', 1.0)))
+                        # Note: delay_between_attempts not used for layout match - runs at max speed
                         if cond_config.get('target_x') is not None and cond_config.get('target_y') is not None and cond_config.get('target_w') is not None and cond_config.get('target_h') is not None:
                             cond_node.set_property('target_x', str(cond_config.get('target_x')))
                             cond_node.set_property('target_y', str(cond_config.get('target_y')))

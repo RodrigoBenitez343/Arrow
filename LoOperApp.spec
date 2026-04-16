@@ -354,6 +354,11 @@ _add_data(os.path.join(looper_dir, 'LoOper.png'), '_internal/LoOper')
 _add_data(os.path.join(looper_dir, 'LoOper.ico'), 'LoOper')
 _add_data(os.path.join(looper_dir, 'LoOper.png'), 'LoOper')
 
+# Bundle the lightweight sandbox agent bridge so it is available as a loose file
+# in compiled builds.  The RDP session runs ONLY this script (via a scheduled task)
+# – never the full LoOper GUI.
+_add_data(os.path.join(looper_dir, 'sandbox_agent.py'), 'LoOper')
+
 # Add the entire Computer_vision directory as a tree to ensure all files (including .py) are present
 _add_tree(os.path.join(player_dir, 'Computer_vision'), '_internal/LoOper/player/Computer_vision')
 _add_tree(os.path.join(player_dir, 'Computer_vision'), 'LoOper/player/Computer_vision')

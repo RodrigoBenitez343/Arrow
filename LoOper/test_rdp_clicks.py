@@ -200,14 +200,26 @@ def _create_task(python_exe: str, agent_script: str, port: int) -> None:
     _append_debug((qi.stdout or "") + "\n" + (qi.stderr or ""))
 
 
+def _get_screen_resolution():
+    """Get current screen resolution dynamically."""
+    try:
+        import ctypes
+        w = int(ctypes.windll.user32.GetSystemMetrics(0))
+        h = int(ctypes.windll.user32.GetSystemMetrics(1))
+        return w, h
+    except Exception:
+        return 1920, 1080
+
+
 def _write_rdp_file(shared_dir: str) -> str:
     rdp_file = os.path.join(shared_dir, "agent_session_test.rdp")
+    desktop_w, desktop_h = _get_screen_resolution()
     with open(rdp_file, "w", encoding="utf-8") as f:
         f.write(
             f"""screen mode id:i:1
 use multimon:i:0
-desktopwidth:i:1920
-desktopheight:i:1080
+desktopwidth:i:{desktop_w}
+desktopheight:i:{desktop_h}
 smart sizing:i:1
 session bpp:i:32
 full address:s:127.0.0.2
@@ -268,8 +280,7 @@ def _decode_png_size(b64_png: str) -> tuple[int, int] | None:
 
 class TestRDPSessionClicks(unittest.TestCase):
     agent_url = None
-    screen_width = 1920
-    screen_height = 1080
+    screen_width, screen_height = _get_screen_resolution()
 
     @classmethod
     def setUpClass(cls):

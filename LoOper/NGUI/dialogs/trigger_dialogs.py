@@ -70,11 +70,78 @@ def _get_capture_screen():
     return QGuiApplication.primaryScreen()
 
 
+def _get_virtual_desktop_geometry():
+    """Get the full virtual desktop geometry across all monitors.
+    
+    This returns the bounding rectangle that encompasses all screens.
+    Used to properly calculate coordinates when capturing the virtual desktop.
+    """
+    try:
+        # Get all screens
+        screens = QGuiApplication.screens()
+        if not screens:
+            primary = QGuiApplication.primaryScreen()
+            return primary.geometry() if primary else QRect(0, 0, 0, 0)
+        
+        # Calculate the bounding rectangle of all screens
+        min_x = float('inf')
+        min_y = float('inf')
+        max_x = float('-inf')
+        max_y = float('-inf')
+        
+        for screen in screens:
+            geo = screen.geometry()
+            # Handle negative positions (monitors to the left/up of primary)
+            min_x = min(min_x, geo.left())
+            min_y = min(min_y, geo.top())
+            max_x = max(max_x, geo.right())
+            max_y = max(max_y, geo.bottom())
+        
+        if min_x == float('inf'):
+            primary = QGuiApplication.primaryScreen()
+            return primary.geometry() if primary else QRect(0, 0, 0, 0)
+        
+        return QRect(int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
+    except Exception:
+        primary = QGuiApplication.primaryScreen()
+        return primary.geometry() if primary else QRect(0, 0, 0, 0)
+
+
+def _get_screen_info_for_capture():
+    """Get screen info needed for proper coordinate calculation.
+    
+    Returns:
+        tuple: (screen, geometry, device_pixel_ratio)
+        - screen: The QScreen to use for capture
+        - geometry: The geometry to use for coordinate calculation (virtual desktop)
+        - dpr: Device pixel ratio for the screen
+    """
+    screen = _get_capture_screen()
+    if screen is None:
+        screen = QGuiApplication.primaryScreen()
+    
+    if screen is None:
+        return None, QRect(0, 0, 0, 0), 1.0
+    
+    # Get device pixel ratio for this screen
+    try:
+        dpr = float(screen.devicePixelRatio())
+    except Exception:
+        dpr = 1.0
+    
+    # Get virtual desktop geometry for proper coordinate calculation
+    # This ensures coordinates are relative to the full virtual desktop
+    virtual_geo = _get_virtual_desktop_geometry()
+    
+    return screen, virtual_geo, dpr
+
+
 class SnipCaptureDialog(QDialog):
-    def __init__(self, frozen_pixmap, screen_geometry, parent=None):
+    def __init__(self, frozen_pixmap, screen_geometry, dpr=1.0, parent=None):
         super().__init__(parent)
         self._frozen_pixmap = frozen_pixmap
         self._screen_geometry = screen_geometry
+        self._dpr = dpr  # Device pixel ratio for coordinate scaling
         self._origin = None
         self._current = None
         self._selected_rect = None
@@ -83,10 +150,27 @@ class SnipCaptureDialog(QDialog):
         self.setMouseTracking(True)
         self.setCursor(Qt.CrossCursor)
         self.setFocusPolicy(Qt.StrongFocus)
+        
+        # Size dialog based on frozen pixmap's LOGICAL dimensions to ensure coordinates align
+        # frozen_pixmap is at device resolution, so we divide by dpr to get logical size
         try:
-            self.setGeometry(self._screen_geometry)
+            if frozen_pixmap is not None and not frozen_pixmap.isNull():
+                pix_w = frozen_pixmap.width()
+                pix_h = frozen_pixmap.height()
+                # Calculate logical dimensions (what the user sees)
+                if dpr > 0:
+                    logical_w = int(pix_w / dpr)
+                    logical_h = int(pix_h / dpr)
+                else:
+                    logical_w = pix_w
+                    logical_h = pix_h
+                # Position at screen geometry's top-left, use logical dimensions for size
+                geo = screen_geometry or QRect(0, 0, 1920, 1080)
+                self.setGeometry(geo.x(), geo.y(), logical_w, logical_h)
+            else:
+                self.setGeometry(screen_geometry)
         except Exception:
-            pass
+            self.setGeometry(screen_geometry)
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -124,8 +208,22 @@ class SnipCaptureDialog(QDialog):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        if self._frozen_pixmap is not None:
-            painter.drawPixmap(0, 0, self._frozen_pixmap)
+        if self._frozen_pixmap is not None and not self._frozen_pixmap.isNull():
+            # frozen_pixmap is at device resolution, dialog is at logical pixels
+            # Scale frozen pixmap to fit the dialog (now sized to logical dimensions)
+            pix_w = self._frozen_pixmap.width()
+            pix_h = self._frozen_pixmap.height()
+            dialog_size = self.size()
+            
+            # Calculate scaling: device pixmap size / dialog logical size
+            if dialog_size.width() > 0 and dialog_size.height() > 0:
+                scale_x = pix_w / dialog_size.width()
+                scale_y = pix_h / dialog_size.height()
+            else:
+                scale_x, scale_y = 1.0, 1.0
+            
+            # Draw frozen pixmap scaled to dialog size
+            painter.drawPixmap(self.rect(), self._frozen_pixmap)
 
         overlay = QColor(0, 0, 0, 90)
         painter.fillRect(self.rect(), overlay)
@@ -137,7 +235,25 @@ class SnipCaptureDialog(QDialog):
             rect = self._selected_rect
 
         if rect is not None and rect.width() > 0 and rect.height() > 0 and self._frozen_pixmap is not None:
-            painter.drawPixmap(rect, self._frozen_pixmap, rect)
+            # Scale selection rect from logical pixels to device pixels for source rect
+            pix_w = self._frozen_pixmap.width()
+            pix_h = self._frozen_pixmap.height()
+            dialog_size = self.size()
+            
+            if dialog_size.width() > 0 and dialog_size.height() > 0:
+                scale_x = pix_w / dialog_size.width()
+                scale_y = pix_h / dialog_size.height()
+            else:
+                scale_x, scale_y = 1.0, 1.0
+            
+            # Source rect in device pixels
+            src_rect = QRect(
+                int(rect.x() * scale_x),
+                int(rect.y() * scale_y),
+                int(rect.width() * scale_x),
+                int(rect.height() * scale_y)
+            )
+            painter.drawPixmap(rect, self._frozen_pixmap, src_rect)
             pen = QPen(QColor(0, 170, 255, 255))
             pen.setWidth(2)
             painter.setPen(pen)
@@ -146,16 +262,52 @@ class SnipCaptureDialog(QDialog):
     def get_result(self):
         if self._selected_rect is None or self._frozen_pixmap is None:
             return None, None
+        
+        # The frozen pixmap is captured at device pixel resolution
+        # The dialog is sized to frozen pixmap's logical dimensions
+        # Mouse events are in dialog coordinates (logical pixels)
+        # We need to scale the selection rect from dialog size to device pixmap size
+        
+        pix_w = self._frozen_pixmap.width()
+        pix_h = self._frozen_pixmap.height()
+        dialog_size = self.size()
+        
+        # Calculate scaling factor: device pixmap size / dialog logical size
+        if dialog_size.width() > 0 and dialog_size.height() > 0:
+            scale_x = pix_w / dialog_size.width()
+            scale_y = pix_h / dialog_size.height()
+        else:
+            scale_x, scale_y = 1.0, 1.0
+        
+        # Scale selection rect to device pixels for cropping from frozen pixmap
+        scaled_rect = QRect(
+            int(self._selected_rect.x() * scale_x),
+            int(self._selected_rect.y() * scale_y),
+            int(self._selected_rect.width() * scale_x),
+            int(self._selected_rect.height() * scale_y)
+        )
+        
         try:
-            cropped = self._frozen_pixmap.copy(self._selected_rect)
+            cropped = self._frozen_pixmap.copy(scaled_rect)
         except Exception:
             cropped = None
+        
+        # For global coordinates: the selection is relative to the dialog
+        # which is positioned at the screen's position (geo.x(), geo.y())
+        # The dialog size now matches the frozen pixmap's logical size
+        # So we scale the dialog position offset by the same scale factor
         geo = self._screen_geometry or QRect(0, 0, 0, 0)
+        
+        # Global position in device pixels:
+        # - dialog position in logical pixels = geo.x(), geo.y()
+        # - dialog size in logical pixels = dialog_size.width(), height()
+        # - frozen pixmap is at device resolution
+        # - scale selection by scale_x, scale_y to get device pixel position
         global_rect = QRect(
-            int(geo.x() + self._selected_rect.x()),
-            int(geo.y() + self._selected_rect.y()),
-            int(self._selected_rect.width()),
-            int(self._selected_rect.height())
+            int(geo.x() * scale_x + self._selected_rect.x() * scale_x),
+            int(geo.y() * scale_y + self._selected_rect.y() * scale_y),
+            int(self._selected_rect.width() * scale_x),
+            int(self._selected_rect.height() * scale_y)
         )
         return cropped, global_rect
 
@@ -370,14 +522,20 @@ class TriggerConfigDialog(ModernDialog):
     def _start_capture(self):
         accepted_after_capture = False
         try:
-            screen = _get_capture_screen()
+            screen, virtual_geo, dpr = _get_screen_info_for_capture()
             if screen is None:
                 return
+            # Get the geometry of the screen where capture will be shown
             geo = screen.geometry()
+            # grabWindow(0) captures the full virtual desktop at device pixel resolution
             frozen = screen.grabWindow(0)
             if frozen is None or frozen.isNull():
                 return
-            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            # Use virtual desktop geometry for coordinate calculation
+            # This ensures coordinates are relative to the full virtual desktop
+            dlg = SnipCaptureDialog(frozen, virtual_geo, dpr, parent=None)
+            # Position the dialog over the screen where the cursor is
+            dlg.setGeometry(geo)
             dlg.raise_()
             dlg.activateWindow()
             if dlg.exec_() == QDialog.Accepted:
@@ -541,16 +699,8 @@ class LayoutMatchConfigDialog(ModernDialog):
         attempts_layout.addStretch()
         layout.addLayout(attempts_layout)
 
-        delay_layout = QHBoxLayout()
-        delay_layout.addWidget(QLabel(_("Delay Between Attempts (s):")))
-        self.delay_spin = QDoubleSpinBox()
-        self.delay_spin.setRange(0.0, 10.0)
-        self.delay_spin.setDecimals(3)
-        self.delay_spin.setSingleStep(0.01)
-        self.delay_spin.setValue(0.01)
-        delay_layout.addWidget(self.delay_spin)
-        delay_layout.addStretch()
-        layout.addLayout(delay_layout)
+        # Note: Delay Between Attempts removed - layout match now runs at max speed
+        # The system will analyze each scroll cycle as fast as the host PC allows
 
         # Timeout (0 = disabled, search until found)
         timeout_layout = QHBoxLayout()
@@ -611,13 +761,7 @@ class LayoutMatchConfigDialog(ModernDialog):
         except Exception:
             if hasattr(self, 'max_attempts_spin'):
                 self.max_attempts_spin.setValue(500)
-        try:
-            if hasattr(self, 'delay_spin'):
-                delay_val = float(self.config.get('delay_between_attempts', 0.01)) if self.config.get('delay_between_attempts') is not None else 0.01
-                self.delay_spin.setValue(delay_val)
-        except Exception:
-            if hasattr(self, 'delay_spin'):
-                self.delay_spin.setValue(0.01)
+        # Note: delay_between_attempts config value is no longer used
         try:
             if hasattr(self, 'timeout_spin'):
                 timeout_val = float(self.config.get('timeout', 0)) if self.config.get('timeout') is not None else 0
@@ -699,14 +843,20 @@ class LayoutMatchConfigDialog(ModernDialog):
     def _start_capture(self):
         accepted_after_capture = False
         try:
-            screen = _get_capture_screen()
+            screen, virtual_geo, dpr = _get_screen_info_for_capture()
             if screen is None:
                 return
+            # Get the geometry of the screen where capture will be shown
             geo = screen.geometry()
+            # grabWindow(0) captures the full virtual desktop at device pixel resolution
             frozen = screen.grabWindow(0)
             if frozen is None or frozen.isNull():
                 return
-            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            # Use virtual desktop geometry for coordinate calculation
+            # This ensures coordinates are relative to the full virtual desktop
+            dlg = SnipCaptureDialog(frozen, virtual_geo, dpr, parent=None)
+            # Position the dialog over the screen where the cursor is
+            dlg.setGeometry(geo)
             dlg.raise_()
             dlg.activateWindow()
             if dlg.exec_() == QDialog.Accepted:
@@ -1077,14 +1227,15 @@ class WaitConditionDialog(ModernDialog):
 
     def _start_capture(self):
         try:
-            screen = _get_capture_screen()
+            screen, virtual_geo, dpr = _get_screen_info_for_capture()
             if screen is None:
                 return
             geo = screen.geometry()
             frozen = screen.grabWindow(0)
             if frozen is None or frozen.isNull():
                 return
-            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg = SnipCaptureDialog(frozen, virtual_geo, dpr, parent=None)
+            dlg.setGeometry(geo)
             dlg.raise_()
             dlg.activateWindow()
             if dlg.exec_() == QDialog.Accepted:
@@ -1365,14 +1516,15 @@ class ConditionalLoopDialog(ModernDialog):
     def _start_capture(self):
         accepted_after_capture = False
         try:
-            screen = _get_capture_screen()
+            screen, virtual_geo, dpr = _get_screen_info_for_capture()
             if screen is None:
                 return
             geo = screen.geometry()
             frozen = screen.grabWindow(0)
             if frozen is None or frozen.isNull():
                 return
-            dlg = SnipCaptureDialog(frozen, geo, parent=None)
+            dlg = SnipCaptureDialog(frozen, virtual_geo, dpr, parent=None)
+            dlg.setGeometry(geo)
             dlg.raise_()
             dlg.activateWindow()
             if dlg.exec_() == QDialog.Accepted:
