@@ -260,6 +260,12 @@ class MultiSequencePlayer(SeleniumBot):
             sandbox_ctx = None
 
         if isinstance(sandbox_ctx, dict) and sandbox_ctx.get("sandboxed"):
+            # Preserve any sandbox agent URL that was set by a previous call to
+            # begin_chain_sandbox() (e.g. from the scheduler or chain import).
+            # Without this, play_chain() would strip the URL from the new dict and
+            # execute_sequence() would not see it, triggering a redundant second RDP
+            # session setup attempt.
+            _existing_url = sandbox_ctx.get("sandbox_agent_url") or sandbox_ctx.get("rdp_agent_url")
             try:
                 self.sequence_executor.global_app_context_override = sandbox_ctx
             except Exception:
@@ -283,6 +289,12 @@ class MultiSequencePlayer(SeleniumBot):
                         set_sandbox_agent_url(sandbox_agent_url)
                     except Exception:
                         pass
+                    # Carry the agent URL into the new context dict so downstream
+                    # execute_sequence() sees it without needing a re-init.
+                    sandbox_ctx["sandbox_agent_url"] = sandbox_agent_url
+                elif _existing_url:
+                    # No new URL was returned but we had one before — re-use it.
+                    sandbox_ctx["sandbox_agent_url"] = _existing_url
             except Exception:
                 sandbox_agent_url = None
 

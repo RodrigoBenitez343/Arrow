@@ -156,6 +156,10 @@ class SequenceExecutor:
         focus_timeout = float((app_context or {}).get("focus_timeout", 2.0))
         sandboxed = (app_context or {}).get("sandboxed", False)
 
+        # Source-root for PYTHONPATH in the PowerShell launch script.
+        # Only used in source (non-frozen) mode; in frozen mode we skip PYTHONPATH.
+        _src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
         exe_norm = os.path.normcase(exe) if exe else ""
         proc_name_norm = proc_name.lower() if proc_name else ""
 
@@ -442,16 +446,90 @@ class SequenceExecutor:
                         except Exception:
                             pass
                         
-                    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-                    agent_script = os.path.join(project_root, "LoOper", "sandbox_agent.py")
-                    
+                    # --- Resolve project root for finding bundled resources -------
+                    # In frozen (compiled) mode, __file__ points inside the PyInstaller
+                    # temp extraction directory (sys._MEIPASS).  Computing project_root
+                    # from __file__ therefore gives a temp-path that does NOT correspond
+                    # to the actual installation directory.  Use sys.executable's directory
+                    # as the stable anchor instead.
+                    _exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else \
+                        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+                    # --- Resolve sandbox_agent.py ---------------------------------
+                    # In source mode it lives at <project>/LoOper/sandbox_agent.py.
+                    # In compiled mode it is bundled as a loose data-file inside the
+                    # PyInstaller archive (see LoOperApp.spec).  Search in order:
+                    #   1.  <exe_dir>/LoOper/sandbox_agent.py          (compiled, onedir / installer layout)
+                    #   2.  <exe_dir>/sandbox_agent.py                (alternative layout)
+                    #   3.  _MEIPASS/LoOper/sandbox_agent.py          (compiled, onefile spec with name='LoOper')
+                    #   4.  _MEIPASS/_internal/LoOper/sandbox_agent.py (compiled, onefile spec with name='_internal/LoOper')
+                    #   5.  _MEIPASS/sandbox_agent.py                  (root of extraction)
+                    _possible_agent_paths = []
+                    if getattr(sys, 'frozen', False):
+                        _possible_agent_paths.extend([
+                            os.path.join(_exe_dir, 'LoOper', 'sandbox_agent.py'),
+                            os.path.join(_exe_dir, 'sandbox_agent.py'),
+                        ])
+                        _meipass = getattr(sys, '_MEIPASS', None)
+                        if _meipass:
+                            for _cdir in ('LoOper', '_internal', '.'):
+                                _candidate = os.path.join(_meipass, _cdir, 'sandbox_agent.py')
+                                if os.path.exists(_candidate):
+                                    _possible_agent_paths.insert(0, _candidate)
+                                    break
+                            # Also check _internal sub-structure directly
+                            _candidate_internal = os.path.join(_meipass, '_internal', 'LoOper', 'sandbox_agent.py')
+                            if os.path.exists(_candidate_internal) and _possible_agent_paths[0] != _candidate_internal:
+                                _possible_agent_paths.insert(0, _candidate_internal)
+                    else:
+                        _possible_agent_paths.append(os.path.join(
+                            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
+                            "LoOper", "sandbox_agent.py"
+                        ))
+
+                    agent_script = None
+                    for _ap in _possible_agent_paths:
+                        if _ap and os.path.exists(_ap):
+                            agent_script = _ap
+                            logger.info(f"Found sandbox_agent.py at: {_ap}")
+                            break
+
+                    # Deploy a copy into the shared folder so the RDP agent user
+                    # (LoOperAgent) is guaranteed read-access regardless of where
+                    # the main LoOper installation lives.
+                    _deployed_agent = os.path.join(temp_dir, 'sandbox_agent.py')
+                    try:
+                        if agent_script and os.path.exists(agent_script):
+                            import shutil
+                            shutil.copy2(agent_script, _deployed_agent)
+                            agent_script = _deployed_agent
+                        else:
+                            logger.error(f"sandbox_agent.py not found. Searched: {_possible_agent_paths}")
+                            return False
+                    except Exception as _copy_err:
+                        logger.error(f"Failed to deploy sandbox_agent.py to {temp_dir}: {_copy_err}")
+                        return False
+
+                    # --- Resolve Python interpreter --------------------------------
+                    # The RDP session needs a Python that has pyautogui available.
+                    # In source mode the project .venv satisfies this.
+                    # In compiled mode sys.executable (LoOper.exe) works because its
+                    # built-in interpreter mode runs .py files via exec() WITHOUT opening
+                    # the GUI, and all bundled modules (including pyautogui) are available.
                     safe_python = ""
-                    candidates = [
-                        os.path.join(project_root, ".venv", "Scripts", "python.exe"),
-                        os.path.join(project_root, ".venv", "scripts", "python.exe"),
-                        sys.executable,
-                    ]
-                    for c in candidates:
+                    _py_candidates = []
+                    if getattr(sys, 'frozen', False):
+                        # Compiled build – the .venv won't exist. Use LoOper.exe whose
+                        # interpreter mode runs sandbox_agent.py correctly (Looper.py).
+                        _py_candidates.append(sys.executable)
+                    else:
+                        _src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+                        _py_candidates.extend([
+                            os.path.join(_src_root, ".venv", "Scripts", "python.exe"),
+                            os.path.join(_src_root, ".venv", "scripts", "python.exe"),
+                        ])
+                        _py_candidates.append(sys.executable)
+                    for c in _py_candidates:
                         try:
                             if c and os.path.exists(c):
                                 safe_python = c
@@ -481,10 +559,13 @@ class SequenceExecutor:
 
                     ps_lines = [
                         "$ErrorActionPreference = 'Stop'",
-                        f"$env:PYTHONPATH = '{project_root}'",
                         f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
-                        "try {",
                     ]
+                    # Only set PYTHONPATH in source mode; in compiled mode the
+                    # bundled interpreter already knows where its modules are.
+                    if not getattr(sys, 'frozen', False):
+                        ps_lines.append(f"$env:PYTHONPATH = '{_src_root}'")
+                    ps_lines.append("try {")
                     if exe:
                         ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
                     ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
@@ -1141,8 +1222,41 @@ enablecredsspsupport:i:1
             except Exception:
                 expected_app = None
 
+            # Sandbox is handled ONCE by begin_chain_sandbox() in play_chain().
+            # After that sandbox_agent_url is set in the context. Subsequent calls to
+            # _ensure_app_open_and_focused from here must NOT try to re-initialise
+            # the RDP session — that would open a second Looper instance in the RDP.
+            def _url_reachable(url):
+                try:
+                    from urllib.parse import urlparse
+                    p = urlparse(str(url))
+                    host = p.hostname
+                    port = p.port or (80 if (p.scheme or "").lower() == "http" else 443)
+                    with socket.create_connection((host, int(port)), timeout=0.35):
+                        return True
+                except Exception:
+                    return False
+
+            _already_sandboxed = False
             if expected_app and expected_app.get("sandboxed"):
-                # Always attempt to launch/focus if sandboxed
+                _existing_url = (expected_app.get("sandbox_agent_url") or
+                                 expected_app.get("rdp_agent_url"))
+                if _existing_url and _url_reachable(_existing_url):
+                    _already_sandboxed = True
+                if not _already_sandboxed:
+                    try:
+                        _g = getattr(self, 'global_app_context_override', None)
+                        if isinstance(_g, dict):
+                            _gu = _g.get("sandbox_agent_url") or _g.get("rdp_agent_url")
+                            if _gu and _url_reachable(_gu):
+                                _already_sandboxed = True
+                    except Exception:
+                        pass
+
+            if expected_app and expected_app.get("sandboxed") and not _already_sandboxed:
+                # Only call _ensure_app_open_and_focused if the agent is not yet reachable.
+                # begin_chain_sandbox() handles the primary setup; this covers the case
+                # where play_chain() was bypassed and sandbox is set directly.
                 try:
                     ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))
                 except Exception:
@@ -1151,14 +1265,17 @@ enablecredsspsupport:i:1
                     logger.error("Sandbox/RDP App could not be launched; aborting sequence execution")
                     return False
             elif expected_app is None and getattr(self, 'global_app_context_override', {}).get("sandboxed"):
-                try:
-                    # In case of pure sandboxed overrides with no specific app expected context (Agent only)
-                    ok = self._ensure_app_open_and_focused(self.global_app_context_override, stop_flag, attempts=3)
-                except Exception:
-                    ok = True
-                if not ok:
-                    logger.error("Sandbox/RDP App could not be launched via global override; aborting sequence execution")
-                    return False
+                _gctx = getattr(self, 'global_app_context_override', {})
+                _gu2 = _gctx.get("sandbox_agent_url") or _gctx.get("rdp_agent_url")
+                if not _gu2 or not _url_reachable(_gu2):
+                    # Primary sandbox setup not yet done (e.g., direct call without play_chain).
+                    try:
+                        ok = self._ensure_app_open_and_focused(_gctx, stop_flag, attempts=3)
+                    except Exception:
+                        ok = True
+                    if not ok:
+                        logger.error("Sandbox/RDP App could not be launched via global override; aborting sequence execution")
+                        return False
             elif isinstance(expected_app, dict) and any(expected_app.get(k) for k in ("exe", "process_name", "title", "pid")):
                 try:
                     ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))

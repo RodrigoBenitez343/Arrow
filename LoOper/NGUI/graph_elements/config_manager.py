@@ -484,7 +484,8 @@ class ConfigManager:
                 # Timeout and retry properties
                 "timeout": self._safe_get_float(node, 'timeout', 0),  # 0 = disabled for layout match
                 "max_attempts": self._safe_get_int(node, 'max_attempts', 500),
-                "delay_between_attempts": self._safe_get_float(node, 'delay_between_attempts', 0.01),
+                # Note: delay_between_attempts kept for backward compat but not used - layout match runs at max speed
+                # "delay_between_attempts": self._safe_get_float(node, 'delay_between_attempts', 0.01),
                 # Layout match-specific properties
                 "scroll_direction": self._safe_get_int(node, 'scroll_direction', 1),  # 1 = up, -1 = down
                 # Loop-specific properties
@@ -824,7 +825,8 @@ class ConfigManager:
                     # Timeout and retry properties
                     node.set_property('timeout', str(cond_data.get('timeout', 0)))  # 0 = disabled for layout match
                     node.set_property('max_attempts', str(cond_data.get('max_attempts', 500)))
-                    node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 0.01)))
+                    # Note: delay_between_attempts kept for backward compat but not used
+                    # node.set_property('delay_between_attempts', str(cond_data.get('delay_between_attempts', 0.01)))
                     # Layout match-specific properties
                     node.set_property('scroll_direction', str(cond_data.get('scroll_direction', 1)))  # 1 = up, -1 = down
                     if cond_data.get('target_x') is not None and cond_data.get('target_y') is not None and cond_data.get('target_w') is not None and cond_data.get('target_h') is not None:

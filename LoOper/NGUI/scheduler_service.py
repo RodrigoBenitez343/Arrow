@@ -4,9 +4,11 @@ import json
 import uuid
 import time
 import threading
-import subprocess
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulerService:
@@ -15,6 +17,12 @@ class SchedulerService:
 
     Supports schedule types: once, daily, weekly, interval.
     Persists schedules to a JSON file in the project root.
+
+    Chain execution is performed IN-PROCESS using MultiSequencePlayer, matching
+    the same execution path as manual playback and chain import nodes. This
+    ensures both source and compiled (PyInstaller) builds work identically,
+    and sandbox mode correctly injects the agent bridge into the RDP session
+    from the host LoOper instance.
     """
 
     STORAGE_FILE = "schedules.json"
@@ -154,12 +162,13 @@ class SchedulerService:
                         # Mark as running
                         self._running_schedules.add(schedule_id)
                     
-                    # Launch chain outside of lock to prevent blocking
+                    # Launch chain in-process (starts a background thread)
+                    # The thread will remove schedule_id from _running_schedules when done
                     self._launch_chain(s)
                     
-                    # Update schedule after successful launch
+                    # Update schedule metadata after launch
                     with self._lock:
-                        if schedule_id in self._schedules:  # Re-check existence
+                        if schedule_id in self._schedules:
                             s = self._schedules[schedule_id]
                             s['last_run'] = self._now_iso()
                             # For one-time schedules, disable after run
@@ -169,12 +178,11 @@ class SchedulerService:
                             else:
                                 s['next_run'] = self._compute_next_run(s, from_time=now)
                             self._save()
-                        
-                        # Remove from running set
-                        self._running_schedules.discard(schedule_id)
+                        # NOTE: Do NOT discard from _running_schedules here.
+                        # The background thread handles cleanup when chain execution finishes.
                 except Exception:
                     # Do not crash scheduler loop on single failure
-                    # Make sure to remove from running set even on error
+                    # Make sure to remove from running set even on error during launch
                     with self._lock:
                         self._running_schedules.discard(schedule_id)
                     pass
@@ -182,41 +190,126 @@ class SchedulerService:
             time.sleep(self.check_interval_seconds)
 
     def _launch_chain(self, schedule: Dict):
+        """
+        Execute a scheduled chain IN-PROCESS using MultiSequencePlayer.
+
+        This mirrors the execution path used by manual playback (main_window.py)
+        and chain import nodes (chain_ops.py). Running in-process ensures:
+        - Works identically in both source and compiled (PyInstaller) builds
+        - Sandbox mode correctly injects the agent bridge into the RDP session
+          from the host LoOper instance (no second GUI or subprocess needed)
+        - The host orchestrates all actions, the RDP session only runs the
+          lightweight HTTP agent bridge (sandbox_agent.py)
+        """
         chain_path = schedule.get('chain_path')
         if not chain_path:
             raise ValueError('Schedule missing chain_path')
-        # Resolve to absolute path if relative
-        if not os.path.isabs(chain_path):
-            chain_path = os.path.join(self.project_root, chain_path)
-        if not os.path.exists(chain_path):
+
+        # Robust path resolution: try multiple locations for the chain file.
+        # In compiled mode the bundled schedules.json may contain absolute paths
+        # from the SOURCE machine (e.g. D:\\LoOperV2\\LoOper\\Chains\\...).  We
+        # also fall back to the exe directory so chains can be installed alongside
+        # the compiled LoOper.
+        _resolved_chain = None
+        _searched = []
+
+        def _try(path):
+            _searched.append(path)
+            if path and os.path.exists(path):
+                return path
+            return None
+
+        if os.path.isabs(chain_path):
+            _resolved_chain = _try(chain_path)
+        else:
+            # Relative path: try project_root first, then exe_dir (compiled)
+            _resolved_chain = _try(os.path.join(self.project_root, chain_path))
+            if getattr(sys, 'frozen', False):
+                _exe_based = os.path.join(os.path.dirname(sys.executable), chain_path)
+                if not _resolved_chain:
+                    _resolved_chain = _try(_exe_based)
+            if not _resolved_chain:
+                _resolved_chain = _try(chain_path)  # raw relative to cwd
+
+        if _resolved_chain:
+            chain_path = _resolved_chain
+        elif os.path.isabs(chain_path):
             raise FileNotFoundError(f'Chain file not found: {chain_path}')
+        else:
+            raise FileNotFoundError(
+                f"Chain file not found: '{chain_path}'. "
+                f"Searched: {_searched}"
+            )
 
-        # Get sandbox configuration from schedule
-        run_in_sandbox = schedule.get('run_in_sandbox', False)
+        # Get sandbox configuration from schedule.
+        # Coerce to boolean to handle both JSON booleans and string 'true'/'false'.
+        run_in_sandbox_raw = schedule.get('run_in_sandbox', False)
+        if isinstance(run_in_sandbox_raw, str):
+            run_in_sandbox = run_in_sandbox_raw.strip().lower() in ('true', '1', 'yes', 'on')
+        else:
+            run_in_sandbox = bool(run_in_sandbox_raw)
         show_sandbox_window = schedule.get('show_sandbox_window', True)
+        schedule_id = schedule.get('id', 'unknown')
 
-        # Launch player as a subprocess (non-blocking)
-        python_exe = sys.executable or 'python'
-        cmd = [python_exe, '-m', 'player.main', chain_path]
-        
-        # Add sandbox arguments if enabled
-        if run_in_sandbox:
-            cmd.append('--sandbox')
-            if not show_sandbox_window:
-                cmd.append('--hide-sandbox-window')
-        
-        # On Linux, use xvfb-run to provide virtual display for GUI automation
-        import platform
-        import shutil
-        if platform.system() == "Linux" and shutil.which("xvfb-run"):
-            cmd = ["xvfb-run", "-a"] + cmd
-        
-        # Use CREATE_NO_WINDOW on Windows to prevent console popup
-        creationflags = 0
-        if sys.platform == "win32":
-            creationflags = 0x08000000
-            
-        subprocess.Popen(cmd, cwd=self.project_root, creationflags=creationflags)
+        def _execute():
+            """Run the chain in a background thread, matching manual playback flow."""
+            try:
+                logger.info(f"[Scheduler] Starting in-process chain execution: {chain_path}")
+
+                # Load chain config
+                with open(chain_path, 'r', encoding='utf-8') as f:
+                    chain_config = json.load(f)
+
+                # Import player modules (same as main_window.py execute_chain_config)
+                from player.multi_sequence_player import MultiSequencePlayer
+                from player.keyboard_monitor import start_global_monitoring, stop_global_monitoring, create_stop_flag
+
+                # Clear JSON cache for fresh execution
+                try:
+                    from player.json_cache import clear_cache
+                    clear_cache()
+                except Exception:
+                    pass
+
+                # Create the player
+                player = MultiSequencePlayer(chain_config, chain_path)
+
+                # Apply sandbox context if configured
+                if run_in_sandbox:
+                    sandbox_ctx = {
+                        "sandboxed": True,
+                        "show_window": show_sandbox_window,
+                    }
+                    player.global_app_context_override = sandbox_ctx
+                    # Propagate to sub-executors (same as chain_ops.py does for chain imports)
+                    if hasattr(player, 'workflow_executor') and player.workflow_executor:
+                        player.workflow_executor.global_app_context_override = sandbox_ctx
+                    if hasattr(player, 'sequence_executor') and player.sequence_executor:
+                        player.sequence_executor.global_app_context_override = sandbox_ctx
+                    logger.info(f"[Scheduler] Sandbox mode enabled for chain. Show window: {show_sandbox_window}")
+
+                # Start ESC key monitoring
+                start_global_monitoring()
+                stop_flag = create_stop_flag()
+
+                try:
+                    result = player.play_chain(stop_flag=stop_flag)
+                    logger.info(f"[Scheduler] Chain execution completed with result: {result}")
+                finally:
+                    stop_global_monitoring()
+
+            except Exception as e:
+                logger.error(f"[Scheduler] Chain execution failed: {e}")
+                import traceback
+                logger.error(f"[Scheduler] Traceback: {traceback.format_exc()}")
+            finally:
+                # Always remove from running set when done
+                with self._lock:
+                    self._running_schedules.discard(schedule_id)
+
+        # Launch in a background thread (non-blocking, same as manual playback)
+        t = threading.Thread(target=_execute, name=f"SchedulerChain-{schedule_id}", daemon=True)
+        t.start()
 
     def _compute_next_run(self, schedule: Dict, from_time: Optional[datetime] = None) -> Optional[str]:
         now = from_time or datetime.now()
@@ -282,6 +375,13 @@ class SchedulerService:
         return sched
 
     def _load(self):
+        # project_root fallback: if schedules.json loaded but points to a non-existent
+        # location (e.g. bundled file from source machine), try the exe directory.
+        if not os.path.exists(self.storage_path):
+            _exe_based = os.path.join(os.path.dirname(sys.executable), self.STORAGE_FILE)
+            if os.path.exists(_exe_based):
+                self.storage_path = _exe_based
+                self.project_root = os.path.dirname(_exe_based)
         if not os.path.exists(self.storage_path):
             self._schedules = {}
             return

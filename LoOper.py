@@ -9,6 +9,37 @@ import ctypes
 
 os.environ.setdefault("YOLO_AUTOINSTALL", "false")
 
+# CRITICAL: Interpreter mode must be checked BEFORE any other code imports.
+# When safe_python = Looper.exe (compiled build), calling 
+#   Looper.exe sandbox_agent.py --port 8000
+# must execute sandbox_agent.py WITHOUT opening the GUI.
+# In frozen mode we skip the os.path.exists() check because the script
+# lives in the caller's filesystem (e.g. C:\TempShared), not inside
+# the PyInstaller bundle, so the bundled LoOper.py path doesn't apply.
+if (len(sys.argv) > 1
+        and sys.argv[1].endswith('.py')
+        and (getattr(sys, 'frozen', False) or os.path.exists(sys.argv[1]))):
+    script_path = sys.argv[1]
+    sys.argv = sys.argv[1:]  # script sees itself as sys.argv[0]
+    script_dir = os.path.dirname(os.path.abspath(script_path))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    try:
+        with open(script_path, 'rb') as _f:
+            _code = _f.read()
+        exec(_code, {
+            '__name__': '__main__',
+            '__file__': script_path,
+            '__builtins__': __builtins__,
+            'os': os, 'sys': sys,
+        })
+        sys.exit(0)
+    except Exception as _e:
+        import traceback
+        print(f"Error executing script {script_path}: {_e}")
+        traceback.print_exc()
+        sys.exit(1)
+
 if sys.platform == "win32":
     try:
         if sys.stdout is None:
