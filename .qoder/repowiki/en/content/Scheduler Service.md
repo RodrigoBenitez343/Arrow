@@ -16,11 +16,11 @@
 
 ## Update Summary
 **Changes Made**
-- Added comprehensive documentation for sandbox execution capabilities
-- Updated scheduler service to support run_in_sandbox and show_sandbox_window configuration options
-- Added visual indicators for sandbox status in the scheduler UI
-- Documented command-line argument support for sandbox execution
-- Added RDP session isolation and background automation capabilities
+- Updated to reflect transition from external subprocess execution to in-process chain execution using MultiSequencePlayer
+- Added comprehensive documentation for path resolution logic and robust error handling
+- Updated architecture diagrams to show in-process execution flow
+- Enhanced sandbox execution documentation with improved context propagation
+- Added detailed coverage of background thread execution mirroring manual playback
 
 ## Table of Contents
 1. [Introduction](#introduction)
@@ -35,10 +35,10 @@
 10. [Conclusion](#conclusion)
 
 ## Introduction
-This document explains the scheduler service component responsible for automated workflow execution. It covers cron-like scheduling, persistent storage, execution tracking, schedule types (once, daily, weekly, interval), and integration with the workflow execution system. The scheduler now includes enhanced sandbox execution capabilities for running chains in isolated RDP sessions, providing background automation without interfering with the user's desktop environment. It also documents how schedules are configured via the visual workflow builder and managed through the scheduler UI, and how scheduled tasks are launched as subprocesses with optional sandbox isolation.
+This document explains the scheduler service component responsible for automated workflow execution. It covers cron-like scheduling, persistent storage, execution tracking, schedule types (once, daily, weekly, interval), and integration with the workflow execution system. The scheduler now performs chain execution in-process using MultiSequencePlayer, ensuring consistent behavior between source and compiled builds with background thread execution that mirrors manual playback. The new implementation includes comprehensive path resolution logic and robust error handling for both source and PyInstaller builds.
 
 ## Project Structure
-The scheduler lives in the NGUI layer and integrates with the player subsystem to execute chains. The main application initializes the scheduler and exposes a UI to manage schedules. The sandbox execution system adds RDP session isolation for background automation.
+The scheduler lives in the NGUI layer and integrates directly with the player subsystem for in-process chain execution. The main application initializes the scheduler and exposes a UI to manage schedules. The sandbox execution system provides RDP session isolation for background automation.
 
 ```mermaid
 graph TB
@@ -48,9 +48,9 @@ SD["SchedulerService<br/>background scheduler"]
 Dlg["SchedulerManagerDialog<br/>UI for managing schedules"]
 end
 subgraph "Player Layer"
-PMain["player.main<br/>CLI entry for playback"]
-MSP["MultiSequencePlayer<br/>executes chains"]
+MSP["MultiSequencePlayer<br/>executes chains in-process"]
 WExec["WorkflowExecutor<br/>executes workflow graphs"]
+KBMon["KeyboardMonitor<br/>global monitoring"]
 end
 subgraph "Sandbox Layer"
 SandboxAgent["sandbox_agent.py<br/>RDP session automation"]
@@ -63,9 +63,9 @@ end
 MW --> SD
 Dlg --> SD
 SD --> JSON
-SD --> PMain
-PMain --> MSP
+SD --> MSP
 MSP --> WExec
+SD --> KBMon
 SD --> SandboxAgent
 SandboxAgent --> RDPSetup
 RDPSetup --> RDPCliTest
@@ -75,7 +75,6 @@ RDPSetup --> RDPCliTest
 - [main_window.py:106-114](file://LoOper/NGUI/main_window.py#L106-L114)
 - [scheduler_service.py:20-31](file://LoOper/NGUI/scheduler_service.py#L20-L31)
 - [scheduler_dialogs.py:15-126](file://LoOper/NGUI/dialogs/scheduler_dialogs.py#L15-L126)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
 - [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
 - [core.py:14-98](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/core.py#L14-L98)
 - [sandbox_agent.py:1-157](file://LoOper/sandbox_agent.py#L1-157)
@@ -87,9 +86,9 @@ RDPSetup --> RDPCliTest
 - [scheduler_service.py:20-31](file://LoOper/NGUI/scheduler_service.py#L20-L31)
 
 ## Core Components
-- SchedulerService: Background thread that evaluates schedules, launches executions, persists state, and tracks running jobs. Now includes sandbox execution capabilities.
+- SchedulerService: Background thread that evaluates schedules, launches in-process executions, persists state, and tracks running jobs. Now executes chains directly using MultiSequencePlayer.
 - SchedulerManagerDialog: UI for listing, adding, editing, enabling/disabling, deleting, and manually running schedules with sandbox configuration options.
-- player.main: CLI entry that loads a chain file and executes it via MultiSequencePlayer and WorkflowExecutor, with optional sandbox mode support.
+- MultiSequencePlayer: Executes chains in-process with the same execution path as manual playback and chain import nodes.
 - MainWindow: Initializes the scheduler and exposes the "Manage Schedules" menu.
 - Sandbox Agent: HTTP-based automation agent that runs in RDP sessions for background execution.
 - RDP Setup Tools: Scripts for configuring Windows RDP environment for sandbox execution.
@@ -97,7 +96,7 @@ RDPSetup --> RDPCliTest
 Key responsibilities:
 - Schedule types and computation of next run time.
 - Persistence to a JSON file in the project root.
-- Subprocess launching of chain execution with optional sandbox isolation.
+- In-process chain execution using MultiSequencePlayer with background thread execution.
 - Execution tracking and concurrency protection.
 - RDP session management and sandbox status visualization.
 
@@ -105,40 +104,40 @@ Key responsibilities:
 - [scheduler_service.py:12-31](file://LoOper/NGUI/scheduler_service.py#L12-L31)
 - [scheduler_dialogs.py:15-126](file://LoOper/NGUI/dialogs/scheduler_dialogs.py#L15-L126)
 - [main_window.py:736-744](file://LoOper/NGUI/main_window.py#L736-L744)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
+- [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
 - [sandbox_agent.py:1-157](file://LoOper/sandbox_agent.py#L1-157)
 - [setup_rdp_agent.py:1-208](file://LoOper/setup_rdp_agent.py#L1-208)
 
 ## Architecture Overview
-The scheduler runs continuously in a dedicated thread, periodically scanning for due schedules. When due, it launches the chain as a subprocess with optional sandbox isolation and updates schedule metadata. The player subsystem loads and executes the chain according to its type (single sequence, legacy chain config, or workflow chain). The sandbox execution system provides isolated RDP sessions for background automation.
+The scheduler runs continuously in a dedicated thread, periodically scanning for due schedules. When due, it executes the chain directly using MultiSequencePlayer in a background thread, mirroring the execution flow used by manual playback. The player subsystem loads and executes the chain according to its type (single sequence, legacy chain config, or workflow chain). The sandbox execution system provides isolated RDP sessions for background automation.
 
 ```mermaid
 sequenceDiagram
 participant UI as "SchedulerManagerDialog"
 participant SVC as "SchedulerService"
 participant FS as "Filesystem<br/>schedules.json"
-participant SUB as "Subprocess<br/>python -m player.main"
+participant PL as "MultiSequencePlayer"
+participant KBMON as "KeyboardMonitor"
 participant SANDBOX as "Sandbox Agent<br/>HTTP API"
-participant PL as "player.main"
-participant MSP as "MultiSequencePlayer"
 participant WEX as "WorkflowExecutor"
 UI->>SVC : "list/add/update/remove/run_now/set_enabled"
 SVC->>FS : "_load/_save"
 SVC->>SVC : "_loop() checks due schedules"
-SVC->>SUB : "_launch_chain(chain_path, sandbox_options)"
-SUB->>SANDBOX : "optional : connect to RDP session"
-SUB->>PL : "execute chain file with sandbox flags"
-PL->>MSP : "instantiate and play_chain"
-MSP->>WEX : "execute workflow graph"
+SVC->>PL : "_launch_chain() creates background thread"
+PL->>KBMON : "start_global_monitoring()"
+PL->>PL : "instantiate MultiSequencePlayer"
+PL->>PL : "apply sandbox context if configured"
+PL->>WEX : "play_chain() with stop_flag"
+WEX->>SANDBOX : "begin_chain_sandbox() if sandboxed"
+WEX-->>PL : "execution progress/results"
+PL->>KBMON : "stop_global_monitoring()"
 SVC->>FS : "_save(last_run,next_run)"
 ```
 
 **Diagram sources**
 - [scheduler_service.py:112-182](file://LoOper/NGUI/scheduler_service.py#L112-L182)
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
-- [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
-- [core.py:14-98](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/core.py#L14-L98)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
+- [multi_sequence_player.py:312-370](file://LoOper/player/multi_sequence_player.py#L312-L370)
 - [sandbox_agent.py:14-157](file://LoOper/sandbox_agent.py#L14-157)
 
 ## Detailed Component Analysis
@@ -148,7 +147,7 @@ Responsibilities:
 - Background loop that evaluates due schedules.
 - Computes next run time for each schedule type.
 - Persists schedules to JSON and restores on startup.
-- Launches chain execution as a subprocess with optional sandbox configuration.
+- Executes chain execution in-process using MultiSequencePlayer with background thread execution.
 - Tracks currently running schedules to avoid concurrent runs.
 
 Public API highlights:
@@ -159,16 +158,17 @@ Public API highlights:
 - run_now: launches a schedule immediately and advances next_run for recurring schedules.
 
 Execution flow:
-- _loop scans schedules under lock, collects due IDs, then launches each due schedule outside the lock.
-- _launch_chain resolves absolute path, validates existence, and spawns player.main as a subprocess with optional sandbox arguments.
+- _loop scans schedules under lock, collects due IDs, then launches each due schedule in a background thread outside the lock.
+- _launch_chain resolves absolute path using comprehensive path resolution logic, validates existence, and executes MultiSequencePlayer directly.
 - After successful launch, updates last_run and next_run; disables one-time schedules.
 
-**Updated** Enhanced with sandbox execution support including run_in_sandbox and show_sandbox_window configuration options.
+**Updated** Transitioned from external subprocess execution to in-process chain execution using MultiSequencePlayer, ensuring consistent behavior between source and compiled builds.
 
 Concurrency and safety:
 - Uses an RLock to guard shared state.
 - Tracks running schedules in a set to prevent overlapping runs.
 - Removes entries from the running set even on exceptions.
+- Background thread execution mirrors manual playback flow.
 
 Persistence:
 - Loads from and saves to a JSON file named schedules.json in the project root.
@@ -176,14 +176,15 @@ Persistence:
 - Stores sandbox configuration options (run_in_sandbox, show_sandbox_window).
 
 Validation and error handling:
-- Validates presence of chain_path and existence of the file.
+- Validates presence of chain_path and existence of the file using robust path resolution logic.
 - Gracefully skips invalid or missing next_run entries.
 - Exceptions during launch do not crash the loop; running set is cleaned up.
+- Comprehensive path resolution handles both source and compiled (PyInstaller) builds.
 
 **Section sources**
 - [scheduler_service.py:34-110](file://LoOper/NGUI/scheduler_service.py#L34-L110)
 - [scheduler_service.py:112-182](file://LoOper/NGUI/scheduler_service.py#L112-L182)
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
 - [scheduler_service.py:211-266](file://LoOper/NGUI/scheduler_service.py#L211-L266)
 - [scheduler_service.py:274-297](file://LoOper/NGUI/scheduler_service.py#L274-L297)
 - [scheduler_service.py:299-315](file://LoOper/NGUI/scheduler_service.py#L299-L315)
@@ -253,43 +254,37 @@ Visual indicators:
 
 ### Player Integration
 Execution pipeline:
-- SchedulerService._launch_chain constructs a command to run player.main with the selected chain file and optional sandbox arguments.
-- player.main inspects the file and dispatches to SequencePlayer (single sequence), legacy MultiSequencePlayer (list format), or modern MultiSequencePlayer (dict with sequences and conditional nodes).
+- SchedulerService._launch_chain creates a background thread that loads the chain file and instantiates MultiSequencePlayer directly.
 - MultiSequencePlayer initializes and runs WorkflowExecutor to traverse and execute the workflow graph.
-- When sandbox mode is enabled, player.main creates a global_app_context_override with sandboxed=True and show_window settings.
+- When sandbox mode is enabled, MultiSequencePlayer applies sandbox context globally to all workflow execution components.
+- Keyboard monitoring is started and stopped around execution to handle ESC key cancellation.
 
-**Updated** Enhanced with sandbox execution support through command-line arguments and global application context override.
+**Updated** Transitioned from external subprocess execution to in-process chain execution using MultiSequencePlayer, ensuring identical behavior between source and compiled builds.
 
 ```mermaid
 sequenceDiagram
 participant SVC as "SchedulerService"
-participant SUB as "Subprocess"
-participant PM as "player.main"
-participant SANDBOX as "Sandbox Context"
+participant BG as "Background Thread"
 participant MSP as "MultiSequencePlayer"
+participant KBMON as "KeyboardMonitor"
 participant WEX as "WorkflowExecutor"
-SVC->>SUB : "spawn python -m player.main chain.json [--sandbox] [--hide-sandbox-window]"
-SUB->>PM : "CLI entry with sandbox flags"
-PM->>SANDBOX : "build sandbox context if enabled"
-PM->>MSP : "instantiate based on file type"
-MSP->>WEX : "execute workflow with sandbox context"
+SVC->>BG : "spawn background thread"
+BG->>MSP : "instantiate MultiSequencePlayer(chain_config, chain_path)"
+BG->>KBMON : "start_global_monitoring()"
+BG->>MSP : "apply sandbox context if configured"
+MSP->>WEX : "play_chain(stop_flag)"
 WEX-->>MSP : "execution progress/results"
-MSP-->>PM : "completion status"
-PM-->>SUB : "exit code"
-SUB-->>SVC : "non-blocking"
+MSP->>KBMON : "stop_global_monitoring()"
+BG-->>SVC : "non-blocking completion"
 ```
 
 **Diagram sources**
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
-- [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
-- [core.py:14-98](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/core.py#L14-L98)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
+- [multi_sequence_player.py:312-370](file://LoOper/player/multi_sequence_player.py#L312-L370)
 
 **Section sources**
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
-- [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
-- [core.py:14-98](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/core.py#L14-L98)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
+- [multi_sequence_player.py:312-370](file://LoOper/player/multi_sequence_player.py#L312-L370)
 
 ### Schedule Types and Examples
 - once
@@ -319,6 +314,7 @@ Examples from the UI:
 - Double-checked due verification: re-validates enabled and next_run timestamps before launching.
 - Atomic updates: last_run and next_run are updated only after successful launch.
 - Persistence: _save writes the latest state to schedules.json.
+- Background thread execution: Each schedule runs in its own background thread, mirroring manual playback flow.
 
 **Section sources**
 - [scheduler_service.py:112-182](file://LoOper/NGUI/scheduler_service.py#L112-L182)
@@ -327,13 +323,14 @@ Examples from the UI:
 ## Sandbox Execution Capabilities
 
 ### Overview
-The scheduler now supports running chains in isolated RDP sessions through a comprehensive sandbox execution system. This allows background automation without interfering with the user's desktop environment, providing true isolation for sensitive operations.
+The scheduler now supports running chains in isolated RDP sessions through a comprehensive sandbox execution system. This allows background automation without interfering with the user's desktop environment, providing true isolation for sensitive operations. The implementation ensures consistent behavior between source and compiled builds.
 
 ### Key Features
 - **RDP Session Isolation**: Chains run in separate Windows RDP sessions, preventing interference with foreground desktop activities.
 - **Background Execution**: Hidden RDP sessions can run without displaying windows, ideal for unattended automation.
 - **HTTP-Based Control**: A sandbox agent provides HTTP endpoints for mouse clicks, keyboard input, screenshots, and other automation actions.
 - **Session Management**: Automatic RDP session setup and teardown with configurable persistence options.
+- **Consistent Execution**: In-process execution ensures identical behavior between source and PyInstaller builds.
 
 ### Configuration Options
 
@@ -411,23 +408,23 @@ The scheduler UI displays sandbox status with clear visual indicators:
 - **"-"**: Chain runs directly on desktop without sandbox
 
 ### Integration Points
-- **Scheduler Service**: Automatically adds sandbox arguments when run_in_sandbox is enabled.
-- **Player Main**: Processes sandbox command-line arguments and creates sandbox context.
-- **MultiSequencePlayer**: Applies sandbox context globally to all workflow execution.
+- **Scheduler Service**: Automatically adds sandbox context when run_in_sandbox is enabled.
+- **MultiSequencePlayer**: Applies sandbox context globally to all workflow execution components.
 - **Workflow Executor**: Executes chains within the sandboxed application context.
+- **Keyboard Monitoring**: Manages ESC key cancellation across sandbox boundaries.
 
 **Section sources**
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
-- [main.py:22-28](file://LoOper/player/main.py#L22-L28)
-- [main.py:63-73](file://LoOper/player/main.py#L63-L73)
-- [sandbox_agent.py:14-157](file://LoOper/sandbox_agent.py#L14-L157)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
+- [multi_sequence_player.py:252-370](file://LoOper/player/multi_sequence_player.py#L252-L370)
+- [sandbox_agent.py:14-157](file://LoOper/sandbox_agent.py#L14-157)
 - [setup_rdp_agent.py:18-84](file://LoOper/setup_rdp_agent.py#L18-84)
 - [test_rdp_clicks.py:269-382](file://LoOper/test_rdp_clicks.py#L269-382)
 
 ## Dependency Analysis
 - SchedulerService depends on:
   - Filesystem for schedules.json.
-  - Python subprocess to launch player.main with optional sandbox arguments.
+  - MultiSequencePlayer for direct chain execution.
+  - Keyboard monitoring for ESC key cancellation.
   - Player entry point and execution pipeline for actual chain execution.
   - Sandbox agent for RDP session automation when sandbox mode is enabled.
 - UI depends on SchedulerService for schedule CRUD and immediate execution.
@@ -437,9 +434,9 @@ The scheduler UI displays sandbox status with clear visual indicators:
 ```mermaid
 graph LR
 SD["SchedulerService"] --> FS["schedules.json"]
-SD --> PM["player.main"]
+SD --> MSP["MultiSequencePlayer"]
+SD --> KBMON["KeyboardMonitor"]
 SD --> SANDBOX["Sandbox Agent"]
-PM --> MSP["MultiSequencePlayer"]
 MSP --> WEX["WorkflowExecutor"]
 UI["SchedulerManagerDialog"] --> SD
 SANDBOX --> SETUP["RDP Setup Tools"]
@@ -448,9 +445,8 @@ SETUP --> TEST["RDP Testing Utilities"]
 
 **Diagram sources**
 - [scheduler_service.py:20-31](file://LoOper/NGUI/scheduler_service.py#L20-L31)
-- [main.py:18-86](file://LoOper/player/main.py#L18-L86)
 - [multi_sequence_player.py:304-310](file://LoOper/player/multi_sequence_player.py#L304-L310)
-- [core.py:14-98](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/core.py#L14-L98)
+- [multi_sequence_player.py:312-370](file://LoOper/player/multi_sequence_player.py#L312-L370)
 - [scheduler_dialogs.py:15-126](file://LoOper/NGUI/dialogs/scheduler_dialogs.py#L15-L126)
 - [sandbox_agent.py:1-157](file://LoOper/sandbox_agent.py#L1-157)
 - [setup_rdp_agent.py:1-208](file://LoOper/setup_rdp_agent.py#L1-208)
@@ -462,24 +458,26 @@ SETUP --> TEST["RDP Testing Utilities"]
 
 ## Performance Considerations
 - Check interval: The scheduler sleeps for a configurable number of seconds between loops; keep it reasonable to balance responsiveness and CPU usage.
-- Non-blocking launches: Execution occurs outside the lock to avoid blocking the scheduler loop.
+- Background thread execution: Execution occurs in background threads to avoid blocking the scheduler loop.
 - Minimal parsing: Date/time parsing is lightweight; avoid excessive recomputation by updating only when relevant fields change.
 - Persistence: JSON I/O is simple and fast for typical schedule counts; consider batching updates if managing many schedules.
 - **Sandbox Overhead**: RDP session creation and management adds overhead; use hidden sandbox mode for background tasks to minimize resource usage.
 - **Network Latency**: Sandbox agent communication introduces network latency; design workflows to handle asynchronous execution patterns.
+- **Memory Efficiency**: In-process execution avoids subprocess memory duplication and ensures consistent resource usage.
 
 ## Troubleshooting Guide
 Common issues and resolutions:
 - Schedule not running
   - Verify enabled state and next_run value.
-  - Confirm chain_path exists and is readable.
+  - Confirm chain_path exists and is readable using robust path resolution.
   - Check that the schedule type and fields are valid (e.g., interval_minutes > 0).
 - Duplicate runs
   - The running set prevents concurrent runs; ensure the previous run completed and next_run was updated.
 - One-time schedule still enabled
   - After a successful run, one-time schedules are disabled and next_run cleared; confirm _save succeeded.
-- Subprocess failures
-  - Ensure player.main is reachable and chain_path is valid; on Linux, xvfb-run is used if available.
+- In-process execution failures
+  - Ensure MultiSequencePlayer can be imported and chain_path is valid.
+  - Verify background thread execution completes successfully.
 - Persistence problems
   - If schedules.json is corrupted, SchedulerService falls back to empty state; verify file permissions and disk space.
 - UI not reflecting changes
@@ -490,7 +488,7 @@ Common issues and resolutions:
   - Ensure sandbox agent is running and accessible.
   - Test RDP session connectivity with provided utilities.
 
-**Updated** Added troubleshooting guidance for sandbox execution issues.
+**Updated** Added troubleshooting guidance for in-process execution and sandbox execution issues.
 
 Operational tips:
 - Use Run Now to test a schedule immediately.
@@ -498,13 +496,14 @@ Operational tips:
 - Monitor logs from the scheduler and player for error messages.
 - **Sandbox Debugging**: Use show_sandbox_window=True for development and testing; switch to hidden mode for production.
 - **RDP Environment**: Ensure proper RDPWrap installation and agent user configuration before enabling sandbox mode.
+- **Compiled Builds**: In-process execution ensures identical behavior between source and PyInstaller builds.
 
 **Section sources**
 - [scheduler_service.py:112-182](file://LoOper/NGUI/scheduler_service.py#L112-L182)
-- [scheduler_service.py:184-210](file://LoOper/NGUI/scheduler_service.py#L184-L210)
+- [scheduler_service.py:192-313](file://LoOper/NGUI/scheduler_service.py#L192-L313)
 - [scheduler_service.py:274-297](file://LoOper/NGUI/scheduler_service.py#L274-L297)
 - [setup_rdp_agent.py:166-208](file://LoOper/setup_rdp_agent.py#L166-208)
 - [test_rdp_clicks.py:269-382](file://LoOper/test_rdp_clicks.py#L269-382)
 
 ## Conclusion
-The scheduler service provides a robust, lightweight mechanism for automating LoOper chain execution with enhanced sandbox capabilities. It supports multiple schedule types, persists state to JSON, and integrates seamlessly with the player subsystem. The new sandbox execution system enables isolated RDP session automation for background tasks without interfering with the user's desktop environment. The UI enables straightforward configuration and management with visual sandbox status indicators. With careful validation, concurrency safeguards, clear error handling, and comprehensive sandbox support, it offers a reliable foundation for automated workflows in both foreground and background scenarios.
+The scheduler service provides a robust, lightweight mechanism for automating LoOper chain execution with enhanced sandbox capabilities. It supports multiple schedule types, persists state to JSON, and integrates seamlessly with the player subsystem through in-process execution using MultiSequencePlayer. The new implementation ensures consistent behavior between source and compiled (PyInstaller) builds, with background thread execution that mirrors manual playback. The comprehensive path resolution logic handles both source and compiled environments, while the sandbox execution system enables isolated RDP session automation for background tasks without interfering with the user's desktop environment. The UI enables straightforward configuration and management with visual sandbox status indicators. With careful validation, concurrency safeguards, clear error handling, and comprehensive sandbox support, it offers a reliable foundation for automated workflows in both foreground and background scenarios.

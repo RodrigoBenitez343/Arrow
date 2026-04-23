@@ -13,6 +13,7 @@ from .chain_expansion_dialog import ChainExpansionDialog
 from .form_filler_dialog import FormFillerDialog
 from .code_node_dialog import CodeNodeDialog
 from .container_dialog import ContainerNodeDialog
+from .context_dialog import ContextDialog
 from .utils import get_default_api_url
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     'FormFillerDialog',
     'CodeNodeDialog',
     'ContainerNodeDialog',
+    'ContextDialog',
     'get_default_api_url'
 ]

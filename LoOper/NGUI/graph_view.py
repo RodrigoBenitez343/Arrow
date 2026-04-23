@@ -375,19 +375,7 @@ class GraphViewWidget(QWidget):
         except Exception:
             pass
         return None
-            
-    # DEPRECATED: Context Builder - remove add function
-    # def add_context_builder_node(self, position=None):
-    #     """Add a new Context Builder node to the graph"""
-    #     logger.debug(f"Adding Context Builder node at position: {position}")
-    #     try:
-    #         result = self.node_operations.add_context_builder_node(position)
-    #         logger.info(f"Context Builder node added successfully: {result.name() if result else 'None'}")
-    #         return result
-    #     except Exception as e:
-    #         logger.error(f"Error adding Context Builder node: {str(e)}", exc_info=True)
-    #         return None
-    
+
     def add_chain_import_node(self, position=None):
         """Add a new Chain Import node to the graph"""
         logger.debug(f"Adding Chain Import node at position: {position}")
@@ -422,6 +410,23 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error adding Code node: {str(e)}", exc_info=True)
             return None
 
+    def add_context_node(self, position=None):
+        """Add a new Context node to the graph"""
+        logger.debug(f"Adding Context node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_context_node(resolved_pos)
+            logger.info(f"Context node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Context node: {str(e)}", exc_info=True)
+            return None
+
     def edit_code_node(self, node):
         """Edit a Code node's properties"""
         logger.debug(f"Editing Code node: {node.name()}")
@@ -437,6 +442,14 @@ class GraphViewWidget(QWidget):
             self.node_operations.edit_container_node(node)
         except Exception as e:
             logger.error(f"Error editing Container node: {str(e)}", exc_info=True)
+
+    def edit_context_node(self, node):
+        """Edit a Context node's properties"""
+        logger.debug(f"Editing Context node: {node.name()}")
+        try:
+            self.node_operations.edit_context_node(node)
+        except Exception as e:
+            logger.error(f"Error editing Context node: {str(e)}", exc_info=True)
 
     def _resolve_creation_pos(self, position):
         """Resolve a node creation position to scene coordinates list [x, y].

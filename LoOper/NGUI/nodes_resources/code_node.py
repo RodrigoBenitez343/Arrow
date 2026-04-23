@@ -60,6 +60,7 @@ class CodeNode(BaseNode):
         self.create_property('timeout', '30')
         self.create_property('gen_model', 'llama3.2:latest')
         self.create_property('gen_prompt', '')
+        self.create_property('description', '')
 
         # Visual indicator
         try:
@@ -78,7 +79,8 @@ class CodeNode(BaseNode):
             'output_variable': self.get_property('output_variable'),
             'timeout': int(self.get_property('timeout') or 30),
             'gen_model': self.get_property('gen_model'),
-            'gen_prompt': self.get_property('gen_prompt')
+            'gen_prompt': self.get_property('gen_prompt'),
+            'description': self.get_property('description') or ''
         }
 
     def execute_code(self, input_data=None, args=None, runtime_code=None):

@@ -8,6 +8,7 @@ from .chain_import_node import ChainImportNode
 from .form_filler_node import FormFillerNode
 from .code_node import CodeNode
 from .container_node import ContainerNode
+from .context_node import ContextNode
 
 __all__ = [
     'get_default_api_url',
@@ -20,5 +21,6 @@ __all__ = [
     'ChainImportNode',
     'FormFillerNode',
     'CodeNode',
-    'ContainerNode'
+    'ContainerNode',
+    'ContextNode'
 ]

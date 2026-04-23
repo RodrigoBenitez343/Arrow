@@ -19,6 +19,7 @@ _USER_GUIDE_TOPIC_TO_HEADING = {
     "llm-dialog": "### LLM Node Dialog",
     "chain-import-dialog": "### Chain Import Dialog",
     "code-node-dialog": "### Code Node Dialog",
+    "context-node-dialog": "### Context Node Dialog",
     "tts-dialog": "### TTS Node Dialog",
     "form-filler-node": "### 7. Form Filler Node",
     "container-node": "### 8. Container (VM) Node",

@@ -1,6 +1,7 @@
 from ....config import logger
 from ..common import chain_logger
 import time
+import uuid
 
 from .dependencies import DependenciesMixin
 from .sequence_ops import SequenceMixin
@@ -10,8 +11,9 @@ from .tts_ops import TTSMixin
 from .chain_ops import ChainImportMixin
 from .code_ops import CodeMixin
 from .container_ops import ContainerMixin
+from .context_ops import ContextMixin
 
-class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMixin, TTSMixin, ChainImportMixin, CodeMixin, ContainerMixin):
+class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMixin, TTSMixin, ChainImportMixin, CodeMixin, ContainerMixin, ContextMixin):
     """Executes workflow graphs with proper dependency resolution and node execution"""
     
     def __init__(self, workflow_graph, sequence_executor, llm_executor, fallback_handler):
@@ -48,7 +50,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         # actually, keeping runtime initialized is better for performance.
         logger.info("WorkflowExecutor state reset")
 
-    def execute_workflow(self, stop_flag=None, action_handlers=None):
+    def execute_workflow(self, stop_flag=None, action_handlers=None, chain_file=None):
         """
         Executes the workflow graph with proper dependency resolution.
         Nodes with multiple inputs will only execute after all their dependencies are satisfied.
@@ -56,6 +58,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         Args:
             stop_flag (callable): Optional function that returns True when execution should stop
             action_handlers: Action handlers for text writing and other actions
+            chain_file: Path to the chain file being executed (for chain_id derivation)
             
         Returns:
             bool: True if workflow completed successfully, False otherwise
@@ -63,6 +66,17 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         if not self.workflow_graph:
             logger.warning("No workflow graph to execute")
             return False
+
+        # Generate run_id for this execution
+        self.run_id = str(uuid.uuid4())
+        
+        # Set chain_id from chain_file if provided, otherwise use existing or default
+        if chain_file:
+            self.chain_id = chain_file
+        elif not getattr(self, 'chain_id', None):
+            self.chain_id = 'default_chain'
+        
+        logger.info(f"Starting workflow execution: run_id={self.run_id}, chain_id={self.chain_id}")
 
         try:
             self.action_handlers = action_handlers
@@ -73,6 +87,9 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         # We'll do minimal initialization first, then full setup only when needed
         self._runtime_initialized = False
         self._runtime_needed = False
+
+        # Pre-initialize context nodes with stored data from previous runs
+        self._pre_initialize_context_nodes()
             
         # Track completed nodes and nodes ready for execution
         completed_nodes = set()
@@ -118,6 +135,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 remaining = [nid for nid in self.workflow_graph.keys() if nid not in completed_nodes and nid not in self.skipped_nodes]
                 if not remaining:
                     logger.info("Workflow execution completed successfully")
+                    self._cleanup_run_context()
                     return True
 
                 for nid in remaining:
@@ -198,6 +216,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 success = self._execute_code_node(node, stop_flag) is not None
             elif node['type'] == 'container':
                 success = self._execute_container_node(node, stop_flag) is not None
+            elif node['type'] == 'context':
+                success = self._execute_context_node(node, stop_flag) is not None
             else:
                 logger.warning(f"Unknown node type: {node['type']}")
                 success = False
@@ -309,11 +329,24 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
             else:
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
                 chain_logger.error(f"Node {current_node_id} FAILED execution. Stopping workflow.")
+                self._cleanup_run_context()
                 return False
         
         logger.info("Workflow execution completed successfully")
         chain_logger.info("=== CHAIN RUN COMPLETED SUCCESSFULLY ===")
+        self._cleanup_run_context()
         return True
+
+    def _cleanup_run_context(self):
+        """Clean up run-scoped context data at the end of execution."""
+        try:
+            context_db = getattr(self, '_context_db', None)
+            run_id = getattr(self, 'run_id', None)
+            if context_db is not None and run_id is not None:
+                context_db.clear_scope('run', run_id)
+                logger.info(f"Cleaned up run-scoped context data for run {run_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clean up run-scoped context: {e}")
 
     def _record_last_node_summary(self, node_id, node, conditional_result):
         try:
@@ -401,6 +434,7 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
             'conditional': 2,
             'tts': 3,
             'chain_import': 4,
+            'context': 4,
             'llm': 5,
         }
         candidates = list(ready_nodes)

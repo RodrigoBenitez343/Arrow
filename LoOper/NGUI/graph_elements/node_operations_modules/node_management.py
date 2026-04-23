@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QMessageBox
-from ...nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode
+from ...nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -15,7 +15,7 @@ class NodeManagementMixin:
             elif isinstance(node, ActionNode):
                 logger.debug("Deleting action node")
                 self.delete_action_node(node)
-            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode)):
+            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode)):
                 logger.debug(f"Deleting {type(node).__name__} node")
                 self.parent_widget.graph_manager.delete_node(node)
             else:

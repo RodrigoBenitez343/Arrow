@@ -2,7 +2,13 @@ import json
 import os
 import logging
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode
+
+# Import ContainerNode with fallback - feature not fully implemented yet
+try:
+    from ..nodes import ContainerNode
+except ImportError:
+    ContainerNode = None
 
 # Import cache invalidation function
 try:
@@ -34,7 +40,7 @@ class ConfigManager:
         logger.info("Initializing ConfigManager")
         try:
             self.parent_widget = parent_widget
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": [], "context_nodes": []}
             self._current_chain_description = ""
             logger.debug("ConfigManager initialized successfully")
         except Exception as e:
@@ -67,6 +73,8 @@ class ConfigManager:
                 "chain_import_nodes": [], 
                 "form_filler_nodes": [], 
                 "code_nodes": [],
+                "container_nodes": [],
+                "context_nodes": [],
                 "description": getattr(self, '_current_chain_description', "")
             }
             
@@ -98,13 +106,16 @@ class ConfigManager:
                 elif isinstance(node, CodeNode):
                     logger.debug(f"Saving Code node: {node.id}")
                     self._save_code_node(node)
-                elif isinstance(node, ContainerNode):
+                elif ContainerNode is not None and isinstance(node, ContainerNode):
                     logger.debug(f"Saving Container node: {node.id}")
                     self._save_container_node(node)
+                elif isinstance(node, ContextNode):
+                    logger.debug(f"Saving Context node: {node.id}")
+                    self._save_context_node(node)
                 else:
                     logger.warning(f"Unknown node type: {type(node).__name__}")
             
-            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes, {len(self.chain_config['code_nodes'])} code nodes, {len(self.chain_config.get('container_nodes', []))} container nodes")
+            logger.info(f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['tts_nodes'])} TTS nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes, {len(self.chain_config['code_nodes'])} code nodes, {len(self.chain_config.get('container_nodes', []))} container nodes, {len(self.chain_config.get('context_nodes', []))} context nodes")
                     
         except Exception as e:
             logger.error(f"Error saving current state: {e}")
@@ -127,10 +138,11 @@ class ConfigManager:
                 "conditional_nodes": [], 
                 "llm_nodes": [], 
                 "tts_nodes": [], 
-                "chain_import_nodes": [], 
+                "chain_import_nodes": [],
                 "form_filler_nodes": [],
                 "code_nodes": [],
-                "container_nodes": []
+                "container_nodes": [],
+                "context_nodes": []
             }
             
             # Save the single node
@@ -148,8 +160,10 @@ class ConfigManager:
                 self._save_form_filler_node(node)
             elif isinstance(node, CodeNode):
                 self._save_code_node(node)
-            elif isinstance(node, ContainerNode):
+            elif ContainerNode is not None and isinstance(node, ContainerNode):
                 self._save_container_node(node)
+            elif isinstance(node, ContextNode):
+                self._save_context_node(node)
                 
             return self.chain_config.copy()
             
@@ -187,10 +201,11 @@ class ConfigManager:
                     "chain_import_nodes": loaded_config.get("chain_import_nodes", []),
                     "form_filler_nodes": loaded_config.get("form_filler_nodes", []),
                     "code_nodes": loaded_config.get("code_nodes", []),
-                    "container_nodes": loaded_config.get("container_nodes", [])
+                    "container_nodes": loaded_config.get("container_nodes", []),
+                    "context_nodes": loaded_config.get("context_nodes", [])
                 }
                 
-                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes, {len(self.chain_config.get('form_filler_nodes', []))} form filler nodes, {len(self.chain_config.get('code_nodes', []))} code nodes, {len(self.chain_config.get('container_nodes', []))} container nodes")
+                logger.debug(f"Loaded config with {len(self.chain_config.get('sequences', []))} sequences, {len(self.chain_config.get('conditional_nodes', []))} conditional nodes, {len(self.chain_config.get('llm_nodes', []))} LLM nodes, {len(self.chain_config.get('tts_nodes', []))} TTS nodes, {len(self.chain_config.get('chain_import_nodes', []))} chain import nodes, {len(self.chain_config.get('form_filler_nodes', []))} form filler nodes, {len(self.chain_config.get('code_nodes', []))} code nodes, {len(self.chain_config.get('container_nodes', []))} container nodes, {len(self.chain_config.get('context_nodes', []))} context nodes")
                     
                 # Build graph from config
                 logger.debug("Building graph from loaded configuration")
@@ -292,6 +307,9 @@ class ConfigManager:
             if hasattr(self.parent_widget, 'container_nodes'):
                 self.parent_widget.container_nodes.clear()
                 logger.debug("Cleared container_nodes tracking list")
+            if hasattr(self.parent_widget, 'context_nodes'):
+                self.parent_widget.context_nodes.clear()
+                logger.debug("Cleared context_nodes tracking list")
             
             # Store node references for connections
             node_map = {}
@@ -328,6 +346,10 @@ class ConfigManager:
             # Create Container nodes
             logger.debug("Creating Container nodes")
             self._create_container_nodes(node_map)
+            
+            # Create Context nodes
+            logger.debug("Creating Context nodes")
+            self._create_context_nodes(node_map)
             
             # Restore connections
             logger.debug("Restoring node connections")
@@ -554,6 +576,9 @@ class ConfigManager:
                 "rag_max_chars": llm_config.get('rag_max_chars', 1500),
                 "rag_documents": llm_config.get('rag_documents', []),
                 "tool_descriptions": llm_config.get('tool_descriptions', {}),
+                "skills": llm_config.get('skills', []),
+                "use_skill_routing": llm_config.get('use_skill_routing', True),
+                "semantic_description": llm_config.get('semantic_description', ''),
                 "node_id": node.id,
                 "position": node.pos(),
                 "connections": self._get_node_connections(node)
@@ -702,6 +727,39 @@ class ConfigManager:
             logger.debug(f"Successfully saved Container node: {node.id}")
         except Exception as e:
             logger.error(f"Error saving Container node {node.id}: {e}")
+            raise
+            
+    def _save_context_node(self, node):
+        """Save a Context node to configuration."""
+        logger.debug(f"Saving Context node {node.id} to configuration")
+        try:
+            config = node.get_context_config()
+            context_data = {
+                "type": "context",
+                "scope": config.get('scope', 'chain'),
+                "default_merge_policy": config.get('default_merge_policy', 'append'),
+                "keys": config.get('keys', '[]'),
+                "key_policies": config.get('key_policies', '{}'),
+                "max_entries_per_key": config.get('max_entries_per_key', 100),
+                "auto_capture_responses": config.get('auto_capture_responses', True),
+                "output_format": config.get('output_format', 'structured'),
+                "context_node_label": config.get('context_node_label', ''),
+                "retrieval_top_k": config.get('retrieval_top_k', 3),
+                "use_semantic_retrieval": config.get('use_semantic_retrieval', False),
+                "shared_context_chain_file": config.get('shared_context_chain_file', ''),  # NEW
+                "shared_context_node_id": config.get('shared_context_node_id', ''),  # NEW
+                "node_id": node.id,
+                "position": node.pos(),
+                "connections": self._get_node_connections(node)
+            }
+            
+            if "context_nodes" not in self.chain_config:
+                self.chain_config["context_nodes"] = []
+                
+            self.chain_config["context_nodes"].append(context_data)
+            logger.debug(f"Successfully saved Context node: {node.id}")
+        except Exception as e:
+            logger.error(f"Error saving Context node {node.id}: {e}")
             raise
         
     def _get_node_connections(self, node):
@@ -933,6 +991,13 @@ class ConfigManager:
                         node.set_property('tool_descriptions', _json.dumps(llm_data.get('tool_descriptions', {})))
                     except Exception:
                         node.set_property('tool_descriptions', '{}')
+                    try:
+                        import json as _json
+                        node.set_property('skills', _json.dumps(llm_data.get('skills', [])))
+                    except Exception:
+                        node.set_property('skills', '[]')
+                    node.set_property('use_skill_routing', str(llm_data.get('use_skill_routing', True)).lower())
+                    node.set_property('semantic_description', llm_data.get('semantic_description', ''))
                     position = llm_data.get("position", [0, 0])
                     node.set_pos(*position)
                     if hasattr(self.parent_widget, 'llm_nodes'):
@@ -1217,6 +1282,59 @@ class ConfigManager:
             logger.error(f"Error creating Container nodes: {e}")
             raise
 
+    def _create_context_nodes(self, node_map):
+        """Create Context nodes from configuration."""
+        logger.debug("Creating Context nodes from configuration")
+        try:
+            context_nodes = self.chain_config.get("context_nodes", [])
+            logger.debug(f"Found {len(context_nodes)} Context nodes to create")
+            
+            for context_data in context_nodes:
+                logger.debug(f"Creating Context node")
+                node = self.parent_widget.graph_manager.create_node(
+                    'context.ContextNode',
+                    name='Context'
+                )
+                
+                if node:
+                    # Set properties
+                    node.set_property('scope', context_data.get('scope', 'chain'))
+                    node.set_property('default_merge_policy', context_data.get('default_merge_policy', 'append'))
+                    node.set_property('keys', context_data.get('keys', '[]'))
+                    node.set_property('key_policies', context_data.get('key_policies', '{}'))
+                    node.set_property('max_entries_per_key', str(context_data.get('max_entries_per_key', 100)))
+                    auto_capture = context_data.get('auto_capture_responses', True)
+                    node.set_property('auto_capture_responses', 'true' if auto_capture else 'false')
+                    node.set_property('output_format', context_data.get('output_format', 'structured'))
+                    node.set_property('context_node_label', context_data.get('context_node_label', ''))
+                    node.set_property('retrieval_top_k', context_data.get('retrieval_top_k', 3))
+                    use_semantic = context_data.get('use_semantic_retrieval', False)
+                    node.set_property('use_semantic_retrieval', 'true' if use_semantic else 'false')
+                    node.set_property('shared_context_chain_file', context_data.get('shared_context_chain_file', ''))  # NEW
+                    node.set_property('shared_context_node_id', context_data.get('shared_context_node_id', ''))  # NEW
+                    
+                    # Update name if label is provided
+                    label = context_data.get('context_node_label', '')
+                    if label:
+                        node.set_name(f"Context: {label}")
+                    
+                    # Set position
+                    position = context_data.get("position", [0, 0])
+                    node.set_pos(*position)
+                    
+                    # Add to parent widget's tracking list if it exists
+                    if hasattr(self.parent_widget, 'context_nodes'):
+                        self.parent_widget.context_nodes.append(node)
+                        
+                    # Store in node map
+                    node_id = context_data.get("node_id", node.id)
+                    node_map[node_id] = node
+                else:
+                    logger.error(f"Failed to create Context node")
+        except Exception as e:
+            logger.error(f"Error creating Context nodes: {e}")
+            raise
+
     def _restore_connections(self, node_map):
         """Restore connections between nodes."""
         logger.debug("Restoring connections between nodes")
@@ -1229,7 +1347,8 @@ class ConfigManager:
                 self.chain_config.get("chain_import_nodes", []) +
                 self.chain_config.get("form_filler_nodes", []) +
                 self.chain_config.get("code_nodes", []) +
-                self.chain_config.get("container_nodes", [])
+                self.chain_config.get("container_nodes", []) +
+                self.chain_config.get("context_nodes", [])
             )
             
             total_connections = sum(len(node_data.get("connections", [])) for node_data in all_node_data)

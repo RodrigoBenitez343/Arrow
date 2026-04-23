@@ -190,6 +190,23 @@ class DragDropManager:
                             new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
                         new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                    elif node_type == 'context':
+                        # Check if this is a shared context node with configuration
+                        if mime.hasFormat('application/x-looper-context-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-context-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                context_node_data = config.get('context_node_data', {})
+                                new_node = self.parent.node_operations.add_context_node_with_shared_file(
+                                    chain_file, context_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared context node drop error: {e}")
+                                new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):
@@ -278,6 +295,23 @@ class DragDropManager:
                             new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
                         new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                    elif node_type == 'context':
+                        # Check if this is a shared context node with configuration
+                        if mime.hasFormat('application/x-looper-context-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-context-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                context_node_data = config.get('context_node_data', {})
+                                new_node = self.parent.node_operations.add_context_node_with_shared_file(
+                                    chain_file, context_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared context node drop error: {e}")
+                                new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):

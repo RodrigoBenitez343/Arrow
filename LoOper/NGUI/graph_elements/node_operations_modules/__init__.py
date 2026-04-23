@@ -8,6 +8,7 @@ from .chain_import import ChainImportOperationsMixin
 from .form_filler import FormFillerOperationsMixin
 from .code import CodeOperationsMixin
 from .container import ContainerOperationsMixin
+from .context import ContextOperationsMixin
 from .node_management import NodeManagementMixin
 
 class NodeOperations(
@@ -21,6 +22,7 @@ class NodeOperations(
     FormFillerOperationsMixin,
     CodeOperationsMixin,
     ContainerOperationsMixin,
+    ContextOperationsMixin,
     NodeManagementMixin
 ):
     """Handles all node operations including adding, deleting, and editing."""

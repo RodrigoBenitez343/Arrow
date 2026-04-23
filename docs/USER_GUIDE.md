@@ -182,6 +182,7 @@ Nodes are the building blocks of automation workflows. Each node type performs a
 | Chain Import Node | Green (#32CD32) |
 | Form Filler Node | Plum (#DDA0DD) |
 | Code Node | Yellow (#F1C40F) |
+| Context Node | Blue (#2196F3) |
 
 ### 1. Sequence Node
 
@@ -321,6 +322,51 @@ Layout Match is a specialized conditional that captures both the image AND its e
 | `max_cycles` | Maximum reasoning cycles |
 | `memory_size` | Context retention size |
 
+#### Skills System
+
+Skills are reusable behavioral instruction sets that tune LLM behavior for specific situations without bloating the system prompt. Each LLM node can have multiple skills that are selectively activated based on context.
+
+| Property | Description |
+|----------|-------------|
+| `skills` | Array of skill definitions stored in the LLM node |
+| `use_skill_routing` | When enabled, skills are selected based on context from connected Context nodes. When disabled, all enabled skills are injected. |
+| `semantic_description` | Auto-generated summary of the LLM node's purpose, used as the context storage key when connected to a Context node |
+
+#### Skill Definition
+
+Each skill contains:
+
+| Field | Description |
+|-------|-------------|
+| **Name** | Short identifier for the skill (e.g., "Data Extraction") |
+| **Description** | One-line summary used by the context-aware router to match skills to situations |
+| **Trigger Keywords** | Comma-separated keywords that help the router identify relevant situations |
+| **Instructions** | The behavioral prompt injected into the system message when the skill is active |
+| **Priority** | 1-10 (lower = higher priority). When multiple skills match, lower priority skills are selected first |
+| **Enabled** | Toggle individual skills on/off without deleting them |
+
+#### How Skill Routing Works
+
+1. During execution, the LLM node reads context from connected **Context Nodes**
+2. Each skill's description and trigger keywords are compared against the current context using semantic similarity (sentence embeddings)
+3. Skills scoring above the relevance threshold are selected and sorted by score and priority
+4. Selected skill instructions are appended to the `system_message` under an `## Active Skills` section
+5. If no skills match the context, all enabled skills are injected as a fallback
+
+When `use_skill_routing` is disabled, all enabled skills are always injected regardless of context.
+
+#### AI Skill Generation
+
+Skills can be generated using AI directly from the Skills tab:
+
+1. Select an Ollama model from the dropdown
+2. Describe what the skill should do in the prompt field
+3. Click **Generate Skill** — the AI produces a complete skill definition
+4. Review and edit the generated name, description, keywords, and instructions
+5. Click **Save Skill** to add it to the LLM node
+
+This follows the same AI generation pattern used in Code Nodes for code generation.
+
 #### Quick Templates
 
 LLM nodes include templates for common tasks:
@@ -336,7 +382,7 @@ LLM nodes include templates for common tasks:
 | Python Code Generation | Generate Python code |
 
 **Color**: Orange (#FF6B35)
-**Ports**: 1 input, 1 output
+**Ports**: 3 inputs (input, tools, context), 2 outputs (output, context)
 
 <!-- IMAGE PLACEHOLDER: LLM node configuration dialog -->
 
@@ -376,6 +422,7 @@ LLM nodes include templates for common tasks:
 | `code` | Python code to execute |
 | `source_type` | "inline" or "file" |
 | `file_path` | Path to Python file (if file source) |
+| `description` | Purpose/description of what this code does. Used as the context storage key when connected to a Context Node. |
 | `timeout` | Maximum execution time (seconds) |
 | `output_variable` | Variable name for result |
 
@@ -396,6 +443,114 @@ LLM nodes include templates for common tasks:
 ### 8. Container (VM) Node
 
 *Not yet accessible to users - Under Development*
+
+### 9. Context Node
+
+**Purpose**: A persistent, structured knowledge store that accumulates and merges data from multiple upstream nodes, enabling LLM nodes to access accumulated context across workflow runs.
+
+The Context Node acts as a database within your workflow graph. It collects outputs from LLM nodes, Code nodes, Conditional nodes, and other sources, stores them as named key-value entries, and provides the accumulated context to downstream nodes. This enables workflows where the process remains fixed but context evolves over time.
+
+#### When to Use Context Nodes
+
+| Use Case | Description |
+|----------|-------------|
+| **Persistent Memory** | Store LLM responses and decisions across multiple runs of the same chain |
+| **Multi-Source Aggregation** | Merge outputs from Code nodes, LLM nodes, and Conditionals into a single context |
+| **Constraints & Skills** | Define reusable constraints or skill descriptions that LLM nodes can reference |
+| **Interaction History** | Automatically capture upstream LLM query/response pairs for future reference |
+
+#### Connection Rules
+
+| Port | Direction | Restriction |
+|------|-----------|-------------|
+| **input** | Incoming | Any node type can connect (LLM, Code, Conditional, Chain Import, Sequence, TTS) |
+| **query** | Incoming | Any node type can connect |
+| **context** (output) | Outgoing | **LLM nodes only** — only LLM nodes can read from the Context node's output |
+
+This restriction enforces the neuro-symbolic pattern: any node can contribute data to the context store, but only LLM nodes (the reasoning layer) can consume the accumulated context for decision-making.
+
+#### Persistence Scopes
+
+| Scope | Behavior |
+|-------|----------|
+| **Run** | Context is cleared when the chain execution finishes (ephemeral) |
+| **Chain** | Context persists across multiple runs of the same chain |
+| **Global** | Context is shared across all chains in the workspace |
+| **Shared Chain** | Context is shared with a specific chain file (see below) |
+
+#### Key-Value Storage
+
+Context Nodes store data as named keys (e.g., "constraints", "skills", "history"). Each key has a configurable merge policy:
+
+| Merge Policy | Behavior |
+|--------------|----------|
+| **append** | New values are appended to a list under the key (default) |
+| **replace** | New values overwrite the existing value |
+| **merge_dict** | New dictionary values are merged with existing dictionary values |
+
+#### Properties
+
+| Property | Description |
+|----------|-------------|
+| `scope` | Persistence scope: run, chain, or global |
+| `default_merge_policy` | Default merge strategy for incoming data (append, replace, merge_dict) |
+| `keys` | Named keys for organizing stored context (e.g., constraints, skills, history) |
+| `key_policies` | Per-key merge policy overrides |
+| `max_entries_per_key` | Maximum number of entries retained per key (0 = unlimited) |
+| `auto_capture_responses` | Automatically store upstream LLM query/response pairs under "history" key |
+| `output_format` | How context is serialized for downstream nodes: structured (JSON) or narrative (prose) |
+| `shared_context_chain_file` | Path to another chain file whose context database should be shared (enables cross-chain context sharing) |
+
+#### Output Format
+
+| Format | Description |
+|--------|-------------|
+| **Structured** | Outputs a JSON object with all keys and their values — ideal for Code nodes or structured processing |
+| **Narrative** | Outputs formatted prose with section headers — ideal for LLM node prompts |
+
+**Color**: Blue (#2196F3)
+**Ports**: 2 inputs (input, query), 1 output (context)
+
+#### Cross-Chain Context Sharing
+
+Context nodes can now share their context database across multiple chains, similar to how Chain Import nodes reuse entire chains. This enables powerful workflows where:
+
+- **Chain A** collects and stores context (e.g., user preferences, learned patterns)
+- **Chain B** reads and uses that context without duplicating data
+- Multiple chains collaborate through a shared knowledge base
+
+**How to Use:**
+
+1. Open the Context Node configuration dialog
+2. Navigate to the **Scope & Retention** tab
+3. In the **Shared Context Database** section, click **Browse...**
+4. Select the chain file (`.json`) that contains the context node you want to share with
+5. Click **Save**
+
+**Example Use Cases:**
+
+| Scenario | Description |
+|----------|-------------|
+| **Central Knowledge Base** | One chain maintains a "master context" with learned patterns, while multiple task-specific chains read from it |
+| **Multi-Stage Workflows** | Chain 1 collects data → Chain 2 processes it → Chain 3 acts on it, all sharing the same context |
+| **Template Chains** | Reusable chain templates that adapt their behavior based on shared context from a parent chain |
+
+<!-- IMAGE PLACEHOLDER: Context node configuration dialog -->
+
+#### Example Workflow
+
+A typical Context Node workflow with skills:
+
+1. **Code Node** (description: "Fetch stock prices") computes data → connects to Context Node `input` port
+2. **LLM Node** generates analysis → connects to Context Node `input` port  
+3. **Context Node** merges both inputs under semantic keys → connects `context` output to downstream LLM Node
+4. **Downstream LLM Node** with skills receives accumulated context:
+   - The skill router reads the context (stock prices + analysis)
+   - Selects the "Financial Reporting" skill based on semantic match
+   - Injects the skill instructions into the system message
+   - The LLM produces a report guided by both the accumulated context and the selected skill
+
+For chain-scoped context, each subsequent run adds to the stored data, enabling LLM nodes to reference their own prior decisions and build on previous results.
 
 ---
 
@@ -542,6 +697,23 @@ The conditional dialog is organized into sections:
 | **Max Cycles** | Reasoning depth |
 | **Memory Size** | Context retention |
 
+#### Skills Tab
+
+| Field | Effect on Behavior |
+|-------|-------------------|
+| **Skills Table** | List of all skills with Enable toggle, Name, Description, and Priority. Select a row to edit. |
+| **Add Skill** | Create a new empty skill entry |
+| **Remove Skill** | Delete the selected skill |
+| **Skill Name** | Short identifier displayed in the skills list |
+| **Description** | One-line summary used for context-aware routing |
+| **Trigger Keywords** | Comma-separated terms that help match the skill to relevant contexts |
+| **Instructions** | Full behavioral prompt injected into the system message when the skill is active |
+| **Priority** | 1-10 ranking (lower = selected first when multiple skills match) |
+| **Save Skill** | Save editor contents to the selected skill row |
+| **AI Model** | Ollama model for AI skill generation |
+| **Generate Skill** | AI-generate a complete skill definition from a natural language description |
+| **Enable context-aware skill routing** | When checked, skills are selected based on context from connected Context Nodes. When unchecked, all enabled skills are always injected. |
+
 #### Templates Tab
 
 Pre-configured templates for common LLM use cases. Selecting a template auto-fills model, prompt, and relevant options.
@@ -582,6 +754,40 @@ Pre-configured templates for common LLM use cases. Selecting a template auto-fil
 |-------|-------------------|
 | **Text** | Content to be spoken aloud |
 | **Language** | BCP-47 language code for speech synthesis |
+
+### Context Node Dialog
+
+<!-- IMAGE PLACEHOLDER: Context node dialog -->
+
+The Context Node dialog has four configuration tabs:
+
+#### Keys & Merge Tab
+
+| Field | Effect on Behavior |
+|-------|-------------------|
+| **Keys Table** | Define named keys for organizing context data. Each key has a name, merge policy, and max entries limit. |
+| **Add Key** | Add a new named key to the context store |
+| **Remove Key** | Remove the selected key (and its stored data) |
+| **Default Merge Policy** | Merge strategy applied to keys without a specific override: append, replace, or merge_dict |
+
+#### Scope & Retention Tab
+
+| Field | Effect on Behavior |
+|-------|-------------------|
+| **Scope** | Run (ephemeral), Chain (persists across runs), or Global (shared across all chains) |
+| **Max Entries per Key** | Retention limit — oldest entries are trimmed when exceeded. Set to 0 for unlimited. |
+
+#### Output Format Tab
+
+| Field | Effect on Behavior |
+|-------|-------------------|
+| **Output Format** | Structured JSON (for code processing) or Narrative prose (for LLM prompts) |
+| **Auto-Capture Responses** | When enabled, automatically stores upstream LLM query/response pairs under the "history" key |
+| **Context Label** | Human-readable label displayed on the node in the graph |
+
+#### Current Contents Tab
+
+Read-only inspector showing the current key-value pairs stored in this context node. Use this to verify what data has been accumulated.
 
 ---
 
@@ -707,7 +913,8 @@ If sandbox fails to start:
   ],
   "conditional_nodes": [...],
   "llm_nodes": [...],
-  "tts_nodes": [...]
+  "tts_nodes": [...],
+  "context_nodes": [...]
 }
 ```
 

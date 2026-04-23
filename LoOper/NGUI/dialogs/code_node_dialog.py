@@ -313,6 +313,22 @@ class CodeNodeDialog(ModernDialog):
         layout = QVBoxLayout(self.settings_tab)
         layout.setSpacing(15)
         
+        # Description / Purpose (used as context key)
+        desc_layout = QVBoxLayout()
+        desc_label = QLabel(_("Description / Purpose:"))
+        desc_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        desc_info = QLabel(_("What this code does (used as context storage key when connected to Context node)"))
+        desc_info.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; margin-bottom: 5px;")
+        
+        self.description_edit = QLineEdit(self.config.get('description', ''))
+        self.description_edit.setPlaceholderText(_("e.g., 'parse_csv_output', 'fetch_api_data'"))
+        self.description_edit.setStyleSheet(self.get_input_style())
+        
+        desc_layout.addWidget(desc_label)
+        desc_layout.addWidget(desc_info)
+        desc_layout.addWidget(self.description_edit)
+        layout.addLayout(desc_layout)
+        
         # File Path (Optional override)
         file_layout = QVBoxLayout()
         file_label = QLabel(_("External File Path (Overrides internal code if set):"))
@@ -429,5 +445,6 @@ class CodeNodeDialog(ModernDialog):
             'output_variable': self.output_var_edit.text(),
             'timeout': self.timeout_spin.value(),
             'gen_model': self.model_combo.currentText(),
-            'gen_prompt': self.prompt_edit.toPlainText()
+            'gen_prompt': self.prompt_edit.toPlainText(),
+            'description': self.description_edit.text()
         }

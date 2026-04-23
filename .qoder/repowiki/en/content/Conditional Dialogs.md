@@ -12,6 +12,13 @@
 - [constants.py](file://LoOper/NGUI/constants.py)
 </cite>
 
+## Update Summary
+**Changes Made**
+- Added comprehensive documentation for enhanced SnipCaptureDialog with device pixel ratio support
+- Updated coordinate scaling and virtual desktop geometry sections
+- Enhanced troubleshooting guide with DPI-related issues
+- Added new section on multi-monitor coordinate mapping
+
 ## Table of Contents
 1. [Introduction](#introduction)
 2. [System Architecture](#system-architecture)
@@ -21,15 +28,18 @@
 6. [Execution Engine Integration](#execution-engine-integration)
 7. [User Interface Design](#user-interface-design)
 8. [Configuration Management](#configuration-management)
-9. [Performance Considerations](#performance-considerations)
-10. [Troubleshooting Guide](#troubleshooting-guide)
-11. [Conclusion](#conclusion)
+9. [Coordinate Scaling and Multi-Monitor Support](#coordinate-scaling-and-multi-monitor-support)
+10. [Performance Considerations](#performance-considerations)
+11. [Troubleshooting Guide](#troubleshooting-guide)
+12. [Conclusion](#conclusion)
 
 ## Introduction
 
 The Conditional Dialogs system in LoOper provides a comprehensive framework for creating sophisticated conditional logic within automation workflows. This system enables users to define complex decision-making structures that control the flow of automated sequences based on various trigger conditions, including image recognition, OCR text matching, conditional loops, and custom Python code execution.
 
 The system consists of three primary layers: a user-friendly dialog interface for configuration, a node-based representation for workflow integration, and an execution engine that evaluates conditions during runtime. This architecture supports both simple and complex conditional scenarios while maintaining intuitive usability.
+
+**Updated** Enhanced with device pixel ratio support for proper coordinate scaling across different monitor configurations and DPI settings, including virtual desktop geometry calculations for multi-monitor setups.
 
 ## System Architecture
 
@@ -41,6 +51,7 @@ subgraph "User Interface Layer"
 CD[Conditional Dialog]
 TD[Trigger Dialogs]
 TS[Toggle Switch]
+SCD[SnipCaptureDialog]
 end
 subgraph "Configuration Layer"
 CN[Conditional Node]
@@ -56,10 +67,14 @@ subgraph "Support Systems"
 BD[Base Dialog]
 CT[Constants]
 I18N[Internationalization]
+SDR[Screen Info Retrieval]
+VGD[Virtual Desktop Geometry]
 end
 CD --> CO
 TD --> CD
 TS --> CD
+SCD --> SDP[Device Pixel Ratio]
+SCD --> VGD
 CN --> CO
 CO --> CE
 CE --> TM
@@ -68,12 +83,15 @@ BD --> CD
 CT --> CD
 CT --> CN
 CT --> CE
+SDR --> SCD
+VGD --> SCD
 ```
 
 **Diagram sources**
 - [conditional_dialogs.py:119-790](file://LoOper/NGUI/dialogs/conditional_dialogs.py#L119-L790)
 - [conditional.py:8-264](file://LoOper/NGUI/graph_elements/node_operations_modules/conditional.py#L8-L264)
 - [conditional_node.py:10-164](file://LoOper/NGUI/nodes_resources/conditional_node.py#L10-L164)
+- [trigger_dialogs.py:139-312](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L139-L312)
 
 ## Core Components
 
@@ -188,7 +206,6 @@ PresenceButtons --> SaveConfig["Save Configuration"]
 LayoutButtons --> SaveConfig
 OCRButtons --> SaveConfig
 LoopButtons --> SaveConfig
-CodeControls --> SaveConfig
 SaveConfig --> End([Dialog Complete])
 ```
 
@@ -355,6 +372,83 @@ J --> K[Execution Engine]
 **Section sources**
 - [conditional.py:37-264](file://LoOper/NGUI/graph_elements/node_operations_modules/conditional.py#L37-L264)
 
+## Coordinate Scaling and Multi-Monitor Support
+
+**Updated** The system now includes comprehensive support for device pixel ratios and multi-monitor configurations to ensure accurate coordinate mapping across different display setups.
+
+### Enhanced SnipCaptureDialog Implementation
+
+The `SnipCaptureDialog` has been significantly enhanced to handle device pixel ratios and virtual desktop geometry calculations for proper coordinate scaling.
+
+```mermaid
+classDiagram
+class SnipCaptureDialog {
++QPixmap _frozen_pixmap
++QRect _screen_geometry
++float _dpr
++QPoint _origin
++QPoint _current
++QRect _selected_rect
++__init__(frozen_pixmap, screen_geometry, dpr=1.0)
++keyPressEvent(event)
++mousePressEvent(event)
++mouseMoveEvent(event)
++mouseReleaseEvent(event)
++paintEvent(event)
++get_result() tuple
+}
+class ScreenInfoRetrieval {
++get_screen_info_for_capture() tuple
++get_virtual_desktop_geometry() QRect
+}
+SnipCaptureDialog --> ScreenInfoRetrieval
+```
+
+**Diagram sources**
+- [trigger_dialogs.py:139-312](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L139-L312)
+- [trigger_dialogs.py:110-136](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L110-L136)
+
+### Device Pixel Ratio Support
+
+The system now properly handles device pixel ratios to ensure accurate coordinate mapping between logical pixels and device pixels:
+
+- **Logical vs Device Pixels**: The dialog is sized in logical pixels while the frozen pixmap is captured at device resolution
+- **Scaling Calculations**: Dynamic scaling factors are calculated based on the device pixel ratio
+- **Coordinate Transformation**: Proper transformation between logical and device coordinate spaces
+
+### Virtual Desktop Geometry Calculation
+
+The system calculates the full virtual desktop geometry across multiple monitors to ensure proper coordinate calculation:
+
+- **Multi-Monitor Support**: Handles negative screen positions and varying monitor configurations
+- **Bounding Rectangle**: Calculates the total area encompassing all screens
+- **Coordinate Reference**: Uses virtual desktop coordinates as the reference frame
+
+### Coordinate Mapping Process
+
+The coordinate mapping process ensures accurate positioning across different DPI settings and monitor configurations:
+
+```mermaid
+flowchart TD
+Start([User Selection]) --> DPR["Get Device Pixel Ratio"]
+DPR --> VDG["Calculate Virtual Desktop Geometry"]
+VDG --> DialogSize["Set Dialog Size (Logical Pixels)"]
+DialogSize --> FrozenSize["Frozen Pixmap Size (Device Pixels)"]
+FrozenSize --> ScaleCalc["Calculate Scale Factors"]
+ScaleCalc --> Selection["User Selection Rect (Logical)"]
+Selection --> LogicalToDevice["Convert to Device Coordinates"]
+LogicalToDevice --> Crop["Crop Frozen Pixmap"]
+Crop --> GlobalCoord["Calculate Global Coordinates"]
+GlobalCoord --> Result([Return Cropped Image + Global Rect])
+```
+
+**Diagram sources**
+- [trigger_dialogs.py:262-312](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L262-L312)
+
+**Section sources**
+- [trigger_dialogs.py:72-136](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L72-L136)
+- [trigger_dialogs.py:139-312](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L139-L312)
+
 ## Performance Considerations
 
 ### Optimization Strategies
@@ -365,6 +459,7 @@ The conditional system implements several performance optimizations to ensure re
 - **Efficient Matching**: Template matching uses optimized algorithms for visual conditions
 - **Memory Management**: Proper cleanup of resources during conditional evaluation
 - **Timeout Handling**: Prevents infinite waits in conditional loops and trigger detection
+- **Device Pixel Ratio Caching**: Device pixel ratios are cached to avoid repeated calculations
 
 ### Resource Management
 
@@ -373,6 +468,7 @@ The system carefully manages system resources during conditional evaluation:
 - **Screen Capture Optimization**: Minimizes screenshot operations for visual triggers
 - **Thread Safety**: Ensures safe concurrent execution of conditional checks
 - **Error Recovery**: Provides graceful degradation when conditions fail to evaluate
+- **Multi-Monitor Coordination**: Efficiently handles coordinate transformations across different monitor setups
 
 ## Troubleshooting Guide
 
@@ -398,14 +494,23 @@ The system carefully manages system resources during conditional evaluation:
 - Optimize image sizes for faster matching
 - Consider increasing timeout values for slower systems
 
+**DPI and Multi-Monitor Issues**
+- **Incorrect Coordinate Mapping**: Ensure device pixel ratio is properly detected and applied
+- **Partial Screen Capture**: Verify virtual desktop geometry calculation includes all monitors
+- **Scaling Problems**: Check that logical and device pixel conversions are handled correctly
+- **Monitor Offset Issues**: Confirm negative screen positions are properly handled in virtual desktop calculations
+
 **Section sources**
 - [conditional_dialogs.py:675-681](file://LoOper/NGUI/dialogs/conditional_dialogs.py#L675-L681)
 - [conditional_ops.py:575-750](file://LoOper/player/multi_sequence/worflow_interpreter_modules/executor_modules/conditional_ops.py#L575-L750)
+- [trigger_dialogs.py:110-136](file://LoOper/NGUI/dialogs/trigger_dialogs.py#L110-L136)
 
 ## Conclusion
 
 The Conditional Dialogs system in LoOper provides a robust, extensible framework for implementing sophisticated conditional logic in automation workflows. Through its unified dialog interface, comprehensive node system, and powerful execution engine, it enables users to create complex decision-making structures that adapt to various runtime conditions.
 
+**Updated** The recent enhancements to device pixel ratio support and multi-monitor coordinate scaling significantly improve the system's reliability across diverse display configurations. The enhanced SnipCaptureDialog now provides accurate coordinate mapping between logical and device pixels, ensuring consistent behavior across different DPI settings and monitor setups.
+
 The system's modular architecture ensures maintainability and extensibility, while its performance optimizations provide responsive operation even in complex scenarios. The combination of visual trigger detection, OCR capabilities, conditional loops, and custom code execution creates a versatile foundation for advanced automation workflows.
 
-Future enhancements could include additional condition types, improved visualization of conditional relationships, and enhanced debugging capabilities for complex conditional scenarios.
+Future enhancements could include additional condition types, improved visualization of conditional relationships, enhanced debugging capabilities for complex conditional scenarios, and expanded support for specialized display configurations such as ultra-wide monitors and mixed DPI environments.

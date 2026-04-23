@@ -3,7 +3,7 @@ from ...config import logger
 class WorkflowGraphBuilder:
     """Builds and manages workflow graphs from sequences and conditional nodes"""
     
-    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None, code_nodes=None, container_nodes=None):
+    def __init__(self, sequences=None, conditional_nodes=None, llm_nodes=None, tts_nodes=None, chain_import_nodes=None, code_nodes=None, container_nodes=None, context_nodes=None):
         self.sequences = sequences or []
         self.conditional_nodes = conditional_nodes or []
         self.llm_nodes = llm_nodes or []
@@ -11,6 +11,7 @@ class WorkflowGraphBuilder:
         self.chain_import_nodes = chain_import_nodes or []
         self.code_nodes = code_nodes or []
         self.container_nodes = container_nodes or []
+        self.context_nodes = context_nodes or []
     
     def build_workflow_graph(self):
         """
@@ -216,6 +217,28 @@ class WorkflowGraphBuilder:
                     'output': output_connections
                 }
             }
+            
+        # Add Context nodes to graph
+        for context_node in self.context_nodes:
+            node_id = str(context_node.get('id') or context_node.get('node_id'))
+            # Convert connections format to outputs format for Context nodes
+            output_connections = []
+            
+            for conn in context_node.get('connections', []):
+                target = {
+                    'node_id': str(conn['target_node_id']),
+                    'input_port': conn.get('input_port')
+                }
+                if conn.get('output_port') == 'context':
+                    output_connections.append(target)
+            
+            graph[node_id] = {
+                'type': 'context',
+                'data': context_node,
+                'connections': {
+                    'context': output_connections
+                }
+            }
         
         # Build connections from conditional outputs to other nodes
         for conditional in self.conditional_nodes:
@@ -341,6 +364,27 @@ class WorkflowGraphBuilder:
                                 'input_port': connection.get('input_port')
                             })
         
+        # Build connections from context node outputs to other nodes
+        for context_node in self.context_nodes:
+            context_id = context_node.get('id') or context_node.get('node_id')
+            
+            # Get connections from the graph node we just created
+            if context_id in graph:
+                context_graph_node = graph[context_id]
+                connections = context_graph_node['connections']
+                
+                for output_name, output_connections in connections.items():
+                    for connection in output_connections:
+                        target_node_id = connection['node_id']
+                        if target_node_id in graph:
+                            if 'inputs' not in graph[target_node_id]:
+                                graph[target_node_id]['inputs'] = []
+                            graph[target_node_id]['inputs'].append({
+                                'from_node': context_id,
+                                'output_type': output_name,
+                                'input_port': connection.get('input_port')
+                            })
+        
         # Process input connections for all node types
         # Handle sequence node inputs
         for i, sequence in enumerate(self.sequences):
@@ -423,6 +467,20 @@ class WorkflowGraphBuilder:
                     if 'inputs' not in graph[code_id]:
                         graph[code_id]['inputs'] = []
                     graph[code_id]['inputs'].append({
+                        'from_node': source_node_id,
+                        'output_type': connection_info['output_name']
+                    })
+        
+        # Handle context node inputs
+        for context_node in self.context_nodes:
+            context_id = str(context_node.get('id') or context_node.get('node_id'))
+            inputs = context_node.get('inputs', {})
+            for input_name, connection_info in inputs.items():
+                source_node_id = str(connection_info['node_id'])
+                if source_node_id in graph:
+                    if 'inputs' not in graph[context_id]:
+                        graph[context_id]['inputs'] = []
+                    graph[context_id]['inputs'].append({
                         'from_node': source_node_id,
                         'output_type': connection_info['output_name']
                     })
