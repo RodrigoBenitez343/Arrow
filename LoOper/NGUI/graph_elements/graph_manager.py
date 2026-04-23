@@ -1,7 +1,7 @@
 import logging
 from NodeGraphQt import NodeGraph
 from PyQt5.QtWidgets import QVBoxLayout, QSplitter
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -56,6 +56,7 @@ class GraphManager:
         try:
             self.parent_widget = parent_widget
             self.node_graph = None
+            self._context_port_validation_enabled = True
             logger.debug(f"GraphManager initialized with parent_widget: {type(parent_widget).__name__}")
         except Exception as e:
             logger.error(f"Error initializing GraphManager: {e}")
@@ -85,6 +86,10 @@ class GraphManager:
             logger.debug("Storing node_graph reference in parent widget")
             self.parent_widget.node_graph = self.node_graph
             
+            # Connect port connection signal for validation
+            logger.debug("Connecting port_connected signal for validation")
+            self.node_graph.port_connected.connect(self._on_port_connected)
+            
             logger.info("Node graph setup completed successfully")
         except Exception as e:
             logger.error(f"Error setting up node graph: {e}")
@@ -104,15 +109,14 @@ class GraphManager:
             self.node_graph.register_node(LLMNode)
             logger.debug("Registering TTSNode")
             self.node_graph.register_node(TTSNode)
-            # DEPRECATED: Context Builder - registration removed
-            # logger.debug("Registering ContextBuilderNode")
-            # self.node_graph.register_node(ContextBuilderNode)
             logger.debug("Registering ChainImportNode")
             self.node_graph.register_node(ChainImportNode)
             logger.debug("Registering FormFillerNode")
             self.node_graph.register_node(FormFillerNode)
             logger.debug("Registering CodeNode")
             self.node_graph.register_node(CodeNode)
+            logger.debug("Registering ContextNode")
+            self.node_graph.register_node(ContextNode)
             logger.info("All custom node types registered successfully")
         except Exception as e:
             logger.error(f"Error registering custom nodes: {e}")
@@ -200,15 +204,17 @@ class GraphManager:
         logger.debug("Configuring graph properties")
         try:
             from NodeGraphQt.constants import PipeLayoutEnum, ViewerEnum
+            # Enable cyclic/feedback connections (e.g., LLM -> Context -> LLM)
+            self.node_graph.set_acyclic(False)
             try:
-                self.node_graph.set_pipe_style(PipeLayoutEnum.ANGLE.value)
+                self.node_graph.set_pipe_style(PipeLayoutEnum.CURVED.value)
             except Exception:
                 pass
             try:
                 self.node_graph.set_grid_mode(ViewerEnum.GRID_DISPLAY_SQUARES.value)
             except Exception:
                 pass
-            logger.debug("Graph configuration completed (pipes/style and grid mode applied)")
+            logger.debug("Graph configuration completed (curved pipes and grid mode applied)")
         except Exception as e:
             logger.error(f"Error configuring graph: {e}")
             raise
@@ -442,3 +448,52 @@ class GraphManager:
             return [sx, sy]
         except Exception:
             return [x, y]
+
+    def _on_port_connected(self, input_port, output_port):
+        """
+        Validate port connections - restrict Context node 'context' output to LLM nodes only.
+        
+        The NodeGraphQt port_connected signal emits (input_port, output_port).
+        - input_port: The port that receives the connection (on the target node)
+        - output_port: The port that sends data (on the source node)
+        """
+        if not self._context_port_validation_enabled:
+            return
+            
+        try:
+            output_node = output_port.node()
+            input_node = input_port.node()
+            
+            # Get node identifiers
+            output_identifier = getattr(output_node, '__identifier__', '')
+            input_identifier = getattr(input_node, '__identifier__', '')
+            
+            # Check if the output comes from a Context node's 'context' output port
+            if output_identifier == 'context' and output_port.name() == 'context':
+                # Only allow connection to LLM nodes
+                if input_identifier != 'llm':
+                    logger.info(
+                        f"Context output port can only connect to LLM nodes. "
+                        f"Blocked connection from Context '{output_node.name()}' to '{input_node.name()}' ({input_identifier})"
+                    )
+                    # Disconnect the invalid connection
+                    # Use a deferred disconnect to avoid issues during signal handling
+                    from PyQt5.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: self._disconnect_ports(output_port, input_port))
+                    
+                    # Show status message if parent has a status bar
+                    if hasattr(self.parent_widget, 'show_status_message'):
+                        self.parent_widget.show_status_message(
+                            "Context output can only connect to LLM nodes", 3000
+                        )
+        except Exception as e:
+            logger.debug(f"Connection validation error: {e}")
+
+    def _disconnect_ports(self, output_port, input_port):
+        """Safely disconnect two ports."""
+        try:
+            if output_port.connected_ports():
+                output_port.disconnect_from(input_port)
+                logger.info("Disconnected invalid Context->non-LLM connection")
+        except Exception as e:
+            logger.debug(f"Error disconnecting ports: {e}")

@@ -23,9 +23,6 @@ class NodeContextMenuManager:
             self.add_conditional_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'llm':
             self.add_llm_node_actions(menu, node)
-        # DEPRECATED: Context Builder - context menu branch removed
-        # elif hasattr(node, '__identifier__') and node.__identifier__ == 'context_builder':
-        #     self.add_context_builder_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'tts':
             self.add_tts_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'chain_import':
@@ -36,6 +33,8 @@ class NodeContextMenuManager:
             self.add_form_filler_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'container':
             self.add_container_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'context':
+            self.add_context_node_actions(menu, node)
         else:
             # Show graph actions for background clicks or any other case
             self.add_graph_actions(menu, pos)
@@ -74,21 +73,7 @@ class NodeContextMenuManager:
         edit_llm_action = QAction(_("Edit LLM Configuration"), menu)
         edit_llm_action.triggered.connect(lambda: self.graph_view.edit_llm(node))
         menu.addAction(edit_llm_action)
-    
-    # DEPRECATED: Context Builder - actions removed
-    # def add_context_builder_node_actions(self, menu, node):
-    #     """Add actions for a Context Builder node to the context menu"""
-    #     edit_action = QAction("Edit Context Builder Configuration", menu)
-    #     edit_action.triggered.connect(lambda: self.graph_view.edit_context_builder_node(node))
-    #     menu.addAction(edit_action)
-    #     
-    #     add_conditional_action = QAction("Add Conditional Branch", menu)
-    #     add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_branch_to_llm(node))
-    #     menu.addAction(add_conditional_action)
-    #     
-    #     delete_action = QAction("Delete Context Builder Node", menu)
-    #     delete_action.triggered.connect(lambda: self.graph_view.delete_node(node))
-    #     menu.addAction(delete_action)
+
     def add_tts_node_actions(self, menu, node):
         """Add actions for a TTS node to the context menu"""
         edit_action = QAction(_("Edit TTS Properties"), menu)
@@ -115,6 +100,12 @@ class NodeContextMenuManager:
         """Add actions for a Container node to the context menu"""
         edit_action = QAction(_("Edit Container Configuration"), menu)
         edit_action.triggered.connect(lambda: self.graph_view.edit_container_node(node))
+        menu.addAction(edit_action)
+
+    def add_context_node_actions(self, menu, node):
+        """Add actions for a Context node to the context menu"""
+        edit_action = QAction(_("Edit Context Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_context_node(node))
         menu.addAction(edit_action)
 
     def add_form_filler_node_actions(self, menu, node):
@@ -144,10 +135,10 @@ class NodeContextMenuManager:
         add_container_action.triggered.connect(lambda: self.graph_view.add_container_node())
         menu.addAction(add_container_action)
         
-        # DEPRECATED: Context Builder - add action removed from graph menu
-        # add_context_builder_action = QAction("Add Context Builder Node", menu)
-        # add_context_builder_action.triggered.connect(lambda: self.graph_view.add_context_builder_node())
-        # menu.addAction(add_context_builder_action)
+        add_context_action = QAction(_("Add Context Node"), menu)
+        add_context_action.triggered.connect(lambda: self.graph_view.add_context_node())
+        menu.addAction(add_context_action)
+
         add_tts_action = QAction(_("Add TTS Node"), menu)
         add_tts_action.triggered.connect(lambda: self.graph_view.add_tts_node())
         menu.addAction(add_tts_action)

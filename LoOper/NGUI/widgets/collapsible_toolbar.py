@@ -23,7 +23,7 @@ from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER,
     LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR,
-    CODE_NODE_COLOR
+    CODE_NODE_COLOR, CONTEXT_NODE_COLOR
 )
 from ..dialogs.base_dialog import ModernDialog
 from ..i18n import _
@@ -426,6 +426,52 @@ def _painter_icon_code(size: int) -> QIcon:
         pass
     return QIcon(pix)
 
+def _painter_icon_context(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    # Draw a database/cylinder icon (stacked layers)
+    # Top ellipse
+    top_ry = s * 0.12
+    p.drawArc(QRectF(cx - s*0.25, cy - s*0.28, s*0.50, top_ry*2), 0, 360*16)
+    # Bottom ellipse
+    p.drawArc(QRectF(cx - s*0.25, cy + s*0.04, s*0.50, top_ry*2), 0, 360*16)
+    # Side lines
+    p.drawLine(QPointF(cx - s*0.25, cy - s*0.16), QPointF(cx - s*0.25, cy + s*0.16))
+    p.drawLine(QPointF(cx + s*0.25, cy - s*0.16), QPointF(cx + s*0.25, cy + s*0.16))
+    # Middle line
+    p.drawLine(QPointF(cx - s*0.25, cy - s*0.06), QPointF(cx + s*0.25, cy - s*0.06))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
 _ICON_CACHE = {}
 
 def get_node_icon(node_type: str, size: int) -> QIcon:
@@ -441,6 +487,7 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
                 'llm': ['ROBOT'],
                 'chain_import': ['BOX_MULTIPLE'],
                 'code': ['CODE', 'TERMINAL_2', 'TERMINAL'],
+                'context': ['DATABASE'],
             }
             names = icon_map.get(node_type)
             if names:
@@ -460,6 +507,7 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
             'tts': _painter_icon_tts,
             'chain_import': _painter_icon_chain,
             'code': _painter_icon_code,
+            'context': _painter_icon_context,
         }
         maker = painter_map.get(node_type)
         icon = maker(size) if maker else _fallback_node_icon(node_type, size, pad=2)
@@ -993,6 +1041,7 @@ class CollapsibleToolbar(QWidget):
         nodes_col.addWidget(self._make_node_button(_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip=_("Add LLM Node")))
         nodes_col.addWidget(self._make_node_button(_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip=_("Add Chain Import Node")))
         nodes_col.addWidget(self._make_node_button(_("Code"), "code", CODE_NODE_COLOR, lambda: self.graph_view.add_code_node(), tooltip=_("Add Code Node")))
+        nodes_col.addWidget(self._make_node_button(_("Context"), "context", CONTEXT_NODE_COLOR, lambda: self.graph_view.add_context_node(), tooltip=_("Add Context Node")))
         nodes_col.addWidget(self._make_node_button(_("TTS"), "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip=_("Add TTS Node")))
         nodes_col.addWidget(self._make_node_button(_("Cond"), "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip=_("Add Conditional Node")))
         self._top_layout.addLayout(nodes_col)

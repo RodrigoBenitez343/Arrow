@@ -13,7 +13,7 @@ _EMBEDDING_MODEL = None
 
 from ...config import logger
 from .config_utils import get_default_api_url
-from .prompt_utils import substitute_variables, assemble_enhanced_prompt
+from .prompt_utils import substitute_variables, assemble_enhanced_prompt, _HISTORY_INSERT_MARKER
 from .inputs import get_input_text, _context_input
 from .rag_utils import build_rag_context, build_rag_context_from_docs
 from .vision_utils import prepare_vision_images
@@ -126,7 +126,7 @@ class LLMExecutor:
     def execute_llm_node(self, node: Dict, stop_flag, action_handlers=None) -> Optional[str]:
         """Execute an LLM node and return the next node ID to run."""
         llm_data = node.get('data', {})
-        _node_id = node.get('id', node.get('node_id', 'Unknown'))
+        _node_id = node.get('id') or node.get('node_id') or llm_data.get('node_id') or llm_data.get('id') or 'Unknown'
         logger.info("=== STARTING LLM NODE EXECUTION ===")
         logger.info(f"Executing LLM node: {llm_data.get('name', llm_data.get('id', llm_data.get('node_id', 'Unknown')))}")
         logger.info(f"Full node data: {node}")
@@ -146,6 +146,34 @@ class LLMExecutor:
 
         llm_config = llm_data.get('llm_configuration', {}) or llm_data
         logger.info(f"LLM configuration: {llm_config}")
+
+        # ── Direct clipboard capture for context timeline ──
+        # Capture raw clipboard content BEFORE any input processing or context supplement
+        _raw_clipboard_for_context = ""
+        try:
+            _configured_source = llm_config.get('input_source', 'none') if llm_config else 'none'
+            if str(_configured_source).strip().lower() == 'clipboard':
+                import pyperclip
+                _raw_clipboard_for_context = pyperclip.paste() or ""
+                logger.info(f"Direct clipboard capture for context: {len(_raw_clipboard_for_context)} chars")
+            elif str(_configured_source).strip().lower() in ('ocr', 'screen'):
+                _raw_clipboard_for_context = "[OCR/screen input - captured at processing time]"
+            elif str(_configured_source).strip().lower() == 'previous':
+                # For 'previous' source, capture from upstream node output
+                for inp in node.get('inputs', []):
+                    upstream_id = inp.get('from_node')
+                    if upstream_id:
+                        upstream_val = self.variables.get(f"node_{upstream_id}_output", "")
+                        if upstream_val:
+                            _raw_clipboard_for_context = str(upstream_val)[:500]
+                            break
+        except Exception as e:
+            logger.warning(f"Direct clipboard capture failed: {e}")
+
+        # Store it immediately under an unambiguous variable name
+        if _node_id:
+            self.variables[f"node_{_node_id}_raw_user_input"] = _raw_clipboard_for_context
+            logger.info(f"Stored raw_user_input for {_node_id}: {len(_raw_clipboard_for_context)} chars, preview: {_raw_clipboard_for_context[:100]}")
 
         model = llm_config.get('model', 'llama3.2')
         logger.info(f"Resolved model for execution: '{model}' (Default: 'llama3.2')")
@@ -227,6 +255,19 @@ class LLMExecutor:
             tool_desc_map = {}
         # Tool processing moved to after prompt substitution for better context awareness
 
+        # Skills
+        skills_raw = llm_config.get('skills', [])
+        if isinstance(skills_raw, str):
+            try:
+                import json as _json_skills
+                skills_raw = _json_skills.loads(skills_raw)
+            except Exception:
+                skills_raw = []
+        enabled_skills = [s for s in skills_raw if s.get('enabled', True)]
+        use_skill_routing = llm_config.get('use_skill_routing', True)
+        if isinstance(use_skill_routing, str):
+            use_skill_routing = use_skill_routing.lower() in ('true', '1', 'yes')
+
 
         try:
             code_paths = {}
@@ -268,17 +309,35 @@ class LLMExecutor:
         except Exception:
             context_ids = []
         has_context_connection = bool(context_ids)
-        has_upstream_context_value = any(f"node_{cid}_context" in self.variables for cid in context_ids)
+        has_upstream_context_value = any(
+            self.variables.get(f"node_{cid}_context", "") and str(self.variables.get(f"node_{cid}_context", "")).strip()
+            for cid in context_ids
+        )
 
-        configured_input_source = (llm_config.get('input_source', 'none') or 'none')
+        # CRITICAL FIX: Capture the raw input source before any auto-detection.
+        # The user's explicit choice (clipboard, OCR, etc.) must be preserved.
+        # The 'or none' fallback was causing valid values like 'clipboard' to be
+        # lost when the config value was empty string or None, triggering unwanted
+        # auto-detection that overwrote the user's choice with 'context'.
+        raw_input_source = llm_config.get('input_source')
+        if raw_input_source and str(raw_input_source).strip():
+            configured_input_source = str(raw_input_source).strip().lower()
+        else:
+            configured_input_source = 'none'
+        
         input_source = configured_input_source
-        if configured_input_source.lower() in ('none', '', 'null'):
+        
+        # Auto-detection ONLY if user didn't explicitly set an input source
+        if configured_input_source in ('none', '', 'null'):
             if has_context_connection and has_upstream_context_value:
                 input_source = 'context'
                 logger.info("Auto-enabled input_source='context' due to detected context connection")
             elif has_input_connection and has_previous_llm_output:
                 input_source = 'previous'
                 logger.info("Auto-enabled input_source='previous' due to detected input connection for concatenation")
+        
+        # DEBUG: Log the final input_source to help diagnose issues
+        logger.info(f"Final input_source resolved to: '{input_source}' (configured: '{configured_input_source}', raw: '{raw_input_source}')")
 
         raw_conf = llm_config.get('ocr_confidence')
         if raw_conf is None:
@@ -470,6 +529,51 @@ class LLMExecutor:
                 pass
         # ----------------------------------
 
+        # ----------------------------------
+
+        # ── Skill routing and injection ──
+        if enabled_skills:
+            if use_skill_routing and len(enabled_skills) > 1:
+                # Gather context from connected Context nodes
+                context_text = ""
+                for cid in context_ids:
+                    ctx_val = self.variables.get(f"node_{cid}_context", "")
+                    if ctx_val:
+                        context_text += str(ctx_val) + "\n"
+                
+                if context_text.strip() and _EMBEDDING_MODEL is not None:
+                    try:
+                        from sentence_transformers import util as st_util
+                        skill_texts = [
+                            f"{s.get('name','')}: {s.get('description','')} {s.get('trigger_keywords','')}"
+                            for s in enabled_skills
+                        ]
+                        query_emb = _EMBEDDING_MODEL.encode(context_text, convert_to_tensor=True)
+                        skill_embs = _EMBEDDING_MODEL.encode(skill_texts, convert_to_tensor=True)
+                        scores = st_util.cos_sim(query_emb, skill_embs)[0]
+                        
+                        selected = []
+                        for idx, skill in enumerate(enabled_skills):
+                            score = float(scores[idx])
+                            if score > 0.15:
+                                selected.append((score, skill))
+                        
+                        if selected:
+                            selected.sort(key=lambda x: (-x[0], x[1].get('priority', 5)))
+                            enabled_skills = [s for _, s in selected]
+                            logger.info(f"Skill routing: Selected {len(enabled_skills)} skills based on context relevance")
+                        # If nothing matched, keep all enabled skills
+                    except Exception as e:
+                        logger.debug(f"Skill routing error: {e}")
+            
+            # Inject selected skills into system_message
+            skill_block = "\n\n## Active Skills\n"
+            for skill in enabled_skills:
+                skill_block += f"\n### {skill.get('name', 'Unnamed')}\n{skill.get('instructions', '')}\n"
+            system_message = system_message + skill_block
+            logger.info(f"Injected {len(enabled_skills)} skills into system message")
+        # ----------------------------------
+
 
         # Determine if we are using the Form Filling Preset
         def _is_form_filling_prompt(p: str) -> bool:
@@ -502,6 +606,22 @@ class LLMExecutor:
             stop_flag,
             use_direct_rag,
         )
+
+        # Store the actual source input text and type so downstream nodes
+        # (e.g. Context node) can capture what was really fed to the LLM,
+        # not just the prompt template.
+        # CRITICAL: This must happen BEFORE any prompt assembly or context supplement.
+        try:
+            if _node_id:
+                # Store the RAW input text (clipboard, OCR, etc.) before any processing
+                raw_input_to_store = input_text if input_text is not None else ""
+                self.variables[f"node_{_node_id}_source_input"] = raw_input_to_store
+                self.variables[f"node_{_node_id}_input_source"] = input_source
+                # DEBUG: Log what we're storing to help diagnose issues
+                preview = str(raw_input_to_store)[:200] if raw_input_to_store else "(empty)"
+                logger.info(f"Stored source_input for node {_node_id}: input_source='{input_source}', content_preview='{preview}...'")
+        except Exception as e:
+            logger.warning(f"Failed to store source_input for node {_node_id}: {e}")
 
         # Fallback OCR removed to respect explicit 'none' input source
         # if input_text is None and ocr_confidence > 0 and input_source.lower() in ('none', '', 'null'):
@@ -551,6 +671,47 @@ class LLMExecutor:
                 logger.info("Direct RAG enabled; skipping raw previous text injection into prompt")
         if use_comorag and input_text and not use_input_text_in_prompt:
             prompt = f"{input_text}\n\n{prompt}"
+
+        # ── Context supplement (inserted between CURRENT INPUT and QUESTION sections) ──
+        # Skip if input_source is already 'context' — the context is already in the prompt
+        # via assemble_enhanced_prompt(), so inserting it again would be redundant.
+        #
+        # The prompt produced by assemble_enhanced_prompt() contains a
+        # _HISTORY_INSERT_MARKER sentinel between CURRENT INPUT and QUESTION.
+        # We replace that marker with the actual interaction-history block,
+        # or strip it if no history is available.
+        if has_context_connection and has_upstream_context_value and input_source != 'context':
+            context_text_parts = []
+            for cid in context_ids:
+                ctx_val = self.variables.get(f"node_{cid}_context", "")
+                if ctx_val and str(ctx_val).strip():
+                    context_text_parts.append(str(ctx_val))
+            if context_text_parts:
+                # SIMPLIFIED: Just inject the history directly, no fancy headers
+                # Small models get confused by elaborate section structures
+                history_section = "\n".join(context_text_parts)
+                
+                if _HISTORY_INSERT_MARKER in prompt:
+                    prompt = prompt.replace(_HISTORY_INSERT_MARKER, history_section)
+                    logger.info(f"Inserted context from {len(context_text_parts)} context node(s) into prompt (via marker)")
+                else:
+                    # Fallback: prepend history before the prompt
+                    prompt = history_section + "\n\n" + prompt
+                    logger.info(f"Prepended context from {len(context_text_parts)} context node(s) to prompt (fallback)")
+                # Debug: log a preview of the context being injected
+                for i, part in enumerate(context_text_parts):
+                    logger.info(f"  Context part {i+1} preview: {part[:300]}...")
+
+        # Strip the marker if it wasn't replaced (no context available)
+        if _HISTORY_INSERT_MARKER in prompt:
+            prompt = prompt.replace(_HISTORY_INSERT_MARKER, "")
+
+        # Debug: log context detection state for diagnostics
+        logger.info(f"Context detection: has_connection={has_context_connection}, has_value={has_upstream_context_value}, context_ids={context_ids}, input_source={input_source}")
+        for cid in context_ids:
+            v = self.variables.get(f"node_{cid}_context", "<NOT SET>")
+            logger.info(f"  node_{cid}_context: {'<EMPTY>' if v == '' else (str(v)[:200] + '...') if len(str(v)) > 200 else v}")
+
         try:
             if self._rich_console:
                 from rich.panel import Panel
@@ -1023,6 +1184,11 @@ class LLMExecutor:
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before API call")
             return None
+
+        # Debug: log the final prompt that will be sent to the LLM
+        logger.info(f"FINAL PROMPT for LLM (length={len(prompt)} chars):\n{prompt[:2000]}{'...[TRUNCATED]' if len(prompt) > 2000 else ''}")
+        if system_message:
+            logger.info(f"SYSTEM MESSAGE for LLM: {system_message[:500]}")
 
         def _task_runner(out_dict: Dict[str, Any]):
             if stop_flag and stop_flag():

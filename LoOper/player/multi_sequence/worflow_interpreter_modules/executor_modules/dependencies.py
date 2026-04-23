@@ -276,11 +276,11 @@ class DependenciesMixin:
         if has_conditional_input and not conditional_satisfied:
             return False
 
-        # Filter out non-blocking inputs (tools, context) and inputs from skipped/conditional nodes
+        # Filter out non-blocking inputs (tools, context, query) and inputs from skipped/conditional nodes
         filtered_inputs = []
         for _inp in inputs:
             ip = str(_inp.get('input_port'))
-            if ip in ('tools', 'context'):
+            if ip in ('tools', 'context', 'query'):
                 continue
             if _inp['from_node'] in self.skipped_nodes:
                 continue

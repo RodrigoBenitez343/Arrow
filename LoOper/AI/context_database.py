@@ -82,6 +82,29 @@ class ContextDatabase:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_chain ON context_items(chain_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_sequence ON context_items(sequence_id)")
             
+            # Create context_store table for key-value storage
+            cursor.execute("""
+            CREATE TABLE IF NOT EXISTS context_store (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL,
+                scope_id TEXT,
+                node_id TEXT,
+                key TEXT NOT NULL,
+                value TEXT,
+                source_node_id TEXT,
+                source_type TEXT,
+                merge_policy TEXT DEFAULT 'append',
+                created_at REAL,
+                updated_at REAL,
+                metadata TEXT
+            )
+            """)
+            
+            # Create indexes for context_store
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_store_scope ON context_store(scope, scope_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_store_node ON context_store(node_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_store_key ON context_store(key)")
+            
             init_conn.commit()
             # Set WAL mode to improve concurrent reads/writes
             try:
@@ -499,6 +522,320 @@ class ContextDatabase:
             logger.info(f"Cleared context data: {cursor.rowcount} items removed")
         except sqlite3.Error as e:
             logger.error(f"Error clearing context: {e}")
+    
+    def put(self, scope, scope_id, node_id, key, value, source_node_id=None, 
+            source_type=None, merge_policy='append', metadata=None, max_entries=0):
+        """Store a key-value entry in the context store with merge logic
+        
+        Args:
+            scope: Scope type ('run', 'chain', 'global')
+            scope_id: Run ID or chain ID (None for global scope)
+            node_id: Owning context node ID
+            key: Named key (e.g., 'constraints', 'skills', 'history')
+            value: Value to store (will be JSON-serialized)
+            source_node_id: Which node wrote this entry
+            source_type: Source type ('llm', 'code', 'conditional', 'context', 'manual')
+            merge_policy: How to merge values ('append', 'replace', 'merge_dict')
+            metadata: Additional metadata as dict
+            max_entries: If > 0 and merge_policy is 'append', trim list to last N items
+            
+        Returns:
+            Row ID of the inserted or updated entry
+        """
+        try:
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
+            
+            current_time = time.time()
+            metadata_json = json.dumps(metadata) if metadata else None
+            
+            with self._write_lock:
+                # Check if entry exists
+                cursor.execute("""
+                    SELECT id, value FROM context_store 
+                    WHERE scope = ? AND scope_id IS ? AND node_id IS ? AND key = ?
+                """, (scope, scope_id, node_id, key))
+                existing = cursor.fetchone()
+                
+                if merge_policy == 'append':
+                    if existing:
+                        row_id, existing_value = existing
+                        # Parse existing value as JSON list and append
+                        try:
+                            existing_list = json.loads(existing_value) if existing_value else []
+                            if not isinstance(existing_list, list):
+                                existing_list = [existing_list]
+                        except (json.JSONDecodeError, TypeError):
+                            existing_list = []
+                        existing_list.append(value)
+                        
+                        # Trim to max_entries if specified
+                        if max_entries > 0 and len(existing_list) > max_entries:
+                            existing_list = existing_list[-max_entries:]
+                        
+                        new_value = json.dumps(existing_list)
+                        cursor.execute("""
+                            UPDATE context_store 
+                            SET value = ?, updated_at = ?, source_node_id = ?, 
+                                source_type = ?, merge_policy = ?, metadata = ?
+                            WHERE id = ?
+                        """, (new_value, current_time, source_node_id, source_type, 
+                              merge_policy, metadata_json, row_id))
+                    else:
+                        # Create new entry with value as list
+                        new_value = json.dumps([value])
+                        cursor.execute("""
+                            INSERT INTO context_store 
+                            (scope, scope_id, node_id, key, value, source_node_id, 
+                             source_type, merge_policy, created_at, updated_at, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (scope, scope_id, node_id, key, new_value, source_node_id,
+                              source_type, merge_policy, current_time, current_time, metadata_json))
+                        row_id = cursor.lastrowid
+                        
+                elif merge_policy == 'replace':
+                    new_value = json.dumps(value)
+                    if existing:
+                        row_id, _ = existing
+                        cursor.execute("""
+                            UPDATE context_store 
+                            SET value = ?, updated_at = ?, source_node_id = ?, 
+                                source_type = ?, merge_policy = ?, metadata = ?
+                            WHERE id = ?
+                        """, (new_value, current_time, source_node_id, source_type,
+                              merge_policy, metadata_json, row_id))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO context_store 
+                            (scope, scope_id, node_id, key, value, source_node_id, 
+                             source_type, merge_policy, created_at, updated_at, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (scope, scope_id, node_id, key, new_value, source_node_id,
+                              source_type, merge_policy, current_time, current_time, metadata_json))
+                        row_id = cursor.lastrowid
+                        
+                elif merge_policy == 'merge_dict':
+                    new_value_json = json.dumps(value)
+                    if existing:
+                        row_id, existing_value = existing
+                        # Parse existing value as JSON dict and merge
+                        try:
+                            existing_dict = json.loads(existing_value) if existing_value else {}
+                            if not isinstance(existing_dict, dict):
+                                existing_dict = {}
+                        except (json.JSONDecodeError, TypeError):
+                            existing_dict = {}
+                        
+                        # Merge dicts - new keys overwrite
+                        if isinstance(value, dict):
+                            existing_dict.update(value)
+                            merged_value = json.dumps(existing_dict)
+                        else:
+                            merged_value = new_value_json
+                            
+                        cursor.execute("""
+                            UPDATE context_store 
+                            SET value = ?, updated_at = ?, source_node_id = ?, 
+                                source_type = ?, merge_policy = ?, metadata = ?
+                            WHERE id = ?
+                        """, (merged_value, current_time, source_node_id, source_type,
+                              merge_policy, metadata_json, row_id))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO context_store 
+                            (scope, scope_id, node_id, key, value, source_node_id, 
+                             source_type, merge_policy, created_at, updated_at, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (scope, scope_id, node_id, key, new_value_json, source_node_id,
+                              source_type, merge_policy, current_time, current_time, metadata_json))
+                        row_id = cursor.lastrowid
+                else:
+                    # Unknown merge policy, treat as replace
+                    new_value = json.dumps(value)
+                    if existing:
+                        row_id, _ = existing
+                        cursor.execute("""
+                            UPDATE context_store 
+                            SET value = ?, updated_at = ?, source_node_id = ?, 
+                                source_type = ?, merge_policy = ?, metadata = ?
+                            WHERE id = ?
+                        """, (new_value, current_time, source_node_id, source_type,
+                              merge_policy, metadata_json, row_id))
+                    else:
+                        cursor.execute("""
+                            INSERT INTO context_store 
+                            (scope, scope_id, node_id, key, value, source_node_id, 
+                             source_type, merge_policy, created_at, updated_at, metadata)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (scope, scope_id, node_id, key, new_value, source_node_id,
+                              source_type, merge_policy, current_time, current_time, metadata_json))
+                        row_id = cursor.lastrowid
+                
+                conn.commit()
+            return row_id
+            
+        except sqlite3.Error as e:
+            logger.error(f"Error in put: {e}")
+            return -1
+    
+    def get(self, scope, scope_id, node_id, key=None):
+        """Retrieve entries from the context store
+        
+        Args:
+            scope: Scope type ('run', 'chain', 'global')
+            scope_id: Run ID or chain ID (None for global scope)
+            node_id: Owning context node ID
+            key: Specific key to retrieve (None for all keys)
+            
+        Returns:
+            If key is provided: dict with {key: parsed_value} or empty dict
+            If key is None: dict with {key1: val1, key2: val2, ...}
+        """
+        try:
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
+            
+            if key is not None:
+                cursor.execute("""
+                    SELECT key, value FROM context_store 
+                    WHERE scope = ? AND scope_id IS ? AND node_id IS ? AND key = ?
+                """, (scope, scope_id, node_id, key))
+                row = cursor.fetchone()
+                if row:
+                    try:
+                        parsed_value = json.loads(row[1]) if row[1] else None
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_value = row[1]
+                    return {row[0]: parsed_value}
+                return {}
+            else:
+                cursor.execute("""
+                    SELECT key, value FROM context_store 
+                    WHERE scope = ? AND scope_id IS ? AND node_id IS ?
+                """, (scope, scope_id, node_id))
+                rows = cursor.fetchall()
+                result = {}
+                for row in rows:
+                    try:
+                        parsed_value = json.loads(row[1]) if row[1] else None
+                    except (json.JSONDecodeError, TypeError):
+                        parsed_value = row[1]
+                    result[row[0]] = parsed_value
+                return result
+                
+        except sqlite3.Error as e:
+            logger.error(f"Error in get: {e}")
+            return {}
+    
+    def query(self, scope, scope_id=None, keys=None, source_type=None, limit=None):
+        """Query context store with filters
+        
+        Args:
+            scope: Scope type ('run', 'chain', 'global')
+            scope_id: Optional run ID or chain ID filter
+            keys: Optional list of key names to filter
+            source_type: Optional source type filter
+            limit: Optional maximum number of results
+            
+        Returns:
+            List of dicts with all columns
+        """
+        try:
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
+            
+            query = "SELECT * FROM context_store WHERE scope = ?"
+            params = [scope]
+            
+            if scope_id is not None:
+                query += " AND scope_id IS ?"
+                params.append(scope_id)
+            
+            if keys is not None:
+                placeholders = ",".join(["?" for _ in keys])
+                query += f" AND key IN ({placeholders})"
+                params.extend(keys)
+            
+            if source_type is not None:
+                query += " AND source_type = ?"
+                params.append(source_type)
+            
+            query += " ORDER BY updated_at DESC"
+            
+            if limit is not None:
+                query += " LIMIT ?"
+                params.append(limit)
+            
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            
+            result = []
+            for row in rows:
+                item = {
+                    'id': row[0],
+                    'scope': row[1],
+                    'scope_id': row[2],
+                    'node_id': row[3],
+                    'key': row[4],
+                    'value': json.loads(row[5]) if row[5] else None,
+                    'source_node_id': row[6],
+                    'source_type': row[7],
+                    'merge_policy': row[8],
+                    'created_at': row[9],
+                    'updated_at': row[10],
+                    'metadata': json.loads(row[11]) if row[11] else None
+                }
+                result.append(item)
+            
+            return result
+            
+        except sqlite3.Error as e:
+            logger.error(f"Error in query: {e}")
+            return []
+    
+    def clear_scope(self, scope, scope_id=None):
+        """Delete all rows matching scope (and scope_id if provided)
+        
+        Args:
+            scope: Scope type ('run', 'chain', 'global')
+            scope_id: Optional scope ID to further filter
+        """
+        try:
+            conn = self._ensure_connection()
+            cursor = conn.cursor()
+            
+            with self._write_lock:
+                if scope_id is not None:
+                    cursor.execute("""
+                        DELETE FROM context_store WHERE scope = ? AND scope_id = ?
+                    """, (scope, scope_id))
+                else:
+                    cursor.execute("""
+                        DELETE FROM context_store WHERE scope = ?
+                    """, (scope,))
+                conn.commit()
+            
+            logger.info(f"Cleared context_store: {cursor.rowcount} items removed")
+        except sqlite3.Error as e:
+            logger.error(f"Error in clear_scope: {e}")
+    
+    def export_context(self, scope, scope_id, node_id):
+        """Export all key-value pairs for a context node as JSON-serializable dict
+        
+        Args:
+            scope: Scope type ('run', 'chain', 'global')
+            scope_id: Run ID or chain ID
+            node_id: Context node ID
+            
+        Returns:
+            Dict in format {"keys": {key1: value1, ...}, "scope": scope, "node_id": node_id}
+        """
+        keys_data = self.get(scope, scope_id, node_id)
+        return {
+            "keys": keys_data,
+            "scope": scope,
+            "node_id": node_id
+        }
     
     def close(self):
         """Close the database connection"""

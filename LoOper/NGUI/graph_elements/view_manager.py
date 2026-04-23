@@ -1,5 +1,5 @@
 import logging
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ContextNode
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class ViewManager:
             visible_count = 0
             hidden_count = 0
             for node in all_nodes:
-                if isinstance(node, (SequenceNode, ConditionalNode, LLMNode, TTSNode)):
+                if isinstance(node, (SequenceNode, ConditionalNode, LLMNode, TTSNode, ContextNode)):
                     node.set_disabled(False)
                     visible_count += 1
                 elif isinstance(node, ActionNode):
@@ -93,7 +93,7 @@ class ViewManager:
                 if isinstance(node, ActionNode):
                     node.set_disabled(False)
                     visible_count += 1
-                elif isinstance(node, (SequenceNode, ConditionalNode, LLMNode)):
+                elif isinstance(node, (SequenceNode, ConditionalNode, LLMNode, ContextNode)):
                     node.set_disabled(True)
                     hidden_count += 1
                     
@@ -188,7 +188,7 @@ class ViewManager:
             
             if view_type == 'sequence':
                 filtered_nodes = [node for node in all_nodes 
-                               if isinstance(node, (SequenceNode, ConditionalNode, LLMNode))]
+                               if isinstance(node, (SequenceNode, ConditionalNode, LLMNode, ContextNode))]
                 logger.debug(f"Sequence view would show {len(filtered_nodes)} nodes")
                 return filtered_nodes
             elif view_type == 'action':
@@ -238,7 +238,7 @@ class ViewManager:
         logger.debug(f"Checking if node {type(node).__name__} is visible in {self.current_view} view")
         try:
             if self.current_view == 'sequence':
-                is_visible = isinstance(node, (SequenceNode, ConditionalNode, LLMNode))
+                is_visible = isinstance(node, (SequenceNode, ConditionalNode, LLMNode, ContextNode))
             elif self.current_view == 'action':
                 is_visible = isinstance(node, ActionNode)
             else:

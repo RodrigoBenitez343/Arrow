@@ -543,3 +543,6 @@ class NodeButtonBarManager(QObject):
             elif 'code' in ntype:
                 if hasattr(self.parent, 'edit_code_node'):
                     self.parent.edit_code_node(node)
+            elif 'context' in ntype:
+                if hasattr(self.parent, 'edit_context_node'):
+                    self.parent.edit_context_node(node)

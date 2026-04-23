@@ -83,8 +83,8 @@ class UIComponents:
             except Exception:
                 pass
             
-            # Left-side collapsible chains library
-            logger.debug("Creating left-side chains library")
+            # Left-side collapsible chains library (with context nodes tab)
+            logger.debug("Creating left-side chains library with context nodes tab")
             from ..widgets.chains_library import ChainsLibrary
             self.parent_widget.chains_library = ChainsLibrary(self.parent_widget)
             splitter.addWidget(self.parent_widget.chains_library)

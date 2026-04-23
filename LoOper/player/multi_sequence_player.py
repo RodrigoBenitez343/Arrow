@@ -90,11 +90,12 @@ class MultiSequencePlayer(SeleniumBot):
             self.chain_import_nodes = chain_config.get('chain_import_nodes', [])
             self.code_nodes = chain_config.get('code_nodes', [])
             self.container_nodes = chain_config.get('container_nodes', [])
+            self.context_nodes = chain_config.get('context_nodes', [])
             
             # Use modularized workflow graph builder
-            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes, self.code_nodes, self.container_nodes)
+            graph_builder = WorkflowGraphBuilder(self.sequences, self.conditional_nodes, self.llm_nodes, self.tts_nodes, self.chain_import_nodes, self.code_nodes, self.container_nodes, self.context_nodes)
             self.workflow_graph = graph_builder.build_workflow_graph()
-            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, {len(self.chain_import_nodes)} chain import nodes, {len(self.code_nodes)} code nodes, and {len(self.container_nodes)} container nodes")
+            logger.info(f"Loaded workflow chain with {len(self.sequences)} sequences, {len(self.conditional_nodes)} conditional nodes, {len(self.llm_nodes)} LLM nodes, {len(self.tts_nodes)} TTS nodes, {len(self.chain_import_nodes)} chain import nodes, {len(self.code_nodes)} code nodes, {len(self.container_nodes)} container nodes, and {len(self.context_nodes)} context nodes")
         
         self.current_sequence_index = 0
         
@@ -321,7 +322,11 @@ class MultiSequencePlayer(SeleniumBot):
                 if hasattr(self, 'global_app_context_override') and self.global_app_context_override:
                     self.workflow_executor.global_app_context_override = self.global_app_context_override
                     
-                result = self.workflow_executor.execute_workflow(stop_flag, getattr(self, 'action_handlers', None))
+                result = self.workflow_executor.execute_workflow(
+                    stop_flag,
+                    getattr(self, 'action_handlers', None),
+                    chain_file=getattr(self, 'chain_file_dir', None) or getattr(self, 'chain_file_path', None)
+                )
                 logger.info(f"Workflow execution completed with result: {result}")
                 return result
             else:

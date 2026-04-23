@@ -20,6 +20,7 @@ CHAIN_IMPORT_COLOR = '#32CD32'
 FORM_FILLER_COLOR = '#DDA0DD'
 CODE_NODE_COLOR = '#F1C40F'
 CONTAINER_NODE_COLOR = '#4A90E2'
+CONTEXT_NODE_COLOR = '#2196F3'  # Blue
 
 # Port Color Mapping (visual emphasis; labels are background logic)
 INPUT_PORT_COLOR = '#4DB6FF'   # Bright blue for inputs

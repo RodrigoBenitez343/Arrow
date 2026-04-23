@@ -1138,13 +1138,26 @@ class OllamaClient:
         try:
             try:
                 for delta in self._post_stream_iter('/generate_stream', payload):
-                    accumulated += delta
+                    # Detect full-text mode: some API servers return progressively
+                    # longer strings instead of true deltas. If the chunk starts with
+                    # the accumulated text, it's full-text — extract only the new part.
+                    if accumulated and len(delta) > len(accumulated) and delta.startswith(accumulated):
+                        accumulated = delta
+                    elif delta == accumulated:
+                        pass  # Duplicate chunk, skip
+                    else:
+                        accumulated += delta
                     if on_delta:
                         on_delta(delta)
             except requests.exceptions.RequestException:
                 try:
                     for delta in self._post_stream_iter('/api/generate', payload):
-                        accumulated += delta
+                        if accumulated and len(delta) > len(accumulated) and delta.startswith(accumulated):
+                            accumulated = delta
+                        elif delta == accumulated:
+                            pass
+                        else:
+                            accumulated += delta
                         if on_delta:
                             on_delta(delta)
                 except requests.exceptions.RequestException:
@@ -1161,7 +1174,12 @@ class OllamaClient:
                                 obj = json.loads(line)
                                 delta = obj.get('response') or obj.get('text') or (obj.get('message', {}) or {}).get('content')
                                 if delta:
-                                    accumulated += delta
+                                    if accumulated and len(delta) > len(accumulated) and delta.startswith(accumulated):
+                                        accumulated = delta
+                                    elif delta == accumulated:
+                                        pass
+                                    else:
+                                        accumulated += delta
                                     if on_delta:
                                         on_delta(delta)
                             except Exception:

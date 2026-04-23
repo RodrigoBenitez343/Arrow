@@ -9,5 +9,6 @@ from .nodes_resources import (
     ChainImportNode,
     FormFillerNode,
     CodeNode,
-    ContainerNode
+    ContainerNode,
+    ContextNode
 )
