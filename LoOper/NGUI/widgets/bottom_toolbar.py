@@ -11,7 +11,7 @@ from ..constants import DARK_GREY, LIGHT_GREY, ACCENT_COLOR, TEXT_COLOR, BLOCK_C
 from ..i18n import _
 from .actions_toolbar import load_tabler_icon
 from player.agentic_ops import ChatController
-from AI.model_cache import get_real_cached_models, get_cached_models
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -42,14 +42,8 @@ class BottomActionsToolbar(QWidget):
             on_restore=self._restore_window,
             get_model=self._get_selected_model
         )
-        try:
-            self.hide()
-            if hasattr(self, "_content_frame") and self._content_frame is not None:
-                self._content_frame.hide()
-            if hasattr(self, "_toggle_btn_bottom") and self._toggle_btn_bottom is not None:
-                self._toggle_btn_bottom.hide()
-        except Exception:
-            pass
+        # Bottom toolbar is now visible by default
+        # Removed automatic hiding to enable development and testing
 
     def _build_ui(self):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -74,17 +68,10 @@ class BottomActionsToolbar(QWidget):
         title.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: 600;")
         header.addWidget(title, 0, Qt.AlignLeft)
         header.addStretch(1)
-        model_label = QLabel(_("Model"), self._content_frame)
-        model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        # Fixed model indicator instead of dropdown
+        model_label = QLabel(_("Model: Qwen3.6-35B-A3B"), self._content_frame)
+        model_label.setStyleSheet(f"color: {ACCENT_COLOR}; font-size: 12px; font-weight: 500;")
         header.addWidget(model_label, 0, Qt.AlignRight)
-        self._model_combo = QComboBox(self._content_frame)
-        self._model_combo.addItems(self._load_available_models())
-        self._model_combo.setStyleSheet(
-            f"QComboBox {{ background-color: {BLOCK_COLOR}; color: {TEXT_COLOR}; border: 1px solid {LIGHT_GREY}; border-radius: 8px; padding: 4px 10px; min-width: 120px; }}"
-            f"QComboBox:hover {{ border-color: {ACCENT_COLOR}; }}"
-            f"QComboBox::drop-down {{ border: 0px; }}"
-        )
-        header.addWidget(self._model_combo, 0, Qt.AlignRight)
         layout.addLayout(header)
 
         chat_frame = QFrame(self._content_frame)
@@ -243,60 +230,25 @@ class BottomActionsToolbar(QWidget):
         except Exception:
             logger.exception("Error updating input height")
 
-    def _load_available_models(self):
-        try:
-            QTimer.singleShot(100, self._update_models_async)
-        except Exception:
-            pass
-
-        try:
-            models = get_real_cached_models(timeout=0.5)
-            if not models:
-                models = get_cached_models(timeout=0.5)
-        except Exception:
-            models = []
-        if not models:
-            models = ["llama3.2:latest"]
-        return models
-
-    def _update_models_async(self):
-        def worker():
-            try:
-                from AI.model_cache import get_model_cache
-                cache = get_model_cache()
-                # Wait for initial load
-                models = cache.get_real_models(timeout=5.0)
-                # If nothing, force a refresh
-                if not models:
-                    cache.refresh_models()
-                    models = cache.get_real_models(timeout=2.0)
-                if not models:
-                    models = cache.get_models(timeout=2.0)
-                if not models:
-                    models = ["llama3.2:latest"]
-                self._post_ui(lambda: self._apply_models(models))
-            except Exception as e:
-                logger.error(f"Error updating models async: {e}")
-                
-        import threading
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _apply_models(self, models):
-        try:
-            current = self._model_combo.currentText()
-            self._model_combo.clear()
-            self._model_combo.addItems(models)
-            if current in models:
-                self._model_combo.setCurrentText(current)
-            elif models:
-                self._model_combo.setCurrentIndex(0)
-        except Exception:
-            pass
-
     def _get_selected_model(self):
+        """Return the fixed Qwen model path for llama.cpp"""
         try:
-            return self._model_combo.currentText().strip()
-        except Exception:
+            # Path to the Qwen3.6-35B-A3B-GGUF model
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            model_path = os.path.join(
+                base_dir, 
+                "AI", 
+                "models", 
+                "Qwen3.6-35B-A3B-GGUF", 
+                "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf"
+            )
+            if os.path.exists(model_path):
+                return model_path
+            else:
+                logger.warning(f"Qwen model not found at: {model_path}")
+                return ""
+        except Exception as e:
+            logger.error(f"Error getting model path: {e}")
             return ""
 
     def _handle_send(self):

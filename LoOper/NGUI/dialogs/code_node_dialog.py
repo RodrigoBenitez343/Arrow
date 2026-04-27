@@ -24,6 +24,12 @@ except ImportError:
     get_real_cached_models = lambda timeout=5.0: []
     get_model_cache = lambda: None
 
+# Import llama.cpp model scanner
+try:
+    from .llm_dialogs import get_llamacpp_models
+except ImportError:
+    get_llamacpp_models = lambda: []
+
 class CodeGeneratorThread(QThread):
     finished = pyqtSignal(str)
     error = pyqtSignal(str)
@@ -114,6 +120,16 @@ class CodeNodeDialog(ModernDialog):
         self.content_layout.addWidget(self.tabs)
         self.add_buttons()
         
+        # Load engine selection from config
+        use_llamacpp = self.config.get('use_llamacpp', False)
+        if isinstance(use_llamacpp, str):
+            use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
+        
+        if use_llamacpp:
+            self.engine_combo.setCurrentText("llama.cpp")
+        else:
+            self.engine_combo.setCurrentText("Ollama")
+        
     def add_buttons(self):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -160,15 +176,40 @@ class CodeNodeDialog(ModernDialog):
                 
         except Exception as e:
             QMessageBox.warning(self, _("Refresh Failed"), _("Failed to refresh models: {error}").format(error=str(e)))
+    
+    def on_engine_changed(self, engine):
+        """Handle engine selection change"""
+        use_llamacpp = (engine == "llama.cpp")
+        
+        # Show/hide appropriate model dropdowns
+        self.model_combo.setVisible(not use_llamacpp)
+        self.model_label.setVisible(not use_llamacpp)
+        
+        self.llamacpp_model_combo.setVisible(use_llamacpp)
+        self.llamacpp_model_label.setVisible(use_llamacpp)
 
     def setup_generator_tab(self):
         layout = QVBoxLayout(self.generator_tab)
         layout.setSpacing(15)
 
+        # Engine Selection
+        engine_layout = QHBoxLayout()
+        engine_label = QLabel(_("Engine:"))
+        engine_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        engine_layout.addWidget(engine_label)
+        
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItems(["Ollama", "llama.cpp"])
+        self.engine_combo.setStyleSheet(self.get_input_style())
+        self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
+        engine_layout.addWidget(self.engine_combo)
+        engine_layout.addStretch()
+        layout.addLayout(engine_layout)
+        
         # Model Selection
         model_layout = QVBoxLayout()
-        model_label = QLabel(_("Model:"))
-        model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        self.model_label = QLabel(_("Ollama Model:"))
+        self.model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
         
         model_select_layout = QHBoxLayout()
         self.model_combo = QComboBox()
@@ -183,7 +224,7 @@ class CodeNodeDialog(ModernDialog):
         model_select_layout.addWidget(self.model_combo)
         model_select_layout.addWidget(refresh_btn)
         
-        # Load models
+        # Load Ollama models
         try:
             # Try to get real cached models first (downloaded ones)
             models = get_real_cached_models(timeout=2.0)
@@ -201,9 +242,39 @@ class CodeNodeDialog(ModernDialog):
         current_model = self.config.get('gen_model', 'llama3.2:latest')
         self.model_combo.setCurrentText(current_model)
         
-        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_label)
         model_layout.addLayout(model_select_layout)
+        
+        # llama.cpp Model Selection (initially hidden)
+        llamacpp_model_layout = QVBoxLayout()
+        self.llamacpp_model_label = QLabel(_("GGUF Model:"))
+        self.llamacpp_model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
+        
+        self.llamacpp_model_combo = QComboBox()
+        self.llamacpp_model_combo.setEditable(True)
+        self.llamacpp_model_combo.setStyleSheet(self.get_input_style())
+        
+        # Load GGUF models
+        gguf_models = get_llamacpp_models()
+        if gguf_models:
+            self.llamacpp_model_combo.addItems(gguf_models)
+        else:
+            self.llamacpp_model_combo.setPlaceholderText("No GGUF models found in AI/models/")
+        
+        # Set current model if exists
+        current_llamacpp = self.config.get('llamacpp_model_path', '')
+        if current_llamacpp:
+            self.llamacpp_model_combo.setCurrentText(current_llamacpp)
+        
+        llamacpp_model_layout.addWidget(self.llamacpp_model_label)
+        llamacpp_model_layout.addWidget(self.llamacpp_model_combo)
+        
+        # Initially hide llama.cpp model selection
+        self.llamacpp_model_label.setVisible(False)
+        self.llamacpp_model_combo.setVisible(False)
+        
         layout.addLayout(model_layout)
+        layout.addLayout(llamacpp_model_layout)
         
         # Prompt
         prompt_layout = QVBoxLayout()
@@ -438,13 +509,18 @@ class CodeNodeDialog(ModernDialog):
         """
         
     def get_config(self):
+        # Determine which engine is selected
+        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
+        
         return {
             'code': self.code_edit.toPlainText(),
             'file_path': self.file_path_edit.text(),
             'execute_on_input': self.exec_check.isChecked(),
             'output_variable': self.output_var_edit.text(),
             'timeout': self.timeout_spin.value(),
-            'gen_model': self.model_combo.currentText(),
+            'use_llamacpp': use_llamacpp,
+            'gen_model': self.model_combo.currentText() if not use_llamacpp else 'llamacpp',
+            'llamacpp_model_path': self.llamacpp_model_combo.currentText() if use_llamacpp else '',
             'gen_prompt': self.prompt_edit.toPlainText(),
             'description': self.description_edit.text()
         }

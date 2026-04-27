@@ -43,7 +43,13 @@ def load_ai_config() -> Dict[str, Any]:
     
     # Set environment variables for current session
     for key, value in config.items():
-        os.environ[key] = value
+        # Only set string values as environment variables
+        # Skip nested dicts like LLAMA_CPP config
+        if isinstance(value, str):
+            os.environ[key] = value
+        elif isinstance(value, (int, float, bool)):
+            os.environ[key] = str(value)
+        # Skip dict, list, and other complex types
     
     return config
 
@@ -63,3 +69,23 @@ def should_auto_start_api() -> bool:
     """Check if API should be auto-started"""
     config = load_ai_config()
     return config.get("AUTO_START_API", "false").lower() == "true"
+
+def get_llamacpp_config() -> Dict[str, Any]:
+    """Get llama.cpp specific configuration"""
+    config = load_ai_config()
+    llamacpp_config = config.get("LLAMA_CPP", {})
+    
+    # Return default config if not specified
+    if not llamacpp_config:
+        return {
+            "enabled": False,
+            "llama_cpp_path": "utils/llama.cpp",
+            "default_model_path": "",
+            "server_port": 8081,
+            "gpu_layers": 35,
+            "threads": 8,
+            "context_size": 4096,
+            "batch_size": 512
+        }
+    
+    return llamacpp_config

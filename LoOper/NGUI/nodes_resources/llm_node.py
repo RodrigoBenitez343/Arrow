@@ -3,6 +3,7 @@ from NodeGraphQt import BaseNode
 from .base_node import _add_multi_input, get_default_api_url
 from ..constants import (
     LLM_COLOR,
+    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
     UNIVERSAL_PORT_TYPE
@@ -37,14 +38,25 @@ class LLMNode(BaseNode):
             'input_source': 'none',
             'ocr_confidence': 0.5,
             'ocr_preprocessing': True,
-            'use_async': True  # Enable asynchronous processing by default
+            'use_async': True,  # Enable asynchronous processing by default
+            # Llama.cpp specific config
+            'use_llamacpp': False,
+            'llamacpp_model_path': '',
+            'llamacpp_gpu_layers': 35,
+            'llamacpp_threads': 8,
+            'llamacpp_context_size': 4096
         }
         
-        # Set a distinct color for LLM nodes (orange)
-        self.set_color(*[int(LLM_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
-        # Title styling: bigger font, black text
+        # Use a darkened version of the special color for better text readability
+        # Keep the color identity but make it dark enough for white text
+        base_color = LLM_COLOR
+        r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
+        # Darken to 25% brightness for good contrast with white text
+        dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
+        self.set_color(dark_r, dark_g, dark_b)
+        # Title styling: bigger font, white text for dark background
         try:
-            self.set_text_color(0, 0, 0)
+            self.set_text_color(255, 255, 255)
         except Exception:
             pass
         try:
@@ -134,14 +146,12 @@ class LLMNode(BaseNode):
         self.create_property('skills', '[]')
         self.create_property('use_skill_routing', 'true')
         self.create_property('semantic_description', '')
-        
-        # Visual indicator for editable nodes (border accent)
-        try:
-            from ..constants import BLOCK_HOVER
-            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
-            self.set_border_color(*border_rgb)
-        except Exception:
-            pass
+        # Llama.cpp properties
+        self.create_property('use_llamacpp', 'false')
+        self.create_property('llamacpp_model_path', '')
+        self.create_property('llamacpp_gpu_layers', '35')
+        self.create_property('llamacpp_threads', '8')
+        self.create_property('llamacpp_context_size', '4096')
     
     def set_llm_config(self, config):
         """Set the LLM configuration for this node"""
@@ -193,6 +203,17 @@ class LLMNode(BaseNode):
             self.set_property('use_skill_routing', str(config['use_skill_routing']).lower())
         if 'semantic_description' in config:
             self.set_property('semantic_description', config['semantic_description'])
+        # Llama.cpp config
+        if 'use_llamacpp' in config:
+            self.set_property('use_llamacpp', str(config['use_llamacpp']).lower())
+        if 'llamacpp_model_path' in config:
+            self.set_property('llamacpp_model_path', config['llamacpp_model_path'])
+        if 'llamacpp_gpu_layers' in config:
+            self.set_property('llamacpp_gpu_layers', str(config['llamacpp_gpu_layers']))
+        if 'llamacpp_threads' in config:
+            self.set_property('llamacpp_threads', str(config['llamacpp_threads']))
+        if 'llamacpp_context_size' in config:
+            self.set_property('llamacpp_context_size', str(config['llamacpp_context_size']))
         
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
@@ -259,7 +280,13 @@ class LLMNode(BaseNode):
             'tool_descriptions': tool_descriptions,
             'skills': _json.loads(self.get_property('skills') or '[]'),
             'use_skill_routing': str(self.get_property('use_skill_routing') or 'true').lower() in ('true', '1'),
-            'semantic_description': self.get_property('semantic_description') or ''
+            'semantic_description': self.get_property('semantic_description') or '',
+            # Llama.cpp config
+            'use_llamacpp': str(self.get_property('use_llamacpp') or 'false').lower() in ('true', '1'),
+            'llamacpp_model_path': self.get_property('llamacpp_model_path') or '',
+            'llamacpp_gpu_layers': int(self.get_property('llamacpp_gpu_layers') or 35),
+            'llamacpp_threads': int(self.get_property('llamacpp_threads') or 8),
+            'llamacpp_context_size': int(self.get_property('llamacpp_context_size') or 4096)
         }
     
     def is_vision_model(self, model_name):
@@ -329,6 +356,13 @@ class LLMNode(BaseNode):
         import sys
         import os
         
+        config = self.get_llm_config()
+        
+        # Check if using llama.cpp
+        if config.get('use_llamacpp', False):
+            return self._execute_llamacpp(config, context_variables)
+        
+        # Otherwise use Ollama (existing code)
         # Add the AI directory to the path to import the OllamaClient
         ai_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'AI')
         if ai_dir not in sys.path:
@@ -337,7 +371,6 @@ class LLMNode(BaseNode):
         try:
             from ...AI.consult import OllamaClient
             
-            config = self.get_llm_config()
             client = OllamaClient(config['api_url'])
             
             # Replace variables in prompt if context is provided
@@ -400,3 +433,55 @@ class LLMNode(BaseNode):
                 
         except Exception as e:
             return {'error': str(e)}
+    
+    def _execute_llamacpp(self, config, context_variables=None):
+        """Execute LLM using llama.cpp engine"""
+        import requests
+        import os
+        
+        try:
+            # Get API URL for llama.cpp endpoints
+            api_url = config.get('api_url', get_default_api_url()).rstrip('/')
+            
+            # Replace variables in prompt if context is provided
+            prompt = config['prompt']
+            if context_variables:
+                for var_name, var_value in context_variables.items():
+                    prompt = prompt.replace(f"{{{var_name}}}", str(var_value))
+            
+            # Build request payload
+            payload = {
+                'model': config.get('llamacpp_model_path', ''),
+                'prompt': prompt,
+                'system': config.get('system_message', ''),
+                'temperature': config.get('temperature', 0.7),
+                'max_tokens': config.get('max_tokens', 4096),
+                'stream': False,
+                'use_llamacpp': True,
+                'gpu_layers': config.get('llamacpp_gpu_layers', 35),
+                'threads': config.get('llamacpp_threads', 8),
+                'context_size': config.get('llamacpp_context_size', 4096)
+            }
+            
+            # Make API call to llama.cpp endpoint
+            response = requests.post(
+                f"{api_url}/llamacpp/generate",
+                json=payload,
+                timeout=120
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                generated_text = result.get('response', '')
+                return {
+                    'success': True,
+                    'text': generated_text,
+                    'variable_name': config['output_variable'],
+                    'used_vision': False,
+                    'engine': 'llamacpp'
+                }
+            else:
+                return {'error': f"llama.cpp API error: {response.status_code} - {response.text}"}
+                
+        except Exception as e:
+            return {'error': f"llama.cpp execution failed: {str(e)}"}

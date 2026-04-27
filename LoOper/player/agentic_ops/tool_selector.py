@@ -34,13 +34,14 @@ class ToolSelector:
                     self._log_event("status_tool_selected", {"query": user_text or text, "tool_id": picked})
                 return picked
         tool_desc_map = {t["id"]: t.get("tool_desc", "") for t in tools}
-        model_name = None
+        
+        # Get the Qwen model path
+        model_path = None
         if self._get_model:
-            model_name = self._get_model()
-        if not model_name:
-            model_name = "cogito:latest"
+            model_path = self._get_model()
+        
         llm_config = {
-            "model": model_name,
+            "model": "Qwen3.6-35B-A3B",
             "api_url": get_default_api_url(),
             "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions.\n"
                               "If the request is to type, write, search, or enter text, choose the 'Write/Type Text' tool.\n"
@@ -55,6 +56,12 @@ class ToolSelector:
             "use_async": False,
             "write_text": False,
             "tool_descriptions": tool_desc_map,
+            # llama.cpp specific configuration
+            "use_llamacpp": True,
+            "llamacpp_model_path": model_path if model_path else "",
+            "llamacpp_gpu_layers": 35,
+            "llamacpp_threads": 8,
+            "llamacpp_context_size": 4096,
         }
         node = {
             "id": "chat_tool_selector",

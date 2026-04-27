@@ -25,13 +25,14 @@ class TypingAssistant:
             "If the step implies writing a message, output the full message content.\n"
             "Output ONLY the text to be typed. Do not include any explanation or quotes unless they are part of the text."
         )
-        model_name = None
+        
+        # Get the Qwen model path
+        model_path = None
         if self._get_model:
-            model_name = self._get_model()
-        if not model_name:
-            model_name = "cogito:latest"
+            model_path = self._get_model()
+        
         llm_config = {
-            "model": model_name,
+            "model": "Qwen3.6-35B-A3B",
             "api_url": get_default_api_url(),
             "system_message": "You are a text generator for automation. Output only the raw text to be typed.",
             "prompt": prompt,
@@ -42,6 +43,12 @@ class TypingAssistant:
             "use_comorag": False,
             "use_async": False,
             "write_text": False,
+            # llama.cpp specific configuration
+            "use_llamacpp": True,
+            "llamacpp_model_path": model_path if model_path else "",
+            "llamacpp_gpu_layers": 35,
+            "llamacpp_threads": 8,
+            "llamacpp_context_size": 4096,
         }
         node = {
             "id": "chat_typing_generator",

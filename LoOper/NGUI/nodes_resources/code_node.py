@@ -3,6 +3,7 @@ from NodeGraphQt import BaseNode
 from .base_node import _add_multi_input
 from ..constants import (
     CODE_NODE_COLOR,
+    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
     UNIVERSAL_PORT_TYPE
@@ -17,12 +18,17 @@ class CodeNode(BaseNode):
     def __init__(self):
         super(CodeNode, self).__init__()
         
-        # Set a distinct color for Code nodes
-        self.set_color(*[int(CODE_NODE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Use a darkened version of the special color for better text readability
+        # Keep the color identity but make it dark enough for white text
+        base_color = CODE_NODE_COLOR
+        r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
+        # Darken to 25% brightness for good contrast with white text
+        dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
+        self.set_color(dark_r, dark_g, dark_b)
         
-        # Title styling
+        # Title styling - white text for dark background
         try:
-            self.set_text_color(0, 0, 0)
+            self.set_text_color(255, 255, 255)
         except Exception:
             pass
         try:
@@ -61,14 +67,11 @@ class CodeNode(BaseNode):
         self.create_property('gen_model', 'llama3.2:latest')
         self.create_property('gen_prompt', '')
         self.create_property('description', '')
-
-        # Visual indicator
-        try:
-            from ..constants import BLOCK_HOVER
-            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
-            self.set_border_color(*border_rgb)
-        except Exception:
-            pass
+        # Llama.cpp support for code generation
+        self.create_property('use_llamacpp', 'false')
+        self.create_property('llamacpp_model_path', '')
+        self.create_property('llamacpp_gpu_layers', '35')
+        self.create_property('llamacpp_threads', '8')
             
     def get_code_config(self):
         """Get the configuration for this node"""
@@ -80,7 +83,12 @@ class CodeNode(BaseNode):
             'timeout': int(self.get_property('timeout') or 30),
             'gen_model': self.get_property('gen_model'),
             'gen_prompt': self.get_property('gen_prompt'),
-            'description': self.get_property('description') or ''
+            'description': self.get_property('description') or '',
+            # Llama.cpp config
+            'use_llamacpp': self.get_property('use_llamacpp') == 'true',
+            'llamacpp_model_path': self.get_property('llamacpp_model_path') or '',
+            'llamacpp_gpu_layers': int(self.get_property('llamacpp_gpu_layers') or 35),
+            'llamacpp_threads': int(self.get_property('llamacpp_threads') or 8)
         }
 
     def execute_code(self, input_data=None, args=None, runtime_code=None):
