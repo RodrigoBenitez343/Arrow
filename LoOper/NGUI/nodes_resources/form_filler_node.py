@@ -1,6 +1,7 @@
 from NodeGraphQt import BaseNode
 from ..constants import (
     FORM_FILLER_COLOR,
+    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR
 )
@@ -15,11 +16,17 @@ class FormFillerNode(BaseNode):
         super(FormFillerNode, self).__init__()
         self.set_name('Form Filler (Deprecated)')
         
-        self.set_color(*[int(FORM_FILLER_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Use a darkened version of the special color for better text readability
+        # Keep the color identity but make it dark enough for white text
+        base_color = FORM_FILLER_COLOR
+        r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
+        # Darken to 25% brightness for good contrast with white text
+        dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
+        self.set_color(dark_r, dark_g, dark_b)
         
-        # Title styling: bigger font, black text
+        # Title styling - white text for dark background
         try:
-            self.set_text_color(0, 0, 0)
+            self.set_text_color(255, 255, 255)
         except Exception:
             pass
         try:
@@ -38,14 +45,6 @@ class FormFillerNode(BaseNode):
         self.create_property('instruction', 'Fill the form on the screen.')
         self.create_property('model', 'llama3.2:latest')
         self.create_property('confidence_threshold', '0.8')
-        
-        # Visual indicator for editable nodes (border accent)
-        try:
-            from ..constants import BLOCK_HOVER
-            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
-            self.set_border_color(*border_rgb)
-        except Exception:
-            pass
 
     def get_form_filler_config(self):
         """Get the configuration for this node"""

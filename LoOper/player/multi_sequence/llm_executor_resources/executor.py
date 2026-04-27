@@ -1197,6 +1197,69 @@ class LLMExecutor:
             _node_id = llm_data.get('node_id') or llm_data.get('id') or node.get('id')
 
             try:
+                # Check if using llama.cpp
+                use_llamacpp = llm_config.get('use_llamacpp', False)
+                if isinstance(use_llamacpp, str):
+                    use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
+                
+                if use_llamacpp:
+                    # Use llama.cpp engine
+                    logger.info("Using llama.cpp engine for LLM execution")
+                    llamacpp_model_path = llm_config.get('llamacpp_model_path', '')
+                    llamacpp_gpu_layers = int(llm_config.get('llamacpp_gpu_layers', 35) or 35)
+                    llamacpp_threads = int(llm_config.get('llamacpp_threads', 8) or 8)
+                    llamacpp_context_size = int(llm_config.get('llamacpp_context_size', 4096) or 4096)
+                    
+                    if not llamacpp_model_path:
+                        logger.error("llama.cpp model path not specified")
+                        out_dict["error"] = "llama.cpp model path not specified"
+                        return
+                    
+                    if not os.path.exists(llamacpp_model_path):
+                        logger.error(f"llama.cpp model not found: {llamacpp_model_path}")
+                        out_dict["error"] = f"Model not found: {llamacpp_model_path}"
+                        return
+                    
+                    # Build llama.cpp API payload
+                    try:
+                        import requests as llm_req
+                        llamacpp_api_url = api_url.rstrip('/')
+                        
+                        payload = {
+                            'model': llamacpp_model_path,
+                            'prompt': effective_prompt if 'effective_prompt' in locals() else prompt,
+                            'system': system_message or '',
+                            'temperature': temperature,
+                            'max_tokens': max_tokens,
+                            'stream': False,
+                            'use_llamacpp': True,
+                            'gpu_layers': llamacpp_gpu_layers,
+                            'threads': llamacpp_threads,
+                            'context_size': llamacpp_context_size
+                        }
+                        
+                        logger.info(f"Sending request to llama.cpp endpoint: {llamacpp_api_url}/llamacpp/generate")
+                        response = llm_req.post(
+                            f"{llamacpp_api_url}/llamacpp/generate",
+                            json=payload,
+                            timeout=300  # 5 minute timeout for large models
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            out_dict["result"] = result
+                            logger.info(f"llama.cpp generation successful: {len(result.get('response', ''))} chars")
+                        else:
+                            error_msg = f"llama.cpp API error: {response.status_code} - {response.text}"
+                            logger.error(error_msg)
+                            out_dict["error"] = error_msg
+                    except Exception as llamacpp_err:
+                        error_msg = f"llama.cpp execution failed: {str(llamacpp_err)}"
+                        logger.error(error_msg, exc_info=True)
+                        out_dict["error"] = error_msg
+                    return
+                
+                # Otherwise use Ollama (existing code)
                 from AI.consult import OllamaClient as _Client
                 # Disable client request timeouts for local LLMs
                 cli = _Client(base_url=api_url, debug=True, use_comorag=use_comorag, timeout=None)

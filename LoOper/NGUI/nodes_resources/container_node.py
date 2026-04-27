@@ -3,6 +3,7 @@ from NodeGraphQt import BaseNode
 from .base_node import _add_multi_input
 from ..constants import (
     CONTAINER_NODE_COLOR,
+    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
     UNIVERSAL_PORT_TYPE
@@ -17,12 +18,17 @@ class ContainerNode(BaseNode):
     def __init__(self):
         super(ContainerNode, self).__init__()
         
-        # Set a distinct color for Container nodes
-        self.set_color(*[int(CONTAINER_NODE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
+        # Use a darkened version of the special color for better text readability
+        # Keep the color identity but make it dark enough for white text
+        base_color = CONTAINER_NODE_COLOR
+        r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
+        # Darken to 25% brightness for good contrast with white text
+        dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
+        self.set_color(dark_r, dark_g, dark_b)
         
-        # Title styling
+        # Title styling - white text for dark background
         try:
-            self.set_text_color(0, 0, 0)
+            self.set_text_color(255, 255, 255)
         except Exception:
             pass
         try:

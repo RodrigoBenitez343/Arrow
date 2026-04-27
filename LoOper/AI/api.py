@@ -30,6 +30,42 @@ except ImportError:
     from OverWatch.api.comorag_engine import ComoRAGEngine
     from OverWatch.api.ollama_engine import OllamaEngine
 
+# Import llama.cpp engine (optional, graceful fallback)
+try:
+    from AI.llama_cpp_engine import LlamaCppEngine, llama_cpp_manager
+except ImportError:
+    try:
+        from llama_cpp_engine import LlamaCppEngine, llama_cpp_manager
+    except ImportError:
+        # llama.cpp not available, create stub classes
+        print("[WARNING] llama.cpp engine not available, using stub")
+        class LlamaCppEngine:
+            def __init__(self, config=None):
+                self.config = config or {}
+                self.is_running = False
+                self.server_url = "http://127.0.0.1:8081"
+            def start_server(self, blocking=False):
+                return False
+            def stop_server(self):
+                pass
+            def generate(self, *args, **kwargs):
+                return {'error': 'llama.cpp not available', 'response': ''}
+            def chat(self, *args, **kwargs):
+                return {'error': 'llama.cpp not available', 'response': ''}
+            def get_server_info(self):
+                return {'status': 'not_available'}
+        
+        class llama_cpp_manager:
+            @staticmethod
+            def create_engine(*args, **kwargs):
+                return None
+            @staticmethod
+            def get_engine(*args, **kwargs):
+                return None
+            @staticmethod
+            def stop_all():
+                pass
+
 import asyncio
 from typing import Set
 import threading
@@ -520,6 +556,11 @@ class ChatRequest(BaseModel):
     system: Optional[str] = None
     images: Optional[List[str]] = None  # List of base64 encoded images or file paths
     cleanup_after: Optional[bool] = True
+    # Llama.cpp specific parameters
+    use_llamacpp: Optional[bool] = False
+    gpu_layers: Optional[int] = None
+    threads: Optional[int] = None
+    context_size: Optional[int] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -1043,6 +1084,177 @@ async def bootstrap_status():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ========== Llama.cpp Endpoints ==========
+
+@app.post("/llamacpp/chat")
+async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks):
+    """Chat with a model using llama.cpp engine"""
+    try:
+        global LLAMACPP_ENGINE
+        
+        if LLAMACPP_ENGINE is None:
+            raise HTTPException(status_code=503, detail="llama.cpp engine not initialized")
+        
+        # Start server if not running
+        if not LLAMACPP_ENGINE.is_running:
+            if not LLAMACPP_ENGINE.start_server(blocking=True):
+                raise HTTPException(status_code=503, detail="Failed to start llama.cpp server")
+        
+        # Build messages or use prompt
+        if request.messages:
+            result = LLAMACPP_ENGINE.chat(
+                messages=request.messages,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+            )
+        else:
+            messages = []
+            if request.system:
+                messages.append({"role": "system", "content": request.system})
+            messages.append({"role": "user", "content": request.prompt or ""})
+            
+            result = LLAMACPP_ENGINE.chat(
+                messages=messages,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+            )
+        
+        if 'error' in result:
+            raise HTTPException(status_code=500, detail=result['error'])
+        
+        return {
+            "response": result.get('response', ''),
+            "model": result.get('model', request.model),
+            "created_at": time.strftime('%Y-%m-%dT%H:%M:%S'),
+            "done": result.get('done', True),
+            "usage": result.get('usage', {})
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"llama.cpp error: {str(e)}")
+
+@app.post("/llamacpp/generate")
+async def llamacpp_generate(request: ChatRequest, background_tasks: BackgroundTasks):
+    """Generate text using llama.cpp engine (alias for chat)"""
+    return await llamacpp_chat(request, background_tasks)
+
+@app.post("/llamacpp/generate_stream")
+async def llamacpp_generate_stream(request: ChatRequest):
+    """Stream text generation using llama.cpp engine"""
+    try:
+        global LLAMACPP_ENGINE
+        
+        if LLAMACPP_ENGINE is None:
+            raise HTTPException(status_code=503, detail="llama.cpp engine not initialized")
+        
+        if not LLAMACPP_ENGINE.is_running:
+            if not LLAMACPP_ENGINE.start_server(blocking=True):
+                raise HTTPException(status_code=503, detail="Failed to start llama.cpp server")
+        
+        # Build prompt
+        prompt = request.prompt or ""
+        if request.system:
+            prompt = f"System: {request.system}\n\nUser: {prompt}\n\nAssistant: "
+        
+        async def stream_generator():
+            accumulated = ""
+            for chunk in LLAMACPP_ENGINE.generate_stream(
+                prompt=prompt,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+            ):
+                accumulated += chunk
+                yield json.dumps({"text": accumulated}) + "\n"
+        
+        return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/llamacpp/models")
+async def llamacpp_list_models():
+    """List available GGUF models"""
+    try:
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'unsloth')
+        gguf_models = []
+        
+        if os.path.exists(models_dir):
+            for root, dirs, files in os.walk(models_dir):
+                for file in files:
+                    if file.endswith('.gguf'):
+                        model_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(model_path, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                        file_size = os.path.getsize(model_path)
+                        gguf_models.append({
+                            "name": rel_path,
+                            "path": model_path,
+                            "size": file_size,
+                            "type": "gguf"
+                        })
+        
+        return {"models": gguf_models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/llamacpp/start")
+async def llamacpp_start_server(body: Dict[str, Any]):
+    """Start llama.cpp server with specific model"""
+    try:
+        global LLAMACPP_ENGINE
+        
+        model_path = body.get('model_path', '')
+        if not model_path or not os.path.exists(model_path):
+            raise HTTPException(status_code=400, detail=f"Model not found: {model_path}")
+        
+        config = {
+            'model_path': model_path,
+            'server_port': int(body.get('server_port', 8081)),
+            'gpu_layers': int(body.get('gpu_layers', 35)),
+            'threads': int(body.get('threads', 8)),
+            'context_size': int(body.get('context_size', 4096)),
+            'batch_size': int(body.get('batch_size', 512))
+        }
+        
+        LLAMACPP_ENGINE = LlamaCppEngine(config)
+        
+        if not LLAMACPP_ENGINE.start_server(blocking=True):
+            raise HTTPException(status_code=503, detail="Failed to start llama.cpp server")
+        
+        return {"status": "started", "url": LLAMACPP_ENGINE.server_url}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/llamacpp/stop")
+async def llamacpp_stop_server():
+    """Stop llama.cpp server"""
+    try:
+        global LLAMACPP_ENGINE
+        
+        if LLAMACPP_ENGINE:
+            LLAMACPP_ENGINE.stop_server()
+            return {"status": "stopped"}
+        return {"status": "not_running"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/llamacpp/status")
+async def llamacpp_status():
+    """Get llama.cpp server status"""
+    try:
+        global LLAMACPP_ENGINE
+        
+        if LLAMACPP_ENGINE:
+            return LLAMACPP_ENGINE.get_server_info()
+        return {"status": "not_initialized"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ========== End Llama.cpp Endpoints ==========
+
 class ComoRAGReasonRequest(BaseModel):
     query: str
     model: str
@@ -1061,11 +1273,12 @@ class ComoRAGAddMemoryRequest(BaseModel):
 
 COMORAG_ENGINE: Optional[ComoRAGEngine] = None
 OLLAMA_ENGINE: Optional[OllamaEngine] = None
+LLAMACPP_ENGINE: Optional[LlamaCppEngine] = None
 SETTINGS: Any = None
 
 @app.on_event("startup")
 async def startup_event():
-    global OLLAMA_ENGINE, COMORAG_ENGINE, SETTINGS
+    global OLLAMA_ENGINE, COMORAG_ENGINE, LLAMACPP_ENGINE, SETTINGS
     
     # Initialize Ollama Engine (using settings from LoOper config or defaults)
     try:
@@ -1095,6 +1308,44 @@ async def startup_event():
     except Exception as e:
         print(f"Warning: Failed to create ComoRAG engine: {e}")
         COMORAG_ENGINE = None
+
+    # Initialize llama.cpp Engine
+    try:
+        # Load llama.cpp config
+        config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+        llamacpp_config = {
+            'enabled': True,
+            'llama_cpp_path': os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'utils', 'llama.cpp'),
+            'model_path': '',
+            'server_port': 8081,
+            'gpu_layers': 35,
+            'threads': 8,
+            'context_size': 4096,
+            'batch_size': 512
+        }
+        
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                if 'LLAMA_CPP' in config:
+                    lc = config['LLAMA_CPP']
+                    llamacpp_config.update(lc)
+                    # Resolve model path
+                    if 'default_model_path' in lc:
+                        model_path = lc['default_model_path']
+                        if not os.path.isabs(model_path):
+                            model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), model_path)
+                        llamacpp_config['model_path'] = model_path
+        
+        if llamacpp_config.get('enabled', False) and llamacpp_config.get('model_path'):
+            LLAMACPP_ENGINE = LlamaCppEngine(llamacpp_config)
+            print(f"[LLAMA.CPP] Engine initialized with model: {llamacpp_config['model_path']}")
+        else:
+            print("[LLAMA.CPP] Engine disabled or model not configured")
+            LLAMACPP_ENGINE = None
+    except Exception as e:
+        print(f"Warning: Failed to create llama.cpp engine: {e}")
+        LLAMACPP_ENGINE = None
 
     async def _init_engines_in_background():
         global OLLAMA_ENGINE, COMORAG_ENGINE

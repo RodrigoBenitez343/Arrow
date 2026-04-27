@@ -88,10 +88,9 @@ class FailureAnalyzer:
         model_name = None
         if self._get_model:
             model_name = self._get_model()
-        if not model_name:
-            model_name = "cogito:latest"
+        
         llm_config = {
-            "model": model_name,
+            "model": "Qwen3.6-35B-A3B",
             "api_url": get_default_api_url(),
             "system_message": "Return only valid JSON. No extra text.",
             "prompt": prompt,
@@ -102,6 +101,12 @@ class FailureAnalyzer:
             "use_comorag": False,
             "use_async": False,
             "write_text": False,
+            # llama.cpp specific configuration
+            "use_llamacpp": True,
+            "llamacpp_model_path": model_name if model_name else "",
+            "llamacpp_gpu_layers": 35,
+            "llamacpp_threads": 8,
+            "llamacpp_context_size": 4096,
         }
         node = {
             "id": "chat_failure_analyzer",

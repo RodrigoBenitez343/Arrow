@@ -29,6 +29,38 @@ from AI.consult import OllamaClient
 from AI.model_cache import get_cached_models, get_model_cache, get_real_cached_models
 
 
+def get_llamacpp_models():
+    """Scan for GGUF models in the LoOper/AI/models directory"""
+    try:
+        # Get the models directory path - go up from NGUI/dialogs to LoOper/AI/models
+        current_file = os.path.abspath(__file__)
+        # current_file is in LoOper/NGUI/dialogs/llm_dialogs.py
+        # We need to go up 2 levels to get to LoOper/
+        looper_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
+        models_dir = os.path.join(looper_dir, 'AI', 'models')
+        
+        if not os.path.exists(models_dir):
+            print(f"Warning: Models directory not found: {models_dir}")
+            return []
+        
+        gguf_models = []
+        # Walk through the models directory to find .gguf files
+        for root, dirs, files in os.walk(models_dir):
+            for file in files:
+                if file.endswith('.gguf'):
+                    # Get relative path from models directory
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, models_dir)
+                    # Convert to forward slashes for consistency
+                    rel_path = rel_path.replace('\\', '/')
+                    gguf_models.append(rel_path)
+        
+        return sorted(gguf_models)
+    except Exception as e:
+        print(f"Warning: Failed to scan llama.cpp models: {e}")
+        return []
+
+
 class SkillGeneratorThread(QThread):
     """Thread for generating skill definitions via AI"""
     finished = pyqtSignal(dict)
@@ -113,6 +145,20 @@ class LLMPropertiesDialog(ModernDialog):
         if current_model in available_models:
             self.model_combo.setCurrentText(current_model)
     
+    def on_engine_changed(self, engine):
+        """Handle engine selection change"""
+        use_llamacpp = (engine == "llama.cpp")
+        
+        # Show/hide appropriate model dropdowns
+        self.model_combo.setVisible(not use_llamacpp)
+        self.model_label.setVisible(not use_llamacpp)
+        
+        self.llamacpp_model_combo.setVisible(use_llamacpp)
+        self.llamacpp_model_label.setVisible(use_llamacpp)
+        
+        # Also show/hide API URL (not needed for llama.cpp)
+        # We'll keep it visible but could hide it if desired
+    
     def setup_ui(self):
         # Use content_layout from ModernDialog instead of creating a new layout on self
         layout = self.content_layout
@@ -152,8 +198,16 @@ class LLMPropertiesDialog(ModernDialog):
         model_layout.setContentsMargins(8, 12, 8, 8)
         model_layout.setSpacing(6)
         
-        # Model selection
-        model_layout.addWidget(QLabel(_("Model:")), 0, 0)
+        # Engine selection (Ollama vs llama.cpp)
+        model_layout.addWidget(QLabel(_("Engine:")), 0, 0)
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItems(["Ollama", "llama.cpp"])
+        self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
+        model_layout.addWidget(self.engine_combo, 0, 1)
+        
+        # Ollama model selection
+        model_layout.addWidget(QLabel(_("Ollama Model:")), 1, 0)
+        self.model_label = model_layout.itemAtPosition(1, 0).widget()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         
@@ -161,10 +215,26 @@ class LLMPropertiesDialog(ModernDialog):
         available_models = self.get_available_models()
         self.model_combo.addItems(available_models)
         
-        model_layout.addWidget(self.model_combo, 0, 1)
+        model_layout.addWidget(self.model_combo, 1, 1)
+        
+        # llama.cpp model selection (initially hidden)
+        model_layout.addWidget(QLabel(_("GGUF Model:")), 2, 0)
+        self.llamacpp_model_combo = QComboBox()
+        self.llamacpp_model_combo.setEditable(True)
+        
+        # Populate GGUF models
+        gguf_models = get_llamacpp_models()
+        self.llamacpp_model_combo.addItems(gguf_models)
+        if not gguf_models:
+            self.llamacpp_model_combo.setPlaceholderText("No GGUF models found in AI/models/")
+        
+        model_layout.addWidget(self.llamacpp_model_combo, 2, 1)
+        self.llamacpp_model_combo.setVisible(False)
+        self.llamacpp_model_label = model_layout.itemAtPosition(2, 0).widget()
+        self.llamacpp_model_label.setVisible(False)
         
         # API URL
-        model_layout.addWidget(QLabel(_("API URL:")), 1, 0)
+        model_layout.addWidget(QLabel(_("API URL:")), 3, 0)
         api_url_layout = QHBoxLayout()
         self.api_url_entry = QLineEdit()
         self.api_url_entry.setPlaceholderText(get_default_api_url())
@@ -175,7 +245,7 @@ class LLMPropertiesDialog(ModernDialog):
         refresh_btn.clicked.connect(self.refresh_models)
         api_url_layout.addWidget(refresh_btn)
         
-        model_layout.addLayout(api_url_layout, 1, 1)
+        model_layout.addLayout(api_url_layout, 3, 1)
         
         layout.addWidget(model_group)
         
@@ -550,8 +620,25 @@ class LLMPropertiesDialog(ModernDialog):
     def load_current_config(self):
         """Load current configuration into the dialog"""
         if self.current_config:
+            # Check if using llama.cpp
+            use_llamacpp = self.current_config.get('use_llamacpp', False)
+            if isinstance(use_llamacpp, str):
+                use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
+            
+            # Set engine selection
+            if use_llamacpp:
+                self.engine_combo.setCurrentText("llama.cpp")
+            else:
+                self.engine_combo.setCurrentText("Ollama")
+            
             # Basic tab settings
             self.model_combo.setCurrentText(self.current_config.get('model', 'llama3.2'))
+            
+            # Load llama.cpp model if applicable
+            llamacpp_model = self.current_config.get('llamacpp_model_path', '')
+            if llamacpp_model:
+                self.llamacpp_model_combo.setCurrentText(llamacpp_model)
+            
             self.api_url_entry.setText(self.current_config.get('api_url', get_default_api_url()))
             self.temperature_spin.setValue(self.current_config.get('temperature', 0.7))
             self.max_tokens_spin.setValue(self.current_config.get('max_tokens', 150))
@@ -780,8 +867,16 @@ class LLMPropertiesDialog(ModernDialog):
       
     def get_config(self):
         """Get the LLM configuration from the dialog"""
+        # Determine which engine is selected
+        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
+        
         config = {
-            'model': self.model_combo.currentText(),
+            'use_llamacpp': use_llamacpp,
+            'model': self.model_combo.currentText() if not use_llamacpp else 'llamacpp',
+            'llamacpp_model_path': self.llamacpp_model_combo.currentText() if use_llamacpp else '',
+            'llamacpp_gpu_layers': 35,  # Default, can be made configurable
+            'llamacpp_threads': 8,  # Default, can be made configurable
+            'llamacpp_context_size': 4096,  # Default, can be made configurable
             'api_url': self.api_url_entry.text() or get_default_api_url(),
             'system_message': self.system_message_edit.toPlainText(),
             'prompt': self.prompt_edit.toPlainText(),

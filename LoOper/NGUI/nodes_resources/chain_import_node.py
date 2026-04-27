@@ -3,6 +3,7 @@ from NodeGraphQt import BaseNode
 from .base_node import _add_multi_input
 from ..constants import (
     CHAIN_IMPORT_COLOR,
+    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR
 )
@@ -22,11 +23,16 @@ class ChainImportNode(BaseNode):
         self.loop_count = 1  # Number of times to execute the imported chain
         self.extra_delay = 0  # Extra delay between loop iterations
         
-        # Set a distinct color for chain import nodes (lime green)
-        self.set_color(*[int(CHAIN_IMPORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4)])
-        # Title styling: bigger font, black text
+        # Use a darkened version of the special color for better text readability
+        # Keep the color identity but make it dark enough for white text
+        base_color = CHAIN_IMPORT_COLOR
+        r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
+        # Darken to 25% brightness for good contrast with white text
+        dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
+        self.set_color(dark_r, dark_g, dark_b)
+        # Title styling: bigger font, white text for dark background
         try:
-            self.set_text_color(0, 0, 0)
+            self.set_text_color(255, 255, 255)
         except Exception:
             pass
         try:
@@ -65,14 +71,6 @@ class ChainImportNode(BaseNode):
         self.create_property('loop_count', '1')
         self.create_property('extra_delay', '0')
         self.create_property('enabled', 'true')
-
-        # Visual indicator for editable nodes (border accent)
-        try:
-            from ..constants import BLOCK_HOVER
-            border_rgb = [int(BLOCK_HOVER.strip('#')[i:i+2], 16) for i in (0, 2, 4)]
-            self.set_border_color(*border_rgb)
-        except Exception:
-            pass
         
     def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', loop_count=1, extra_delay=0, enabled=True):
         """Set the chain import data for this node"""
