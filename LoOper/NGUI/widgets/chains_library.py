@@ -7,15 +7,15 @@ from PyQt5.QtWidgets import (
     QGraphicsDropShadowEffect, QStyleOptionButton, QStyle,
     QMenu, QAction, QInputDialog, QLineEdit
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QMimeData
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QMimeData, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon
 
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, CONTEXT_NODE_COLOR,
-    CODE_NODE_COLOR, LLM_COLOR, SIDE_PANEL_BG
+    CODE_NODE_COLOR, LLM_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
 )
-from .collapsible_toolbar import get_node_icon, load_tabler_icon
+from .collapsible_toolbar import get_node_icon, load_tabler_icon, make_toggle_triangle_icon
 from ..i18n import _
 
 logger = logging.getLogger(__name__)
@@ -838,145 +838,62 @@ class ChainsLibrary(QWidget):
         tab_buttons_layout = QHBoxLayout()
         tab_buttons_layout.setSpacing(4)
         
-        # Chains tab button
-        self._chains_tab_btn = QPushButton(_("Chains"))
-        self._chains_tab_btn.setFixedHeight(32)
-        self._chains_tab_btn.setCheckable(True)
-        self._chains_tab_btn.setChecked(True)
-        self._chains_tab_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:checked {{
-                background-color: {CHAIN_IMPORT_COLOR};
-                color: #000000;
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            """
-        )
-        self._chains_tab_btn.clicked.connect(self._switch_to_chains_tab)
-        
-        # Context Nodes tab button
-        self._context_tab_btn = QPushButton(_("Context"))
-        self._context_tab_btn.setFixedHeight(32)
-        self._context_tab_btn.setCheckable(True)
-        self._context_tab_btn.setChecked(False)
-        self._context_tab_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:checked {{
-                background-color: {CONTEXT_NODE_COLOR};
-                color: #000000;
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            """
-        )
-        self._context_tab_btn.clicked.connect(self._switch_to_context_tab)
-        
-        # Code Nodes tab button
-        self._code_tab_btn = QPushButton(_("Code"))
-        self._code_tab_btn.setFixedHeight(32)
-        self._code_tab_btn.setCheckable(True)
-        self._code_tab_btn.setChecked(False)
-        self._code_tab_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:checked {{
-                background-color: {CODE_NODE_COLOR};
-                color: #000000;
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            """
-        )
-        self._code_tab_btn.clicked.connect(self._switch_to_code_tab)
-        
-        # LLM Nodes tab button
-        self._llm_tab_btn = QPushButton(_("LLM"))
-        self._llm_tab_btn.setFixedHeight(32)
-        self._llm_tab_btn.setCheckable(True)
-        self._llm_tab_btn.setChecked(False)
-        self._llm_tab_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:checked {{
-                background-color: {LLM_COLOR};
-                color: #000000;
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            """
-        )
-        self._llm_tab_btn.clicked.connect(self._switch_to_llm_tab)
-        
-        # Sequences tab button
-        self._sequences_tab_btn = QPushButton(_("Sequences"))
-        self._sequences_tab_btn.setFixedHeight(32)
-        self._sequences_tab_btn.setCheckable(True)
-        self._sequences_tab_btn.setChecked(False)
-        self._sequences_tab_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-            QPushButton:checked {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: {TEXT_COLOR};
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            """
-        )
+        # -- Helper for icon-only tab buttons --
+        def _make_tab_btn(icon_node_type, icon_tabler_name, tooltip_text, checked_color, is_checked=False):
+            btn = QPushButton()
+            btn.setFixedHeight(32)
+            btn.setCheckable(True)
+            btn.setChecked(is_checked)
+            # Try node icon first, then tabler icon
+            ico = get_node_icon(icon_node_type, 18) if icon_node_type else None
+            if ico is None or ico.isNull():
+                ico = load_tabler_icon(icon_tabler_name, 18)
+            if ico and not ico.isNull():
+                btn.setIcon(ico)
+                btn.setIconSize(QSize(18, 18))
+            btn.setToolTip(tooltip_text)
+            btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: rgba(255, 255, 255, 0.04);
+                    color: {TEXT_COLOR};
+                    border: 1px solid rgba(255, 255, 255, 0.08);
+                    border-radius: 8px;
+                    font-weight: 600;
+                }}
+                QPushButton:checked {{
+                    background-color: {checked_color};
+                    color: #000000;
+                    border-color: {ACCENT_COLOR};
+                }}
+                QPushButton:hover {{
+                    background-color: rgba(255, 255, 255, 0.08);
+                    border-color: {ACCENT_COLOR};
+                }}
+                """
+            )
+            return btn
+
+        # Icon definitions: (icon_node_type, tabler_icon_fallback, tooltip_text, checked_color)
+        _tab_icons = [
+            (None,   'FILES',         _("Sequences"), 'rgba(255, 255, 255, 0.04)'),
+            ('chain_import', 'BOX_MULTIPLE', _("Chains"),   CHAIN_IMPORT_COLOR),
+            ('llm',   'ROBOT',         _("LLM"),       LLM_COLOR),
+            ('context', 'DATABASE',      _("Context"),   CONTEXT_NODE_COLOR),
+            ('code',  'CODE',          _("Code"),      CODE_NODE_COLOR),
+        ]
+
+        self._sequences_tab_btn = _make_tab_btn(*_tab_icons[0], is_checked=False)
+        self._chains_tab_btn = _make_tab_btn(*_tab_icons[1], is_checked=True)
+        self._llm_tab_btn = _make_tab_btn(*_tab_icons[2], is_checked=False)
+        self._context_tab_btn = _make_tab_btn(*_tab_icons[3], is_checked=False)
+        self._code_tab_btn = _make_tab_btn(*_tab_icons[4], is_checked=False)
+
         self._sequences_tab_btn.clicked.connect(self._switch_to_sequences_tab)
+        self._chains_tab_btn.clicked.connect(self._switch_to_chains_tab)
+        self._llm_tab_btn.clicked.connect(self._switch_to_llm_tab)
+        self._context_tab_btn.clicked.connect(self._switch_to_context_tab)
+        self._code_tab_btn.clicked.connect(self._switch_to_code_tab)
 
         tab_buttons_layout.addWidget(self._sequences_tab_btn)
         tab_buttons_layout.addWidget(self._chains_tab_btn)
@@ -1098,17 +1015,15 @@ class ChainsLibrary(QWidget):
 
         # Toggle button
         self._toggle_btn = QToolButton(self.graph_view)
-        ico = load_tabler_icon('CHEVRON_LEFT', 14)
-        if ico:
-            self._toggle_btn.setIcon(ico)
-        else:
-            self._toggle_btn.setText("❮")
-        self._toggle_btn.setFixedSize(28, 28)
+        ico = make_toggle_triangle_icon('LEFT', 14, GRAPH_PLANE)
+        self._toggle_btn.setIcon(ico)
+        self._toggle_btn.setIconSize(QSize(14, 14))
+        self._toggle_btn.setFixedSize(24, 28)
         self._toggle_btn.setCursor(Qt.PointingHandCursor)
         self._toggle_btn.setAutoRaise(True)
         self._toggle_btn.setStyleSheet(
-            f"QToolButton {{ background-color: rgba(32,32,32,180); border: 1px solid {LIGHT_GREY}; border-radius: 14px; }}"
-            f"QToolButton:hover {{ border-color: {ACCENT_COLOR}; }}"
+            f"QToolButton {{ background-color: transparent; border: none; }}"
+            f"QToolButton:hover {{ background-color: rgba(255,255,255,0.06); border-radius: 4px; }}"
         )
         self._toggle_btn.clicked.connect(self._toggle_panel)
         
@@ -1126,19 +1041,42 @@ class ChainsLibrary(QWidget):
     def _toggle_panel(self):
         self._collapsed = not self._collapsed
         if self._collapsed:
-            self._content_frame.setVisible(False)
             self.setMinimumWidth(0)
-            self.setMaximumWidth(0)
-            ico = load_tabler_icon('CHEVRON_RIGHT', 14)
-            if ico: self._toggle_btn.setIcon(ico)
+            start_w = max(0, self.width())
+            self._anim_panel = QPropertyAnimation(self, b"maximumWidth")
+            self._anim_panel.setDuration(200)
+            self._anim_panel.setStartValue(start_w)
+            self._anim_panel.setEndValue(0)
+            self._anim_panel.setEasingCurve(QEasingCurve.InOutQuad)
+            self._anim_panel.finished.connect(self._on_panel_collapse)
+            self._anim_panel.start(QAbstractAnimation.DeleteWhenStopped)
+            ico = make_toggle_triangle_icon('RIGHT', 14, SIDE_PANEL_BG)
+            self._toggle_btn.setIcon(ico)
+            self._toggle_btn.setIconSize(QSize(14, 14))
         else:
             self._content_frame.setVisible(True)
-            self.setMinimumWidth(320)
-            self.setMaximumWidth(320)
-            ico = load_tabler_icon('CHEVRON_LEFT', 14)
-            if ico: self._toggle_btn.setIcon(ico)
-        
-        self._position_toggle()
+            self._anim_panel = QPropertyAnimation(self, b"maximumWidth")
+            self._anim_panel.setDuration(200)
+            self._anim_panel.setStartValue(0)
+            self._anim_panel.setEndValue(320)
+            self._anim_panel.setEasingCurve(QEasingCurve.InOutQuad)
+            self._anim_panel.finished.connect(self._on_panel_expand)
+            self._anim_panel.start(QAbstractAnimation.DeleteWhenStopped)
+            ico = make_toggle_triangle_icon('LEFT', 14, GRAPH_PLANE)
+            self._toggle_btn.setIcon(ico)
+            self._toggle_btn.setIconSize(QSize(14, 14))
+
+        QTimer.singleShot(0, self._position_toggle)
+        QTimer.singleShot(250, self._position_toggle)
+
+    def _on_panel_collapse(self):
+        self._content_frame.setVisible(False)
+        self.setMinimumWidth(0)
+        QTimer.singleShot(0, self._position_toggle)
+
+    def _on_panel_expand(self):
+        self.setMinimumWidth(320)
+        QTimer.singleShot(0, self._position_toggle)
 
     def _position_toggle(self):
         if not self._toggle_btn: return

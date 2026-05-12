@@ -8,9 +8,10 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QApplication, QGraphicsDropShadowEffect,
     QLineEdit, QComboBox, QScrollArea, QGridLayout
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMimeData
+from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMimeData, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtCore import QFileSystemWatcher
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QIcon, QDrag
+from PyQt5.QtWidgets import QApplication
 
 try:
     from pytablericons import TablerIcons, OutlineIcon
@@ -25,8 +26,10 @@ except Exception:
 
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
-    BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, BAR_BG
+    BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, BAR_BG,
+    SIDE_PANEL_BG, GRAPH_PLANE
 )
+from .collapsible_toolbar import make_toggle_triangle_icon
 from ..i18n import _
 from ..dialogs.toggle_switch import ModernToggle
 
@@ -496,6 +499,7 @@ class ActionsToolbar(QWidget):
     def __init__(self, graph_view, parent=None):
         super().__init__(parent)
         self.graph_view = graph_view
+        self._collapsed = False
         self._build_ui()
 
     def _build_ui(self):
@@ -525,24 +529,19 @@ class ActionsToolbar(QWidget):
         layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip=_("Paste"), label_text=_("Paste")), alignment=Qt.AlignVCenter)
         outer.addWidget(self._content_frame)
 
-        # Floating toggle button (modern chevron) centered under the actions frame
+        # Floating toggle button (solid triangle) centered under the actions frame
         self._toggle_btn_actions = QToolButton(self.graph_view)
         self._toggle_btn_actions.setToolTip(_("Toggle Actions Toolbar"))
-        # Initialize with UP chevron because toolbar starts expanded (visible)
-        ico2 = load_tabler_icon('CHEVRON_UP', 14)
-        if ico2:
-            self._toggle_btn_actions.setIcon(ico2)
-            self._toggle_btn_actions.setIconSize(QSize(14, 14))
-        else:
-            self._toggle_btn_actions.setText("▴")
+        ico2 = make_toggle_triangle_icon('UP', 14, GRAPH_PLANE)
+        self._toggle_btn_actions.setIcon(ico2)
+        self._toggle_btn_actions.setIconSize(QSize(14, 14))
         self._toggle_btn_actions.setAutoRaise(True)
         self._toggle_btn_actions.setCursor(Qt.PointingHandCursor)
-        self._toggle_btn_actions.setFixedSize(28, 28)
+        self._toggle_btn_actions.setFixedSize(24, 28)
         self._toggle_btn_actions.setStyleSheet(
-            f"QToolButton {{ background-color: rgba(32,32,32,180); border: 1px solid {LIGHT_GREY}; border-radius: 14px; }}"
-            f"QToolButton:hover {{ border-color: {ACCENT_COLOR}; }}"
+            f"QToolButton {{ background-color: transparent; border: none; }}"
+            f"QToolButton:hover {{ background-color: rgba(255,255,255,0.06); border-radius: 4px; }}"
         )
-        # Shadow effect removed to match right toolbar and prevent artifacts
         self._toggle_btn_actions.clicked.connect(self._toggle_actions_toolbar)
         try:
             QTimer.singleShot(0, self._position_actions_toggle)
@@ -551,19 +550,44 @@ class ActionsToolbar(QWidget):
 
     def _toggle_actions_toolbar(self):
         try:
-            is_visible = self._content_frame.isVisible()
-            self._content_frame.setVisible(not is_visible)
-            name = 'CHEVRON_DOWN' if is_visible else 'CHEVRON_UP'
-            ico = load_tabler_icon(name, 16)
-            if ico:
-                self._toggle_btn_actions.setIcon(ico)
+            self._collapsed = not self._collapsed
+            if self._collapsed:
+                start_h = max(0, self._content_frame.height())
+                self._anim_actions = QPropertyAnimation(self._content_frame, b"maximumHeight")
+                self._anim_actions.setDuration(200)
+                self._anim_actions.setStartValue(start_h)
+                self._anim_actions.setEndValue(0)
+                self._anim_actions.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim_actions.finished.connect(self._on_actions_collapse)
+                self._anim_actions.start(QAbstractAnimation.DeleteWhenStopped)
             else:
-                self._toggle_btn_actions.setText("▴" if is_visible else "▾")
-            
-            # Re-position after toggle state change
-            QTimer.singleShot(50, self._position_actions_toggle)
+                self._content_frame.setVisible(True)
+                self._content_frame.setMaximumHeight(0)
+                QApplication.processEvents()
+                target_h = self._content_frame.minimumSizeHint().height()
+                self._anim_actions = QPropertyAnimation(self._content_frame, b"maximumHeight")
+                self._anim_actions.setDuration(200)
+                self._anim_actions.setStartValue(0)
+                self._anim_actions.setEndValue(target_h)
+                self._anim_actions.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim_actions.finished.connect(self._on_actions_expand)
+                self._anim_actions.start(QAbstractAnimation.DeleteWhenStopped)
+            direction = 'DOWN' if self._collapsed else 'UP'
+            color = SIDE_PANEL_BG if self._collapsed else GRAPH_PLANE
+            ico = make_toggle_triangle_icon(direction, 14, color)
+            self._toggle_btn_actions.setIcon(ico)
+            self._toggle_btn_actions.setIconSize(QSize(14, 14))
+            QTimer.singleShot(250, self._position_actions_toggle)
         except Exception:
             pass
+
+    def _on_actions_collapse(self):
+        self._content_frame.setVisible(False)
+        self._content_frame.setMaximumHeight(16777215)
+
+    def _on_actions_expand(self):
+        self._content_frame.setMaximumHeight(16777215)
+        QTimer.singleShot(0, self._position_actions_toggle)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

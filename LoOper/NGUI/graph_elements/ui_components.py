@@ -107,7 +107,6 @@ class UIComponents:
             """)
             
             from ..widgets.actions_toolbar import ActionsToolbar
-            from ..widgets.bottom_toolbar import BottomActionsToolbar
             actions_toolbar = ActionsToolbar(self.parent_widget)
             self.parent_widget.actions_toolbar = actions_toolbar
             try:
@@ -116,9 +115,6 @@ class UIComponents:
                 pass
             center_container_layout.addWidget(actions_toolbar, 0)
             center_container_layout.addWidget(self.parent_widget.node_graph_widget, 1)
-            bottom_toolbar = BottomActionsToolbar(self.parent_widget)
-            self.parent_widget.bottom_toolbar = bottom_toolbar
-            center_container_layout.addWidget(bottom_toolbar, 0)
             splitter.addWidget(center_container)
             
             # Right-side collapsible toolbar (spans full height to the top)
