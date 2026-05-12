@@ -10,5 +10,10 @@
 /LoOper/screenshots
 /LoOper/sequences/screenshots
 *.msi
+/.wix
 /LoOper/runtime
+/LoOper/AI/models
+/LoOper/data/agent_logs
+/LoOper/AI/memory_data
+
 

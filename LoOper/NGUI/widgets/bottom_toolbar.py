@@ -3,7 +3,7 @@ import os
 import threading
 
 from player.agentic_ops import ChatController
-from PyQt5.QtCore import QMetaObject, QPoint, QSize, Qt, QTimer, pyqtSlot
+from PyQt5.QtCore import QMetaObject, QPoint, QSize, Qt, QTimer, pyqtSlot, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -28,9 +28,11 @@ from ..constants import (
     MEDIUM_GREY,
     TEXT_COLOR,
     BAR_BG,
+    SIDE_PANEL_BG,
+    GRAPH_PLANE,
 )
 from ..i18n import _
-from .actions_toolbar import load_tabler_icon
+from .collapsible_toolbar import make_toggle_triangle_icon
 
 
 # ---- Model helpers (simplified: fixed pipeline) ----
@@ -51,6 +53,7 @@ class BottomActionsToolbar(QWidget):
     def __init__(self, graph_view, parent=None):
         super().__init__(parent)
         self.graph_view = graph_view
+        self._collapsed = False
         self._ui_queue = []
         self._processing_bubble = None
         self._processing_label = None
@@ -185,18 +188,15 @@ class BottomActionsToolbar(QWidget):
 
         self._toggle_btn_bottom = QToolButton(self.graph_view)
         self._toggle_btn_bottom.setToolTip(_("Toggle Bottom Toolbar"))
-        ico = load_tabler_icon("CHEVRON_DOWN", 14)
-        if ico:
-            self._toggle_btn_bottom.setIcon(ico)
-            self._toggle_btn_bottom.setIconSize(QSize(14, 14))
-        else:
-            self._toggle_btn_bottom.setText("▾")
+        ico = make_toggle_triangle_icon("DOWN", 14, GRAPH_PLANE)
+        self._toggle_btn_bottom.setIcon(ico)
+        self._toggle_btn_bottom.setIconSize(QSize(14, 14))
         self._toggle_btn_bottom.setAutoRaise(True)
         self._toggle_btn_bottom.setCursor(Qt.PointingHandCursor)
-        self._toggle_btn_bottom.setFixedSize(28, 28)
+        self._toggle_btn_bottom.setFixedSize(24, 28)
         self._toggle_btn_bottom.setStyleSheet(
-            f"QToolButton {{ background-color: rgba(32,32,32,180); border: 1px solid {LIGHT_GREY}; border-radius: 14px; }}"
-            f"QToolButton:hover {{ border-color: {ACCENT_COLOR}; }}"
+            f"QToolButton {{ background-color: transparent; border: none; }}"
+            f"QToolButton:hover {{ background-color: rgba(255,255,255,0.06); border-radius: 4px; }}"
         )
         self._toggle_btn_bottom.clicked.connect(self._toggle_bottom_toolbar)
         self._send_button.clicked.connect(self._handle_send)
@@ -210,18 +210,46 @@ class BottomActionsToolbar(QWidget):
 
     def _toggle_bottom_toolbar(self):
         try:
-            is_visible = self._content_frame.isVisible()
-            self._content_frame.setVisible(not is_visible)
-            name = "CHEVRON_UP" if is_visible else "CHEVRON_DOWN"
-            ico = load_tabler_icon(name, 16)
-            if ico:
-                self._toggle_btn_bottom.setIcon(ico)
+            self._collapsed = not self._collapsed
+            if self._collapsed:
+                start_h = max(0, self._content_frame.height())
+                self._anim_bottom = QPropertyAnimation(self._content_frame, b"maximumHeight")
+                self._anim_bottom.setDuration(200)
+                self._anim_bottom.setStartValue(start_h)
+                self._anim_bottom.setEndValue(0)
+                self._anim_bottom.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim_bottom.finished.connect(self._on_bottom_collapse)
+                self._anim_bottom.start(QAbstractAnimation.DeleteWhenStopped)
             else:
-                self._toggle_btn_bottom.setText("▾" if is_visible else "▴")
-            self._apply_layout_stretch(not is_visible)
-            QTimer.singleShot(50, self._position_bottom_toggle)
+                self._content_frame.setVisible(True)
+                self._content_frame.setMaximumHeight(0)
+                QApplication.processEvents()
+                target_h = self._content_frame.minimumSizeHint().height()
+                self._anim_bottom = QPropertyAnimation(self._content_frame, b"maximumHeight")
+                self._anim_bottom.setDuration(200)
+                self._anim_bottom.setStartValue(0)
+                self._anim_bottom.setEndValue(target_h)
+                self._anim_bottom.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim_bottom.finished.connect(self._on_bottom_expand)
+                self._anim_bottom.start(QAbstractAnimation.DeleteWhenStopped)
+            direction = "UP" if self._collapsed else "DOWN"
+            color = SIDE_PANEL_BG if self._collapsed else GRAPH_PLANE
+            ico = make_toggle_triangle_icon(direction, 14, color)
+            self._toggle_btn_bottom.setIcon(ico)
+            self._toggle_btn_bottom.setIconSize(QSize(14, 14))
+            self._apply_layout_stretch(not self._collapsed)
+            QTimer.singleShot(250, self._position_bottom_toggle)
         except Exception:
             logger.exception("Error toggling bottom toolbar")
+
+    def _on_bottom_collapse(self):
+        self._content_frame.setVisible(False)
+        self._content_frame.setMaximumHeight(16777215)
+        self._apply_layout_stretch(False)
+
+    def _on_bottom_expand(self):
+        self._content_frame.setMaximumHeight(16777215)
+        QTimer.singleShot(0, self._position_bottom_toggle)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
     QGraphicsDropShadowEffect, QMessageBox, QDialog
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF, pyqtSignal
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF, pyqtSignal, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon, QPainterPath, QFont, QPolygonF
 from PyQt5.QtCore import QMimeData
 try:
@@ -23,7 +23,7 @@ from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER,
     LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR,
-    CODE_NODE_COLOR, CONTEXT_NODE_COLOR, SIDE_PANEL_BG
+    CODE_NODE_COLOR, CONTEXT_NODE_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
 )
 from ..dialogs.base_dialog import ModernDialog
 from ..i18n import _
@@ -88,6 +88,41 @@ def load_tabler_icon(name: str, size: int) -> QIcon:
     except Exception:
         pass
     return QIcon(pix)
+
+
+def make_toggle_triangle_icon(direction: str, size: int, color: str) -> QIcon:
+    """Create a solid filled triangle icon for toolbar toggle buttons."""
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    s = float(size) * dpr
+    if direction == 'LEFT':
+        points = [QPointF(s * 0.8, s * 0.1), QPointF(s * 0.2, s * 0.5), QPointF(s * 0.8, s * 0.9)]
+    elif direction == 'RIGHT':
+        points = [QPointF(s * 0.2, s * 0.1), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.2, s * 0.9)]
+    elif direction == 'UP':
+        points = [QPointF(s * 0.1, s * 0.8), QPointF(s * 0.5, s * 0.2), QPointF(s * 0.9, s * 0.8)]
+    else:  # DOWN
+        points = [QPointF(s * 0.1, s * 0.2), QPointF(s * 0.5, s * 0.8), QPointF(s * 0.9, s * 0.2)]
+    p.drawPolygon(QPolygonF(points))
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
 
 def _load_tabler_square(icon_enum, size: int, pad: int = 3) -> QIcon:
     try:
@@ -1087,58 +1122,64 @@ class CollapsibleToolbar(QWidget):
 
         main_layout.addWidget(self._content_frame)
 
-        # Floating toggle button (modern chevron), parented to graph_view to float outside
+        # Floating toggle button (solid triangle), parented to graph_view to float outside
         self._toggle_btn_nodes = QToolButton(self.graph_view)
         self._toggle_btn_nodes.setToolTip(_("Toggle Nodes Toolbar"))
-        ico = load_tabler_icon('CHEVRON_RIGHT', 14)
-        if ico:
-            self._toggle_btn_nodes.setIcon(ico)
-            self._toggle_btn_nodes.setIconSize(QSize(14, 14))
-        else:
-            self._toggle_btn_nodes.setText("❯")
+        self._set_triangle_icon('RIGHT', SIDE_PANEL_BG)
         self._toggle_btn_nodes.setAutoRaise(True)
         self._toggle_btn_nodes.setCursor(Qt.PointingHandCursor)
-        self._toggle_btn_nodes.setFixedSize(28, 28)
+        self._toggle_btn_nodes.setFixedSize(24, 28)
         self._toggle_btn_nodes.setStyleSheet(
-            f"QToolButton {{ background-color: rgba(32,32,32,180); border: 1px solid {LIGHT_GREY}; border-radius: 14px; }}"
-            f"QToolButton:hover {{ border-color: {ACCENT_COLOR}; }}"
+            f"QToolButton {{ background-color: transparent; border: none; }}"
+            f"QToolButton:hover {{ background-color: rgba(255,255,255,0.06); border-radius: 4px; }}"
         )
-        # Shadow effect removed to prevent "floating window" artifacts during toggle
         self._toggle_btn_nodes.clicked.connect(self._toggle_nodes_toolbar)
         
         QTimer.singleShot(0, self._position_nodes_toggle)
+
+    def _set_triangle_icon(self, direction, color):
+        ico = make_toggle_triangle_icon(direction, 14, color)
+        self._toggle_btn_nodes.setIcon(ico)
+        self._toggle_btn_nodes.setIconSize(QSize(14, 14))
 
     def _toggle_nodes_toolbar(self):
         try:
             self._collapsed = not self._collapsed
             if self._collapsed:
-                # Hide content and shrink toolbar to zero (visually)
-                self._content_frame.setVisible(False)
                 self.setMinimumWidth(0)
-                self.setMaximumWidth(0)
-                
-                ico = load_tabler_icon('CHEVRON_LEFT', 14)
-                if ico:
-                    self._toggle_btn_nodes.setIcon(ico)
-                else:
-                    self._toggle_btn_nodes.setText("❮")
+                start_w = max(0, self.width())
+                self._anim = QPropertyAnimation(self, b"maximumWidth")
+                self._anim.setDuration(200)
+                self._anim.setStartValue(start_w)
+                self._anim.setEndValue(0)
+                self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim.finished.connect(self._on_collapse_finished)
+                self._anim.start(QAbstractAnimation.DeleteWhenStopped)
+                self._set_triangle_icon('LEFT', SIDE_PANEL_BG)
             else:
-                # Show content and restore width
                 self._content_frame.setVisible(True)
-                self.setMinimumWidth(160)
-                self.setMaximumWidth(160)
-                
-                ico = load_tabler_icon('CHEVRON_RIGHT', 14)
-                if ico:
-                    self._toggle_btn_nodes.setIcon(ico)
-                else:
-                    self._toggle_btn_nodes.setText("❯")
-            
-            # Re-position vertically and horizontally after layout update
+                self._anim = QPropertyAnimation(self, b"maximumWidth")
+                self._anim.setDuration(200)
+                self._anim.setStartValue(0)
+                self._anim.setEndValue(160)
+                self._anim.setEasingCurve(QEasingCurve.InOutQuad)
+                self._anim.finished.connect(self._on_expand_finished)
+                self._anim.start(QAbstractAnimation.DeleteWhenStopped)
+                self._set_triangle_icon('RIGHT', GRAPH_PLANE)
+
             QTimer.singleShot(0, self._position_nodes_toggle)
-            QTimer.singleShot(50, self._position_nodes_toggle)
+            QTimer.singleShot(250, self._position_nodes_toggle)
         except Exception:
             pass
+
+    def _on_collapse_finished(self):
+        self._content_frame.setVisible(False)
+        self.setMinimumWidth(0)
+        QTimer.singleShot(0, self._position_nodes_toggle)
+
+    def _on_expand_finished(self):
+        self.setMinimumWidth(160)
+        QTimer.singleShot(0, self._position_nodes_toggle)
 
 
     def refresh_sequences_list(self, path=None):
