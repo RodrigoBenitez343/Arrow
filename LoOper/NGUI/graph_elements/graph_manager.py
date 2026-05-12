@@ -214,7 +214,17 @@ class GraphManager:
                 self.node_graph.set_grid_mode(ViewerEnum.GRID_DISPLAY_SQUARES.value)
             except Exception:
                 pass
-            logger.debug("Graph configuration completed (curved pipes and grid mode applied)")
+            # Set background darker than bars for contrast (bars are #1E2329)
+            try:
+                self.node_graph.set_background_color(13, 17, 23)
+            except Exception:
+                pass
+            # Set grid barely visible on dark canvas
+            try:
+                self.node_graph.set_grid_color(22, 26, 32)
+            except Exception:
+                pass
+            logger.debug("Graph configuration completed (curved pipes, grid mode, and background colors applied)")
         except Exception as e:
             logger.error(f"Error configuring graph: {e}")
             raise

@@ -35,6 +35,62 @@ class CodeOperationsMixin:
             
         return None
 
+    def add_code_node_with_shared_file(self, chain_file_path, code_node_data):
+        """Add a Code node pre-configured from a shared code node in another chain."""
+        logger.info(f"Adding Code node with shared file: {chain_file_path}")
+        try:
+            node = self.parent_widget.graph_manager.create_node(
+                'code.CodeNode',
+                name='Code',
+                pos=None
+            )
+
+            if node:
+                # Copy configuration from the source code node
+                code = code_node_data.get('code', '')
+                file_path = code_node_data.get('file_path', '')
+                execute_on_input = code_node_data.get('execute_on_input', True)
+                output_variable = code_node_data.get('output_variable', 'result')
+                timeout = code_node_data.get('timeout', 30)
+                description = code_node_data.get('description', '')
+                gen_model = code_node_data.get('gen_model', 'llama3.2:latest')
+                gen_prompt = code_node_data.get('gen_prompt', '')
+
+                # Set properties
+                node.set_property('code', code)
+                node.set_property('file_path', file_path)
+                node.set_property('execute_on_input', 'true' if execute_on_input else 'false')
+                node.set_property('output_variable', output_variable)
+                node.set_property('timeout', str(timeout))
+                node.set_property('description', description)
+                node.set_property('gen_model', gen_model)
+                node.set_property('gen_prompt', gen_prompt)
+
+                # Update node name
+                if file_path:
+                    import os
+                    name_preview = os.path.basename(file_path)
+                    node.set_name(f"Code: {name_preview} (Shared)")
+                else:
+                    # Use first 40 chars of code as preview name
+                    code_snippet = code.replace('\n', ' ').strip()[:40]
+                    node.set_name(f"Code: {code_snippet} (Shared)")
+
+                logger.info(f"Successfully added shared Code node {node.id}")
+                return node
+            else:
+                logger.error("Failed to create shared Code node")
+
+        except Exception as e:
+            logger.error(f"Error adding shared Code node: {e}")
+            QMessageBox.critical(
+                self.parent_widget,
+                "Error",
+                f"Failed to add shared Code node: {str(e)}"
+            )
+
+        return None
+
     def edit_code_node(self, node):
         """Edit a Code node's properties."""
         logger.info(f"Editing Code node: {node.id}")

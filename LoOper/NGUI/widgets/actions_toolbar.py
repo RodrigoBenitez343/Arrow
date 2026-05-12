@@ -25,7 +25,7 @@ except Exception:
 
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
-    BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR
+    BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, BAR_BG
 )
 from ..i18n import _
 from ..dialogs.toggle_switch import ModernToggle
@@ -185,7 +185,7 @@ class SearchBarFrame(QFrame):
         self._results_frame = QFrame(self)
         self._results_frame.setObjectName("searchResultsFrame")
         self._results_frame.setStyleSheet(
-            f"QFrame#searchResultsFrame {{ background-color: {DARK_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"QFrame#searchResultsFrame {{ background-color: {DARK_GREY}; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 8px; }}"
         )
         results_layout = QVBoxLayout(self._results_frame)
         results_layout.setContentsMargins(5, 5, 5, 5)
@@ -499,6 +499,8 @@ class ActionsToolbar(QWidget):
         self._build_ui()
 
     def _build_ui(self):
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -508,7 +510,7 @@ class ActionsToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("actionsContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#actionsContent {{ background-color: {DARK_GREY}; border: 1px solid rgba(80, 80, 80, 0.5); border-radius: 10px; }}"
+            f"QFrame#actionsContent {{ background-color: {BAR_BG}; border-radius: 10px; }}"
         )
         layout = QHBoxLayout(self._content_frame)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -598,20 +600,26 @@ class ActionsToolbar(QWidget):
         except Exception:
             pass
         btn.setIcon(icon)
-        btn.setIconSize(QSize(22, 22))
+        btn.setIconSize(QSize(18, 18))
         btn.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {BLOCK_COLOR};
+                background: rgba(255, 255, 255, 0.05);
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
                 padding: 2px 8px;
                 min-width: 96px;
                 min-height: 24px;
+                font-weight: 500;
             }}
-            QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
-            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
+            QPushButton:hover {{
+                background: rgba(255, 255, 255, 0.08);
+                border-color: {ACCENT_COLOR};
+            }}
+            QPushButton:pressed {{
+                background: rgba(255, 255, 255, 0.12);
+            }}
             """
         )
         return btn
@@ -634,20 +642,26 @@ class ActionsToolbar(QWidget):
         p.drawEllipse(3, 3, 16, 16)
         p.end()
         btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(22, 22))
+        btn.setIconSize(QSize(18, 18))
         btn.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {BLOCK_COLOR};
+                background: rgba(255, 255, 255, 0.05);
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 8px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
                 padding: 2px 8px;
                 min-width: 96px;
                 min-height: 24px;
+                font-weight: 500;
             }}
-            QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}
-            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
+            QPushButton:hover {{
+                background: rgba(255, 255, 255, 0.08);
+                border-color: {ACCENT_COLOR};
+            }}
+            QPushButton:pressed {{
+                background: rgba(255, 255, 255, 0.12);
+            }}
             """
         )
         return btn

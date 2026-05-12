@@ -1,17 +1,18 @@
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-    QCheckBox, QPlainTextEdit, QFileDialog, QPushButton,
-    QTabWidget, QWidget, QSpinBox, QComboBox, QMessageBox,
-    QApplication
+    QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPlainTextEdit, QPushButton,
+    QWidget, QSpinBox, QComboBox, QMessageBox,
+    QTextBrowser, QSplitter, QCheckBox
 )
-from PyQt5.QtGui import QFont, QColor
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtGui import QFont, QTextCursor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QProcess, QTimer
 from .base_dialog import ModernDialog
-from ..constants import TEXT_COLOR, LIGHT_GREY, ACCENT_COLOR
+from ..constants import TEXT_COLOR, LIGHT_GREY, ACCENT_COLOR, DARK_GREY, MEDIUM_GREY
 from ..nodes_resources.base_node import get_default_api_url
 from ..i18n import _
 import sys
 import os
+import re
 
 # Import AI modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -30,343 +31,305 @@ try:
 except ImportError:
     get_llamacpp_models = lambda: []
 
-class CodeGeneratorThread(QThread):
-    finished = pyqtSignal(str)
+
+# ---------------------------------------------------------------------------
+# System prompt for the coding agent
+# ---------------------------------------------------------------------------
+CODING_AGENT_SYSTEM = (
+    "You are an expert Python developer and coding assistant integrated into a workflow automation tool. "
+    "The user will ask you to write, modify, or debug Python code. "
+    "Your response MUST contain the final code inside a Python fenced code block: ```python\n...\n```"
+    "You may include explanations OUTSIDE the code block. "
+    "The code will be executed in a local environment where:\n"
+    "- 'input_data' and 'args' variables are available from the previous node (if any)\n"
+    "- Standard libraries (os, sys, json, csv, re, math, etc.) are available\n"
+    "- The result should be assigned to a variable named 'result' for downstream use\n"
+    "Keep responses concise and focused on the code."
+)
+
+
+# ---------------------------------------------------------------------------
+# Thread: send a chat message to the AI and get a response
+# ---------------------------------------------------------------------------
+class CodeAgentThread(QThread):
+    finished = pyqtSignal(str)          # full assistant response text
     error = pyqtSignal(str)
-    
-    def __init__(self, model, prompt, api_url=None):
+
+    def __init__(self, conversation_prompt, model, api_url=None, system=CODING_AGENT_SYSTEM):
         super().__init__()
+        self.prompt = conversation_prompt
         self.model = model
-        self.prompt = prompt
         self.api_url = api_url
-        
+        self.system = system
+
     def run(self):
         try:
-            # Use provided API URL or default
             api_url = self.api_url or get_default_api_url()
             client = OllamaClient(base_url=api_url)
-            
-            # Construct a system prompt for code generation
-            system_prompt = (
-                "You are an expert Python developer. "
-                "Write a Python script based on the user's request. "
-                "The script should be self-contained or use standard libraries. "
-                "You have access to 'input_data' and 'args' variables from the previous node. "
-                "Assign the final result to a variable named 'result' (or as specified). "
-                "Return ONLY the Python code, no markdown formatting, no explanations."
-            )
-            
-            # Note: generate() does not accept 'stream' argument
             response = client.generate(
                 model=self.model,
                 prompt=self.prompt,
-                system=system_prompt
+                system=self.system
             )
-            
-            code = response.get('response', '')
-            # Strip markdown if present
-            if code.startswith("```python"):
-                code = code[9:]
-            elif code.startswith("```"):
-                code = code[3:]
-            if code.endswith("```"):
-                code = code[:-3]
-                
-            self.finished.emit(code.strip())
+            text = response.get('response', '')
+            self.finished.emit(text.strip())
         except Exception as e:
             self.error.emit(str(e))
 
+
+# ---------------------------------------------------------------------------
+# Helper: extract Python code from an AI response
+# ---------------------------------------------------------------------------
+def _extract_code(text):
+    """Return the content of the first ```python ... ``` block, or the whole text."""
+    m = re.search(r'```python\s*\n(.*?)```', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r'```\s*\n(.*?)```', text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Helper: format a chat message for HTML display
+# ---------------------------------------------------------------------------
+def _format_message(role, content):
+    if role == 'user':
+        color = ACCENT_COLOR
+        label = '🧑 You'
+        bg = '#1E2A2A'
+    else:
+        color = '#FFB347'
+        label = '🤖 Assistant'
+        bg = '#1E1E2E'
+    # Escape HTML
+    safe = content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    # Wrap code blocks
+    safe = re.sub(r'```(\w*)\n(.*?)```', r'<pre><code>\2</code></pre>', safe, flags=re.DOTALL)
+    # Inline code
+    safe = re.sub(r'`([^`]+)`', r'<code>\1</code>', safe)
+    # Newlines
+    safe = safe.replace('\n', '<br>')
+    return (
+        f'<div style="margin:8px 0;padding:10px 14px;border-radius:8px;background:{bg};'
+        f'border-left:3px solid {color};">'
+        f'<b style="color:{color};">{label}</b>'
+        f'<div style="color:{TEXT_COLOR};margin-top:4px;">{safe}</div></div>'
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main Dialog
+# ---------------------------------------------------------------------------
 class CodeNodeDialog(ModernDialog):
     def __init__(self, parent=None, config=None):
         super().__init__(parent, title=_("Code Node Configuration"), help_topic="code-node-dialog")
-        self.resize(700, 600)
-        
+        self.setMinimumSize(780, 680)
+        self.resize(820, 720)
+
         self.config = config or {}
-        
-        # Setup Tabs
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: 1px solid {LIGHT_GREY};
-                background: transparent;
-            }}
-            QTabBar::tab {{
-                background: transparent;
-                color: {TEXT_COLOR};
-                padding: 8px 12px;
-                border: 1px solid transparent;
-            }}
-            QTabBar::tab:selected {{
-                border-bottom: 2px solid {ACCENT_COLOR};
-                font-weight: bold;
-            }}
-        """)
-        
-        # Tab 1: AI Generator
-        self.generator_tab = QWidget()
-        self.setup_generator_tab()
-        self.tabs.addTab(self.generator_tab, _("AI Generator"))
 
-        # Tab 2: Code Editor
-        self.editor_tab = QWidget()
-        self.setup_editor_tab()
-        self.tabs.addTab(self.editor_tab, _("Code Editor"))
-        
-        # Tab 3: Settings
-        self.settings_tab = QWidget()
-        self.setup_settings_tab()
-        self.tabs.addTab(self.settings_tab, _("Settings"))
-        
-        self.content_layout.addWidget(self.tabs)
-        self.add_buttons()
-        
-        # Load engine selection from config
-        use_llamacpp = self.config.get('use_llamacpp', False)
-        if isinstance(use_llamacpp, str):
-            use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
-        
-        if use_llamacpp:
-            self.engine_combo.setCurrentText("llama.cpp")
-        else:
-            self.engine_combo.setCurrentText("Ollama")
-        
-    def add_buttons(self):
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        
-        cancel_btn = QPushButton(_("Cancel"))
-        cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet(self.get_button_style())
-        
-        save_btn = QPushButton(_("Save"))
-        save_btn.clicked.connect(self.accept)
-        save_btn.setStyleSheet(self.get_button_style().replace(LIGHT_GREY, ACCENT_COLOR).replace(TEXT_COLOR, "#121212")) # Accent style
-        
-        button_layout.addWidget(cancel_btn)
-        button_layout.addWidget(save_btn)
-        
-        self.content_layout.addLayout(button_layout)
+        # Chat history: list of {"role": str, "content": str}
+        self.chat_history = []
+        # Currently selected / generated code
+        self.current_code = self.config.get('code', '')
+        # QProcess for running code
+        self._process = None
 
-    def refresh_models(self):
-        """Refresh the list of available models from the API"""
-        try:
-            api_url = get_default_api_url()
-            current_model = self.model_combo.currentText()
-            
-            # Refresh cache
-            cache = get_model_cache()
-            if cache:
-                cache.refresh_models(api_url)
-                
-            # Get real models
-            models = get_real_cached_models(timeout=5.0)
-            
-            if models:
-                self.model_combo.clear()
-                self.model_combo.addItems(models)
-                
-                # Restore selection if it exists
-                if current_model in models:
-                    self.model_combo.setCurrentText(current_model)
-                else:
-                    self.model_combo.setCurrentText(models[0])
-            else:
-                # If no real models found, don't clear, just show message
-                QMessageBox.information(self, _("No Models Found"), _("Could not detect any downloaded models from Ollama API."))
-                
-        except Exception as e:
-            QMessageBox.warning(self, _("Refresh Failed"), _("Failed to refresh models: {error}").format(error=str(e)))
-    
-    def on_engine_changed(self, engine):
-        """Handle engine selection change"""
-        use_llamacpp = (engine == "llama.cpp")
-        
-        # Show/hide appropriate model dropdowns
-        self.model_combo.setVisible(not use_llamacpp)
-        self.model_label.setVisible(not use_llamacpp)
-        
-        self.llamacpp_model_combo.setVisible(use_llamacpp)
-        self.llamacpp_model_label.setVisible(use_llamacpp)
+        # ---- Build UI ----
+        # Override the scroll area: we don't want a scroll for the whole dialog
+        # Instead we'll build directly into content_layout.
+        # First remove the scroll_area from base (keeping it for compatibility)
+        # Actually ModernDialog already provides content_layout inside a scroll area.
+        # For this complex layout we'll replace the scroll area approach.
 
-    def setup_generator_tab(self):
-        layout = QVBoxLayout(self.generator_tab)
-        layout.setSpacing(15)
+        # Since ModernDialog uses scroll_area, we need to manage it.
+        # We'll work within self.content_layout but we need the whole dialog
+        # to scroll if needed. Let's use the scroll area properly.
 
-        # Engine Selection
-        engine_layout = QHBoxLayout()
-        engine_label = QLabel(_("Engine:"))
-        engine_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        engine_layout.addWidget(engine_label)
-        
+        # Remove default margins for our layout
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(0)
+
+        # Main vertical layout inside content
+        main_widget = QWidget()
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(16, 12, 16, 12)
+        main_layout.setSpacing(8)
+
+        # 1. Model/Engine bar (always visible, prominent)
+        model_bar = QHBoxLayout()
+        model_bar.setSpacing(8)
+
+        eng_label = QLabel(_("Engine:"))
+        eng_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold; font-size: 13px;")
+        model_bar.addWidget(eng_label)
         self.engine_combo = QComboBox()
         self.engine_combo.addItems(["Ollama", "llama.cpp"])
-        self.engine_combo.setStyleSheet(self.get_input_style())
-        self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
-        engine_layout.addWidget(self.engine_combo)
-        engine_layout.addStretch()
-        layout.addLayout(engine_layout)
-        
-        # Model Selection
-        model_layout = QVBoxLayout()
-        self.model_label = QLabel(_("Ollama Model:"))
-        self.model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        
-        model_select_layout = QHBoxLayout()
-        self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
-        self.model_combo.setStyleSheet(self.get_input_style())
-        
-        # Refresh models button
-        refresh_btn = QPushButton(_("Refresh"))
-        refresh_btn.setStyleSheet(self.get_button_style())
-        refresh_btn.clicked.connect(self.refresh_models)
-        
-        model_select_layout.addWidget(self.model_combo)
-        model_select_layout.addWidget(refresh_btn)
-        
-        # Load Ollama models
-        try:
-            # Try to get real cached models first (downloaded ones)
-            models = get_real_cached_models(timeout=2.0)
-            if not models:
-                # Fallback to cached list (which might have defaults)
-                models = get_cached_models()
-                
-            if models:
-                self.model_combo.addItems(models)
-            else:
-                self.model_combo.addItem("llama3.2:latest")
-        except Exception:
-            self.model_combo.addItem("llama3.2:latest")
-            
-        current_model = self.config.get('gen_model', 'llama3.2:latest')
-        self.model_combo.setCurrentText(current_model)
-        
-        model_layout.addWidget(self.model_label)
-        model_layout.addLayout(model_select_layout)
-        
-        # llama.cpp Model Selection (initially hidden)
-        llamacpp_model_layout = QVBoxLayout()
-        self.llamacpp_model_label = QLabel(_("GGUF Model:"))
-        self.llamacpp_model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        
-        self.llamacpp_model_combo = QComboBox()
-        self.llamacpp_model_combo.setEditable(True)
-        self.llamacpp_model_combo.setStyleSheet(self.get_input_style())
-        
-        # Load GGUF models
-        gguf_models = get_llamacpp_models()
-        if gguf_models:
-            self.llamacpp_model_combo.addItems(gguf_models)
-        else:
-            self.llamacpp_model_combo.setPlaceholderText("No GGUF models found in AI/models/")
-        
-        # Set current model if exists
-        current_llamacpp = self.config.get('llamacpp_model_path', '')
-        if current_llamacpp:
-            self.llamacpp_model_combo.setCurrentText(current_llamacpp)
-        
-        llamacpp_model_layout.addWidget(self.llamacpp_model_label)
-        llamacpp_model_layout.addWidget(self.llamacpp_model_combo)
-        
-        # Initially hide llama.cpp model selection
-        self.llamacpp_model_label.setVisible(False)
-        self.llamacpp_model_combo.setVisible(False)
-        
-        layout.addLayout(model_layout)
-        layout.addLayout(llamacpp_model_layout)
-        
-        # Prompt
-        prompt_layout = QVBoxLayout()
-        prompt_label = QLabel(_("Prompt / Instructions:"))
-        prompt_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        
-        self.prompt_edit = QPlainTextEdit()
-        self.prompt_edit.setPlaceholderText(_("Describe what the code should do..."))
-        self.prompt_edit.setPlainText(self.config.get('gen_prompt', ''))
-        self.prompt_edit.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background-color: #252526;
+        self.engine_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
                 border-radius: 4px;
-                padding: 5px;
+                padding: 4px 10px;
+                font-size: 13px;
+                min-width: 100px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+        """)
+        self.engine_combo.currentTextChanged.connect(self._on_engine_changed)
+        model_bar.addWidget(self.engine_combo)
+
+        # separator
+        sep = QLabel("|")
+        sep.setStyleSheet(f"color: {LIGHT_GREY}; padding: 0 4px;")
+        model_bar.addWidget(sep)
+
+        self.model_label = QLabel(_("Model:"))
+        self.model_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold; font-size: 13px;")
+        model_bar.addWidget(self.model_label)
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 13px;
+                min-width: 180px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+        """)
+        model_bar.addWidget(self.model_combo)
+
+        self.refresh_btn = QPushButton(_("⟳"))
+        self.refresh_btn.setFixedSize(30, 30)
+        self.refresh_btn.setToolTip(_("Refresh model list from API"))
+        self.refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                font-size: 18px;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+        """)
+        self.refresh_btn.clicked.connect(self.refresh_models)
+        model_bar.addWidget(self.refresh_btn)
+
+        # llama.cpp model combo (hidden by default)
+        self.llamacpp_label = QLabel(_("GGUF Model:"))
+        self.llamacpp_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold; font-size: 13px;")
+        self.llamacpp_label.setVisible(False)
+        model_bar.addWidget(self.llamacpp_label)
+        self.llamacpp_combo = QComboBox()
+        self.llamacpp_combo.setEditable(True)
+        self.llamacpp_combo.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 13px;
+                min-width: 200px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+        """)
+        self.llamacpp_combo.setVisible(False)
+        model_bar.addWidget(self.llamacpp_combo)
+
+        model_bar.addStretch()
+        main_layout.addLayout(model_bar)
+
+        # 2. Splitter: Chat + Code + Terminal
+        splitter = QSplitter(Qt.Vertical)
+        splitter.setHandleWidth(2)
+        splitter.setStyleSheet(f"""
+            QSplitter::handle {{
+                background-color: {LIGHT_GREY};
+                height: 2px;
             }}
         """)
-        
-        prompt_layout.addWidget(prompt_label)
-        prompt_layout.addWidget(self.prompt_edit)
-        layout.addLayout(prompt_layout)
-        
-        # Generate Button
-        self.gen_btn = QPushButton(_("Generate Code"))
-        self.gen_btn.setStyleSheet(f"""
+
+        # Chat area
+        chat_widget = QWidget()
+        chat_layout = QVBoxLayout(chat_widget)
+        chat_layout.setContentsMargins(0, 0, 0, 0)
+        chat_layout.setSpacing(4)
+        chat_label = QLabel(_("💬 Conversation"))
+        chat_label.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: bold; font-size: 12px;")
+        chat_layout.addWidget(chat_label)
+        self.chat_browser = QTextBrowser()
+        self.chat_browser.setReadOnly(True)
+        self.chat_browser.setOpenExternalLinks(False)
+        self.chat_browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {DARK_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+        """)
+        chat_layout.addWidget(self.chat_browser)
+        splitter.addWidget(chat_widget)
+
+        # Code editor area
+        code_widget = QWidget()
+        code_layout = QVBoxLayout(code_widget)
+        code_layout.setContentsMargins(0, 0, 0, 0)
+        code_layout.setSpacing(4)
+        code_header = QHBoxLayout()
+        code_label = QLabel(_("📝 Code"))
+        code_label.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: bold; font-size: 12px;")
+        code_header.addWidget(code_label)
+        code_header.addStretch()
+
+        self.run_btn = QPushButton(_("▶ Run"))
+        self.run_btn.setFixedHeight(28)
+        self.run_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {ACCENT_COLOR};
-                color: #121212;
+                background-color: #2D8F2D;
+                color: white;
                 border: none;
-                padding: 8px 16px;
+                border-radius: 4px;
+                padding: 4px 14px;
+                font-weight: bold;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{ background-color: #3AA53A; }}
+            QPushButton:disabled {{ background-color: #555; color: #888; }}
+        """)
+        self.run_btn.clicked.connect(self._run_code)
+        code_header.addWidget(self.run_btn)
+
+        self.kill_btn = QPushButton(_("⏹"))
+        self.kill_btn.setFixedSize(28, 28)
+        self.kill_btn.setToolTip(_("Stop execution"))
+        self.kill_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: #C0392B;
+                color: white;
+                border: none;
                 border-radius: 4px;
                 font-weight: bold;
+                font-size: 14px;
             }}
-            QPushButton:hover {{
-                background-color: #00CC99;
-            }}
-            QPushButton:disabled {{
-                background-color: #555555;
-                color: #888888;
-            }}
+            QPushButton:hover {{ background-color: #E74C3C; }}
+            QPushButton:disabled {{ background-color: #555; color: #888; }}
         """)
-        self.gen_btn.clicked.connect(self.generate_code)
-        layout.addWidget(self.gen_btn)
-        
-        # Status Label
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet(f"color: {TEXT_COLOR}; font-style: italic;")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
-        
-    def generate_code(self):
-        prompt = self.prompt_edit.toPlainText()
-        if not prompt:
-            QMessageBox.warning(self, _("Missing Prompt"), _("Please enter a prompt describing the code you want to generate."))
-            return
-            
-        model = self.model_combo.currentText()
-        
-        self.gen_btn.setEnabled(False)
-        self.gen_btn.setText(_("Generating..."))
-        self.status_label.setText(_("Generating code... please wait."))
-        
-        # Start generation thread
-        self.gen_thread = CodeGeneratorThread(model, prompt)
-        self.gen_thread.finished.connect(self.on_generation_finished)
-        self.gen_thread.error.connect(self.on_generation_error)
-        self.gen_thread.start()
-        
-    def on_generation_finished(self, code):
-        self.code_edit.setPlainText(code)
-        self.gen_btn.setEnabled(True)
-        self.gen_btn.setText(_("Generate Code"))
-        self.status_label.setText(_("Code generated successfully! Switch to 'Code Editor' tab to view/edit."))
-        # Optional: Switch tab automatically
-        self.tabs.setCurrentWidget(self.editor_tab)
-        
-    def on_generation_error(self, error_msg):
-        self.gen_btn.setEnabled(True)
-        self.gen_btn.setText(_("Generate Code"))
-        self.status_label.setText(_("Generation failed."))
-        QMessageBox.critical(self, _("Generation Error"), _("Failed to generate code:\n{error}").format(error=error_msg))
+        self.kill_btn.clicked.connect(self._kill_process)
+        self.kill_btn.setEnabled(False)
+        code_header.addWidget(self.kill_btn)
 
-    def setup_editor_tab(self):
-        layout = QVBoxLayout(self.editor_tab)
-        
-        # Instructions
-        info_label = QLabel(_("Write Python code to execute. 'input_data' and 'args' variables are available."))
-        info_label.setStyleSheet(f"color: {TEXT_COLOR}; font-style: italic;")
-        layout.addWidget(info_label)
-        
-        # Code Editor
+        code_layout.addLayout(code_header)
+
         self.code_edit = QPlainTextEdit()
         self.code_edit.setFont(QFont("Consolas", 10))
         self.code_edit.setStyleSheet(f"""
@@ -374,153 +337,513 @@ class CodeNodeDialog(ModernDialog):
                 background-color: #1E1E1E;
                 color: #D4D4D4;
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 4px;
+                border-radius: 6px;
             }}
         """)
-        self.code_edit.setPlainText(self.config.get('code', ''))
-        layout.addWidget(self.code_edit)
-        
-    def setup_settings_tab(self):
-        layout = QVBoxLayout(self.settings_tab)
-        layout.setSpacing(15)
-        
-        # Description / Purpose (used as context key)
-        desc_layout = QVBoxLayout()
-        desc_label = QLabel(_("Description / Purpose:"))
-        desc_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        desc_info = QLabel(_("What this code does (used as context storage key when connected to Context node)"))
-        desc_info.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; margin-bottom: 5px;")
-        
-        self.description_edit = QLineEdit(self.config.get('description', ''))
-        self.description_edit.setPlaceholderText(_("e.g., 'parse_csv_output', 'fetch_api_data'"))
-        self.description_edit.setStyleSheet(self.get_input_style())
-        
-        desc_layout.addWidget(desc_label)
-        desc_layout.addWidget(desc_info)
-        desc_layout.addWidget(self.description_edit)
-        layout.addLayout(desc_layout)
-        
-        # File Path (Optional override)
-        file_layout = QVBoxLayout()
-        file_label = QLabel(_("External File Path (Overrides internal code if set):"))
-        file_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        
-        path_layout = QHBoxLayout()
-        self.file_path_edit = QLineEdit(self.config.get('file_path', ''))
-        self.file_path_edit.setPlaceholderText("/path/to/script.py")
-        self.file_path_edit.setStyleSheet(self.get_input_style())
-        
-        browse_btn = QPushButton(_("Browse..."))
-        browse_btn.setStyleSheet(self.get_button_style())
-        browse_btn.clicked.connect(self.browse_file)
-        
-        path_layout.addWidget(self.file_path_edit)
-        path_layout.addWidget(browse_btn)
-        
-        file_layout.addWidget(file_label)
-        file_layout.addLayout(path_layout)
-        layout.addLayout(file_layout)
-        
-        # Output Variable
-        var_layout = QVBoxLayout()
-        var_label = QLabel(_("Output Variable Name:"))
-        var_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        var_info = QLabel(_("The variable name in your code that contains the result to output."))
-        var_info.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 11px; margin-bottom: 5px;")
-        
+        self.code_edit.setPlainText(self.current_code)
+        self.code_edit.textChanged.connect(self._on_code_changed)
+        code_layout.addWidget(self.code_edit)
+        splitter.addWidget(code_widget)
+
+        # Terminal area
+        term_widget = QWidget()
+        term_layout = QVBoxLayout(term_widget)
+        term_layout.setContentsMargins(0, 0, 0, 0)
+        term_layout.setSpacing(4)
+        term_header = QHBoxLayout()
+        term_label = QLabel(_("🖥 Terminal"))
+        term_label.setStyleSheet(f"color: {ACCENT_COLOR}; font-weight: bold; font-size: 12px;")
+        term_header.addWidget(term_label)
+        term_header.addStretch()
+        self.clear_term_btn = QPushButton(_("Clear"))
+        self.clear_term_btn.setFixedHeight(24)
+        self.clear_term_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 2px 10px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+        """)
+        self.clear_term_btn.clicked.connect(self._clear_terminal)
+        term_header.addWidget(self.clear_term_btn)
+        term_layout.addLayout(term_header)
+
+        self.terminal_browser = QTextBrowser()
+        self.terminal_browser.setReadOnly(True)
+        self.terminal_browser.setFont(QFont("Consolas", 10))
+        self.terminal_browser.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: #0C0C0C;
+                color: #00FF00;
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 6px;
+                padding: 8px;
+            }}
+        """)
+        term_layout.addWidget(self.terminal_browser)
+        splitter.addWidget(term_widget)
+
+        # Set initial sizes: chat 40%, code 35%, terminal 25%
+        splitter.setSizes([280, 240, 160])
+        main_layout.addWidget(splitter, 1)
+
+        # 3. Input bar
+        input_layout = QHBoxLayout()
+        input_layout.setSpacing(6)
+        self.input_edit = QLineEdit()
+        self.input_edit.setPlaceholderText(_("Ask the AI to write or change code..."))
+        self.input_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {ACCENT_COLOR}; }}
+        """)
+        self.input_edit.returnPressed.connect(self._send_message)
+        input_layout.addWidget(self.input_edit, 1)
+
+        self.send_btn = QPushButton(_("Send"))
+        self.send_btn.setFixedHeight(36)
+        self.send_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+                border: none;
+                border-radius: 6px;
+                padding: 8px 20px;
+                font-weight: bold;
+                font-size: 13px;
+            }}
+            QPushButton:hover {{ background-color: #00CC99; }}
+            QPushButton:disabled {{ background-color: #555; color: #888; }}
+        """)
+        self.send_btn.clicked.connect(self._send_message)
+        input_layout.addWidget(self.send_btn)
+        main_layout.addLayout(input_layout)
+
+        # 4. Advanced settings toggle + bottom bar
+        bottom_bar = QHBoxLayout()
+        bottom_bar.setSpacing(8)
+
+        self.settings_toggle_btn = QPushButton(_("⚙ Advanced"))
+        self.settings_toggle_btn.setFixedHeight(28)
+        self.settings_toggle_btn.setCheckable(True)
+        self.settings_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 4px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+            QPushButton:checked {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+            }}
+        """)
+        self.settings_toggle_btn.toggled.connect(self._toggle_advanced)
+        bottom_bar.addWidget(self.settings_toggle_btn)
+        bottom_bar.addStretch()
+
+        cancel_btn = QPushButton(_("Cancel"))
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: {LIGHT_GREY}; }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        bottom_bar.addWidget(cancel_btn)
+
+        save_btn = QPushButton(_("Save"))
+        save_btn.setFixedHeight(32)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+                border: none;
+                border-radius: 6px;
+                padding: 6px 20px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{ background-color: #00CC99; }}
+        """)
+        save_btn.clicked.connect(self.accept)
+        bottom_bar.addWidget(save_btn)
+        main_layout.addLayout(bottom_bar)
+
+        # 5. Advanced settings panel (collapsible)
+        self.advanced_panel = QWidget()
+        self.advanced_panel.setVisible(False)
+        adv_layout = QHBoxLayout(self.advanced_panel)
+        adv_layout.setContentsMargins(0, 4, 0, 0)
+        adv_layout.setSpacing(12)
+
+        # Output variable
+        ov_label = QLabel(_("Output var:"))
+        ov_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        adv_layout.addWidget(ov_label)
         self.output_var_edit = QLineEdit(self.config.get('output_variable', 'result'))
-        self.output_var_edit.setStyleSheet(self.get_input_style())
-        
-        var_layout.addWidget(var_label)
-        var_layout.addWidget(var_info)
-        var_layout.addWidget(self.output_var_edit)
-        layout.addLayout(var_layout)
-        
-        # Execution Options
-        opts_layout = QVBoxLayout()
-        opts_label = QLabel(_("Execution Options:"))
-        opts_label.setStyleSheet(f"color: {TEXT_COLOR}; font-weight: bold;")
-        
-        self.exec_check = QCheckBox(_("Execute on Input Trigger"))
-        self.exec_check.setChecked(self.config.get('execute_on_input', True))
-        self.exec_check.setStyleSheet(f"color: {TEXT_COLOR};")
-        
+        self.output_var_edit.setFixedWidth(80)
+        self.output_var_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {MEDIUM_GREY};
+                color: {TEXT_COLOR};
+                border: 1px solid {LIGHT_GREY};
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }}
+        """)
+        adv_layout.addWidget(self.output_var_edit)
+
         # Timeout
-        timeout_layout = QHBoxLayout()
-        timeout_label = QLabel(_("Timeout (seconds):"))
-        timeout_label.setStyleSheet(f"color: {TEXT_COLOR};")
+        to_label = QLabel(_("Timeout (s):"))
+        to_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        adv_layout.addWidget(to_label)
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(1, 3600)
         self.timeout_spin.setValue(self.config.get('timeout', 30))
-        self.timeout_spin.setStyleSheet(self.get_input_style())
-        
-        timeout_layout.addWidget(timeout_label)
-        timeout_layout.addWidget(self.timeout_spin)
-        timeout_layout.addStretch()
-        
-        opts_layout.addWidget(opts_label)
-        opts_layout.addWidget(self.exec_check)
-        opts_layout.addLayout(timeout_layout)
-        layout.addLayout(opts_layout)
-        
-        layout.addStretch()
-        
-    def browse_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, _("Select Python Script"), "", _("Python Files (*.py);;All Files (*)")
-        )
-        if file_path:
-            self.file_path_edit.setText(file_path)
-            
-    def get_input_style(self):
-        return f"""
-            QLineEdit, QSpinBox, QComboBox {{
-                background-color: #252526;
+        self.timeout_spin.setFixedWidth(60)
+        self.timeout_spin.setStyleSheet(f"""
+            QSpinBox {{
+                background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 5px;
                 border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 background-color: {LIGHT_GREY};
                 border: none;
+                width: 14px;
             }}
-            QComboBox::drop-down {{
-                border: none;
-                background-color: {LIGHT_GREY};
-                width: 20px;
-                border-top-right-radius: 4px;
-                border-bottom-right-radius: 4px;
-            }}
-        """
-        
-    def get_button_style(self):
-        return f"""
-            QPushButton {{
-                background-color: {LIGHT_GREY};
+        """)
+        adv_layout.addWidget(self.timeout_spin)
+
+        # Execute on input
+        exec_label = QLabel(_("⏺ Auto-exec"))
+        exec_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        adv_layout.addWidget(exec_label)
+        self.exec_cb = QCheckBox()
+        self.exec_cb.setChecked(self.config.get('execute_on_input', True))
+        self.exec_cb.setStyleSheet(f"color: {TEXT_COLOR};")
+        adv_layout.addWidget(self.exec_cb)
+
+        # Description
+        desc_label = QLabel(_("Desc:"))
+        desc_label.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 12px;")
+        adv_layout.addWidget(desc_label)
+        self.desc_edit = QLineEdit(self.config.get('description', ''))
+        self.desc_edit.setPlaceholderText(_("context key"))
+        self.desc_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
-                border: none;
-                padding: 6px 12px;
+                border: 1px solid {LIGHT_GREY};
                 border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
             }}
-            QPushButton:hover {{
-                background-color: #3E3E3E;
-            }}
-        """
-        
-    def get_config(self):
-        # Determine which engine is selected
+        """)
+        adv_layout.addWidget(self.desc_edit, 1)
+
+        adv_layout.addStretch()
+        main_layout.addWidget(self.advanced_panel)
+
+        # Replace the scroll area content
+        self.content_layout.addWidget(main_widget)
+
+        # ---- Load initial data ----
+        self._init_models()
+
+        # Load engine selection
+        use_llamacpp = self.config.get('use_llamacpp', False)
+        if isinstance(use_llamacpp, str):
+            use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
+        if use_llamacpp:
+            self.engine_combo.setCurrentText("llama.cpp")
+
+    # ------------------------------------------------------------------ #
+    #  Model management
+    # ------------------------------------------------------------------ #
+    def _init_models(self):
+        """Populate model combos."""
+        try:
+            models = get_real_cached_models(timeout=2.0)
+            if not models:
+                models = get_cached_models()
+            if models:
+                self.model_combo.addItems(models)
+            else:
+                self.model_combo.addItem("llama3.2:latest")
+        except Exception:
+            self.model_combo.addItem("llama3.2:latest")
+
+        current_model = self.config.get('gen_model', 'llama3.2:latest')
+        self.model_combo.setCurrentText(current_model)
+
+        # GGUF models
+        gguf = get_llamacpp_models()
+        if gguf:
+            self.llamacpp_combo.addItems(gguf)
+        else:
+            self.llamacpp_combo.setPlaceholderText("No GGUF models found")
+        current_llamacpp = self.config.get('llamacpp_model_path', '')
+        if current_llamacpp:
+            self.llamacpp_combo.setCurrentText(current_llamacpp)
+
+    def refresh_models(self):
+        try:
+            api_url = get_default_api_url()
+            current_model = self.model_combo.currentText()
+            cache = get_model_cache()
+            if cache:
+                cache.refresh_models(api_url)
+            models = get_real_cached_models(timeout=5.0)
+            if models:
+                self.model_combo.clear()
+                self.model_combo.addItems(models)
+                if current_model in models:
+                    self.model_combo.setCurrentText(current_model)
+                else:
+                    self.model_combo.setCurrentText(models[0])
+            else:
+                QMessageBox.information(self, _("No Models Found"),
+                                        _("Could not detect any downloaded models from Ollama API."))
+        except Exception as e:
+            QMessageBox.warning(self, _("Refresh Failed"),
+                                _("Failed to refresh models: {error}").format(error=str(e)))
+
+    def _on_engine_changed(self, engine):
+        use_llamacpp = (engine == "llama.cpp")
+        self.model_label.setVisible(not use_llamacpp)
+        self.model_combo.setVisible(not use_llamacpp)
+        self.refresh_btn.setVisible(not use_llamacpp)
+        self.llamacpp_label.setVisible(use_llamacpp)
+        self.llamacpp_combo.setVisible(use_llamacpp)
+
+    # ------------------------------------------------------------------ #
+    #  Conversation
+    # ------------------------------------------------------------------ #
+    def _add_welcome_message(self):
+        welcome = (
+            "Welcome to the Code Agent! 🚀\n\n"
+            "Describe the Python code you'd like to write, and I'll generate it for you. "
+            "You can ask me to modify, debug, or enhance the code through natural conversation. "
+            "Use the **▶ Run** button to execute the current code and see output in the Terminal below."
+        )
+        self.chat_history.append({"role": "assistant", "content": welcome})
+        self._render_chat()
+
+    def _build_conversation_prompt(self):
+        """Format chat history as a prompt string for the LLM."""
+        lines = []
+        for msg in self.chat_history:
+            if msg['role'] == 'user':
+                lines.append(f"User: {msg['content']}")
+            else:
+                lines.append(f"Assistant: {msg['content']}")
+        # If the last message is from assistant, we still want the model to see it
+        # For generating new responses, we construct: full history + "Assistant:"
+        # The system prompt is sent separately.
+        return "\n\n".join(lines)
+
+    def _send_message(self):
+        text = self.input_edit.text().strip()
+        if not text:
+            return
+
+        self.input_edit.clear()
+        self.send_btn.setEnabled(False)
+        self.send_btn.setText(_("Generating..."))
+
+        # Add user message
+        self.chat_history.append({"role": "user", "content": text})
+        self._render_chat()
+        self._scroll_chat_to_bottom()
+
+        # Build conversation prompt
+        prompt = self._build_conversation_prompt()
         use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
-        
+        if use_llamacpp:
+            model = self.llamacpp_combo.currentText()
+        else:
+            model = self.model_combo.currentText()
+
+        self._gen_thread = CodeAgentThread(prompt, model)
+        self._gen_thread.finished.connect(self._on_ai_response)
+        self._gen_thread.error.connect(self._on_ai_error)
+        self._gen_thread.start()
+
+    def _on_ai_response(self, response_text):
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText(_("Send"))
+        self.input_edit.setFocus()
+
+        # Add to history
+        self.chat_history.append({"role": "assistant", "content": response_text})
+        self._render_chat()
+        self._scroll_chat_to_bottom()
+
+        # Extract code and update editor
+        code = _extract_code(response_text)
+        if code:
+            self.code_edit.setPlainText(code)
+            self.current_code = code
+
+    def _on_ai_error(self, error_msg):
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText(_("Send"))
+        self.chat_history.append({
+            "role": "assistant",
+            "content": f"⚠️ Error: {error_msg}"
+        })
+        self._render_chat()
+        self._scroll_chat_to_bottom()
+
+    def _render_chat(self):
+        html = '<div style="font-size:13px;">'
+        for msg in self.chat_history:
+            html += _format_message(msg['role'], msg['content'])
+        html += '</div>'
+        self.chat_browser.setHtml(html)
+
+    def _scroll_chat_to_bottom(self):
+        self.chat_browser.verticalScrollBar().setValue(
+            self.chat_browser.verticalScrollBar().maximum()
+        )
+
+    # ------------------------------------------------------------------ #
+    #  Code execution
+    # ------------------------------------------------------------------ #
+    def _run_code(self):
+        code = self.code_edit.toPlainText().strip()
+        if not code:
+            QMessageBox.information(self, _("No Code"), _("There is no code to execute."))
+            return
+
+        # Write code to a temp file and run it
+        temp_file = os.path.join(os.environ.get('TEMP', os.getcwd()),
+                                 f'_looper_code_node_{os.getpid()}.py')
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                f.write(code)
+        except Exception as e:
+            self._append_terminal(f"Error writing temp file: {e}\n")
+            return
+
+        self._append_terminal(f"$ python {os.path.basename(temp_file)}\n")
+        self.run_btn.setEnabled(False)
+        self.kill_btn.setEnabled(True)
+
+        self._process = QProcess(self)
+        self._process.setProcessChannelMode(QProcess.MergedChannels)
+        timeout = self.timeout_spin.value()
+
+        # Timer for timeout
+        self._run_timer = QTimer(self)
+        self._run_timer.setSingleShot(True)
+        self._run_timer.timeout.connect(self._on_run_timeout)
+
+        buffer = []
+
+        def on_ready():
+            data = self._process.readAllStandardOutput().data().decode('utf-8', errors='replace')
+            if data:
+                buffer.append(data)
+
+        def on_finished(exit_code, exit_status):
+            self._process = None
+            self.run_btn.setEnabled(True)
+            self.kill_btn.setEnabled(False)
+            self._run_timer.stop()
+            if buffer:
+                self._append_terminal(''.join(buffer))
+            if exit_code == 0:
+                self._append_terminal(f"\n{_('✅ Process exited with code 0')}\n")
+            else:
+                self._append_terminal(f"\n{_('❌ Process exited with code')} {exit_code}\n")
+            # Cleanup
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+            except Exception:
+                pass
+
+        self._process.readyReadStandardOutput.connect(on_ready)
+        self._process.readyReadStandardError.connect(on_ready)
+        self._process.finished.connect(on_finished)
+
+        self._process.start("python", [temp_file])
+
+        if timeout > 0:
+            self._run_timer.start(timeout * 1000)
+
+    def _on_run_timeout(self):
+        if self._process and self._process.state() == QProcess.Running:
+            self._append_terminal(f"\n{_('⏰ Timeout reached, terminating process...')}\n")
+            self._process.kill()
+
+    def _kill_process(self):
+        if self._process and self._process.state() == QProcess.Running:
+            self._append_terminal(f"\n{_('⏹ Process terminated by user')}\n")
+            self._process.kill()
+            self.run_btn.setEnabled(True)
+            self.kill_btn.setEnabled(False)
+
+    def _append_terminal(self, text):
+        cursor = self.terminal_browser.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        self.terminal_browser.setTextCursor(cursor)
+        self.terminal_browser.verticalScrollBar().setValue(
+            self.terminal_browser.verticalScrollBar().maximum()
+        )
+
+    def _clear_terminal(self):
+        self.terminal_browser.clear()
+
+    def _on_code_changed(self):
+        self.current_code = self.code_edit.toPlainText()
+
+    # ------------------------------------------------------------------ #
+    #  Advanced settings toggle
+    # ------------------------------------------------------------------ #
+    def _toggle_advanced(self, checked):
+        self.advanced_panel.setVisible(checked)
+
+    # ------------------------------------------------------------------ #
+    #  Config
+    # ------------------------------------------------------------------ #
+    def get_config(self):
+        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
         return {
             'code': self.code_edit.toPlainText(),
-            'file_path': self.file_path_edit.text(),
-            'execute_on_input': self.exec_check.isChecked(),
+            'file_path': '',  # Removed file path from simplified UI
+            'execute_on_input': self.exec_cb.isChecked(),
             'output_variable': self.output_var_edit.text(),
             'timeout': self.timeout_spin.value(),
             'use_llamacpp': use_llamacpp,
             'gen_model': self.model_combo.currentText() if not use_llamacpp else 'llamacpp',
-            'llamacpp_model_path': self.llamacpp_model_combo.currentText() if use_llamacpp else '',
-            'gen_prompt': self.prompt_edit.toPlainText(),
-            'description': self.description_edit.text()
+            'llamacpp_model_path': self.llamacpp_combo.currentText() if use_llamacpp else '',
+            'gen_prompt': '',  # Prompt-based generation is now done via chat
+            'description': self.desc_edit.text()
         }

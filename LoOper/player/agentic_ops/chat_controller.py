@@ -1,19 +1,132 @@
-import json
-import os
+"""
+ChatController — Simplified entry point for the visual agent loop.
 
-from .chat_logger import ChatLogger
-from .learning_store import LearningStore
-from .plan_generator import PlanGenerator
-from .tool_selector import ToolSelector
+Creates and wires together:
+  - ChainRegistry   (scans chains/ folder)
+  - ChainRunner     (executes chain JSON files)
+  - ScreenObserver  (LFM vision via llama.cpp)
+  - DecisionEngine  (LLM-based action selection)
+  - VisualAgent     (the observe-decide-act loop)
+"""
+
+import logging
+import os
+import threading
+import time
+from typing import Any, Callable, Optional
+
+import requests as _rq
+
+from .action_executor import ActionExecutor
+from .chain_builder import ChainBuilder
+from .chain_registry import ChainRegistry
 from .chain_runner import ChainRunner
+from .chat_logger import ChatLogger
+from .decision_engine import DecisionEngine
+from .learning_store import LearningStore
+from .screen_observer import ScreenObserver
 from .typing_ops import TypingAssistant
-from .failure_analyzer import FailureAnalyzer
-from .execution_engine import ExecutionEngine
-from . import status_utils
+from .visual_agent import VisualAgent
+
+logger = logging.getLogger(__name__)
+
+
+# ── helper: detect LFM model paths ──────────────────────────────
+
+
+def _find_lfm_model(base_dir: str) -> tuple:
+    """Scan AI/models/ for the first LFM GGUF + mmproj pair.
+
+    Returns (model_path, mmproj_path) or ("", "").
+    """
+    models_dir = os.path.join(base_dir, "AI", "models")
+    if not os.path.isdir(models_dir):
+        return ("", "")
+    for root, _dirs, files in os.walk(models_dir):
+        model = ""
+        mmproj = ""
+        for f in files:
+            if f.endswith(".gguf"):
+                if f.startswith("mmproj-"):
+                    if not mmproj:
+                        mmproj = os.path.join(root, f)
+                else:
+                    if not model:
+                        model = os.path.join(root, f)
+        if model:
+            return (model, mmproj)
+    return ("", "")
+
+
+# ── helper: build LLM caller for decisions ──────────────────────
+
+
+def _build_decision_llm_caller(
+    ollama_url: str = "http://127.0.0.1:11434",
+    ollama_model: str = "granite4:3b",
+) -> Callable[[str, str], str]:
+    """Create a call_llm function for the DecisionEngine.
+
+    Uses a text-only reasoning model via Ollama (granite4:3b by default).
+    The vision model (LFM) is ONLY used by ScreenObserver for describing
+    screenshots — it should NOT be used for structured decision-making.
+    """
+
+    def _call(system_prompt: str, user_prompt: str) -> str:
+        full = f"{system_prompt}\n\n{user_prompt}" if system_prompt else user_prompt
+
+        # Primary: reasoning model via Ollama
+        try:
+            resp = _rq.post(
+                f"{ollama_url}/api/generate",
+                json={
+                    "model": ollama_model,
+                    "prompt": full,
+                    "stream": False,
+                    "options": {"num_predict": 512, "temperature": 0.2},
+                },
+                timeout=60,
+            )
+            if resp.status_code == 200:
+                content = resp.json().get("response", "").strip()
+                if content:
+                    return content
+        except Exception:
+            pass
+
+        logger.debug("Ollama unavailable — decision engine will return failed")
+        return ""
+
+    return _call
+
+
+# ── main controller ─────────────────────────────────────────────
 
 
 class ChatController:
-    def __init__(self, graph_view, post_ui, post_ui_sync, add_chat_bubble, scroll_to_bottom, force_ui_flush, set_processing_label, start_processing_indicator, stop_processing_indicator, translate, accent_color, on_minimize=None, on_restore=None, get_model=None):
+    """Wires up all agentic components and provides handle_request().
+
+    Designed to be created once by the UI (BottomActionsToolbar) and
+    reused for each chat message.
+    """
+
+    def __init__(
+        self,
+        graph_view,
+        post_ui: Callable,
+        post_ui_sync: Callable,
+        add_chat_bubble: Callable,
+        scroll_to_bottom: Callable,
+        force_ui_flush: Callable,
+        set_processing_label: Callable,
+        start_processing_indicator: Callable,
+        stop_processing_indicator: Callable,
+        translate: Callable,
+        accent_color: str,
+        on_minimize: Optional[Callable] = None,
+        on_restore: Optional[Callable] = None,
+        get_model: Optional[Callable] = None,
+    ):
         self._graph_view = graph_view
         self._post_ui = post_ui
         self._post_ui_sync = post_ui_sync
@@ -23,187 +136,213 @@ class ChatController:
         self._set_processing_label = set_processing_label
         self._start_processing_indicator = start_processing_indicator
         self._stop_processing_indicator = stop_processing_indicator
-        self._translate = translate
+        self._translate = translate or (lambda s: s)
         self._accent_color = accent_color
         self._on_minimize = on_minimize
         self._on_restore = on_restore
-        self._llm_executor = None
         self._get_model = get_model
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        self._chat_logger = ChatLogger(base_dir)
-        self._learning_store = LearningStore(base_dir, self._log_event)
-        self._plan_generator = PlanGenerator(self._get_llm_executor, self._log_llm_interaction, self._get_selected_model)
-        self._tool_selector = ToolSelector(self._get_llm_executor, self._log_event, self._log_llm_interaction, self._get_selected_model)
-        self._chain_runner = ChainRunner(self._get_llm_executor, on_minimize=on_minimize, on_restore=on_restore)
-        self._typing_assistant = TypingAssistant(self._get_llm_executor, on_minimize=on_minimize, on_restore=on_restore, get_model=self._get_selected_model)
-        self._failure_analyzer = FailureAnalyzer(self._get_llm_executor, self._learning_store, self._log_llm_interaction, self._get_selected_model)
-        self._execution_engine = ExecutionEngine(
-            tool_selector=self._tool_selector,
-            chain_runner=self._chain_runner,
-            typing_assistant=self._typing_assistant,
-            failure_analyzer=self._failure_analyzer,
-            log_event=self._log_event,
-            post_ui=self._post_ui,
-            post_ui_sync=self._post_ui_sync,
-            add_chat_bubble=self._add_chat_bubble,
-            scroll_to_bottom=self._scroll_to_bottom,
-            force_ui_flush=self._force_ui_flush,
-            set_processing_label=self._set_processing_label,
-            translate=self._translate,
-            accent_color=self._accent_color
+
+        # Determine base directory (project root)
+        _self_path = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        )
+        self._base_dir = _self_path
+
+        # ── Core subsystems ─────────────────────────────────────
+        self._chat_logger = ChatLogger(self._base_dir)
+        self._learning_store = LearningStore(self._base_dir, self._log_event)
+
+        # Chain registry & runner
+        self._chain_registry = ChainRegistry(
+            getattr(graph_view, "chains_folder", "")
+        )
+        self._chain_runner = ChainRunner(
+            self._get_llm_executor,
+            on_minimize=on_minimize,
+            on_restore=on_restore,
         )
 
-    def handle_request(self, text):
+        # Typing assistant
+        self._typing_assistant = TypingAssistant(
+            on_minimize=on_minimize,
+            on_restore=on_restore,
+        )
+
+        # Screen observer (LFM vision) — lazily started
+        lfm_model_path, lfm_mmproj_path = _find_lfm_model(self._base_dir)
+        self._screen_observer: Optional[ScreenObserver] = None
+        if lfm_model_path:
+            self._screen_observer = ScreenObserver(
+                model_path=lfm_model_path,
+                mmproj_path=lfm_mmproj_path,
+                server_port=8082,
+                gpu_layers=35,
+                threads=8,
+                screenshots_dir=os.path.join(self._base_dir, "screenshots"),
+                on_minimize=on_minimize,
+                on_restore=on_restore,
+            )
+        else:
+            logger.warning("No LFM model found — visual observation disabled")
+
+        # Decision engine — uses a text-only reasoning model (granite4:3b via Ollama).
+        # The vision model (LFM) is only used by ScreenObserver.describe().
+        self._call_llm = _build_decision_llm_caller()
+        self._decision_engine = DecisionEngine(
+            call_llm=self._call_llm,
+            chain_registry=self._chain_registry,
+            log_fn=self._log_event,
+        )
+
+        # ── Action executor & chain builder (interactive learning) ─
+        self._action_executor = ActionExecutor(
+            on_minimize=on_minimize,
+            on_restore=on_restore,
+        )
+        self._chain_builder = ChainBuilder(
+            chains_dir=os.path.join(self._base_dir, "chains"),
+            sequences_dir=os.path.join(self._base_dir, "sequences"),
+            registry=self._chain_registry,
+        )
+
+        # ── Persistent agent reference (survives across requests) ─
+        self._agent: Optional[VisualAgent] = None
+
+        # ── LLM executor (lazy, shared) ─────────────────────────
+        self._llm_executor = None
+
+    def handle_request(self, text: str) -> None:
+        """Process a user chat request in a background thread."""
+        thread = threading.Thread(
+            target=self._handle_internal, args=(text,), daemon=True
+        )
+        thread.start()
+
+    # ── internal ─────────────────────────────────────────────────
+
+    def _on_ask_user(self, question: str) -> None:
+        """Show the agent's question/prompt as a chat bubble."""
+        self._post_ui(lambda q=question: self._add_chat_bubble(q, False))
+        self._post_ui(self._scroll_to_bottom)
+
+    def _handle_internal(self, text: str) -> None:
+        """Run the VisualAgent in a background thread.
+
+        If the persistent agent is waiting for user input, routes to the
+        appropriate handler (guidance or confirmation) instead of
+        creating a new agent.
+        """
         try:
-            if self._start_processing_indicator:
-                self._start_processing_indicator(self._translate("Processing request"))
-            self._chat_logger.start_log(text)
-            tools = self._load_chain_tools()
-            tools.append({
-                "id": "sys_write_text",
-                "name": "Write/Type Text",
-                "description": "Simulates keyboard typing. Use this step whenever you need to enter text, after a previous step has focused an input field.",
-                "tool_desc": "Write/Type Text: Simulates keyboard typing. Use this step whenever you need to enter text, after a previous step has focused an input field."
-            })
-            tools.append({
-                "id": "sys_reason",
-                "name": "Reason/Think",
-                "description": "Pause to analyze the situation or context before proceeding. Useful for complex workflows.",
-                "tool_desc": "Reason/Think: Pause to analyze the situation or context before proceeding."
-            })
-            if not tools:
-                self._log_event("no_tools_available", {"query": text})
+            # ── Interactive routing ──────────────────────────────
+            if (
+                self._agent is not None
+                and self._agent._ctx.waiting_for_input
+            ):
+                state = self._agent._ctx.state
+                user_request = self._agent._ctx.user_request
+
+                if state == "waiting_guidance":
+                    response = self._agent.process_guidance(text)
+                elif state == "waiting_confirmation":
+                    response = self._agent.process_confirmation(
+                        text, user_request
+                    )
+                else:
+                    response = "Unknown interaction state. Starting fresh."
+                    self._agent = None
+
+                if response:
+                    self._post_ui(
+                        lambda r=response: self._add_chat_bubble(r, False)
+                    )
                 if self._stop_processing_indicator:
                     self._stop_processing_indicator()
-                self._post_ui(lambda: self._add_chat_bubble(self._translate("No chains available."), False))
                 self._post_ui(self._scroll_to_bottom)
-                self._chat_logger.end_log({"success": False, "reason": "no_tools"})
                 return
-            self._post_ui(lambda: self._set_processing_label(self._translate("Generating plan...")) if self._set_processing_label else None)
-            known_learnings = self._learning_store.format_for_prompt(self._learning_store.relevant(text))
-            plan = self._plan_generator.generate_plan(text, tools, known_learnings)
-            if status_utils.is_status_query(text):
-                plan = status_utils.normalize_status_plan(plan, text)
-            self._log_event("plan_generated", {"query": text, "plan": plan})
-            if len(plan) > 1:
-                plan_text = "Plan:\n" + "\n".join([f"{i + 1}. {step}" for i, step in enumerate(plan)])
-                self._post_ui(lambda: self._add_chat_bubble(plan_text, False))
-                self._post_ui(self._scroll_to_bottom)
-            execution_result = self._execution_engine.execute_plan_steps(plan, text, tools)
-            self._log_event("execution_result", execution_result)
-            if execution_result and not execution_result.get("success", True):
-                self._execution_engine.handle_execution_failure(text, plan, tools, execution_result)
-            if status_utils.is_status_query(text):
-                status_text = self._chain_runner.get_last_chain_result_text()
-                status_value = status_utils.parse_open_status(status_text)
-                subject = status_utils.extract_status_subject(text)
-                self._log_event("status_check", {"status_text": status_text, "status_value": status_value, "subject": subject})
-                if status_value is None:
-                    self._log_event("status_check_failed", {"status_text": status_text})
-                    failure_result = {
-                        "success": False,
-                        "failed_steps": ["status_check"],
-                        "last_result_text": status_text
-                    }
-                    self._execution_engine.handle_execution_failure(text, plan, tools, failure_result)
-                elif status_value is True:
-                    if subject:
-                        self._post_ui(lambda: self._add_chat_bubble(self._translate("{name} is already open.").format(name=subject), False))
-                    else:
-                        self._post_ui(lambda: self._add_chat_bubble(self._translate("The app is already open."), False))
-                elif status_value is False:
-                    if subject:
-                        self._post_ui(lambda: self._add_chat_bubble(self._translate("{name} is not open. Opening now.").format(name=subject), False))
-                    else:
-                        self._post_ui(lambda: self._add_chat_bubble(self._translate("The app is not open. Opening now."), False))
-                    follow_text = f"Open {subject}".strip() if subject else "Open the app"
-                    follow_plan = self._plan_generator.generate_plan(follow_text, tools, known_learnings)
-                    self._log_event("followup_plan", {"query": follow_text, "plan": follow_plan})
-                    if len(follow_plan) > 1:
-                        plan_text = "Plan:\n" + "\n".join([f"{i + 1}. {step}" for i, step in enumerate(follow_plan)])
-                        self._post_ui(lambda: self._add_chat_bubble(plan_text, False))
-                        self._post_ui(self._scroll_to_bottom)
-                    follow_result = self._execution_engine.execute_plan_steps(follow_plan, follow_text, tools)
-                    self._log_event("followup_execution_result", follow_result)
-                    if follow_result and not follow_result.get("success", True):
-                        self._execution_engine.handle_execution_failure(follow_text, follow_plan, tools, follow_result)
+
+            # ── Normal flow: start a new agent ─────────────────
+            if self._start_processing_indicator:
+                self._start_processing_indicator(
+                    self._translate("Processing request")
+                )
+
+            self._chat_logger.start_log(text)
+
+            agent = VisualAgent(
+                chain_runner=self._chain_runner,
+                screen_observer=self._screen_observer,
+                decision_engine=self._decision_engine,
+                chain_registry=self._chain_registry,
+                typing_assistant=self._typing_assistant,
+                learning_store=self._learning_store,
+                log_event=self._log_event,
+                add_chat_bubble=self._add_chat_bubble,
+                scroll_to_bottom=self._scroll_to_bottom,
+                set_processing_label=self._set_processing_label,
+                translate=self._translate,
+                accent_color=self._accent_color,
+                max_iterations=10,
+                action_executor=self._action_executor,
+                chain_builder=self._chain_builder,
+                on_ask_user=self._on_ask_user,
+            )
+            self._agent = agent
+
+            response = agent.run(text)
+
+            # Show final response if not already shown by agent
+            if response:
+                self._post_ui(
+                    lambda r=response: self._add_chat_bubble(r, False)
+                )
+
             if self._stop_processing_indicator:
                 self._stop_processing_indicator()
-            if len(plan) > 1:
-                self._post_ui(lambda: self._add_chat_bubble(self._translate("All tasks completed."), False))
             self._post_ui(self._scroll_to_bottom)
             self._chat_logger.end_log({"success": True})
+
         except Exception as e:
             if self._stop_processing_indicator:
                 self._stop_processing_indicator()
-            self._post_ui(lambda: self._add_chat_bubble(self._translate("Chat execution failed."), False))
+            self._post_ui(
+                lambda: self._add_chat_bubble(
+                    self._translate("Chat execution failed."), False
+                )
+            )
             self._post_ui(self._scroll_to_bottom)
             self._log_event("dispatch_error", {"error": str(e)})
-            self._chat_logger.end_log({"success": False, "reason": "exception", "error": str(e)})
-
-    def _load_chain_tools(self):
-        tools = []
-        folder = getattr(self._graph_view, "chains_folder", None)
-        if not folder or not os.path.isdir(folder):
-            return tools
-        files = sorted([f for f in os.listdir(folder) if f.lower().endswith(".json")])
-        used_ids = set()
-        for name in files:
-            path = os.path.join(folder, name)
-            base = os.path.splitext(name)[0]
-            display_name = base
-            description = ""
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                display_name = data.get("name", display_name)
-                description = data.get("description", "")
-            except Exception:
-                pass
-            tool_id = "".join(ch if (ch.isalnum() or ch in ("_", "-")) else "_" for ch in str(base))
-            if not tool_id:
-                tool_id = "chain"
-            original_id = tool_id
-            idx = 2
-            while tool_id in used_ids:
-                tool_id = f"{original_id}_{idx}"
-                idx += 1
-            used_ids.add(tool_id)
-            if description:
-                tool_desc = f"{display_name}: {description}"
-            else:
-                tool_desc = str(display_name)
-            tools.append(
-                {
-                    "id": tool_id,
-                    "name": str(display_name),
-                    "description": str(description),
-                    "tool_desc": tool_desc,
-                    "path": path,
-                }
+            self._chat_logger.end_log(
+                {"success": False, "reason": "exception", "error": str(e)}
             )
-        return tools
 
-    def _log_event(self, event, payload=None):
+    def _log_event(self, event: str, payload: Any = None) -> None:
         self._chat_logger.log_event(event, payload)
 
-    def _log_llm_interaction(self, name, llm_config, response):
+    def _log_llm_interaction(
+        self, name: str, llm_config: dict, response: Any
+    ) -> None:
         payload = {
             "name": name,
             "model": llm_config.get("model"),
             "system_message": llm_config.get("system_message"),
             "prompt": llm_config.get("prompt"),
             "output_variable": llm_config.get("output_variable"),
-            "response": response
+            "response": response,
         }
         self._log_event("llm_interaction", payload)
 
-    def _get_llm_executor(self, llm_executor_class):
+    def _get_llm_executor(self, llm_executor_class=None):
+        """Lazy-load LLMExecutor (keeps chain_runner compatible)."""
         if self._llm_executor is None and llm_executor_class:
-            self._llm_executor = llm_executor_class()
+            try:
+                from player.multi_sequence.llm_executor import LLMExecutor
+                self._llm_executor = LLMExecutor()
+            except Exception:
+                pass
         return self._llm_executor
 
     def _get_selected_model(self):
+        """Return selected model string (for TypingAssistant compat)."""
         try:
             if self._get_model:
                 return self._get_model()

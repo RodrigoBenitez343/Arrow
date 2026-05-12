@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QFrame, QSizePolicy, QLabel, QApplication, QStyle, QScrollArea,
     QGraphicsDropShadowEffect, QMessageBox, QDialog
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF
+from PyQt5.QtCore import Qt, QPoint, QSize, QFileSystemWatcher, QTimer, QPointF, QRectF, pyqtSignal
 from PyQt5.QtGui import QDrag, QPixmap, QPainter, QColor, QIcon, QPainterPath, QFont, QPolygonF
 from PyQt5.QtCore import QMimeData
 try:
@@ -23,7 +23,7 @@ from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER,
     LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR,
-    CODE_NODE_COLOR, CONTEXT_NODE_COLOR
+    CODE_NODE_COLOR, CONTEXT_NODE_COLOR, SIDE_PANEL_BG
 )
 from ..dialogs.base_dialog import ModernDialog
 from ..i18n import _
@@ -531,18 +531,20 @@ class DraggableButton(QPushButton):
             QPushButton {{
                 background-color: {bg_color};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-top: 1px solid rgba(255, 255, 255, 0.2);
                 padding: 4px 10px;
-                border-radius: 14px;
+                border-radius: 12px;
                 min-width: 96px;
                 min-height: 42px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
+                background-color: {bg_color};
                 border-color: {ACCENT_COLOR};
             }}
             QPushButton:pressed {{
-                background-color: {BLOCK_HOVER};
+                background-color: rgba(255, 255, 255, 0.12);
             }}
             """
         )
@@ -947,36 +949,15 @@ class TrashBinWidget(QPushButton):
 
 
 class CollapsibleToolbar(QWidget):
-    """Collapsible top toolbar that mirrors context menu actions."""
+    """Collapsible right toolbar with special node creation buttons."""
+
+    scheduler_requested = pyqtSignal()
+    ai_settings_requested = pyqtSignal()
 
     def __init__(self, graph_view, parent=None):
         super().__init__(parent)
         self.graph_view = graph_view
         self._collapsed = False
-        try:
-            self._watcher = QFileSystemWatcher(self)
-            folder = getattr(self.graph_view, 'sequences_folder', None)
-            if folder:
-                try:
-                    os.makedirs(folder, exist_ok=True)
-                except Exception:
-                    pass
-                try:
-                    success = self._watcher.addPath(folder)
-                    if success:
-                        logger.debug(f"CollapsibleToolbar: Watching sequences folder: {folder}")
-                    else:
-                        logger.warning(f"CollapsibleToolbar: Failed to add folder to watcher: {folder}")
-                except Exception as e:
-                    logger.error(f"CollapsibleToolbar: Error adding folder to watcher: {e}")
-            try:
-                self._watcher.directoryChanged.connect(self.refresh_sequences_list)
-                self._watcher.fileChanged.connect(self.refresh_sequences_list)
-            except Exception as e:
-                logger.error(f"CollapsibleToolbar: Error connecting watcher signals: {e}")
-        except Exception as e:
-            self._watcher = None
-            logger.error(f"CollapsibleToolbar: Failed to initialize QFileSystemWatcher: {e}")
         self._build_ui()
 
     def _build_ui(self):
@@ -992,43 +973,23 @@ class CollapsibleToolbar(QWidget):
         # Make the main widget transparent (content frame provides background)
         # This ensures no "black frame" when integrated in layout
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
 
         # Container for content
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("toolbarContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#toolbarContent {{ background-color: {DARK_GREY}; border: 2px solid {LIGHT_GREY}; border-radius: 10px; }}"
+            f"QFrame#toolbarContent {{ background-color: {SIDE_PANEL_BG}; border-radius: 10px; }}"
         )
         content_layout = QVBoxLayout(self._content_frame)
         content_layout.setContentsMargins(8, 8, 8, 8)
         content_layout.setSpacing(6)
-
-        # Title Label
-        title_label = QLabel(_("Sequence List"))
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setFixedHeight(40)  # Match standard toolbar height
-        title_label.setStyleSheet(
-            f"""
-            QLabel {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
-                font-weight: bold;
-                font-size: 14px;
-                padding: 4px;
-            }}
-            """
-        )
-        content_layout.addWidget(title_label)
 
         top_cluster = QFrame(self._content_frame)
         top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._top_layout = QVBoxLayout(top_cluster)
         self._top_layout.setContentsMargins(0, 0, 0, 0)
         self._top_layout.setSpacing(1)
-        self._sequences_scroll = self._make_sequences_scroll_box()
-        self._top_layout.addWidget(self._sequences_scroll)
 
         # Trash Bin
         self.trash_bin = TrashBinWidget(self._content_frame)
@@ -1036,7 +997,7 @@ class CollapsibleToolbar(QWidget):
         self._top_layout.addSpacing(4)
 
         nodes_col = QVBoxLayout()
-        nodes_col.setSpacing(1)
+        nodes_col.setSpacing(6)
         nodes_col.setContentsMargins(0, 0, 0, 0)
         nodes_col.addWidget(self._make_node_button(_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip=_("Add LLM Node")))
         nodes_col.addWidget(self._make_node_button(_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip=_("Add Chain Import Node")))
@@ -1046,6 +1007,77 @@ class CollapsibleToolbar(QWidget):
         nodes_col.addWidget(self._make_node_button(_("Cond"), "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip=_("Add Conditional Node")))
         self._top_layout.addLayout(nodes_col)
         content_layout.addWidget(top_cluster)
+
+        # Scheduler button at the bottom
+        content_layout.addStretch()
+        sched_btn = QPushButton(_("Scheduler"))
+        sched_btn.setCursor(Qt.PointingHandCursor)
+        sched_btn.setFixedHeight(36)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            ico = TablerIcons.load(OutlineIcon.CALENDAR, size=18, color='#00E0B8').toqpixmap()
+            sched_btn.setIcon(QIcon(ico))
+            sched_btn.setIconSize(QSize(18, 18))
+        except Exception:
+            pass
+        sched_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
+                border: 1px solid {ACCENT_COLOR};
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {BLOCK_HOVER};
+                border: 1px solid {ACCENT_COLOR};
+            }}
+            QPushButton:pressed {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+            }}
+            """
+        )
+        sched_btn.clicked.connect(self.scheduler_requested.emit)
+        content_layout.addWidget(sched_btn)
+
+        # AI Settings button below scheduler
+        ai_btn = QPushButton(_("AI Settings"))
+        ai_btn.setCursor(Qt.PointingHandCursor)
+        ai_btn.setFixedHeight(36)
+        try:
+            from pytablericons import TablerIcons, OutlineIcon
+            ico = TablerIcons.load(OutlineIcon.SETTINGS, size=18, color='#00E0B8').toqpixmap()
+            ai_btn.setIcon(QIcon(ico))
+            ai_btn.setIconSize(QSize(18, 18))
+        except Exception:
+            pass
+        ai_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
+                border: 1px solid {ACCENT_COLOR};
+                border-radius: 8px;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {BLOCK_HOVER};
+                border: 1px solid {ACCENT_COLOR};
+            }}
+            QPushButton:pressed {{
+                background-color: {ACCENT_COLOR};
+                color: {DARK_GREY};
+            }}
+            """
+        )
+        ai_btn.clicked.connect(self.ai_settings_requested.emit)
+        content_layout.addWidget(ai_btn)
 
         content_layout.addSpacing(8)
         try:
@@ -1110,45 +1142,8 @@ class CollapsibleToolbar(QWidget):
 
 
     def refresh_sequences_list(self, path=None):
-        """Refresh the list of sequences in the toolbar."""
-        try:
-            if path:
-                logger.debug(f"CollapsibleToolbar: Refreshing sequences list due to change in: {path}")
-            else:
-                logger.debug("CollapsibleToolbar: Refreshing sequences list")
-            
-            new_scroll = self._make_sequences_scroll_box()
-            if hasattr(self, '_sequences_scroll') and self._sequences_scroll is not None:
-                old_scroll = self._sequences_scroll
-                try:
-                    # Hide it first to avoid ghost window
-                    old_scroll.hide()
-                    # Remove from layout
-                    self._top_layout.removeWidget(old_scroll)
-                    old_scroll.setParent(None)
-                    old_scroll.deleteLater()
-                except Exception:
-                    pass
-                
-                # Insert new scroll at top (index 0)
-                self._sequences_scroll = new_scroll
-                self._top_layout.insertWidget(0, self._sequences_scroll)
-            else:
-                self._sequences_scroll = new_scroll
-                self._top_layout.insertWidget(0, self._sequences_scroll)
-            try:
-                self._sequences_scroll.update()
-                self._top_layout.update()
-                self._content_frame.update()
-                self.update()
-                try:
-                    QApplication.processEvents()
-                except Exception:
-                    pass
-            except Exception:
-                pass
-        except Exception as e:
-            logger.error(f"Failed to refresh sequences list: {e}")
+        """Stub kept for backward compatibility - sequences moved to left sidebar."""
+        pass
 
     def _position_nodes_toggle(self):
         # Position the button relative to the toolbar's position on the screen
@@ -1180,63 +1175,6 @@ class CollapsibleToolbar(QWidget):
                 self._toggle_btn_nodes.raise_()
             except Exception:
                 pass
-
-    def _make_sequences_scroll_box(self):
-        scroll = QScrollArea(self)
-        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        try:
-            scroll.setWidgetResizable(True)
-        except Exception:
-            pass
-        try:
-            # Allow vertical scrollbar, hide horizontal
-            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        except Exception:
-            pass
-        
-
-        container = QFrame(scroll)
-        layout = QVBoxLayout(container)
-        # Add right margin (12px) to make space for scrollbar without overlap
-        layout.setContentsMargins(4, 4, 12, 4)
-        layout.setSpacing(6)
-        folder = getattr(self.graph_view, 'sequences_folder', None)
-        files = []
-        try:
-            if folder and os.path.isdir(folder):
-                files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.json')])
-                nested = os.path.join(folder, 'sequences')
-                if os.path.isdir(nested):
-                    extra = [f for f in os.listdir(nested) if f.lower().endswith('.json')]
-                    files = sorted(set(files + extra))
-        except Exception:
-            files = []
-        if not files:
-            placeholder = QLabel(_("No sequences"))
-            placeholder.setAlignment(Qt.AlignCenter)
-            placeholder.setStyleSheet(
-                f"""
-                QLabel {{
-                    background-color: {MEDIUM_GREY};
-                    color: {TEXT_COLOR};
-                    border: 1px solid {LIGHT_GREY};
-                    border-radius: 10px;
-                    min-height: 40px;
-                }}
-                """
-            )
-            layout.addWidget(placeholder)
-            scroll.setWidget(container)
-            return scroll
-        for name in files:
-            p1 = os.path.join(folder, name)
-            p2 = os.path.join(folder, 'sequences', name)
-            full_path = p1 if os.path.exists(p1) else p2
-            btn = DraggableSequenceButton(name, full_path, self.graph_view, self)
-            layout.addWidget(btn)
-        scroll.setWidget(container)
-        return scroll
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
         btn = DraggableButton(label, node_type, color, click_handler, self)

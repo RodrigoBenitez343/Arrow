@@ -767,12 +767,13 @@ class GraphViewWidget(QWidget):
     
 
     def refresh_sequences_toolbar(self):
+        """Refresh sequences in the left sidebar."""
         try:
-            toolbar = getattr(self, '_toolbar_widget', None)
-            if toolbar and hasattr(toolbar, 'refresh_sequences_list'):
-                toolbar.refresh_sequences_list()
+            chains_lib = getattr(self, 'chains_library', None)
+            if chains_lib and hasattr(chains_lib, 'refresh_sequences_list'):
+                chains_lib.refresh_sequences_list()
         except Exception as e:
-            logger.error(f"Failed to refresh sequences toolbar: {e}")
+            logger.error(f"Failed to refresh sequences list: {e}")
 
     def record_single_action(self, sequence_node):
         """Record a single action within a sequence"""

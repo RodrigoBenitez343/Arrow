@@ -2,7 +2,7 @@ import logging
 from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QSplitter
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
-from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR)
+from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, CENTER_BG, GRAPH_PLANE)
 from ..widgets.collapsible_toolbar import CollapsibleToolbar
 
 # Configure logger
@@ -47,7 +47,7 @@ class UIComponents:
             logger.debug("Applying main widget styling")
             self.parent_widget.setStyleSheet(f"""
                 QWidget {{
-                    background-color: {DARK_GREY};
+                    background-color: {GRAPH_PLANE};
                     color: {TEXT_COLOR};
                     border: none;
                 }}
@@ -101,13 +101,12 @@ class UIComponents:
             self.parent_widget.node_graph_widget = QWidget(center_container)
             self.parent_widget.node_graph_widget.setStyleSheet(f"""
                 QWidget {{
-                    background-color: {MEDIUM_GREY};
-                    border: 1px solid {LIGHT_GREY};
+                    background-color: {CENTER_BG};
                     border-radius: 10px;
                 }}
             """)
             
-            from ..widgets.actions_toolbar import ActionsToolbar, SearchBarFrame
+            from ..widgets.actions_toolbar import ActionsToolbar
             from ..widgets.bottom_toolbar import BottomActionsToolbar
             actions_toolbar = ActionsToolbar(self.parent_widget)
             self.parent_widget.actions_toolbar = actions_toolbar
@@ -116,9 +115,6 @@ class UIComponents:
             except Exception:
                 pass
             center_container_layout.addWidget(actions_toolbar, 0)
-            search_bar = SearchBarFrame(self.parent_widget, center_container)
-            self.parent_widget.search_bar = search_bar
-            center_container_layout.addWidget(search_bar, 0)
             center_container_layout.addWidget(self.parent_widget.node_graph_widget, 1)
             bottom_toolbar = BottomActionsToolbar(self.parent_widget)
             self.parent_widget.bottom_toolbar = bottom_toolbar
@@ -134,7 +130,7 @@ class UIComponents:
             
             # Initial sizes: left=160, center expands, right=160
             try:
-                splitter.setSizes([160, 900, 160])
+                splitter.setSizes([320, 740, 160])
             except Exception:
                 pass
             

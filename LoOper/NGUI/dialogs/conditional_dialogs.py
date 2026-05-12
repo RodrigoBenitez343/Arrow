@@ -164,7 +164,7 @@ class AdvancedConditionalDialog(ModernDialog):
     def setup_unified_conditions(self, parent_layout: QVBoxLayout):
         """Setup a unified layout with the supported options (no tabs)."""
         # Code condition
-        code_group = QGroupBox(_("Code Condition (must return True/False)"))
+        code_group = QGroupBox(_("Code Condition (must set 'result' to True/False for routing)"))
         code_layout = QVBoxLayout(code_group)
         code_layout.setContentsMargins(10, 15, 10, 10)
         code_layout.setSpacing(8)
@@ -178,6 +178,30 @@ class AdvancedConditionalDialog(ModernDialog):
         code_enable_row.addWidget(self.code_enabled_toggle)
         code_enable_row.addStretch()
         code_layout.addLayout(code_enable_row)
+
+        # Info label showing available variables
+        info_label = QLabel()
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(f"""
+            QLabel {{
+                color: #a0a0a0;
+                background-color: #1e1e1e;
+                border: 1px solid #333333;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 11px;
+            }}
+        """)
+        info_label.setText(_(
+            "Available variables in your code:\n"
+            "  \u2022 input_data  - output from the previous node (LLM result, code output, etc.)\n"
+            "  \u2022 args        - dict of values from 'args' port connections\n"
+            "  \u2022 variables   - all shared workflow variables (read/write)\n"
+            "  \u2022 get_variable(name, default) - retrieve any variable by name\n"
+            "  \u2022 set_variable(name, value)   - store a value as a variable\n"
+            "Set result = True to follow the 'true' branch, or False for the 'false' branch."
+        ))
+        code_layout.addWidget(info_label)
 
         self.code_edit = QTextEdit()
         self.code_edit.setMinimumHeight(160)
@@ -343,7 +367,17 @@ class AdvancedConditionalDialog(ModernDialog):
         if code_text:
             self.code_edit.setPlainText(str(code_text))
         else:
-            self.code_edit.setPlainText("result = True")
+            self.code_edit.setPlainText(
+                "# Evaluate previous node's output to decide routing\n"
+                "# input_data contains the output from the previous node\n"
+                "# Examples:\n"
+                "#   # Check if LLM output contains specific keywords\n"
+                "#   if input_data and 'error' in str(input_data).lower():\n"
+                "#       result = False\n"
+                "#   else:\n"
+                "#       result = True\n"
+                "result = True"
+            )
         try:
             timeout = float(code_cfg.get('timeout', 5.0) or 5.0)
         except Exception:

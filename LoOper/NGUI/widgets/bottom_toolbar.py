@@ -1,17 +1,48 @@
 import logging
+import os
 import threading
 
+from player.agentic_ops import ChatController
+from PyQt5.QtCore import QMetaObject, QPoint, QSize, Qt, QTimer, pyqtSlot
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QToolButton, QFrame, QSizePolicy,
-    QLabel, QComboBox, QPushButton, QTextEdit, QScrollArea, QApplication
+    QApplication,
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTextEdit,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMetaObject, pyqtSlot
 
-from ..constants import DARK_GREY, LIGHT_GREY, ACCENT_COLOR, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, MEDIUM_GREY
+from ..constants import (
+    ACCENT_COLOR,
+    BLOCK_COLOR,
+    BLOCK_HOVER,
+    DARK_GREY,
+    LIGHT_GREY,
+    MEDIUM_GREY,
+    TEXT_COLOR,
+    BAR_BG,
+)
 from ..i18n import _
 from .actions_toolbar import load_tabler_icon
-from player.agentic_ops import ChatController
-import os
+
+
+# ---- Model helpers (simplified: fixed pipeline) ----
+
+
+def _get_models():
+    """Return the fixed two-model pipeline info for display."""
+    return {
+        "vision": "LFM2.5-VL-450M",
+        "reasoning": "gemma4:4b",
+    }
+
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +71,13 @@ class BottomActionsToolbar(QWidget):
             accent_color=ACCENT_COLOR,
             on_minimize=self._minimize_window,
             on_restore=self._restore_window,
-            get_model=self._get_selected_model
         )
         # Bottom toolbar is now visible by default
         # Removed automatic hiding to enable development and testing
 
     def _build_ui(self):
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -54,7 +86,7 @@ class BottomActionsToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("bottomActionsContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#bottomActionsContent {{ background-color: {DARK_GREY}; border: 1px solid rgba(80, 80, 80, 0.5); border-radius: 10px; }}"
+            f"QFrame#bottomActionsContent {{ background-color: {BAR_BG}; border-radius: 10px; }}"
         )
         self._content_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout = QVBoxLayout(self._content_frame)
@@ -68,10 +100,26 @@ class BottomActionsToolbar(QWidget):
         title.setStyleSheet(f"color: {TEXT_COLOR}; font-size: 14px; font-weight: 600;")
         header.addWidget(title, 0, Qt.AlignLeft)
         header.addStretch(1)
-        # Fixed model indicator instead of dropdown
-        model_label = QLabel(_("Model: Qwen3.6-35B-A3B"), self._content_frame)
-        model_label.setStyleSheet(f"color: {ACCENT_COLOR}; font-size: 12px; font-weight: 500;")
-        header.addWidget(model_label, 0, Qt.AlignRight)
+        # Fixed model labels — vision + reasoning always use these
+        models_label = QLabel(
+            "vision: LFM2.5-VL-450M  |  reasoning: gemma4:4b",
+            self._content_frame,
+        )
+        models_label.setStyleSheet(
+            f"color: {LIGHT_GREY}; font-size: 10px;"
+        )
+        header.addWidget(models_label, 0, Qt.AlignRight)
+        # Clear memory button
+        self._clear_memory_btn = QPushButton(_("Clear"), self._content_frame)
+        self._clear_memory_btn.setToolTip(_("Clear all agent memory / learned experiences"))
+        self._clear_memory_btn.setCursor(Qt.PointingHandCursor)
+        self._clear_memory_btn.setFixedSize(42, 22)
+        self._clear_memory_btn.setStyleSheet(
+            f"QPushButton {{ background-color: transparent; color: {LIGHT_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 6px; font-size: 10px; padding: 0px 6px; }}"
+            f"QPushButton:hover {{ color: #ff6b6b; border-color: #ff6b6b; }}"
+        )
+        self._clear_memory_btn.clicked.connect(self._clear_memory)
+        header.addWidget(self._clear_memory_btn, 0, Qt.AlignRight)
         layout.addLayout(header)
 
         chat_frame = QFrame(self._content_frame)
@@ -94,7 +142,9 @@ class BottomActionsToolbar(QWidget):
         self._chat_layout.setContentsMargins(4, 4, 4, 4)
         self._chat_layout.setSpacing(8)
         self._chat_layout.setAlignment(Qt.AlignTop)
-        self._placeholder_label = QLabel(_("Start a conversation"), self._chat_container)
+        self._placeholder_label = QLabel(
+            _("Start a conversation"), self._chat_container
+        )
         self._placeholder_label.setAlignment(Qt.AlignCenter)
         self._placeholder_label.setStyleSheet(
             f"color: {TEXT_COLOR}; background-color: {BLOCK_COLOR}; border: 1px solid {LIGHT_GREY}; border-radius: 12px; padding: 10px 14px;"
@@ -135,7 +185,7 @@ class BottomActionsToolbar(QWidget):
 
         self._toggle_btn_bottom = QToolButton(self.graph_view)
         self._toggle_btn_bottom.setToolTip(_("Toggle Bottom Toolbar"))
-        ico = load_tabler_icon('CHEVRON_DOWN', 14)
+        ico = load_tabler_icon("CHEVRON_DOWN", 14)
         if ico:
             self._toggle_btn_bottom.setIcon(ico)
             self._toggle_btn_bottom.setIconSize(QSize(14, 14))
@@ -162,7 +212,7 @@ class BottomActionsToolbar(QWidget):
         try:
             is_visible = self._content_frame.isVisible()
             self._content_frame.setVisible(not is_visible)
-            name = 'CHEVRON_UP' if is_visible else 'CHEVRON_DOWN'
+            name = "CHEVRON_UP" if is_visible else "CHEVRON_DOWN"
             ico = load_tabler_icon(name, 16)
             if ico:
                 self._toggle_btn_bottom.setIcon(ico)
@@ -183,7 +233,10 @@ class BottomActionsToolbar(QWidget):
 
     def _position_bottom_toggle(self):
         try:
-            if not hasattr(self, '_toggle_btn_bottom') or self._toggle_btn_bottom is None:
+            if (
+                not hasattr(self, "_toggle_btn_bottom")
+                or self._toggle_btn_bottom is None
+            ):
                 return
             toolbar_top_left = self.mapTo(self.graph_view, QPoint(0, 0))
             x = toolbar_top_left.x() + self.width() // 2 - 14
@@ -230,26 +283,28 @@ class BottomActionsToolbar(QWidget):
         except Exception:
             logger.exception("Error updating input height")
 
+    # ---- Model info ----
     def _get_selected_model(self):
-        """Return the fixed Qwen model path for llama.cpp"""
+        """Return fixed (engine, model_name) tuple."""
+        return ("Ollama", "gemma4:4b")
+
+    def _clear_memory(self):
         try:
-            # Path to the Qwen3.6-35B-A3B-GGUF model
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            model_path = os.path.join(
-                base_dir, 
-                "AI", 
-                "models", 
-                "Qwen3.6-35B-A3B-GGUF", 
-                "Qwen3.6-35B-A3B-UD-Q2_K_XL.gguf"
+            store = getattr(self._chat_controller, '_learning_store', None)
+            if store is None:
+                return
+            count = store.count()
+            if count == 0:
+                self._add_chat_bubble(_('Memory is already empty.'), False)
+                self._scroll_to_bottom()
+                return
+            store.clear()
+            self._add_chat_bubble(
+                _('Memory cleared: {} entries removed.').format(count), False
             )
-            if os.path.exists(model_path):
-                return model_path
-            else:
-                logger.warning(f"Qwen model not found at: {model_path}")
-                return ""
-        except Exception as e:
-            logger.error(f"Error getting model path: {e}")
-            return ""
+            self._scroll_to_bottom()
+        except Exception:
+            logger.exception('Error clearing memory')
 
     def _handle_send(self):
         try:
@@ -306,11 +361,13 @@ class BottomActionsToolbar(QWidget):
     def _post_ui_sync(self, func, timeout=0.5):
         try:
             done = threading.Event()
+
             def wrapped():
                 try:
                     func()
                 finally:
                     done.set()
+
             self._post_ui(wrapped)
             done.wait(timeout=timeout)
         except Exception:
@@ -370,12 +427,16 @@ class BottomActionsToolbar(QWidget):
             self._processing_label = QLabel(text, self._processing_bubble)
             self._processing_label.setObjectName("chatBubbleLabel")
             self._processing_label.setWordWrap(True)
-            self._processing_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self._processing_label.setSizePolicy(
+                QSizePolicy.Fixed, QSizePolicy.Preferred
+            )
             max_width = self._bubble_max_width()
             self._apply_label_width(self._processing_label, max_width)
             self._processing_label.setStyleSheet(f"color: {TEXT_COLOR};")
             layout.addWidget(self._processing_label)
-            self._processing_bubble.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
+            self._processing_bubble.setSizePolicy(
+                QSizePolicy.Fixed, QSizePolicy.Preferred
+            )
             self._processing_bubble.setFixedWidth(self._processing_label.width() + 24)
             self._chat_layout.addWidget(self._processing_bubble, 0, Qt.AlignLeft)
             self._scroll_to_bottom()
@@ -383,13 +444,16 @@ class BottomActionsToolbar(QWidget):
             self._processing_timer.setInterval(400)
             self._processing_timer.timeout.connect(self._tick_processing_indicator)
             self._processing_timer.start()
+
         self._post_ui_sync(_start)
 
     def _tick_processing_indicator(self):
         if not self._processing_label:
             return
         self._processing_dots = (self._processing_dots + 1) % 4
-        base = self._processing_label.text().split("...")[0].split("..")[0].split(".")[0]
+        base = (
+            self._processing_label.text().split("...")[0].split("..")[0].split(".")[0]
+        )
         self._processing_label.setText(base + ("." * self._processing_dots))
         max_width = self._bubble_max_width()
         self._apply_label_width(self._processing_label, max_width)
@@ -408,6 +472,7 @@ class BottomActionsToolbar(QWidget):
                 self._processing_label = None
             except Exception:
                 pass
+
         self._post_ui_sync(_stop)
 
     def _bubble_max_width(self):
@@ -423,7 +488,9 @@ class BottomActionsToolbar(QWidget):
         try:
             fm = label.fontMetrics()
             text = label.text() or ""
-            text_width = fm.boundingRect(0, 0, 10_000, 10_000, Qt.TextWordWrap, text).width()
+            text_width = fm.boundingRect(
+                0, 0, 10_000, 10_000, Qt.TextWordWrap, text
+            ).width()
             target = min(max_width, text_width + 6)
             if target < 160:
                 target = min(max_width, 160)
@@ -448,5 +515,6 @@ class BottomActionsToolbar(QWidget):
                 self._chat_controller.handle_request(text)
             except Exception as e:
                 logger.error(f"Chat dispatch error: {e}")
+
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
