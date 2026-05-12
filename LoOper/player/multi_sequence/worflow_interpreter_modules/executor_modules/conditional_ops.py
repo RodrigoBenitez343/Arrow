@@ -1,5 +1,6 @@
 from ....config import logger
 import os
+from ...llm_executor_resources.executor import _strip_think_tags
 
 class ConditionalMixin:
     def _get_expected_app_context(self, conditional_node):
@@ -586,6 +587,14 @@ class ConditionalMixin:
             input_data = None
         else:
             input_data = input_data_list
+
+        # Strip chain-of-thought/reasoning tags from input_data
+        # to ensure code conditionals evaluate against clean text
+        try:
+            if input_data is not None and isinstance(input_data, str):
+                input_data = _strip_think_tags(input_data)
+        except Exception:
+            pass
 
         node_id = str(conditional_node.get('id') or conditional_node.get('node_id') or '')
 

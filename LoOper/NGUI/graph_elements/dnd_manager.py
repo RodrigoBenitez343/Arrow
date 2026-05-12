@@ -177,7 +177,22 @@ class DragDropManager:
 
                     new_node = None
                     if node_type == 'llm':
-                        new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
+                        # Check if this is a shared LLM node with configuration
+                        if mime.hasFormat('application/x-looper-llm-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-llm-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                llm_node_data = config.get('llm_node_data', {})
+                                new_node = self.parent.node_operations.add_llm_node_with_shared_file(
+                                    chain_file, llm_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared LLM node drop error: {e}")
+                                new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
                     elif node_type == 'tts':
                         new_node = self.parent.node_operations.add_tts_node(pos=drop_pos)
                     elif node_type == 'conditional':
@@ -189,7 +204,22 @@ class DragDropManager:
                         else:
                             new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
-                        new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                        # Check if this is a shared code node with configuration
+                        if mime.hasFormat('application/x-looper-code-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-code-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                code_node_data = config.get('code_node_data', {})
+                                new_node = self.parent.node_operations.add_code_node_with_shared_file(
+                                    chain_file, code_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared code node drop error: {e}")
+                                new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'context':
                         # Check if this is a shared context node with configuration
                         if mime.hasFormat('application/x-looper-context-config'):
@@ -282,7 +312,22 @@ class DragDropManager:
 
                     new_node = None
                     if node_type == 'llm':
-                        new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
+                        # Check if this is a shared LLM node with configuration
+                        if mime.hasFormat('application/x-looper-llm-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-llm-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                llm_node_data = config.get('llm_node_data', {})
+                                new_node = self.parent.node_operations.add_llm_node_with_shared_file(
+                                    chain_file, llm_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared LLM node drop error: {e}")
+                                new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
                     elif node_type == 'tts':
                         new_node = self.parent.node_operations.add_tts_node(pos=drop_pos)
                     elif node_type == 'conditional':
@@ -294,7 +339,22 @@ class DragDropManager:
                         else:
                             new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
-                        new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                        # Check if this is a shared code node with configuration
+                        if mime.hasFormat('application/x-looper-code-config'):
+                            import json
+                            try:
+                                config_data = bytes(mime.data('application/x-looper-code-config')).decode('utf-8')
+                                config = json.loads(config_data)
+                                chain_file = config.get('chain_file', '')
+                                code_node_data = config.get('code_node_data', {})
+                                new_node = self.parent.node_operations.add_code_node_with_shared_file(
+                                    chain_file, code_node_data
+                                )
+                            except Exception as e:
+                                logger.error(f"Shared code node drop error: {e}")
+                                new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
+                        else:
+                            new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'context':
                         # Check if this is a shared context node with configuration
                         if mime.hasFormat('application/x-looper-context-config'):

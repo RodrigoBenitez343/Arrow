@@ -3,7 +3,7 @@
 # Color Palette (NothingOS-inspired, clean minimal dark)
 RED_PRIMARY = '#FF4B4B'
 RED_DARK = '#D43C3C'
-DARK_GREY = '#121212'
+DARK_GREY = '#1E2329'  # Deep Charcoal - base wall
 MEDIUM_GREY = '#1A1A1A'
 LIGHT_GREY = '#2E2E2E'
 TEXT_COLOR = '#EEEEEE'
@@ -11,16 +11,22 @@ ACCENT_COLOR = '#00E0B8'
 BLOCK_COLOR = '#1F1F1F'
 BLOCK_HOVER = '#242424'
 FALLBACK_COLOR = '#8B4513'
+
+# Elevation / piling shades (progressive lightening of DARK_GREY)
+SIDE_PANEL_BG = '#242B32'  # Level 1 - left & right panels
+CENTER_BG = '#2C333D'      # Level 2 - graph area background
+BAR_BG = '#343D48'         # Level 3 - top & bottom bars (highest)
+GRAPH_PLANE = '#0D1117'   # Graph canvas / wall color (darkest)
 SCREENSHOT_COLOR = '#00008B'
 ACTION_COLOR = '#1F1F1F'
 CONDITIONAL_COLOR = '#7B61FF'
-LLM_COLOR = '#FF6B35'
+LLM_COLOR = '#BD6C4D'  # Muted Matte Orange
 TTS_COLOR = '#00CED1'
-CHAIN_IMPORT_COLOR = '#32CD32'
+CHAIN_IMPORT_COLOR = '#5C8D68'  # Muted Matte Green
 FORM_FILLER_COLOR = '#DDA0DD'
 CODE_NODE_COLOR = '#F1C40F'
 CONTAINER_NODE_COLOR = '#4A90E2'
-CONTEXT_NODE_COLOR = '#2196F3'  # Blue
+CONTEXT_NODE_COLOR = '#4A7DA5'  # Muted Matte Blue
 
 # Port Color Mapping (visual emphasis; labels are background logic)
 INPUT_PORT_COLOR = '#4DB6FF'   # Bright blue for inputs

@@ -52,7 +52,7 @@ from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QFileDialog, QInputDialog, QMessageBox, QLineEdit
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QIcon
-from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR
+from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR, GRAPH_PLANE
 from .i18n import _
 from pynput import mouse, keyboard
 from .graph_view import GraphViewWidget
@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
             self.central_widget = QWidget()
             self.central_widget.setStyleSheet(f"""
                 QWidget {{
-                    background-color: {DARK_GREY};
+                    background-color: {GRAPH_PLANE};
                     color: {TEXT_COLOR};
                     border: none;
                 }}
@@ -139,6 +139,15 @@ class MainWindow(QMainWindow):
             logger.debug("Creating GraphViewWidget")
             self.graph_view = GraphViewWidget(self)
             self.layout.addWidget(self.graph_view)
+
+            # Connect toolbar scheduler button to open manager
+            try:
+                toolbar = getattr(self.graph_view, '_toolbar_widget', None)
+                if toolbar:
+                    toolbar.scheduler_requested.connect(self.open_scheduler_manager)
+                    toolbar.ai_settings_requested.connect(self.open_ai_settings)
+            except Exception as e:
+                logger.error(f"Failed to connect toolbar scheduler: {e}")
             
             logger.debug("Creating menu bar")
             self.create_menu_bar()
@@ -172,7 +181,7 @@ class MainWindow(QMainWindow):
                 QMenu {{
                     background-color: {MEDIUM_GREY};
                     color: {TEXT_COLOR};
-                    border: 1px solid {LIGHT_GREY};
+                    border: 1px solid rgba(255, 255, 255, 0.08);
                     border-radius: 8px;
                 }}
                 QMenu::item {{
@@ -186,65 +195,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         
-        # File menu
-        file_menu = menu_bar.addMenu(_("&File"))
-        # Keep only Exit in File menu
-        exit_action = QAction(_("&Exit"), self)
+        # Exit button directly on menu bar (no dropdown for a single action)
+        exit_action = QAction(_("Exit"), self)
         try:
             from pytablericons import TablerIcons, OutlineIcon
             exit_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.SQUARE_X, size=16, color=TEXT_COLOR).toqpixmap()))
         except Exception:
             pass
         exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        menu_bar.addAction(exit_action)
 
-        #settings menu
-        settings_menu = menu_bar.addMenu(_("&Settings"))
-        
-        ai_settings_action = QAction(_("&AI Configuration"), self)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            ai_settings_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.SETTINGS, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
-        ai_settings_action.triggered.connect(self.open_ai_settings)
-        settings_menu.addAction(ai_settings_action)
-        
-        # Environment menu
-        env_menu = menu_bar.addMenu(_("&Environment"))
-        
-        # Action to configure Sandbox settings if needed in the future
-        # For now, it's mostly handled per-chain
-        
-        # View menu: allow showing/hiding the right toolbar
-        view_menu = menu_bar.addMenu(_("&View"))
-        toggle_toolbar_action = QAction(_("Show Toolbar"), self)
-        toggle_toolbar_action.setCheckable(True)
-        toggle_toolbar_action.setChecked(True)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            toggle_toolbar_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.LAYOUT_SIDEBAR_RIGHT, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
-        def _toggle_toolbar(checked):
-            try:
-                self.graph_view.set_toolbar_visible(checked)
-            except Exception as e:
-                logger.error(f"Failed to toggle toolbar visibility: {e}")
-        toggle_toolbar_action.toggled.connect(_toggle_toolbar)
-        view_menu.addAction(toggle_toolbar_action)
-        
-        # Scheduler menu
-        scheduler_menu = menu_bar.addMenu(_("&Scheduler"))
-        manage_sched_action = QAction(_("&Manage Schedules"), self)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            manage_sched_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.CALENDAR, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
-        manage_sched_action.triggered.connect(self.open_scheduler_manager)
-        scheduler_menu.addAction(manage_sched_action)
-
+        # Docs menu
         docs_menu = menu_bar.addMenu(_("&Documentation"))
         user_guide_action = QAction(_("&User Guide"), self)
         try:

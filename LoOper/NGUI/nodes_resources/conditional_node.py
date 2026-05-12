@@ -83,7 +83,10 @@ class ConditionalNode(BaseNode):
         self.create_property('target_w', '')
         self.create_property('target_h', '')
         self.create_property('position_tolerance', '6')
-        self.create_property('code', 'result = True')
+        self.create_property('code',
+            '# input_data contains the output from the previous node (LLM result, code output, etc.)\n'
+            '# Set result = True for true branch, False for false branch\n'
+            'result = True')
         
         # OCR-specific fields (language and region removed - uses full screen with default English)
         self.create_property('target_text', '')
