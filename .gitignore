@@ -16,4 +16,7 @@
 /LoOper/data/agent_logs
 /LoOper/AI/memory_data
 
-
+# License system - private key MUST remain local
+/keygen/private_key.pem
+/keygen/validate_license_build.py
+/license_validator.spec

@@ -62,7 +62,7 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
                             Language="1033",
                             Scope="perUser")
     
-    ET.SubElement(package, "MajorUpgrade", DowngradeErrorMessage="A newer version of LoOper is already installed.")
+    ET.SubElement(package, "MajorUpgrade", DowngradeErrorMessage="A newer version of arrow is already installed.")
     
     # Media template for embedding files in MSI
     ET.SubElement(package, "MediaTemplate", EmbedCab="yes")
@@ -188,6 +188,23 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
                   Execute="immediate",
                   Return="asyncNoWait")
 
+    # Custom Action: validate license key BEFORE file extraction.
+    # We reference the validator via [SourceDir] because at UI-sequence time
+    # the MSI source directory is available but the files haven't been copied
+    # to INSTALLFOLDER yet.
+    validate_license_action_id = "ValidateLicense"
+    ET.SubElement(package, "CustomAction",
+                  Id=validate_license_action_id,
+                  Directory="INSTALLFOLDER",
+                  ExeCommand='"[SourceDir]license_validator.exe" --install "[INSTALLFOLDER]"',
+                  Execute="immediate",
+                  Return="check")
+
+    # InstallUISequence runs the validation early (before file extraction)
+    # In WiX 4, UI sequence custom actions are placed here.
+    ui_seq = ET.SubElement(package, "InstallUISequence")
+    ET.SubElement(ui_seq, "Custom", Action=validate_license_action_id, Before="ProgressDlg", Condition="NOT Installed")
+
     # Custom Action to install RDPWrap
     rdpwrap_install_action_id = "InstallRDPWrap"
     ET.SubElement(package, "CustomAction",
@@ -208,8 +225,8 @@ def create_wxs(dist_dir, output_file, app_name, version, manufacturer):
         f.write(reparsed.toprettyxml(indent="  "))
 
 if __name__ == "__main__":
-    dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "dist", "LoOper"))
-    output_wxs = os.path.abspath(os.path.join(os.path.dirname(__file__), "LoOper.wxs"))
+    dist_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "dist", "arrow"))
+    output_wxs = os.path.abspath(os.path.join(os.path.dirname(__file__), "arrow.wxs"))
 
     print("Preparing RDPWrap for installer...")
     rdpwrap_src = download_and_extract_rdpwrap(os.path.dirname(dist_path))
@@ -219,5 +236,5 @@ if __name__ == "__main__":
     shutil.copytree(rdpwrap_src, rdpwrap_dest)
     print(f"RDPWrap prepared at {rdpwrap_dest}")
 
-    create_wxs(dist_path, output_wxs, "LoOper", "1.5.0", "Rodrigo David Benitez")
+    create_wxs(dist_path, output_wxs, "arrow", "1.1.0", "Rodrigo David Benitez")
     print(f"Generated {output_wxs}")

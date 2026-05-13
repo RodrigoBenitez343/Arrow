@@ -420,8 +420,83 @@ def start_api_server():
         return None
 
 
+def _show_license_error(title: str, message: str):
+    """Show a Windows message box for license errors (reliable in frozen builds)."""
+    try:
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        print(f"ERROR: {title} - {message}")
+
+
+def _check_license() -> bool:
+    """Check that a valid hardware-bound license exists.
+
+    In frozen (compiled) builds the license.bin is expected next to the
+    executable.  In development mode we skip the check for convenience.
+    """
+    # Skip in development mode
+    if not getattr(sys, "frozen", False):
+        return True
+
+    exe_dir = os.path.dirname(sys.executable)
+    license_path = os.path.join(exe_dir, "license.bin")
+
+    if not os.path.exists(license_path):
+        _show_license_error(
+            "License Not Found",
+            "arrow license not found.\n\n"
+            "Please install arrow using the official installer, or contact\n"
+            "support to obtain a valid license.",
+        )
+        return False
+
+    # Try to run the validator to check the license
+    validator_path = os.path.join(exe_dir, "license_validator.exe")
+    if os.path.exists(validator_path):
+        try:
+            result = subprocess.run(
+                [validator_path, "--check", exe_dir],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            if result.returncode == 0:
+                return True
+            print(f"License validation failed (exit code {result.returncode}).")
+            _show_license_error(
+                "License Invalid",
+                "The arrow license on this machine is invalid or has been tampered with.\n\n"
+                "Please reinstall arrow or contact support.",
+            )
+        except Exception as e:
+            print(f"License validator error: {e}")
+    else:
+        print("license_validator.exe not found, checking license.bin header...")
+        try:
+            with open(license_path, "rb") as f:
+                data = f.read()
+            if data.startswith(b"ARWLIC\x00\x01"):
+                return True
+        except Exception:
+            pass
+        _show_license_error(
+            "License Invalid",
+            "The arrow license file is corrupted or missing.\n\n"
+            "Please reinstall arrow or contact support.",
+        )
+        return False
+
+    return False
+
+
 def run_app():
     """Main function to start the application logic"""
+    # Validate license before starting (skip in dev mode)
+    if not _check_license():
+        print("Exiting due to invalid license.")
+        sys.exit(1)
+
     # Load AI configuration
     print("LocalOperator starting up...")
     print("Loading AI configuration...")

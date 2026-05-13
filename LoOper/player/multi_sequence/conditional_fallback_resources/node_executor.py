@@ -764,6 +764,7 @@ enablecredsspsupport:i:1
         # The JSON stores properties directly, not nested under 'condition_data'
         condition_config = {
             'image_path': conditional_node.get('image_path', ''),
+            'image_data': conditional_node.get('image_data', ''),
             'confidence': float(conditional_node.get('threshold', 0.8)),
             'timeout': float(conditional_node.get('wait_time', 10)),
             'max_loops': int(conditional_node.get('max_loops', 10)),
@@ -837,25 +838,61 @@ enablecredsspsupport:i:1
         except Exception:
             Image = None
     
+        # Priority: embedded base64 image_data, then file path
+        image_data = conditional_node.get('image_data', '') or ''
         image_path = conditional_node.get('image_path', '') or ''
-        if not str(image_path).strip():
-            logger.warning("Layout match: no image path provided")
+        
+        if not image_data and not str(image_path).strip():
+            logger.warning("Layout match: no image data or path provided")
             return False
-    
-        def _resolve_image(p):
+
+        if Image is None:
+            logger.warning("Layout match: PIL not available")
+            return False
+
+        # Load template - Priority 1: embedded base64 data
+        template_img = None
+        if image_data:
             try:
-                rp = self.path_resolver.resolve_path(p, add_json=False)
-                if rp:
-                    return rp
-            except Exception:
-                pass
-            return p
-    
-        resolved_image_path = _resolve_image(str(image_path))
-        if not os.path.exists(resolved_image_path):
-            logger.warning(f"Layout match: image file not found: {resolved_image_path}")
+                from ...image_utils import base64_to_pil
+                template_img = base64_to_pil(image_data)
+                if template_img:
+                    logger.debug("Layout match: loaded template from base64 image_data")
+            except Exception as e:
+                logger.debug(f"Layout match: base64 load failed: {e}")
+
+        # Load template - Priority 2: file path
+        if template_img is None and str(image_path).strip():
+            def _resolve_image(p):
+                try:
+                    rp = self.path_resolver.resolve_path(p, add_json=False)
+                    if rp:
+                        return rp
+                except Exception:
+                    pass
+                return p
+
+            resolved_image_path = _resolve_image(str(image_path))
+            if not os.path.exists(resolved_image_path):
+                logger.warning(f"Layout match: image file not found: {resolved_image_path}")
+                return False
+            try:
+                template_img = Image.open(resolved_image_path).convert("RGB")
+            except Exception as e:
+                logger.warning(f"Layout match: failed to load template image: {e}")
+                return False
+
+        if template_img is None:
+            logger.warning("Layout match: failed to load any template image")
             return False
-    
+
+        template_size = template_img.size
+        try:
+            template_bytes = template_img.tobytes()
+        except Exception as e:
+            logger.warning(f"Layout match: failed to get template bytes: {e}")
+            return False
+
         expected_x = conditional_node.get('target_x')
         expected_y = conditional_node.get('target_y')
         expected_w = conditional_node.get('target_w')
@@ -893,23 +930,6 @@ enablecredsspsupport:i:1
         if timeout < 0:
             timeout = 0
     
-        if Image is None:
-            logger.warning("Layout match: PIL not available")
-            return False
-    
-        try:
-            template_img = Image.open(resolved_image_path).convert("RGB")
-        except Exception as e:
-            logger.warning(f"Layout match: failed to load template image: {e}")
-            return False
-    
-        template_size = template_img.size
-        try:
-            template_bytes = template_img.tobytes()
-        except Exception as e:
-            logger.warning(f"Layout match: failed to get template bytes: {e}")
-            return False
-    
         agent_url = None
         try:
             if callable(get_sandbox_agent_url):
@@ -934,7 +954,6 @@ enablecredsspsupport:i:1
             except Exception:
                 return False
     
-        logger.info(f"Layout match: starting pixel-by-pixel alignment for {resolved_image_path}")
         logger.info(f"Layout match: target position ({expected_x_i}, {expected_y_i}), size {template_size}")
         logger.info(f"Layout match: max_attempts={max_attempts}, scroll_direction={'up' if scroll_direction > 0 else 'down'}, timeout={'disabled' if timeout <= 0 else f'{timeout}s'}")
 
@@ -1102,6 +1121,7 @@ enablecredsspsupport:i:1
         # Convert to standard presence trigger format
         condition_config = {
             'image_path': conditional_node.get('image_path', ''),
+            'image_data': conditional_node.get('image_data', ''),
             'confidence': float(conditional_node.get('threshold', 0.8)),
             'timeout': float(conditional_node.get('wait_time', 10))
         }
@@ -1131,6 +1151,7 @@ enablecredsspsupport:i:1
         # Convert to standard absence trigger format
         condition_config = {
             'image_path': conditional_node.get('image_path', ''),
+            'image_data': conditional_node.get('image_data', ''),
             'confidence': float(conditional_node.get('threshold', 0.8)),
             'timeout': float(conditional_node.get('wait_time', 10))
         }

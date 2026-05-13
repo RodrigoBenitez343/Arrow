@@ -72,8 +72,11 @@ class LlamaCppEngine:
         candidates = []
 
         if os.name == "nt":  # Windows
+            # Bundled in MSI: [INSTALLFOLDER]/bin/llama-server.exe
+            _exe_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else None
             candidates.extend(
                 [
+                    os.path.join(_exe_dir, "bin", "llama-server.exe") if _exe_dir else "",
                     os.path.join(
                         self.llama_cpp_path,
                         "build",
@@ -85,7 +88,7 @@ class LlamaCppEngine:
                         self.llama_cpp_path, "build", "bin", "llama-server.exe"
                     ),
                     os.path.join(self.llama_cpp_path, "llama-server.exe"),
-                ]
+                ] + ([os.path.join(_exe_dir, "llama-server.exe")] if _exe_dir else [])
             )
             # Also check WinGet install location
             try:
@@ -120,8 +123,11 @@ class LlamaCppEngine:
         """Find the llama-mtmd-cli executable"""
         candidates = []
         if os.name == "nt":
+            # Bundled in MSI: [INSTALLFOLDER]/bin/llama-mtmd-cli.exe
+            _exe_dir_mtmd = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else None
             candidates.extend(
                 [
+                    os.path.join(_exe_dir_mtmd, "bin", "llama-mtmd-cli.exe") if _exe_dir_mtmd else "",
                     os.path.join(
                         self.llama_cpp_path,
                         "build",
@@ -133,7 +139,7 @@ class LlamaCppEngine:
                         self.llama_cpp_path, "build", "bin", "llama-mtmd-cli.exe"
                     ),
                     os.path.join(self.llama_cpp_path, "llama-mtmd-cli.exe"),
-                ]
+                ] + ([os.path.join(_exe_dir_mtmd, "llama-mtmd-cli.exe")] if _exe_dir_mtmd else [])
             )
             try:
                 localappdata = os.environ.get("LOCALAPPDATA", "")

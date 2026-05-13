@@ -16,7 +16,7 @@ from numpy import random
 pyautogui.FAILSAFE = False
 from .config import logger, CV2_AVAILABLE
 from .computer_vision import TemplateMatching
-from .screenshot_cleanup import register_temporal_screenshot, cleanup_screenshot
+from .screenshot_cleanup import register_temporal_screenshot
 
 if CV2_AVAILABLE:
     import cv2
@@ -145,38 +145,67 @@ class ActionHandlers:
         """
         self.bot.random_delay(0.001, 0.01)  # Reduced from 0.01-0.1 - Add a small random delay before clicking.
 
-        if not action.get('screenshot'):
+        if not action.get('screenshot') and not action.get('screenshot_data'):
             logger.error(f"Action {idx} is a click without a screenshot. Aborting playback.")
             raise Exception(f"Action {idx} is a click without a screenshot.")
 
-        screenshot_path = action['screenshot']
-        # Resolve screenshot path robustly across common project layouts
-        cand_paths = []
-        norm_rel = os.path.normpath(screenshot_path)
-        if os.path.isabs(norm_rel):
-            cand_paths.append(os.path.normpath(norm_rel))
-        else:
-            cwd = os.getcwd()
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            cand_paths.extend([
-                os.path.normpath(os.path.join(cwd, norm_rel)),
-                os.path.normpath(os.path.join(project_root, norm_rel)),
-                os.path.normpath(os.path.join(project_root, 'sequences', norm_rel)),
-                os.path.normpath(os.path.join(project_root, 'sequences', 'screenshots', os.path.basename(norm_rel))),
-                os.path.normpath(os.path.join(project_root, 'sequences', 'sequences', 'screenshots', os.path.basename(norm_rel))),
-            ])
+        screenshot_path = action.get('screenshot', '')
+        screenshot_data = action.get('screenshot_data')
+        
+        # Resolve the screenshot to a usable template (path string, PIL Image, or base64)
+        screenshot_template = None
+        element_key = None
+        
+        # Priority 1: Embedded base64 image data
+        if screenshot_data:
+            from .image_utils import is_embedded_image, base64_to_pil
+            if is_embedded_image(screenshot_data):
+                screenshot_template = base64_to_pil(screenshot_data)
+                if screenshot_template:
+                    # Use screenshot path for element_key if available, otherwise hash the data
+                    if screenshot_path:
+                        element_key = f"embedded:{os.path.normpath(screenshot_path)}"
+                    else:
+                        import hashlib
+                        data_hash = hashlib.md5(screenshot_data.encode('utf-8')).hexdigest()[:16]
+                        element_key = f"embedded:{data_hash}"
+                    logger.debug(f"Using embedded screenshot data for action {idx}")
+        
+        # Priority 2: File path (resolve and load from disk)
+        if screenshot_template is None and screenshot_path:
+            cand_paths = []
+            norm_rel = os.path.normpath(screenshot_path)
+            if os.path.isabs(norm_rel):
+                cand_paths.append(os.path.normpath(norm_rel))
+            else:
+                cwd = os.getcwd()
+                project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                cand_paths.extend([
+                    os.path.normpath(os.path.join(cwd, norm_rel)),
+                    os.path.normpath(os.path.join(project_root, norm_rel)),
+                    os.path.normpath(os.path.join(project_root, 'sequences', norm_rel)),
+                    os.path.normpath(os.path.join(project_root, 'sequences', 'screenshots', os.path.basename(norm_rel))),
+                    os.path.normpath(os.path.join(project_root, 'sequences', 'sequences', 'screenshots', os.path.basename(norm_rel))),
+                ])
 
-        resolved_path = None
-        for cand in cand_paths:
-            if os.path.exists(cand):
-                resolved_path = cand
-                break
+            resolved_path = None
+            for cand in cand_paths:
+                if os.path.exists(cand):
+                    resolved_path = cand
+                    break
 
-        if not resolved_path:
-            logger.error(f"Screenshot file for action {idx} does not exist: {cand_paths[0]}")
-            raise Exception(f"Screenshot file not found: {cand_paths[0]}")
-        screenshot_path = resolved_path
-        element_key = os.path.abspath(screenshot_path)
+            if not resolved_path:
+                logger.error(f"Screenshot file for action {idx} does not exist: {cand_paths[0]}")
+                raise Exception(f"Screenshot file not found: {cand_paths[0]}")
+            
+            screenshot_path = resolved_path
+            screenshot_template = screenshot_path  # Use path string for template matching
+            element_key = os.path.abspath(screenshot_path)
+        
+        if element_key is None:
+            logger.error(f"Could not resolve screenshot for action {idx}")
+            raise Exception(f"Could not resolve screenshot for action {idx}")
+
         stop_on_all = bool(action.get('stop_when_all_clicked', True))
         state = self.bot.selection_memory.get(element_key, {})
         if stop_on_all and state.get('all_clicked'):
@@ -192,30 +221,18 @@ class ActionHandlers:
 
         # Capture single screenshot for all search attempts to improve efficiency
         current_screen_cv = None
-        temporal_screenshot_path = None
         current_screen_pil = None
         try:
             current_screen_pil = self._get_screen_pil()
             if CV2_AVAILABLE:
-                # Capture once and convert for OpenCV operations
+                # Capture once and convert for OpenCV operations - keep in memory only
                 screen_np = np.array(current_screen_pil)
                 if len(screen_np.shape) == 3 and screen_np.shape[2] == 4:
                     screen_np = cv2.cvtColor(screen_np, cv2.COLOR_RGBA2RGB)
                 current_screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-                
-                # Save temporal screenshot for debugging
-                temporal_screenshot_path = f"temporal_screen_{idx}_{int(time.time())}.png"
-                current_screen_pil.save(temporal_screenshot_path)
-                # Register for automatic cleanup
-                register_temporal_screenshot(temporal_screenshot_path)
-                logger.debug(f"Single screenshot captured and converted for all search methods")
+                logger.debug(f"Single screenshot captured (in-memory) for all search methods")
             else:
-                # Fallback: capture screenshot for pyautogui methods
-                temporal_screenshot_path = f"temporal_screen_{idx}_{int(time.time())}.png"
-                current_screen_pil.save(temporal_screenshot_path)
-                # Register for automatic cleanup
-                register_temporal_screenshot(temporal_screenshot_path)
-                logger.debug(f"Temporal screenshot captured for pyautogui methods")
+                logger.debug(f"In-memory screenshot captured for pyautogui methods")
         except Exception as e:
             logger.debug(f"Failed to capture screenshot: {e}")
 
@@ -269,14 +286,14 @@ class ActionHandlers:
                         try:
                             if current_screen_pil:
                                 boxes = list(pyautogui.locateAll(
-                                    screenshot_path,
+                                    screenshot_template,
                                     current_screen_pil,
                                     confidence=strategy['confidence'],
                                     grayscale=strategy['grayscale']
                                 ))
                             else:
                                 boxes = list(pyautogui.locateAllOnScreen(
-                                    screenshot_path,
+                                    screenshot_template,
                                     confidence=strategy['confidence'],
                                     grayscale=strategy['grayscale']
                                 ))
@@ -439,7 +456,7 @@ class ActionHandlers:
                             if current_screen_pil:
                                 try:
                                     box = pyautogui.locate(
-                                        screenshot_path,
+                                        screenshot_template,
                                         current_screen_pil,
                                         confidence=strategy['confidence'],
                                         grayscale=strategy['grayscale']
@@ -449,7 +466,7 @@ class ActionHandlers:
                                     location = None
                             else:
                                 location = pyautogui.locateCenterOnScreen(
-                                    screenshot_path,
+                                    screenshot_template,
                                     confidence=strategy['confidence'],
                                     grayscale=strategy['grayscale']
                                 )
@@ -457,7 +474,7 @@ class ActionHandlers:
                     elif strategy['method'] == 'multiscale':
                         # Multi-scale template matching with shared screenshot
                         location = self.template_matcher.multiscale_template_match(
-                            screenshot_path, 
+                            screenshot_template, 
                             strategy['confidence'],
                             strategy['scales'],
                             strategy['grayscale'],
@@ -467,7 +484,7 @@ class ActionHandlers:
                     elif strategy['method'] == 'region':
                         # Region-based search with original coordinates as hint and shared screenshot
                         location = self.template_matcher.region_based_search(
-                            screenshot_path,
+                            screenshot_template,
                             action['x'],
                             action['y'],
                             strategy['confidence'],
@@ -505,10 +522,6 @@ class ActionHandlers:
                     time.sleep(sleep_time)
                     elapsed += sleep_time
         
-        # Clean up temporal screenshot using the cleanup utility
-        if temporal_screenshot_path:
-            cleanup_screenshot(temporal_screenshot_path)
-
         if target_coords:
             button = action.get('button', 'left')
             agent_url = getattr(self.bot, 'sandbox_agent_url', None)

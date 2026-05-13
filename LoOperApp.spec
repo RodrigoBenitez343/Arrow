@@ -339,29 +339,29 @@ if pkg_resources_spec and pkg_resources_spec.origin:
 # _add_pkg_data('paddleocr', 'ppstructure', 'ppstructure')
 
 # Add specific files
-_add_data(os.path.join(looper_dir, 'data'), '_internal/LoOper/data')
+_add_data(os.path.join(looper_dir, 'data'), '_internal/arrow/data')
 _add_data(os.path.join(looper_dir, 'data'), 'data')
-_add_data(os.path.join(ai_dir, 'config.json'), '_internal/LoOper/AI')
-_add_data(os.path.join(ai_dir, 'OverWatch', 'config', 'config.json'), '_internal/LoOper/AI/OverWatch/config')
+_add_data(os.path.join(ai_dir, 'config.json'), '_internal/arrow/AI')
+_add_data(os.path.join(ai_dir, 'OverWatch', 'config', 'config.json'), '_internal/arrow/AI/OverWatch/config')
 _add_data(os.path.join(looper_dir, 'schedules.json'), 'schedules.json')
-_add_data(os.path.join(looper_dir, 'schedules.json'), '_internal/LoOper/schedules.json')
+_add_data(os.path.join(looper_dir, 'schedules.json'), '_internal/arrow/schedules.json')
 _add_data(os.path.join(looper_dir, 'LoOper.ico'), '.')
 _add_data(os.path.join(looper_dir, 'LoOper.png'), '.')
 _add_data(os.path.join(looper_dir, 'LoOper.ico'), '_internal')
 _add_data(os.path.join(looper_dir, 'LoOper.png'), '_internal')
-_add_data(os.path.join(looper_dir, 'LoOper.ico'), '_internal/LoOper')
-_add_data(os.path.join(looper_dir, 'LoOper.png'), '_internal/LoOper')
-_add_data(os.path.join(looper_dir, 'LoOper.ico'), 'LoOper')
-_add_data(os.path.join(looper_dir, 'LoOper.png'), 'LoOper')
+_add_data(os.path.join(looper_dir, 'LoOper.ico'), '_internal/arrow')
+_add_data(os.path.join(looper_dir, 'LoOper.png'), '_internal/arrow')
+_add_data(os.path.join(looper_dir, 'LoOper.ico'), 'arrow')
+_add_data(os.path.join(looper_dir, 'LoOper.png'), 'arrow')
 
 # Bundle the lightweight sandbox agent bridge so it is available as a loose file
 # in compiled builds.  The RDP session runs ONLY this script (via a scheduled task)
-# – never the full LoOper GUI.
-_add_data(os.path.join(looper_dir, 'sandbox_agent.py'), 'LoOper')
+# – never the full arrow GUI.
+_add_data(os.path.join(looper_dir, 'sandbox_agent.py'), 'arrow')
 
 # Add the entire Computer_vision directory as a tree to ensure all files (including .py) are present
-_add_tree(os.path.join(player_dir, 'Computer_vision'), '_internal/LoOper/player/Computer_vision')
-_add_tree(os.path.join(player_dir, 'Computer_vision'), 'LoOper/player/Computer_vision')
+_add_tree(os.path.join(player_dir, 'Computer_vision'), '_internal/arrow/player/Computer_vision')
+_add_tree(os.path.join(player_dir, 'Computer_vision'), 'arrow/player/Computer_vision')
 
 # Bundle the models found in the local user's .paddleocr directory
 user_home = os.path.expanduser('~')
@@ -490,7 +490,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='LoOper',
+    name='arrow',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -510,5 +510,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='LoOper',
+    name='arrow',
 )

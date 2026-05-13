@@ -902,24 +902,8 @@ class ChainsLibrary(QWidget):
         tab_buttons_layout.addWidget(self._code_tab_btn)
         content_layout.addLayout(tab_buttons_layout)
 
-        # Scroll area for sequences (initially hidden, shown when Sequences tab active)
-        self._sequences_scroll_area = QScrollArea()
-        self._sequences_scroll_area.setWidgetResizable(True)
-        self._sequences_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._sequences_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._sequences_scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        self._sequences_scroll_area.setVisible(False)
-
-        self._sequences_container = QFrame()
-        self._sequences_container_layout = QVBoxLayout(self._sequences_container)
-        self._sequences_container_layout.setContentsMargins(0, 4, 8, 4)
-        self._sequences_container_layout.setSpacing(8)
-        self._sequences_container_layout.addStretch()
-
-        self._sequences_scroll_area.setWidget(self._sequences_container)
-        content_layout.addWidget(self._sequences_scroll_area)
-
         # Search bar for filtering nodes in the active tab
+        # Placed BEFORE all scroll areas so it stays at the top for every tab
         self._search_field = QLineEdit(self._content_frame)
         self._search_field.setPlaceholderText(_("Filter nodes…"))
         self._search_field.setStyleSheet(
@@ -943,6 +927,23 @@ class ChainsLibrary(QWidget):
         )
         content_layout.addWidget(self._search_field)
         self._search_field.textChanged.connect(self._filter_active_tab)
+
+        # Scroll area for sequences (initially hidden, shown when Sequences tab active)
+        self._sequences_scroll_area = QScrollArea()
+        self._sequences_scroll_area.setWidgetResizable(True)
+        self._sequences_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._sequences_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._sequences_scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        self._sequences_scroll_area.setVisible(False)
+
+        self._sequences_container = QFrame()
+        self._sequences_container_layout = QVBoxLayout(self._sequences_container)
+        self._sequences_container_layout.setContentsMargins(0, 4, 8, 4)
+        self._sequences_container_layout.setSpacing(8)
+        self._sequences_container_layout.addStretch()
+
+        self._sequences_scroll_area.setWidget(self._sequences_container)
+        content_layout.addWidget(self._sequences_scroll_area)
 
         # Scroll area for chains
         self._scroll_area = QScrollArea()
@@ -1100,6 +1101,7 @@ class ChainsLibrary(QWidget):
         while self._container_layout.count() > 1:
             item = self._container_layout.takeAt(0)
             if item.widget():
+                item.widget().setVisible(False)
                 item.widget().deleteLater()
         
         folder = getattr(self.graph_view, 'chains_folder', None)
@@ -1140,6 +1142,7 @@ class ChainsLibrary(QWidget):
         while self._sequences_container_layout.count() > 1:
             item = self._sequences_container_layout.takeAt(0)
             if item.widget():
+                item.widget().setVisible(False)
                 item.widget().deleteLater()
 
         folder = getattr(self.graph_view, 'sequences_folder', None)
@@ -1166,6 +1169,9 @@ class ChainsLibrary(QWidget):
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(f"color: {TEXT_COLOR}; opacity: 0.5; padding: 20px;")
             self._sequences_container_layout.insertWidget(0, placeholder)
+        # Force immediate layout recalculation to prevent cards from stacking
+        self._sequences_container_layout.activate()
+        self._sequences_container.updateGeometry()
         QTimer.singleShot(0, self._sync_sequence_buttons)
 
     def _sync_sequence_buttons(self):
@@ -1337,6 +1343,7 @@ class ChainsLibrary(QWidget):
         while self._context_container_layout.count() > 1:
             item = self._context_container_layout.takeAt(0)
             if item.widget():
+                item.widget().setVisible(False)
                 item.widget().deleteLater()
         
         folder = getattr(self.graph_view, 'chains_folder', None)
@@ -1413,6 +1420,7 @@ class ChainsLibrary(QWidget):
         while self._code_container_layout.count() > 1:
             item = self._code_container_layout.takeAt(0)
             if item.widget():
+                item.widget().setVisible(False)
                 item.widget().deleteLater()
 
         folder = getattr(self.graph_view, 'chains_folder', None)
@@ -1495,6 +1503,7 @@ class ChainsLibrary(QWidget):
         while self._llm_container_layout.count() > 1:
             item = self._llm_container_layout.takeAt(0)
             if item.widget():
+                item.widget().setVisible(False)
                 item.widget().deleteLater()
 
         folder = getattr(self.graph_view, 'chains_folder', None)

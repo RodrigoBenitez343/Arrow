@@ -54,34 +54,50 @@ class TemplateMatching:
     _cache_max_size = 100  # Maximum number of templates to cache
     
     @classmethod
-    def _load_template(cls, template_path):
+    def _load_template(cls, template_src):
         """
-        Load template with caching to avoid repeated disk I/O.
+        Load a template image from a file path, base64 string, or numpy array.
+        Supports embedded base64 image data for self-contained JSON chains/sequences.
         
         Args:
-            template_path (str): Path to the template image
+            template_src (str or numpy.ndarray): 
+                - File path to the template image
+                - Base64-encoded image string (with or without data:image/ prefix)
+                - Pre-loaded numpy array (returned as-is)
             
         Returns:
-            numpy.ndarray: Template image or None if failed to load
+            numpy.ndarray: Template image in BGR format, or None if failed to load
         """
         if not CV2_AVAILABLE:
             return None
+        
+        import numpy as np
+        
+        # Case 1: Already a numpy array - return as-is
+        if isinstance(template_src, np.ndarray):
+            return template_src.copy()
+        
+        # Case 2: Base64-encoded image string
+        if isinstance(template_src, str):
+            if template_src.startswith('data:image/') or (len(template_src) > 100 and 'base64' not in template_src[:20]):
+                try:
+                    from .image_utils import base64_to_cv2
+                    result = base64_to_cv2(template_src)
+                    if result is not None:
+                        logger.debug(f"Loaded template from base64 data")
+                        return result
+                except Exception as e:
+                    logger.debug(f"Failed to load template from base64: {e}")
             
-        # Convert to absolute path for consistent caching
-        abs_path = os.path.abspath(template_path)
+            # Case 3: File path - load from disk
+            abs_path = os.path.abspath(template_src)
+            template = cv2.imread(abs_path)
+            if template is None:
+                logger.debug(f"Failed to load template: {abs_path}")
+                return None
+            return template
         
-        # Disable cache check entirely so we always read from disk
-        # if abs_path in cls._template_cache:
-        #     logger.debug(f"Template cache hit: {abs_path}")
-        #     return cls._template_cache[abs_path]
-        
-        # Load from disk
-        template = cv2.imread(abs_path)
-        if template is None:
-            logger.debug(f"Failed to load template: {abs_path}")
-            return None
-        
-        return template
+        return None
     
     @classmethod
     def clear_template_cache(cls):

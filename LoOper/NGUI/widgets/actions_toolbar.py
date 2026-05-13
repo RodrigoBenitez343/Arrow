@@ -514,11 +514,11 @@ class ActionsToolbar(QWidget):
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("actionsContent")
         self._content_frame.setStyleSheet(
-            f"QFrame#actionsContent {{ background-color: {BAR_BG}; border-radius: 10px; }}"
+            f"QFrame#actionsContent {{ background-color: {SIDE_PANEL_BG}; border-radius: 10px; }}"
         )
         layout = QHBoxLayout(self._content_frame)
-        layout.setContentsMargins(5, 5, 5, 5)
-        layout.setSpacing(6)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
         layout.setAlignment(Qt.AlignVCenter)
         layout.addWidget(self._make_record_icon_button(), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip=_("Load Chain"), label_text=_("Load")), alignment=Qt.AlignVCenter)
@@ -631,10 +631,10 @@ class ActionsToolbar(QWidget):
                 background: rgba(255, 255, 255, 0.05);
                 color: {TEXT_COLOR};
                 border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 2px 8px;
-                min-width: 96px;
-                min-height: 24px;
+                border-radius: 8px;
+                padding: 1px 6px;
+                min-width: 64px;
+                min-height: 22px;
                 font-weight: 500;
             }}
             QPushButton:hover {{
@@ -673,10 +673,10 @@ class ActionsToolbar(QWidget):
                 background: rgba(255, 255, 255, 0.05);
                 color: {TEXT_COLOR};
                 border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 2px 8px;
-                min-width: 96px;
-                min-height: 24px;
+                border-radius: 8px;
+                padding: 1px 6px;
+                min-width: 64px;
+                min-height: 22px;
                 font-weight: 500;
             }}
             QPushButton:hover {{

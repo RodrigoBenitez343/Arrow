@@ -31,7 +31,7 @@ class AbsenceTrigger:
         Check if a visual element is absent from screen within timeout.
         
         Args:
-            trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
+            trigger_config (dict): Configuration with 'image_path', 'image_data', 'confidence', etc.
             timeout (float): Maximum time to wait for absence
             check_interval (float): Time between checks (optional, defaults to 0.5s)
         
@@ -44,14 +44,21 @@ class AbsenceTrigger:
         
         try:
             image_path = trigger_config.get('image_path')
-            image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+            image_data = trigger_config.get('image_data')
+            
+            # Priority 1: Embedded base64 image data
+            if image_data:
+                image_path = image_data  # Pass base64 string to template matcher
+                logger.debug(f"Using embedded image data for absence trigger")
+            else:
+                # Priority 2: File path - resolve relative to chain file directory
+                image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+                if not image_path or not os.path.exists(image_path):
+                    logger.warning(f"Absence trigger image not found: {image_path}")
+                    return True  # If image doesn't exist, consider it "absent"
+            
             confidence = trigger_config.get('confidence', 0.8)
-            
-            if not image_path or not os.path.exists(image_path):
-                logger.warning(f"Absence trigger image not found: {image_path}")
-                return True  # If image doesn't exist, consider it "absent"
-            
-            logger.info(f"Checking absence of image: {image_path} (timeout: {timeout}s, check_interval: {check_interval}s)")
+            logger.info(f"Checking absence of image (timeout: {timeout}s, check_interval: {check_interval}s)")
             
             start_time = time.time()
             attempt_count = 0
@@ -114,21 +121,28 @@ class AbsenceTrigger:
         Check if a visual element is immediately absent (single check).
         
         Args:
-            trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
+            trigger_config (dict): Configuration with 'image_path', 'image_data', 'confidence', etc.
         
         Returns:
             bool: True if element is not found
         """
         try:
             image_path = trigger_config.get('image_path')
-            image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+            image_data = trigger_config.get('image_data')
+            
+            # Priority 1: Embedded base64 image data
+            if image_data:
+                image_path = image_data  # Pass base64 string to template matcher
+                logger.debug(f"Using embedded image data for absence immediate check")
+            else:
+                # Priority 2: File path - resolve relative to chain file directory
+                image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+                if not image_path or not os.path.exists(image_path):
+                    logger.warning(f"Absence trigger image not found: {image_path}")
+                    return True  # If image doesn't exist, consider it "absent"
+            
             confidence = trigger_config.get('confidence', 0.8)
-            
-            if not image_path or not os.path.exists(image_path):
-                logger.warning(f"Absence trigger image not found: {image_path}")
-                return True  # If image doesn't exist, consider it "absent"
-            
-            logger.info(f"Checking immediate absence of image: {image_path}")
+            logger.info(f"Checking immediate absence of image")
             
             # Check stop flag
             if self.stop_flag and self.stop_flag():
