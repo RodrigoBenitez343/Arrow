@@ -32,7 +32,7 @@ class PresenceTrigger:
         Check if a visual element is present on screen - OPTIMIZED: Single check only with caching
         
         Args:
-            trigger_config (dict): Configuration with 'image_path', 'confidence', etc.
+            trigger_config (dict): Configuration with 'image_path', 'image_data', 'confidence', etc.
             screen_cv (numpy.ndarray): Pre-captured screen image to avoid multiple screenshots
         
         Returns:
@@ -43,20 +43,27 @@ class PresenceTrigger:
             cached_result = None
             
             image_path = trigger_config.get('image_path')
-            # Resolve image path relative to the chain file directory for nested imports
-            image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+            image_data = trigger_config.get('image_data')
+            
+            # Priority 1: Embedded base64 image data
+            if image_data:
+                image_path = image_data  # Pass base64 string to template matcher
+                logger.debug(f"Using embedded image data for presence trigger")
+            else:
+                # Priority 2: File path - resolve relative to chain file directory
+                image_path = self.path_resolver.resolve_path(image_path, add_json=False)
+                if not image_path or not os.path.exists(image_path):
+                    logger.warning(f"Presence trigger image not found: {image_path}")
+                    # Cache the negative result for missing images
+                    self.validation_cache.cache_validation_result(
+                        trigger_config, False, screen_cv, self.template_matcher, self.path_resolver
+                    )
+                    return False
+            
             confidence = trigger_config.get('confidence', 0.8)
             scales = trigger_config.get('scales') or [0.7, 0.85, 1.0, 1.15, 1.3]
             
-            if not image_path or not os.path.exists(image_path):
-                logger.warning(f"Presence trigger image not found: {image_path}")
-                # Cache the negative result for missing images
-                self.validation_cache.cache_validation_result(
-                    trigger_config, False, screen_cv, self.template_matcher, self.path_resolver
-                )
-                return False
-            
-            logger.info(f"Checking presence of image: {image_path} (confidence: {confidence})")
+            logger.info(f"Checking presence of image (confidence: {confidence})")
             
             # Check stop flag before starting presence trigger
             if self.stop_flag and self.stop_flag():

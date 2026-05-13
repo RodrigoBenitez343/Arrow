@@ -162,6 +162,7 @@ class SequencePlayer(SeleniumBot):
     def load_sequence(self, filename):
         """
         Loads and validates the action sequence from a JSON file with caching and optimized loading.
+        Resolves hash-referenced images (screenshot_hash -> screenshot_data) for player compatibility.
 
         Args:
             filename (str): The path to the JSON file.
@@ -181,6 +182,20 @@ class SequencePlayer(SeleniumBot):
             
             if "actions" not in data:
                 raise ValueError("Invalid sequence format: Missing actions")
+            
+            # Resolve hash-referenced images (screenshot_hash -> screenshot_data)
+            images_map = data.get('images', {})
+            if images_map:
+                resolved_count = 0
+                for action in data['actions']:
+                    if isinstance(action, dict) and action.get('screenshot_hash'):
+                        data_hash = action['screenshot_hash']
+                        if data_hash in images_map:
+                            action['screenshot_data'] = images_map[data_hash]
+                            del action['screenshot_hash']
+                            resolved_count += 1
+                if resolved_count:
+                    logger.debug(f"Resolved {resolved_count} hash-referenced screenshots")
             
             # Cache the loaded data
             _sequence_cache.put(filename, data)

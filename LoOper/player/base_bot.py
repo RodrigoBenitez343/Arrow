@@ -65,14 +65,26 @@ class SeleniumBot:
 
     def take_screenshot(self, directory="screenshots", prefix="screenshot", is_temporal=False):
         """
-        Captures a screenshot of the entire screen and saves it to the specified directory.
+        Captures a screenshot of the entire screen.
+        Temporal screenshots are kept in-memory only (no disk write).
+        Non-temporal screenshots are saved to the specified directory.
 
         Args:
-            directory (str): Directory where screenshots will be saved.
+            directory (str): Directory where permanent screenshots will be saved.
             prefix (str): Filename prefix for the screenshot.
-            is_temporal (bool): If True, registers screenshot for automatic cleanup.
+            is_temporal (bool): If True, screenshot is ephemeral (memory-only).
         """
-        # Ensure output directory exists
+        if is_temporal:
+            # Ephemeral mode: capture but don't save to disk
+            try:
+                pyautogui.screenshot()
+                logger.debug(f"Temporal screenshot captured (in-memory): {prefix}")
+                return
+            except Exception as e:
+                logger.error(f"Failed to capture temporal screenshot: {e}")
+                return
+
+        # Permanent screenshot: save to disk
         if not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
 
@@ -83,11 +95,6 @@ class SeleniumBot:
             screenshot = pyautogui.screenshot()
             screenshot.save(path)
             logger.debug(f"Screenshot saved to {path}")
-            
-            # Register temporal screenshots for cleanup
-            if is_temporal:
-                register_temporal_screenshot(path)
-                
         except Exception as e:
             logger.error(f"Failed to take screenshot: {e}")
             raise

@@ -209,6 +209,7 @@ class ConditionalLoop:
                 condition = {
                     'trigger_type': 'presence',
                     'image_path': conditional_data.get('image_path', ''),
+                    'image_data': conditional_data.get('image_data', ''),
                     'confidence': float(conditional_data.get('threshold', 0.8))
                 }
             

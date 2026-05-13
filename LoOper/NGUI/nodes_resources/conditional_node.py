@@ -70,6 +70,7 @@ class ConditionalNode(BaseNode):
         # Register properties without rendering inline input widgets
         self.create_property('condition_type', 'presence')
         self.create_property('image_path', '')
+        self.create_property('image_data', '')
         self.create_property('confidence', '0.8')
         self.create_property('threshold', '0.8')
         self.create_property('timeout', '5.0')
@@ -110,6 +111,7 @@ class ConditionalNode(BaseNode):
         # Update the text inputs to reflect the new data
         self.set_property('condition_type', condition_type)
         self.set_property('image_path', condition_data.get('image_path', ''))
+        self.set_property('image_data', condition_data.get('image_data', ''))
         self.set_property('confidence', str(condition_data.get('confidence', 0.8)))
         self.set_property('timeout', str(condition_data.get('timeout', 5.0)))
         # Region removed - OCR now uses full screen

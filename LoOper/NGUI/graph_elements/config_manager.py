@@ -554,9 +554,23 @@ class ConfigManager:
         """Save a conditional node to configuration."""
         logger.debug(f"Saving conditional node {node.id} to configuration")
         try:
+            # Get image path and embed as base64 if it's a valid file
+            image_path = node.get_property("image_path") or ""
+            image_data = node.get_property("image_data") or ""
+            if not image_data and image_path and os.path.exists(image_path):
+                try:
+                    from ...player.image_utils import read_image_to_base64
+                    b64 = read_image_to_base64(image_path)
+                    if b64:
+                        image_data = b64
+                        logger.debug(f"Embedded conditional image {os.path.basename(image_path)} as base64")
+                except Exception as e:
+                    logger.debug(f"Failed to embed conditional image: {e}")
+
             conditional_data = {
                 "condition_type": node.get_property("condition_type") or "presence",
-                "image_path": node.get_property("image_path") or "",
+                "image_path": image_path,
+                "image_data": image_data,
                 "threshold": self._safe_get_float(node, "threshold", 0.8),
                 "wait_time": self._safe_get_float(node, "wait_time", 5),
                 "max_loops": self._safe_get_int(node, "max_loops", 10),
@@ -1007,6 +1021,12 @@ class ConfigManager:
                     # Set properties
                     node.set_property("condition_type", condition_type)
                     node.set_property("image_path", cond_data.get("image_path", ""))
+                    image_data = cond_data.get("image_data", "")
+                    if image_data:
+                        try:
+                            node.set_property("image_data", image_data, push_undo=False)
+                        except Exception:
+                            pass  # Non-critical - image_data is a cache
                     node.set_property("threshold", str(cond_data.get("threshold", 0.8)))
                     node.set_property("wait_time", str(cond_data.get("wait_time", 5)))
                     node.set_property("max_loops", str(cond_data.get("max_loops", 10)))

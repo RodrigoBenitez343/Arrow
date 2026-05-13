@@ -1060,7 +1060,7 @@ class CollapsibleToolbar(QWidget):
             QPushButton {{
                 background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
-                border: 1px solid {ACCENT_COLOR};
+                border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 8px;
                 font-weight: bold;
                 font-size: 13px;
@@ -1095,7 +1095,7 @@ class CollapsibleToolbar(QWidget):
             QPushButton {{
                 background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
-                border: 1px solid {ACCENT_COLOR};
+                border: 1px solid rgba(255, 255, 255, 0.1);
                 border-radius: 8px;
                 font-weight: bold;
                 font-size: 13px;

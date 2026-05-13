@@ -136,6 +136,20 @@ def _get_screen_info_for_capture():
     return screen, virtual_geo, dpr
 
 
+def _pixmap_to_base64(pixmap):
+    """Convert a QPixmap to a base64-encoded PNG string."""
+    if pixmap is None or pixmap.isNull():
+        return ''
+    try:
+        from io import BytesIO
+        buffer = BytesIO()
+        pixmap.save(buffer, 'PNG')
+        import base64
+        return base64.b64encode(buffer.getvalue()).decode('ascii')
+    except Exception:
+        return ''
+
+
 class SnipCaptureDialog(QDialog):
     def __init__(self, frozen_pixmap, screen_geometry, dpr=1.0, parent=None):
         super().__init__(parent)
@@ -397,6 +411,7 @@ class TriggerConfigDialog(ModernDialog):
         self._prev_modality = None
         self._capture_original_geo = None
         self._capture_in_progress = False
+        self._captured_image_data = ''
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -552,6 +567,7 @@ class TriggerConfigDialog(ModernDialog):
                 except Exception:
                     cropped.save(file_path)
                 self.image_path_entry.setText(file_path)
+                self._captured_image_data = _pixmap_to_base64(cropped)
                 try:
                     QApplication.processEvents()
                 except Exception:
@@ -623,6 +639,7 @@ class TriggerConfigDialog(ModernDialog):
         """Get the trigger configuration"""
         config = {
             'image_path': self.image_path_entry.text(),
+            'image_data': self._captured_image_data or '',
             'confidence': self.confidence_spin.value()
         }
         
@@ -649,6 +666,7 @@ class LayoutMatchConfigDialog(ModernDialog):
         self._prev_modality = None
         self._capture_original_geo = None
         self._capture_in_progress = False
+        self._captured_image_data = ''
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -873,6 +891,7 @@ class LayoutMatchConfigDialog(ModernDialog):
                 except Exception:
                     cropped.save(file_path)
                 self.image_path_entry.setText(file_path)
+                self._captured_image_data = _pixmap_to_base64(cropped)
 
                 self._target_w = int(global_rect.width())
                 self._target_h = int(global_rect.height())
@@ -941,6 +960,7 @@ class LayoutMatchConfigDialog(ModernDialog):
             except Exception:
                 pixmap.save(file_path)
             self.image_path_entry.setText(file_path)
+            self._captured_image_data = _pixmap_to_base64(pixmap)
 
             self._target_w = int(rect.width())
             self._target_h = int(rect.height())
@@ -1317,6 +1337,7 @@ class ConditionalLoopDialog(ModernDialog):
         self._capture_in_progress = False
         self._main_window = None
         self._capture_original_geo = None
+        self._captured_image_data = ''
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -1541,6 +1562,7 @@ class ConditionalLoopDialog(ModernDialog):
                 except Exception:
                     cropped.save(file_path)
                 self.image_path_entry.setText(file_path)
+                self._captured_image_data = _pixmap_to_base64(cropped)
                 try:
                     QApplication.processEvents()
                 except Exception:
@@ -1588,6 +1610,7 @@ class ConditionalLoopDialog(ModernDialog):
             condition = {
                 'trigger_type': 'presence',
                 'image_path': self.image_path_entry.text(),
+                'image_data': self._captured_image_data or '',
                 'confidence': self.confidence_spin.value()
             }
         

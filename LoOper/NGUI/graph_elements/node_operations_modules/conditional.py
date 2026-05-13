@@ -5,6 +5,17 @@ from .utils import get_logger
 
 logger = get_logger(__name__)
 
+
+def _safe_set_image_data(node, image_data):
+    """Safely set image_data on a node, avoiding issues with large base64 data in the undo stack."""
+    if not image_data:
+        return  # Skip setting empty data to avoid unnecessary undo commands
+    try:
+        node.set_property('image_data', image_data, push_undo=False)
+    except Exception as e:
+        logger.warning(f"Failed to set image_data property (non-critical): {e}")
+
+
 class ConditionalOperationsMixin:
     def add_conditional_node(self, pos=None):
         """Add a new conditional node."""
@@ -54,6 +65,7 @@ class ConditionalOperationsMixin:
             if condition_type == 'layout_match' and node.get_property('image_path'):
                 cfg = {
                     'image_path': node.get_property('image_path'),
+                    'image_data': node.get_property('image_data') or '',
                     'confidence': float(node.get_property('threshold') or 0.8),
                     'timeout': float(node.get_property('timeout') or 0),  # 0 = disabled, search until found
                     'max_attempts': int(float(node.get_property('max_attempts') or 500)),
@@ -74,12 +86,14 @@ class ConditionalOperationsMixin:
             if condition_type == 'presence' and node.get_property('image_path'):
                 current_config['presence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
+                    'image_data': node.get_property('image_data') or '',
                     'confidence': float(node.get_property('threshold') or 0.8),
                     'timeout': float(node.get_property('timeout') or 5.0)
                 }]
             elif condition_type == 'absence' and node.get_property('image_path'):
                 current_config['absence_triggers'] = [{
                     'image_path': node.get_property('image_path'),
+                    'image_data': node.get_property('image_data') or '',
                     'confidence': float(node.get_property('threshold') or 0.8),
                     'timeout': float(node.get_property('timeout') or 10.0)
                 }]
@@ -111,6 +125,7 @@ class ConditionalOperationsMixin:
                         condition = {
                             'trigger_type': 'presence',
                             'image_path': node.get_property('image_path') or '',
+                            'image_data': node.get_property('image_data') or '',
                             'confidence': float(node.get_property('threshold') or 0.8)
                         }
                 else:
@@ -118,6 +133,7 @@ class ConditionalOperationsMixin:
                     condition = {
                         'trigger_type': 'presence',
                         'image_path': node.get_property('image_path') or '',
+                        'image_data': node.get_property('image_data') or '',
                         'confidence': float(node.get_property('threshold') or 0.8)
                     }
                 
@@ -163,6 +179,7 @@ class ConditionalOperationsMixin:
                     condition_data = config['layout_match_conditionals'][0]
                     node.set_property('condition_type', 'layout_match')
                     node.set_property('image_path', condition_data.get('image_path', ''))
+                    _safe_set_image_data(node, condition_data.get('image_data', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
                     node.set_property('timeout', str(condition_data.get('timeout', 0)))  # 0 = disabled
                     node.set_property('max_attempts', str(condition_data.get('max_attempts', 500)))
@@ -187,6 +204,7 @@ class ConditionalOperationsMixin:
                     condition_data = config['presence_triggers'][0]
                     node.set_property('condition_type', 'presence')
                     node.set_property('image_path', condition_data.get('image_path', ''))
+                    _safe_set_image_data(node, condition_data.get('image_data', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
                     # Apply timeout from dialog configuration to node property
                     timeout = condition_data.get('timeout', 5.0)
@@ -198,6 +216,7 @@ class ConditionalOperationsMixin:
                     condition_data = config['absence_triggers'][0]
                     node.set_property('condition_type', 'absence')
                     node.set_property('image_path', condition_data.get('image_path', ''))
+                    _safe_set_image_data(node, condition_data.get('image_data', ''))
                     node.set_property('threshold', str(condition_data.get('confidence', 0.8)))
                     # Apply timeout from dialog configuration to node property
                     timeout = condition_data.get('timeout', 10.0)

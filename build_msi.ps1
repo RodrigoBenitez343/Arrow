@@ -1,17 +1,17 @@
-# LoOper MSI Build Script
+# arrow MSI Build Script
 # This script generates a WiX configuration and builds the MSI installer.
 
-$AppName = "LoOper"
-$DistDir = Join-Path $PSScriptRoot "dist\LoOper"
-$WxsFile = Join-Path $PSScriptRoot "LoOper.wxs"
-$MsiFile = Join-Path $PSScriptRoot "LoOper.msi"
+$AppName = "arrow"
+$DistDir = Join-Path $PSScriptRoot "dist\arrow"
+$WxsFile = Join-Path $PSScriptRoot "arrow.wxs"
+$MsiFile = Join-Path $PSScriptRoot "arrow.msi"
 $SpecFile = Join-Path $PSScriptRoot "LoOperApp.spec"
 $VenvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 $PythonExe = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
-$AppExe = Join-Path $DistDir "LoOper.exe"
+$AppExe = Join-Path $DistDir "arrow.exe"
 $ReqFile = Join-Path $PSScriptRoot "requirements.txt"
 
-Write-Host "--- LoOper MSI Builder ---" -ForegroundColor Cyan
+Write-Host "--- arrow MSI Builder ---" -ForegroundColor Cyan
 
 if (-not (Test-Path $VenvPython)) {
     Write-Host "Creating virtual environment (.venv)..." -ForegroundColor Green
@@ -41,18 +41,52 @@ if (-not (Test-Path $AppExe)) {
         Write-Error "Spec file not found: $SpecFile"
         exit 1
     }
-    Write-Host "Building LoOper executable (PyInstaller)..." -ForegroundColor Green
+    Write-Host "Building arrow executable (PyInstaller)..." -ForegroundColor Green
     Push-Location $PSScriptRoot
     & $PythonExe -m PyInstaller -y $SpecFile
     $BuildExitCode = $LASTEXITCODE
     Pop-Location
     if ($BuildExitCode -ne 0 -or -not (Test-Path $AppExe)) {
-        Write-Error "Failed to build LoOper.exe into $DistDir"
+        Write-Error "Failed to build arrow.exe into $DistDir"
         exit 1
     }
 }
 
-# 2. Check for WiX Toolset
+# 2.5. Build license validator
+& "$PSScriptRoot\keygen\build_validator.ps1" -PythonExe $PythonExe -DistDir (Join-Path $PSScriptRoot "dist")
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Failed to build license_validator.exe"
+    exit 1
+}
+
+# 2.6. Bundle llama.cpp binaries
+Write-Host "Bundling llama.cpp binaries..." -ForegroundColor Green
+$LlamaBinDir = Join-Path $PSScriptRoot "utils\llama.cpp\build\bin\Release"
+$LlamaDestDir = Join-Path $DistDir "bin"
+$NeededBinaries = @("llama-server.exe", "llama-mtmd-cli.exe")
+
+if (Test-Path $LlamaBinDir) {
+    if (-not (Test-Path $LlamaDestDir)) {
+        New-Item -ItemType Directory -Path $LlamaDestDir -Force | Out-Null
+    }
+    foreach ($exe in $NeededBinaries) {
+        $src = Join-Path $LlamaBinDir $exe
+        if (Test-Path $src) {
+            $dst = Join-Path $LlamaDestDir $exe
+            Copy-Item $src $dst -Force
+            $size = (Get-Item $dst).Length / 1MB
+            Write-Host "  Bundled $exe ($([math]::Round($size, 1)) MB)" -ForegroundColor Gray
+        } else {
+            Write-Warning "llama.cpp binary not found: $src"
+            Write-Warning "Build llama.cpp first: cd utils\llama.cpp && cmake --build build --config Release"
+        }
+    }
+} else {
+    Write-Warning "llama.cpp build directory not found at $LlamaBinDir"
+    Write-Warning "Skipping llama.cpp binary bundling."
+}
+
+# 3. Check for WiX Toolset
 Write-Host "Checking for WiX Toolset..."
 $WixInstalled = Get-Command wix -ErrorAction SilentlyContinue
 

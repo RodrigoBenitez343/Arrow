@@ -40,20 +40,20 @@ class ElementRecorder:
         """
         self.flush_current_string()
 
-        # Capture screenshot
-        screenshot_path = self.screenshot_manager.capture_click_screenshot(x, y)
+        # Capture screenshot (ephemeral - base64 data)
+        screenshot_data = self.screenshot_manager.capture_click_screenshot(x, y)
 
-        # Create action
+        # Create action with embedded base64 image data
         action = {
             'type': 'click',
             'button': button,
             'coordinates': {'x': x, 'y': y},
-            'screenshot': screenshot_path,
+            'screenshot_data': screenshot_data,
             'timestamp': self.sequence_manager.start_time
         }
         
         self.sequence_manager.add_action(action)
-        print(f"\n🖱 Click at ({x}, {y})")
+        print(f"\nClick at ({x}, {y})")
 
     def record_scroll(self, x, y, dx, dy):
         """
@@ -93,7 +93,7 @@ class ElementRecorder:
 
             # Handle screenshot for click actions
             if action.get('needs_screenshot'):
-                action['screenshot'] = self.screenshot_manager.capture_click_screenshot(
+                action['screenshot_data'] = self.screenshot_manager.capture_click_screenshot(
                     action['coordinates']['x'], 
                     action['coordinates']['y']
                 )

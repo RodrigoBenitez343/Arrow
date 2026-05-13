@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QInputDialog, QLineEdit
 try:
     from ...dialogs.chain_import_dialogs import ChainImportDialog
 except ImportError:
@@ -7,6 +7,7 @@ except ImportError:
 
 from .utils import get_logger
 import os
+import json
 
 logger = get_logger(__name__)
 
@@ -67,6 +68,156 @@ class ChainImportOperationsMixin:
         except Exception as e:
             logger.error(f"Error adding Chain Import from file: {e}")
         return None
+
+    def wrap_selected_nodes_into_chain(self, selected_nodes, target_chain_import_node):
+        """Wrap the selected nodes into a new chain JSON file and configure the
+        target Chain Import node to reference it.  The selected nodes are removed
+        from the main graph after being saved."""
+        from ...nodes_resources.chain_import_node import ChainImportNode
+        from ...nodes_resources.sequence_node import SequenceNode
+        from ...nodes_resources.conditional_node import ConditionalNode
+        from ...nodes_resources.llm_node import LLMNode
+        from ...nodes_resources.tts_node import TTSNode
+        from ...nodes_resources.code_node import CodeNode
+        from ...nodes_resources.context_node import ContextNode
+        try:
+            from ...nodes_resources.container_node import ContainerNode
+        except ImportError:
+            ContainerNode = None
+
+        logger.info(f"Wrapping {len(selected_nodes)} nodes into chain")
+
+        # Exclude the target chain import node itself and any chain import nodes
+        nodes_to_wrap = []
+        for n in selected_nodes:
+            if n is target_chain_import_node:
+                continue
+            if isinstance(n, ChainImportNode):
+                continue  # don't nest chain imports
+            nodes_to_wrap.append(n)
+
+        if not nodes_to_wrap:
+            QMessageBox.warning(
+                self.parent_widget,
+                "Wrap in Chain",
+                "No valid nodes selected to wrap.  Chain Import nodes cannot be nested."
+            )
+            return False
+
+        # --- Ask the user for a name and description ---
+        chain_name, ok = QInputDialog.getText(
+            self.parent_widget,
+            "New Chain Name",
+            "Enter a file name for the new chain (without .json):",
+            QLineEdit.Normal,
+            ""
+        )
+        if not ok or not chain_name.strip():
+            return False
+        chain_name = chain_name.strip()
+
+        chain_desc, ok = QInputDialog.getText(
+            self.parent_widget,
+            "Chain Description",
+            "Enter a description for this chain:",
+            QLineEdit.Normal,
+            ""
+        )
+        if not ok:
+            return False
+        chain_desc = chain_desc.strip()
+
+        # --- Build the chain configuration from the selected nodes ---
+        config_manager = self.parent_widget.config_manager
+        merged_config = {
+            "sequences": [],
+            "conditional_nodes": [],
+            "llm_nodes": [],
+            "tts_nodes": [],
+            "chain_import_nodes": [],
+            "form_filler_nodes": [],
+            "code_nodes": [],
+            "container_nodes": [],
+            "context_nodes": [],
+            "description": chain_desc,
+        }
+
+        for node in nodes_to_wrap:
+            single_cfg = config_manager.get_single_node_config(node)
+            if single_cfg:
+                for key in merged_config:
+                    if key == "description":
+                        continue
+                    if key in single_cfg:
+                        merged_config[key].extend(single_cfg[key])
+
+        total_wrapped = sum(
+            len(merged_config.get(k, []))
+            for k in merged_config
+            if k != "description"
+        )
+        if total_wrapped == 0:
+            QMessageBox.warning(
+                self.parent_widget,
+                "Wrap in Chain",
+                "Could not extract configuration from the selected nodes."
+            )
+            return False
+
+        # --- Save the chain JSON file ---
+        chains_folder = self.parent_widget.chains_folder
+        safe_name = "".join(c for c in chain_name if c.isalnum() or c in " _-").rstrip()
+        if not safe_name:
+            safe_name = "wrapped_chain"
+        chain_file_path = os.path.join(chains_folder, f"{safe_name}.json")
+
+        # Avoid overwriting an existing file – append a number if needed
+        counter = 2
+        base_path = chain_file_path
+        while os.path.exists(chain_file_path):
+            chain_file_path = os.path.join(chains_folder, f"{safe_name}_{counter}.json")
+            counter += 1
+
+        try:
+            with open(chain_file_path, "w", encoding="utf-8") as f:
+                json.dump(merged_config, f, indent=2)
+            logger.info(f"Saved wrapped chain to: {chain_file_path}")
+        except Exception as e:
+            logger.error(f"Failed to save wrapped chain: {e}")
+            QMessageBox.critical(
+                self.parent_widget,
+                "Error",
+                f"Failed to save chain file: {str(e)}"
+            )
+            return False
+
+        # --- Remove the wrapped nodes from the graph ---
+        for node in list(nodes_to_wrap):
+            try:
+                self.parent_widget.graph_manager.delete_node(node)
+            except Exception as e:
+                logger.error(f"Error deleting wrapped node {node.id}: {e}")
+
+        # --- Configure the target Chain Import node with the new chain ---
+        prefix = safe_name
+        target_chain_import_node.set_chain_import_data(
+            chain_file_path,
+            import_mode='full',
+            prefix=prefix,
+            loop_count=1,
+            extra_delay=0.0,
+            enabled=True
+        )
+
+        QMessageBox.information(
+            self.parent_widget,
+            "Chain Created",
+            f"Successfully wrapped {len(nodes_to_wrap)} node(s) into chain:\n{safe_name}.json"
+        )
+        logger.info(
+            f"Wrap complete: {len(nodes_to_wrap)} nodes -> {chain_file_path}"
+        )
+        return True
         
     def edit_chain_import_node(self, node):
         """Edit a Chain Import node configuration."""

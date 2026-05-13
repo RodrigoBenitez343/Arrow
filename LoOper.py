@@ -137,6 +137,77 @@ from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QVBoxLayout, QProgres
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 
+def _check_license() -> bool:
+    """Check for a valid hardware-bound license.
+
+    In frozen mode (compiled build), verifies license.bin exists next to
+    the executable and has the expected magic header.  If missing, tries
+    to launch the license_validator.exe for interactive activation.
+
+    In development mode the check is skipped entirely.
+    """
+    if not getattr(sys, "frozen", False):
+        return True
+
+    exe_dir = os.path.dirname(sys.executable)
+    license_path = os.path.join(exe_dir, "license.bin")
+    validator = os.path.join(exe_dir, "license_validator.exe")
+
+    # Quick magic-byte check first
+    if os.path.exists(license_path):
+        try:
+            with open(license_path, "rb") as f:
+                data = f.read(8)
+            if data == b"ARWLIC\x00\x01":
+                return True
+        except Exception:
+            pass
+
+    # Try the validator with --check (more thorough verification)
+    if os.path.exists(validator):
+        try:
+            result = subprocess.run(
+                [validator, "--check", exe_dir],
+                capture_output=True,
+                timeout=15,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    # No valid license -- show activation dialog
+    if os.path.exists(validator):
+        try:
+            result = subprocess.run(
+                [validator, "--reinstall", exe_dir],
+                timeout=120,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            )
+            if result.returncode == 0:
+                return True
+        except Exception:
+            pass
+
+    # Cannot proceed without a license
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "License Required",
+            "A valid license is required to run arrow.\n\n"
+            "Please reinstall the application or contact support."
+        )
+        root.destroy()
+    except Exception:
+        pass
+
+    return False
+
+
 def _run_main_app():
     """Import and run the main application logic"""
     try:
@@ -606,10 +677,12 @@ if __name__ == "__main__":
             sys.exit(1)
 
     # Check if we are being called to run the main app logic
+    # License check -- enforced for GUI launch only
     if "--run-main" in sys.argv:
-        # Remove the flag so it doesn't interfere with the main app's argument parsing
         sys.argv.remove("--run-main")
         _run_main_app()
+    elif not _check_license():
+        sys.exit(1)
     elif "--run-vision" in sys.argv:
         # Remove the flag
         sys.argv.remove("--run-vision")

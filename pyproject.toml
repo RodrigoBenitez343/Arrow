@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "looperv2"
-version = "0.1.0"
-description = "Combined LoOper and OverWatch dependencies for easy install"
+name = "arrow"
+version = "1.0.0"
+description = "arrow desktop automation and AI workflow application"
 requires-python = ">=3.10"
 dependencies = [
   "aiofiles==25.1.0",

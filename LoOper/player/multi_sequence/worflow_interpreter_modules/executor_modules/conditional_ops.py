@@ -279,6 +279,7 @@ class ConditionalMixin:
         
         condition_config = {
             'image_path': conditional_node.get('image_path', ''),
+            'image_data': conditional_node.get('image_data', ''),
             'confidence': float(conditional_node.get('threshold', conditional_node.get('confidence', 0.8))),
             'timeout': float(conditional_node.get('wait_time', conditional_node.get('timeout', 10))),
             'max_loops': int(conditional_node.get('max_loops', 10)),
@@ -356,25 +357,61 @@ class ConditionalMixin:
         except Exception:
             Image = None
 
+        # Priority: embedded base64 image_data, then file path
+        image_data = conditional_node.get('image_data', '') or ''
         image_path = conditional_node.get('image_path', '') or ''
-        if not str(image_path).strip():
-            logger.warning("Layout match: no image path provided")
+        
+        if not image_data and not str(image_path).strip():
+            logger.warning("Layout match: no image data or path provided")
             return False
 
-        def _resolve_image(p):
-            try:
-                pr = getattr(self.fallback_handler, 'path_resolver', None)
-                if pr is not None:
-                    rp = pr.resolve_path(p, add_json=False)
-                    if rp:
-                        return rp
-            except Exception:
-                pass
-            return p
+        if Image is None:
+            logger.warning("Layout match: PIL not available")
+            return False
 
-        resolved_image_path = _resolve_image(str(image_path))
-        if not os.path.exists(resolved_image_path):
-            logger.warning(f"Layout match: image file not found: {resolved_image_path}")
+        # Load template - Priority 1: embedded base64 data
+        template_img = None
+        if image_data:
+            try:
+                from ....player.image_utils import base64_to_pil
+                template_img = base64_to_pil(image_data)
+                if template_img:
+                    logger.debug("Layout match: loaded template from base64 image_data")
+            except Exception as e:
+                logger.debug(f"Layout match: base64 load failed: {e}")
+
+        # Load template - Priority 2: file path
+        if template_img is None and str(image_path).strip():
+            def _resolve_image(p):
+                try:
+                    pr = getattr(self.fallback_handler, 'path_resolver', None)
+                    if pr is not None:
+                        rp = pr.resolve_path(p, add_json=False)
+                        if rp:
+                            return rp
+                except Exception:
+                    pass
+                return p
+
+            resolved_image_path = _resolve_image(str(image_path))
+            if not os.path.exists(resolved_image_path):
+                logger.warning(f"Layout match: image file not found: {resolved_image_path}")
+                return False
+            try:
+                template_img = Image.open(resolved_image_path).convert("RGB")
+            except Exception as e:
+                logger.warning(f"Layout match: failed to load template image: {e}")
+                return False
+
+        if template_img is None:
+            logger.warning("Layout match: failed to load any template image")
+            return False
+
+        template_size = template_img.size
+        try:
+            template_bytes = template_img.tobytes()
+        except Exception as e:
+            logger.warning(f"Layout match: failed to get template bytes: {e}")
             return False
 
         expected_x = conditional_node.get('target_x')
@@ -414,24 +451,7 @@ class ConditionalMixin:
         if timeout < 0:
             timeout = 0
 
-        if Image is None:
-            logger.warning("Layout match: PIL not available")
-            return False
-
-        try:
-            template_img = Image.open(resolved_image_path).convert("RGB")
-        except Exception as e:
-            logger.warning(f"Layout match: failed to load template image: {e}")
-            return False
-
-        template_size = template_img.size
-        try:
-            template_bytes = template_img.tobytes()
-        except Exception as e:
-            logger.warning(f"Layout match: failed to get template bytes: {e}")
-            return False
-
-        logger.info(f"Layout match: starting pixel-by-pixel alignment for {resolved_image_path}")
+        logger.info(f"Layout match: starting pixel-by-pixel alignment (size={template_size})")
         logger.info(f"Layout match: target position ({expected_x_i}, {expected_y_i}), size {template_size}")
         logger.info(f"Layout match: max_attempts={max_attempts}, scroll_direction={'up' if scroll_direction > 0 else 'down'}, timeout={'disabled' if timeout <= 0 else f'{timeout}s'}")
 
@@ -800,6 +820,7 @@ class ConditionalMixin:
                 condition = {
                     'trigger_type': 'presence',
                     'image_path': conditional_data.get('image_path', ''),
+                    'image_data': conditional_data.get('image_data', ''),
                     'confidence': float(conditional_data.get('threshold', 0.8))
                 }
             if not isinstance(condition, dict):
@@ -833,6 +854,7 @@ class ConditionalMixin:
                     condition = {
                         'trigger_type': 'presence',
                         'image_path': conditional_data.get('image_path', ''),
+                        'image_data': conditional_data.get('image_data', ''),
                         'confidence': conf
                     }
             

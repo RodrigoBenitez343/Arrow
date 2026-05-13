@@ -111,6 +111,9 @@ class GraphViewWidget(QWidget):
             logger.debug("NodeContextMenuManager initialized")
             self.dnd_manager = DragDropManager(self)
             self.clipboard_manager = ClipboardManager(self)
+            # Drag tracking for wrap-into-chain detection
+            self._drag_start_pos = None
+            self._drag_active = False
             
             # Branching is handled automatically during workflow execution
             
@@ -253,6 +256,20 @@ class GraphViewWidget(QWidget):
             handled = self.dnd_manager.handle_event(obj, event)
             if handled:
                 return True
+            elif event.type() == QEvent.MouseButtonPress:
+                try:
+                    self._drag_start_pos = event.globalPos()
+                    self._drag_active = False
+                except Exception:
+                    pass
+            elif event.type() == QEvent.MouseMove:
+                try:
+                    if self._drag_start_pos is not None:
+                        delta = event.globalPos() - self._drag_start_pos
+                        if delta.manhattanLength() >= 8:
+                            self._drag_active = True
+                except Exception:
+                    pass
             elif event.type() == QEvent.MouseButtonRelease:
                 try:
                     selected = self.node_graph.selected_nodes() if hasattr(self, 'node_graph') else []
@@ -264,8 +281,14 @@ class GraphViewWidget(QWidget):
                                 n.set_pos(sx, sy)
                         except Exception:
                             pass
+                    # Only check for wrap if the user was actually dragging (not just selecting)
+                    if selected and self._drag_active:
+                        self._check_wrap_into_chain(selected)
                 except Exception:
                     pass
+                finally:
+                    self._drag_start_pos = None
+                    self._drag_active = False
         except Exception as e:
             logger.debug(f"Event filter non-critical error: {e}")
         return super().eventFilter(obj, event)
@@ -317,6 +340,81 @@ class GraphViewWidget(QWidget):
             return [sx, sy]
         except Exception:
             return [x, y]
+
+    def _check_wrap_into_chain(self, selected_nodes):
+        """Check if any selected nodes overlap with an empty Chain Import node.
+        If they do, trigger the 'wrap into chain' workflow."""
+        try:
+            from .nodes_resources.chain_import_node import ChainImportNode
+            if not selected_nodes:
+                return
+
+            # Find all empty Chain Import nodes on the graph
+            all_nodes = self.graph_manager.get_all_nodes()
+            empty_chain_nodes = []
+            for node in all_nodes:
+                if not isinstance(node, ChainImportNode):
+                    continue
+                # An "empty" chain node has no chain_file configured
+                chain_file = node.get_property('chain_file') or ''
+                if not chain_file:
+                    empty_chain_nodes.append(node)
+
+            if not empty_chain_nodes:
+                return
+
+            # For each empty chain node, check if any selected node overlaps with it
+            for chain_node in empty_chain_nodes:
+                # Get chain node bounding rect
+                chain_x, chain_y = chain_node.pos()
+                chain_rect = getattr(chain_node, 'rect', None)
+                if chain_rect:
+                    chain_w = int(getattr(chain_rect, 'width', lambda: chain_rect.width())()) if callable(getattr(chain_rect, 'width', None)) else int(chain_rect.width())
+                    chain_h = int(getattr(chain_rect, 'height', lambda: chain_rect.height())()) if callable(getattr(chain_rect, 'height', None)) else int(chain_rect.height())
+                else:
+                    chain_w, chain_h = 140, 60  # default node size
+
+                # Expand the target area slightly for easier dropping
+                margin = 30
+                cx1 = chain_x - margin
+                cy1 = chain_y - margin
+                cx2 = chain_x + chain_w + margin
+                cy2 = chain_y + chain_h + margin
+
+                # Check if any selected node overlaps with this chain import node
+                overlaps = False
+                for sel_node in selected_nodes:
+                    if sel_node is chain_node:
+                        continue
+                    if isinstance(sel_node, ChainImportNode):
+                        continue  # nested chain imports not supported
+                    sx, sy = sel_node.pos()
+                    sel_rect = getattr(sel_node, 'rect', None)
+                    if sel_rect:
+                        sw = int(getattr(sel_rect, 'width', lambda: sel_rect.width())()) if callable(getattr(sel_rect, 'width', None)) else int(sel_rect.width())
+                        sh = int(getattr(sel_rect, 'height', lambda: sel_rect.height())()) if callable(getattr(sel_rect, 'height', None)) else int(sel_rect.height())
+                    else:
+                        sw, sh = 140, 60
+
+                    # Check rectangle overlap
+                    if (sx < cx2 and sx + sw > cx1 and
+                            sy < cy2 and sy + sh > cy1):
+                        overlaps = True
+                        break
+
+                if overlaps:
+                    logger.info(
+                        f"Detected node overlap with empty Chain Import node {chain_node.id}, "
+                        f"triggering wrap"
+                    )
+                    self.node_operations.wrap_selected_nodes_into_chain(
+                        selected_nodes, chain_node
+                    )
+                    return
+
+        except Exception as e:
+            logger.debug(f"_check_wrap_into_chain error (non-critical): {e}")
+
     def add_conditional_node(self, position=None):
         """Add a new conditional node to the graph with comprehensive condition types"""
         logger.debug(f"Adding conditional node at position: {position}")

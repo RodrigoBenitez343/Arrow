@@ -3,6 +3,7 @@
 import json
 import time
 import os
+import hashlib
 
 # Import cache invalidation function
 try:
@@ -137,11 +138,53 @@ class SequenceManager:
     
     def save_sequence(self, filename='sequence.json'):
         """
-        Save all recorded actions to JSON file
+        Save all recorded actions to JSON file with embedded screenshot data.
+        Screenshots are converted to base64 and stored inline in the JSON,
+        making the sequence file self-contained and portable.
         
         Args:
             filename (str): Name of the output file
         """
+        # Embed screenshot images as base64 data before serializing
+        images_map = {}  # hash -> base64 data (deduplicated)
+        try:
+            from ..player.image_utils import read_image_to_base64
+
+            for action in self.recorded_actions:
+                if isinstance(action, dict) and action.get('screenshot') and not action.get('screenshot_data'):
+                    screenshot_path = action['screenshot']
+                    # Resolve relative paths for screenshot files
+                    if not os.path.isabs(screenshot_path):
+                        base_dir = os.path.dirname(filename) if filename != 'sequence.json' else os.getcwd()
+                        candidates = [
+                            os.path.join(base_dir, screenshot_path),
+                            os.path.join(os.getcwd(), screenshot_path),
+                            os.path.join(os.getcwd(), 'sequences', screenshot_path),
+                        ]
+                        for cand in candidates:
+                            if os.path.exists(cand):
+                                screenshot_path = cand
+                                break
+                    
+                    if os.path.exists(screenshot_path):
+                        b64_data = read_image_to_base64(screenshot_path)
+                        if b64_data:
+                            action['screenshot_data'] = b64_data
+                            print(f"Embedded screenshot {os.path.basename(screenshot_path)} as base64 data")
+
+            # Deduplicate images using content hash
+            for action in self.recorded_actions:
+                if isinstance(action, dict) and action.get('screenshot_data'):
+                    raw_data = action['screenshot_data']
+                    data_hash = hashlib.md5(raw_data.encode('utf-8')).hexdigest()
+                    if data_hash not in images_map:
+                        images_map[data_hash] = raw_data
+                    action['screenshot_hash'] = data_hash
+                    del action['screenshot_data']  # Remove inline data, replaced by hash reference
+                    
+        except Exception as e:
+            print(f"Warning: Failed to process screenshots: {e}")
+
         output = {
             'metadata': {
                 'created_at': time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -152,6 +195,10 @@ class SequenceManager:
             'actions': self.recorded_actions
         }
         
+        # Add deduplicated images map if we have any embedded screenshots
+        if images_map:
+            output['images'] = images_map
+        
         os.makedirs(os.path.dirname(filename) or ".", exist_ok=True)
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(output, f, indent=4)
@@ -160,7 +207,7 @@ class SequenceManager:
         print(f"DEBUG: Clearing entire cache after saving sequence: {filename}")
         clear_cache()
         
-        print(f"\n✅ Saved to {filename} | {len(self.recorded_actions)} actions")
+        print(f"\n\u2705 Saved to {filename} | {len(self.recorded_actions)} actions")
     
     def get_action_count(self):
         """
