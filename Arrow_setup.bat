@@ -202,7 +202,7 @@ if defined VULKAN_SDK (
   echo [llama] Vulkan SDK detected - enabling the Vulkan backend.
   set "BACKEND_FLAGS=-DGGML_VULKAN=ON"
 ) else (
-  echo [llama] No Vulkan SDK - building CPU-only (works everywhere).
+  echo [llama] No Vulkan SDK - building CPU-only ^(works everywhere^).
 )
 
 :: Architecture: x64 (default) or arm64.
