@@ -1,0 +1,489 @@
+{
+  "schema_version": 1,
+  "mode": "web",
+  "metadata": {
+    "created_at": "2026-09-11 15:14:03",
+    "total_actions": 6,
+    "duration_sec": 26.26,
+    "mode": "web",
+    "start_url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+    "name": "form.json"
+  },
+  "actions": [
+    {
+      "type": "click",
+      "ts": 1789161248818.0,
+      "locator": {
+        "tag": "div",
+        "id": "ember748",
+        "name": null,
+        "role": null,
+        "text": "Apply to Zyte",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "artdeco-modal__header",
+          "ember-view"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//div[normalize-space(.)=\"Apply to Zyte\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#ember748",
+        "ancestor_css": "div#ember746 > div:nth-of-type(1) > div:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[1]/div[1]/div[1]/div[1]/div[1]",
+        "xpath": "/div[1]/div[@id=\"artdeco-modal-outlet\"]/div[@id=\"ember746\"]/div[1]/div[@id=\"ember748\"]",
+        "shadow_hosts": [
+          {
+            "ancestor_css": "div#root > div:nth-of-type(3)",
+            "aria_label": null,
+            "classes": [
+              "theme--light"
+            ],
+            "css": "div#interop-outlet",
+            "data_attrs": {
+              "data-testid": "interop-shadowdom"
+            },
+            "href": null,
+            "id": "interop-outlet",
+            "index": 0,
+            "input_type": null,
+            "name": null,
+            "placeholder": null,
+            "role": null,
+            "structural_xpath": "/html/body/div[1]/div[3]",
+            "tag": "div",
+            "text": null,
+            "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]"
+          }
+        ],
+        "viewport": {
+          "h": 61,
+          "vh": 773,
+          "vw": 1440,
+          "w": 744,
+          "x": 348,
+          "y": 32
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 353,
+        "y": 37
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": null,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "scroll",
+      "ts": 1789161254122.0,
+      "locator": {
+        "tag": "div",
+        "id": "interop-outlet",
+        "name": null,
+        "role": null,
+        "text": null,
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {
+          "data-testid": "interop-shadowdom"
+        },
+        "classes": [
+          "theme--light"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#interop-outlet",
+        "ancestor_css": "div#root > div:nth-of-type(3)",
+        "structural_xpath": "/html/body/div[1]/div[3]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]",
+        "shadow_hosts": [],
+        "viewport": null
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": null,
+      "button": null,
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": {
+        "end": {
+          "x": 801,
+          "y": 256
+        },
+        "start": {
+          "x": 801,
+          "y": 256
+        },
+        "steps": 8,
+        "total_delta": 800
+      },
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 5304,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "scroll",
+      "ts": 1789161254645.0,
+      "locator": {
+        "tag": "div",
+        "id": "interop-outlet",
+        "name": null,
+        "role": null,
+        "text": null,
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {
+          "data-testid": "interop-shadowdom"
+        },
+        "classes": [
+          "theme--light"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#interop-outlet",
+        "ancestor_css": "div#root > div:nth-of-type(3)",
+        "structural_xpath": "/html/body/div[1]/div[3]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]",
+        "shadow_hosts": [],
+        "viewport": null
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": null,
+      "button": null,
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": {
+        "end": {
+          "x": 801,
+          "y": 256
+        },
+        "start": {
+          "x": 801,
+          "y": 256
+        },
+        "steps": 8,
+        "total_delta": 800
+      },
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 523,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "scroll",
+      "ts": 1789161255141.0,
+      "locator": {
+        "tag": "div",
+        "id": "interop-outlet",
+        "name": null,
+        "role": null,
+        "text": null,
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {
+          "data-testid": "interop-shadowdom"
+        },
+        "classes": [
+          "theme--light"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#interop-outlet",
+        "ancestor_css": "div#root > div:nth-of-type(3)",
+        "structural_xpath": "/html/body/div[1]/div[3]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]",
+        "shadow_hosts": [],
+        "viewport": null
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": null,
+      "button": null,
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": {
+        "end": {
+          "x": 801,
+          "y": 256
+        },
+        "start": {
+          "x": 801,
+          "y": 256
+        },
+        "steps": 8,
+        "total_delta": 900
+      },
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 496,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "click",
+      "ts": 1789161262332.0,
+      "locator": {
+        "tag": "button",
+        "id": "ember772",
+        "name": null,
+        "role": null,
+        "text": "Next",
+        "href": null,
+        "placeholder": null,
+        "aria_label": "Continue to next step",
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "artdeco-button",
+          "artdeco-button--2",
+          "artdeco-button--primary"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//button[normalize-space(.)=\"Next\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "button#ember772",
+        "ancestor_css": "div#ember749 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > footer:nth-of-type(1) > div:nth-of-type(2) > button:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[1]/div[2]/form[1]/footer[1]/div[2]/button[1]",
+        "xpath": "/div[1]/div[@id=\"artdeco-modal-outlet\"]/div[@id=\"ember746\"]/div[1]/div[@id=\"ember749\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\"ember772\"]",
+        "shadow_hosts": [
+          {
+            "ancestor_css": "div#root > div:nth-of-type(3)",
+            "aria_label": null,
+            "classes": [
+              "theme--light"
+            ],
+            "css": "div#interop-outlet",
+            "data_attrs": {
+              "data-testid": "interop-shadowdom"
+            },
+            "href": null,
+            "id": "interop-outlet",
+            "index": 0,
+            "input_type": null,
+            "name": null,
+            "placeholder": null,
+            "role": null,
+            "structural_xpath": "/html/body/div[1]/div[3]",
+            "tag": "div",
+            "text": null,
+            "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]"
+          }
+        ],
+        "viewport": {
+          "h": 32,
+          "vh": 773,
+          "vw": 1440,
+          "w": 67,
+          "x": 986,
+          "y": 565
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 1025,
+        "y": 580
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 7191,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "click",
+      "ts": 1789161267676.0,
+      "locator": {
+        "tag": "button",
+        "id": "ember906",
+        "name": null,
+        "role": null,
+        "text": "Discard",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {
+          "data-control-name": "discard_application_confirm_btn"
+        },
+        "classes": [
+          "artdeco-button",
+          "artdeco-button--2",
+          "artdeco-button--secondary"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//button[normalize-space(.)=\"Discard\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "button#ember906",
+        "ancestor_css": "div#ember905 > button:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[1]/div[1]/div[2]/div[1]/div[3]/button[1]",
+        "xpath": "/div[1]/div[@id=\"artdeco-modal-outlet\"]/div[@id=\"ember901\"]/div[1]/div[@id=\"ember905\"]/button[@id=\"ember906\"]",
+        "shadow_hosts": [
+          {
+            "ancestor_css": "div#root > div:nth-of-type(3)",
+            "aria_label": null,
+            "classes": [
+              "theme--light"
+            ],
+            "css": "div#interop-outlet",
+            "data_attrs": {
+              "data-testid": "interop-shadowdom"
+            },
+            "href": null,
+            "id": "interop-outlet",
+            "index": 0,
+            "input_type": null,
+            "name": null,
+            "placeholder": null,
+            "role": null,
+            "structural_xpath": "/html/body/div[1]/div[3]",
+            "tag": "div",
+            "text": null,
+            "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]"
+          }
+        ],
+        "viewport": {
+          "h": 32,
+          "vh": 773,
+          "vw": 1440,
+          "w": 86,
+          "x": 712,
+          "y": 394
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 770,
+        "y": 414
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4459045048&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&referralSearchId=9rDvmxAYXoh8c56s8Q7wVw%3D%3D&geoId=90009870&f_AL=true",
+      "title": "IT Automation & Platform Engineer - Remote | Zyte | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 5344,
+      "context": {},
+      "entity": null
+    }
+  ]
+}

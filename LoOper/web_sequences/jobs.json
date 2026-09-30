@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "mode": "web",
+  "metadata": {
+    "created_at": "2026-09-10 14:15:20",
+    "total_actions": 1,
+    "duration_sec": 7.56,
+    "mode": "web",
+    "start_url": "https://www.linkedin.com/feed/foryou/",
+    "name": "jobs"
+  },
+  "actions": [
+    {
+      "type": "click",
+      "ts": 1789071324147.0,
+      "locator": {
+        "tag": "path",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": null,
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "svg#job-medium > path",
+        "ancestor_css": "svg#job-medium > path:nth-of-type(1)",
+        "structural_xpath": "/html/body/ul[1]/li[3]/a[1]/span[1]/svg[1]/path[1]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[1]/div[2]/div[1]/header[1]/div[1]/div[1]/div[1]/div[3]/div[1]/div[2]/div[@id=\"primaryNavLinksComponentRef\"]/div[1]/nav[1]/ul[1]/li[3]/a[1]/span[1]/svg[@id=\"job-medium\"]/path[1]",
+        "viewport": {
+          "h": 18,
+          "vh": 773,
+          "vw": 1440,
+          "w": 20,
+          "x": 820,
+          "y": 8
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "value": null,
+      "coordinates": {
+        "x": 828,
+        "y": 22
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/feed/foryou/",
+      "title": "Feed | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": null,
+      "context": {}
+    }
+  ]
+}

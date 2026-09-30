@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "mode": "web",
+  "metadata": {
+    "created_at": "2026-09-27 16:11:41",
+    "total_actions": 1,
+    "duration_sec": 9.0,
+    "mode": "web",
+    "start_url": "https://www.linkedin.com/jobs/view/4455799955/?companyName=Coderio&refId=Hs5Xeelx2n1%2FNMdf5uiGVA%3D%3D&trackingId=EnSY4g6sZtdVQtGFHcdUQw%3D%3D&applicantTrackingSystemName=Lever",
+    "name": "next.json_copy"
+  },
+  "actions": [
+    {
+      "type": "click",
+      "ts": 1790547104833.0,
+      "locator": {
+        "tag": "button",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": "Next",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "_7e411247",
+          "_4a81d71a",
+          "_224a73b8"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//button[normalize-space(.)=\"Next\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#root > dialog._72508315._62fe3e17._82742516 > div._263bbd74._67e8ae8c.f4bdeba8 > div._8c383285._8aa69fc1._222cbca4 > div.a676b3fa._1d6a4537 > div._185e6391._1d6a4537 > div.c3d1defd._263bbd74._67e8ae8c > div._0f5e254b._171a5d33.c1fded87 > div.c3d1defd._263bbd74._67e8ae8c > div.c3d1defd._263bbd74._67e8ae8c > div.c3d1defd._263bbd74._67e8ae8c > footer.fe7c6d71.e3120df0._76752176 > button._7e411247._4a81d71a._224a73b8",
+        "ancestor_css": "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > dialog:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > footer:nth-of-type(1) > button:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]",
+        "shadow_hosts": [],
+        "viewport": {
+          "h": 48,
+          "vh": 559,
+          "vw": 1280,
+          "w": 55,
+          "x": 954,
+          "y": 503
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 980,
+        "y": 525.6666870117188
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/view/4455799955/?companyName=Coderio&refId=Hs5Xeelx2n1%2FNMdf5uiGVA%3D%3D&trackingId=EnSY4g6sZtdVQtGFHcdUQw%3D%3D&applicantTrackingSystemName=Lever",
+      "title": "Senior Machine Learning Engineer | Coderio | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": null,
+      "context": {},
+      "entity": null
+    }
+  ]
+}

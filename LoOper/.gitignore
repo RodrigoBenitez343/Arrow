@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+
+# Log files
+automation.log
+graphui_debug.log
+/dist/
+/build/
+/.wix/
+
+# Generated directories
+sequences/
+screenshots/
+chains/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary files
+*.tmp
+*.temp
+temporal_screen_*.png
+/iso/

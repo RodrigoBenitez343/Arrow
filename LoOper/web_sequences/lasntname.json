@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "mode": "web",
+  "metadata": {
+    "created_at": "2026-09-12 22:21:25",
+    "total_actions": 3,
+    "duration_sec": 13.46,
+    "mode": "web",
+    "start_url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4464317311&eBP=NOT_ELIGIBLE_FOR_CHARGING&refId=TlmkUCtOC%2FVUN3zsORP5Rg%3D%3D&trackingId=099woXWfA0uONQ9UwsKF5w%3D%3D&keywords=ai%20&origin=JOBS_HOME_SEARCH_BUTTON",
+    "name": "lasntname"
+  },
+  "actions": [
+    {
+      "type": "scroll",
+      "ts": 1789273186510.0,
+      "locator": {
+        "tag": "div",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": "Posted 2 weeks ago2 weeks ago",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "_2fc5bc11",
+          "_22576f66",
+          "b8c411c0"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//div[normalize-space(.)=\"Posted 2 weeks ago2 weeks ago\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "main#workspace > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._8a16025f._91c3d372._5227b528 > div.b888a936._7eb5d10b._6e6c4a92 > div.a73f9e3c._027b8cec._7606b7c8 > div._4ad3fe9f._1470c439 > div.bde1bb6e.d7675ade._2fc5bc11 > div._4ad3fe9f._1470c439 > div.e8bc5a6b._29ec9d85._7d09cb64 > div._4ad3fe9f._1470c439 > div._087e6488.b66fbbbd._6474e8db > div.bde1bb6e._43143fb8._5ce4b2e1 > div._2fc5bc11._22576f66.b8c411c0 > div.bde1bb6e._43143fb8._2fc5bc11 > div.bde1bb6e._21d530a4._2fc5bc11 > div._2fc5bc11._22576f66.b8c411c0",
+        "ancestor_css": "html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(12) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2)",
+        "structural_xpath": "/html/body/div[1]/div[1]/div[1]/div[1]/div[2]/div[2]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[1]/div[2]/div[2]/main[@id=\"workspace\"]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[12]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[2]",
+        "shadow_hosts": [],
+        "viewport": {
+          "h": 15,
+          "vh": 641,
+          "vw": 1360,
+          "w": 360,
+          "x": 187,
+          "y": 186
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": null,
+      "button": null,
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": {
+        "end": {
+          "x": 303,
+          "y": 489
+        },
+        "start": {
+          "x": 303,
+          "y": 489
+        },
+        "steps": 4,
+        "total_delta": 400
+      },
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4464317311&eBP=NOT_ELIGIBLE_FOR_CHARGING&refId=TlmkUCtOC%2FVUN3zsORP5Rg%3D%3D&trackingId=099woXWfA0uONQ9UwsKF5w%3D%3D&keywords=ai%20&origin=JOBS_HOME_SEARCH_BUTTON",
+      "title": "AI Specialist | Darwin AI | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": null,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "click",
+      "ts": 1789273292200.0,
+      "locator": {
+        "tag": "label",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": "Last name",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "artdeco-text-input--label"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//label[normalize-space(.)=\"Last name\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#ember738 > label.artdeco-text-input--label",
+        "ancestor_css": "div#ember738 > label:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[3]/div[1]/div[1]/div[1]/div[1]/label[1]",
+        "xpath": "/div[1]/div[@id=\"artdeco-modal-outlet\"]/div[@id=\"ember723\"]/div[1]/div[@id=\"ember726\"]/div[1]/div[2]/form[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[@id=\"ember737\"]/div[@id=\"ember738\"]/label[1]",
+        "shadow_hosts": [
+          {
+            "ancestor_css": "div#root > div:nth-of-type(3)",
+            "aria_label": null,
+            "classes": [
+              "theme--light"
+            ],
+            "css": "div#interop-outlet",
+            "data_attrs": {
+              "data-testid": "interop-shadowdom"
+            },
+            "href": null,
+            "id": "interop-outlet",
+            "index": 0,
+            "input_type": null,
+            "name": null,
+            "placeholder": null,
+            "role": null,
+            "structural_xpath": "/html/body/div[1]/div[3]",
+            "tag": "div",
+            "text": null,
+            "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]"
+          }
+        ],
+        "viewport": {
+          "h": 20,
+          "vh": 641,
+          "vw": 1360,
+          "w": 681,
+          "x": 332,
+          "y": 299
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 362,
+        "y": 313
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4464317311&eBP=NOT_ELIGIBLE_FOR_CHARGING&refId=TlmkUCtOC%2FVUN3zsORP5Rg%3D%3D&trackingId=099woXWfA0uONQ9UwsKF5w%3D%3D&keywords=ai%20&origin=JOBS_HOME_SEARCH_BUTTON",
+      "title": "AI Specialist | Darwin AI | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 105690,
+      "context": {},
+      "entity": null
+    },
+    {
+      "type": "click",
+      "ts": 1789273292207.0,
+      "locator": {
+        "tag": "input",
+        "id": "single-line-text-form-component-formElement-urn-li-jobs-applyformcommon-easyApplyFormElement-4464317311-36135959050-text",
+        "name": null,
+        "role": null,
+        "text": null,
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": "text",
+        "data_attrs": {},
+        "classes": [
+          "artdeco-text-input--input"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "input#single-line-text-form-component-formElement-urn-li-jobs-applyformcommon-easyApplyFormElement-4464317311-36135959050-text",
+        "ancestor_css": "div#ember738 > input:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[3]/div[1]/div[1]/div[1]/div[1]/input[1]",
+        "xpath": "/div[1]/div[@id=\"artdeco-modal-outlet\"]/div[@id=\"ember723\"]/div[1]/div[@id=\"ember726\"]/div[1]/div[2]/form[1]/div[1]/div[1]/div[3]/div[1]/div[1]/div[@id=\"ember737\"]/div[@id=\"ember738\"]/input[@id=\"single-line-text-form-component-formElement-urn-li-jobs-applyformcommon-easyApplyFormElement-4464317311-36135959050-text\"]",
+        "shadow_hosts": [
+          {
+            "ancestor_css": "div#root > div:nth-of-type(3)",
+            "aria_label": null,
+            "classes": [
+              "theme--light"
+            ],
+            "css": "div#interop-outlet",
+            "data_attrs": {
+              "data-testid": "interop-shadowdom"
+            },
+            "href": null,
+            "id": "interop-outlet",
+            "index": 0,
+            "input_type": null,
+            "name": null,
+            "placeholder": null,
+            "role": null,
+            "structural_xpath": "/html/body/div[1]/div[3]",
+            "tag": "div",
+            "text": null,
+            "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[@id=\"interop-outlet\"]"
+          }
+        ],
+        "viewport": {
+          "h": 32,
+          "vh": 641,
+          "vw": 1360,
+          "w": 681,
+          "x": 332,
+          "y": 321
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "window_ordinal": 0,
+      "frame_index_path": [],
+      "value": null,
+      "coordinates": {
+        "x": 362,
+        "y": 313
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4464317311&eBP=NOT_ELIGIBLE_FOR_CHARGING&refId=TlmkUCtOC%2FVUN3zsORP5Rg%3D%3D&trackingId=099woXWfA0uONQ9UwsKF5w%3D%3D&keywords=ai%20&origin=JOBS_HOME_SEARCH_BUTTON",
+      "title": "AI Specialist | Darwin AI | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 7,
+      "context": {},
+      "entity": null
+    }
+  ]
+}

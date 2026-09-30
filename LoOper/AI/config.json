@@ -1,0 +1,17 @@
+{
+  "LLAMA_CPP": {
+    "enabled": true,
+    "model_path": "D:\\LoOperV2\\LoOper\\AI\\models\\SmolLM3-Q4_K_M.gguf",
+    "embedding_model_path": "embeddinggemma-300M-Q8_0.gguf",
+    "gpu_layers": 0,
+    "threads": -1,
+    "context_size": 0,
+    "batch_size": 2048
+  },
+  "API_PORT": "8000",
+  "OLLAMA_HOST": "localhost",
+  "OLLAMA_PORT": "11434",
+  "API_TIMEOUT": "30",
+  "AUTO_START_API": "true",
+  "AGENT_TAILSCALE_IP": "100.99.132.70"
+}
