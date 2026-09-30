@@ -8,11 +8,12 @@ setlocal
 ::    1. create the Python virtual environment and install dependencies
 ::    2. BUILD llama.cpp from utils/llama.cpp for this machine's architecture
 ::       (no prebuilt binaries are committed - they are produced here)
-::    3. DOWNLOAD the base models the app needs:
+::    3. DOWNLOAD the base models + browser the app needs:
 ::         Laya decision engine, EmbeddingGemma, SmolLM3, LFM2.5-VL,
-::         LocateAnything, PaddleOCR (det/rec/cls), Vosk STT, Piper TTS
+::         LocateAnything, PaddleOCR (det/rec/cls), Vosk STT, Piper TTS,
+::         Chrome for Testing + matching chromedriver (web automation)
 ::    4. set up the RDP sandbox session
-::    5. launch LoOper
+::    5. ask Debug vs Normal, then launch LoOper\main.py
 :: ============================================================================
 
 :: ---- Elevate to Administrator (the RDP sandbox needs it) -------------------
@@ -47,6 +48,10 @@ echo [setup] Installing Python dependencies (pip install -e .)...
 python -m pip install --upgrade pip
 pushd "%ROOT%"
 python -m pip install -e .
+:: The editable install alone omits part of the runtime set (web automation,
+:: piper-tts, pyqtgraph, lap).  Install the authoritative pinned lock too so a
+:: fresh clone gets the exact environment the MSI build ships.
+python -m pip install -r "%ROOT%build_pipeline\requirements.txt"
 set "PIP_RC=%errorlevel%"
 popd
 if not "%PIP_RC%"=="0" (
@@ -131,10 +136,30 @@ netsh advfirewall firewall set rule group="remote desktop" new enable=Yes >nul 2
 cmdkey /generic:TERMSRV/127.0.0.2 /user:%AGENT_USER% /pass:%AGENT_PASS% >nul 2>&1
 
 :: ============================================================================
-::  5. Launch
+::  5. Launch - pick Debug (terminal visible) or Normal (no console)
 :: ============================================================================
-echo [run] Starting LoOper...
-python "%ROOT%LoOper.py"
+cd /d "%ROOT%"
+echo.
+echo   How do you want to start arrow?
+echo     [D] Debug  - LoOper\main.py with the terminal visible (logs / tracebacks)
+echo     [N] Normal - LoOper\main.py without a console window
+choice /C DN /N /M "   Choose [D]ebug or [N]ormal: "
+if errorlevel 2 goto launch_normal
+goto launch_debug
+
+:launch_debug
+echo [run] Debug mode - terminal visible. Close this window to stop the app.
+set "PYTHONFAULTHANDLER=1"
+set "PYTHONUNBUFFERED=1"
+"%VENV_DIR%\Scripts\python.exe" "%ROOT%LoOper\main.py"
+echo.
+echo [run] LoOper exited with code %errorlevel%.
+pause
+goto :eof
+
+:launch_normal
+echo [run] Normal mode - launching without a console window...
+start "LoOper" "%VENV_DIR%\Scripts\pythonw.exe" "%ROOT%LoOper\main.py"
 goto :eof
 
 
@@ -215,28 +240,33 @@ echo.
 echo [models] Fetching base models...
 
 :: -- Laya System-1 decision engine (models + engine binary) ------------------
-call :getfile "https://huggingface.co/mys/laya-GGUF/resolve/main/laya_english_ud_q4_k_m.gguf" "%LAY_DIR%\laya_english_ud_q4_k_m.gguf"
-call :getfile "https://huggingface.co/mys/laya-GGUF/resolve/main/laya_english_q8_0.gguf" "%LAY_DIR%\laya_english_q8_0.gguf"
+:: NOTE: every Hugging Face download below is pinned to a specific revision
+:: (commit sha) so an upstream repo update can never silently change the model.
+call :getfile "https://huggingface.co/mys/laya-GGUF/resolve/713ae6f6e39fb54835e010485656e4484e5ec411/laya_english_ud_q4_k_m.gguf" "%LAY_DIR%\laya_english_ud_q4_k_m.gguf"
+call :getfile "https://huggingface.co/mys/laya-GGUF/resolve/713ae6f6e39fb54835e010485656e4484e5ec411/laya_english_q8_0.gguf" "%LAY_DIR%\laya_english_q8_0.gguf"
 call :get_laya_exe
 
 :: -- EmbeddingGemma (offline embeddings / RAG) --------------------------------
-call :getfile "https://huggingface.co/unsloth/embeddinggemma-300m-GGUF/resolve/main/embeddinggemma-300M-Q8_0.gguf" "%AI_MODELS%\embeddinggemma-300M-Q8_0.gguf"
+call :getfile "https://huggingface.co/unsloth/embeddinggemma-300m-GGUF/resolve/6661a6504c30d8304af13455cb4a5d4f5bc6011f/embeddinggemma-300M-Q8_0.gguf" "%AI_MODELS%\embeddinggemma-300M-Q8_0.gguf"
 
 :: -- SmolLM3 (default chat / chain-router model) ------------------------------
-call :getfile "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf" "%AI_MODELS%\SmolLM3-Q4_K_M.gguf"
+call :getfile "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/4965cb60b150737b68a0408c36aeefb65078f894/SmolLM3-Q4_K_M.gguf" "%AI_MODELS%\SmolLM3-Q4_K_M.gguf"
 
 :: -- LFM2.5-VL (vision understanding) + vision projector ----------------------
-call :getfile "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF/resolve/main/LFM2.5-VL-450M-Q8_0.gguf" "%LFM_DIR%\LFM2.5-VL-450M-Q8_0.gguf"
-call :getfile "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF/resolve/main/mmproj-LFM2.5-VL-450m-Q8_0.gguf" "%LFM_DIR%\mmproj-LFM2.5-VL-450m-Q8_0.gguf"
+call :getfile "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF/resolve/1abed04b6fe71314d8c446a1371c03d7c332266d/LFM2.5-VL-450M-Q8_0.gguf" "%LFM_DIR%\LFM2.5-VL-450M-Q8_0.gguf"
+call :getfile "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF/resolve/1abed04b6fe71314d8c446a1371c03d7c332266d/mmproj-LFM2.5-VL-450m-Q8_0.gguf" "%LFM_DIR%\mmproj-LFM2.5-VL-450m-Q8_0.gguf"
 
 :: -- LocateAnything (UI grounding / Handle node) + projector ------------------
-call :getfile "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF/resolve/main/locateanything-3b-q8_0.gguf" "%AI_MODELS%\LocateAnything-3B-Q8_0.gguf"
-call :getfile "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF/resolve/main/mmproj-locateanything-3b-bf16.gguf" "%AI_MODELS%\mmproj-LocateAnything-3B-BF16.gguf"
+call :getfile "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF/resolve/aac6aefe07703a6c994fab05828cfa5524609380/locateanything-3b-q8_0.gguf" "%AI_MODELS%\LocateAnything-3B-Q8_0.gguf"
+call :getfile "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF/resolve/aac6aefe07703a6c994fab05828cfa5524609380/mmproj-locateanything-3b-bf16.gguf" "%AI_MODELS%\mmproj-LocateAnything-3B-BF16.gguf"
 
 :: -- PaddleOCR models, Vosk STT model, Piper TTS voices -----------------------
 call :get_paddle_models
 call :get_vosk_model
 call :get_piper_voices
+
+:: -- Chrome for Testing + matching chromedriver (web automation) --------------
+call :get_chrome
 
 echo [models] Base models ready.
 exit /b 0
@@ -281,6 +311,50 @@ call :getfile "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_
 call :getfile "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json" "%PIPER_DIR%\en_US-lessac-medium.onnx.json"
 call :getfile "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx" "%PIPER_DIR%\es_ES-carlfm-x_low.onnx"
 call :getfile "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/es/es_ES/carlfm/x_low/es_ES-carlfm-x_low.onnx.json" "%PIPER_DIR%\es_ES-carlfm-x_low.onnx.json"
+exit /b 0
+
+
+:: ---- Chrome for Testing + matching chromedriver (web automation) ------------
+:: Deterministic browser for the WebSequence nodes (no dependence on a system
+:: Chrome).  Lands as the bundle the app/spec expect:
+::   LoOper\AI\bin\chrome\chrome.exe  +  chromedriver.exe  +  .chrome-version
+:get_chrome
+set "CHROME_DIR=%AI_BIN%\chrome"
+if exist "%CHROME_DIR%\chrome.exe" if exist "%CHROME_DIR%\chromedriver.exe" (
+  echo   [skip] %CHROME_DIR%
+  exit /b 0
+)
+
+:: PINNED version - undetected_chromedriver requires the Chrome binary and the
+:: chromedriver to match EXACTLY, and this is the version the web nodes are
+:: tested against.  Bump this one line to upgrade both together.
+set "CFT_VER=153.0.8010.48"
+echo   [info] Chrome for Testing %CFT_VER% ^(pinned^)
+set "CFT_BASE=https://storage.googleapis.com/chrome-for-testing-public/%CFT_VER%/win64"
+
+call :getfile "%CFT_BASE%/chrome-win64.zip" "%TEMP%\cft-chrome-win64.zip"
+if not exist "%TEMP%\cft-chrome-win64.zip" (
+  echo   [warn] Chrome for Testing download failed - skipping.
+  exit /b 0
+)
+call :getfile "%CFT_BASE%/chromedriver-win64.zip" "%TEMP%\cft-chromedriver-win64.zip"
+
+if not exist "%AI_BIN%" mkdir "%AI_BIN%" >nul 2>&1
+echo   [pkg ] extracting Chrome for Testing
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$d=Join-Path $env:TEMP 'cft_chrome'; if (Test-Path $d) { Remove-Item $d -Recurse -Force };" ^
+  "Expand-Archive -Path (Join-Path $env:TEMP 'cft-chrome-win64.zip') -DestinationPath $d -Force;" ^
+  "$dir='%CHROME_DIR%'; if (Test-Path $dir) { Get-ChildItem $dir -Force | Remove-Item -Recurse -Force } else { New-Item -ItemType Directory -Force -Path $dir | Out-Null };" ^
+  "Copy-Item -Path (Join-Path $d 'chrome-win64\*') -Destination $dir -Recurse -Force;"
+
+if exist "%TEMP%\cft-chromedriver-win64.zip" (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$d=Join-Path $env:TEMP 'cft_driver'; if (Test-Path $d) { Remove-Item $d -Recurse -Force };" ^
+    "Expand-Archive -Path (Join-Path $env:TEMP 'cft-chromedriver-win64.zip') -DestinationPath $d -Force;" ^
+    "Copy-Item -Path (Join-Path $d 'chromedriver-win64\chromedriver.exe') -Destination (Join-Path '%CHROME_DIR%' 'chromedriver.exe') -Force;"
+)
+> "%CHROME_DIR%\.chrome-version" echo %CFT_VER%
+echo   [pkg ] Chrome for Testing staged at %CHROME_DIR%
 exit /b 0
 
 

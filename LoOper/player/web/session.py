@@ -414,19 +414,26 @@ def _prune_extra_browser_windows(driver, profile_dir: str) -> None:
 
 
 def _bundled_chrome_dir() -> Optional[Path]:
-    """Chrome for Testing bundled next to the frozen app, if any.
+    """Chrome for Testing staged next to the app, if any.
 
     build_msi.ps1 stages chrome.exe + chromedriver.exe under
-    <_MEIPASS>/bin/chrome (see LoOperApp.spec).  When present, web sessions
-    prefer this pair so record/replay work offline on machines without an
-    installed Chrome.  Source runs have no bundle and use the system Chrome.
+    <_MEIPASS>/bin/chrome (see LoOperApp.spec), and run_looper.bat stages the
+    same pair in the source tree at LoOper/AI/bin/chrome.  When present, web
+    sessions prefer this pair so record/replay work offline on machines
+    without an installed Chrome; otherwise they fall back to the system Chrome.
     """
-    if not getattr(sys, "frozen", False):
-        return None
-    base = Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
-    cand = base / "bin" / "chrome"
-    if (cand / "chrome.exe").is_file():
-        return cand
+    if getattr(sys, "frozen", False):
+        candidates = [
+            Path(getattr(sys, "_MEIPASS", os.path.dirname(sys.executable)))
+            / "bin" / "chrome"
+        ]
+    else:
+        # Source checkout (run_looper.bat): LoOper/AI/bin/chrome, resolved
+        # relative to this module (LoOper/player/web/session.py).
+        candidates = [Path(__file__).resolve().parents[2] / "AI" / "bin" / "chrome"]
+    for cand in candidates:
+        if (cand / "chrome.exe").is_file():
+            return cand
     return None
 
 
