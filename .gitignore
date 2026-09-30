@@ -1,0 +1,213 @@
+# =============================================================================
+# arrow / LoOper — source-only repository
+# =============================================================================
+# Excludes everything that is NOT the app's own source: vendored engines and
+# third-party sandboxes under utils/, model weights, native binaries, build
+# outputs, virtual-environments, caches, logs and runtime data.
+#
+# -----------------------------------------------------------------------------
+# IMPORTANT — NESTED GIT REPOSITORIES
+# -----------------------------------------------------------------------------
+# The vendored trees kept below (utils/llama.cpp, utils/nano-graphrag,
+# utils/rdpwrap) each ship their own .git/ directory.
+# Git records a directory containing .git/ as a submodule "gitlink" and will
+# NOT commit its files.  To commit their contents as plain files, delete the
+# nested .git folders first (PowerShell), then stage again:
+#
+#   Remove-Item -Recurse -Force `
+#       utils\llama.cpp\.git, utils\nano-graphrag\.git, utils\rdpwrap\.git
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Virtual environments & installed packages (any depth, not just top level)
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+ENV/
+env/
+**/site-packages/
+**/node_modules/
+*.egg-info/
+*.egg/
+
+# -----------------------------------------------------------------------------
+# Python bytecode & tool caches  (ALL levels — matches the request)
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+
+# -----------------------------------------------------------------------------
+# Build outputs, installers & generated files
+# -----------------------------------------------------------------------------
+build/
+dist/
+.cmake-build/
+cmake-build-*/
+*.msi
+*.cab
+*.wixpdb
+*.wixobj
+*.nupkg
+build_pipeline/arrow.wxs
+build_pipeline/chrome-cft/
+.wix/
+*.spec.bak
+
+# Native build trees of the vendored C/C++ engines
+utils/llama.cpp/build/
+utils/llama.cpp/build-vulkan/
+utils/ggmlc/build-win/
+
+# -----------------------------------------------------------------------------
+# Native binaries, libraries & archives
+# -----------------------------------------------------------------------------
+*.exe
+*.dll
+*.pyd
+*.so
+*.so.*
+*.dylib
+*.lib
+*.a
+*.o
+*.obj
+*.exp
+*.ilk
+*.pdb
+*.bin
+*.whl
+*.dmg
+*.AppImage
+*.pak
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# -----------------------------------------------------------------------------
+# AI model weights (huge — fetched or prebuilt separately)
+# -----------------------------------------------------------------------------
+*.gguf
+*.ggml
+*.ggmf
+*.safetensors
+*.onnx
+*.ort
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.pb
+*.tflite
+*.npz
+*.npy
+*.pkl
+*.joblib
+*.msgpack
+*.model
+_paddleocr_models/
+
+# -----------------------------------------------------------------------------
+# LoOper app — engines, models, runtime data, logs, user recordings
+# -----------------------------------------------------------------------------
+LoOper/AI/bin/
+LoOper/AI/models/*
+!LoOper/AI/models/README.txt
+LoOper/AI/memory_data/
+LoOper/data/
+LoOper/logs/
+LoOper/runtime/
+LoOper/dist/
+LoOper/screenshots/
+LoOper/player/screenshots/
+LoOper/player/multi_sequence/vision_output/
+LoOper/sequences/screenshots/
+LoOper/chains/
+LoOper/sequences/
+LoOper/graphui_debug.log
+LoOper/run.log
+LoOper/automation.log*
+
+# -----------------------------------------------------------------------------
+# Root-level runtime, logs & databases
+# -----------------------------------------------------------------------------
+runtime/
+logs/
+run.log
+automation.log*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.lmdb
+*.rdb
+*.log
+*.log.[0-9]*
+
+# -----------------------------------------------------------------------------
+# utils/ — vendored engines & third-party sandboxes
+# -----------------------------------------------------------------------------
+# KEEP only the SOURCE the app / build actually uses:
+#   llama.cpp      local inference engine source (config_loader default
+#                  "utils/llama.cpp"); run_looper.bat builds it locally and its
+#                  outputs (utils/llama.cpp/build*, *.exe/*.dll) are ignored.
+#   nano-graphrag  Graph RAG (added to the PyInstaller pathex)
+#   rdpwrap        RDP sandbox bootstrap (LoOper/setup_rdp_agent.py)
+#
+# Engine/models are NOT committed - run_looper.bat fetches them at setup:
+#   Laya models  -> LoOper/AI/models/laya-GGUF/   (HF: mys/laya-GGUF)
+#   Laya engine  -> LoOper/AI/bin/laya.exe        (ggmlc release zip)
+# Everything below is an unrelated sandbox / upstream mirror / fetched asset
+# and is NOT referenced anywhere in LoOper source or the build pipeline.
+/utils/.cache/
+/utils/ComoRAG/
+/utils/NodeEditTestCPP/
+/utils/Stop-RAG/
+/utils/aider/
+/utils/ggmlc/
+/utils/laya-GGUF/
+/utils/little-coder/
+/utils/llama.cpp.upstream/
+/utils/openjev/
+/utils/playwright-mcp/
+/utils/stop/
+/utils/laya_english_f16.gguf
+/utils/license.bin
+
+# -----------------------------------------------------------------------------
+# .qoder — agent workspace (scratch files, caches, ~2 GB test blobs)
+# -----------------------------------------------------------------------------
+.qoder/
+
+# -----------------------------------------------------------------------------
+# Secrets & private artifacts
+# -----------------------------------------------------------------------------
+keygen/private_key.pem
+keygen/validate_license_build.py
+*license_validator.spec
+.env
+.env.*
+
+# -----------------------------------------------------------------------------
+# IDE / OS cruft
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
