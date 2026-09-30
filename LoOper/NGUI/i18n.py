@@ -69,13 +69,9 @@ TRANSLATIONS = {
 
         # AI settings
         "AI Settings": "Ajustes de IA",
-        "Remote API Configuration": "Configuración de API remota",
-        "Tailscale Server IP:": "IP de servidor Tailscale:",
         "API Port:": "Puerto de API:",
         "Ollama Host:": "Host de Ollama:",
         "Ollama Port:": "Puerto de Ollama:",
-        "e.g., 100.64.1.2 or localhost": "p.ej., 100.64.1.2 o localhost",
-        "e.g., localhost or 100.64.1.3": "p.ej., localhost o 100.64.1.3",
         "Run the API server locally if you have sufficient resources": "Ejecuta el servidor API localmente si tienes recursos suficientes",
         "Checking connection...": "Comprobando conexión...",
         "Available Models:": "Modelos disponibles:",
@@ -131,7 +127,6 @@ TRANSLATIONS = {
         "Information Extraction (OCR + LLM)": "Extracción de información (OCR + LLM)",
         "Custom Instructions": "Instrucciones personalizadas",
         "Direct Prompt": "Prompt directo",
-        "ComoRAG Analysis": "Análisis con ComoRAG",
         "Data Processing Chain": "Cadena de procesamiento de datos",
         "Text Analysis": "Análisis de texto",
         "Content Summarization": "Resumen de contenido",
@@ -159,10 +154,6 @@ TRANSLATIONS = {
         "Use Vision:": "Usar visión:",
         "Screenshot:": "Captura de pantalla:",
         "Note: Vision models can analyze screenshots along with text prompts.": "Nota: Los modelos de visión pueden analizar capturas junto con indicaciones de texto.",
-        "Enable ComoRAG:": "Habilitar ComoRAG:",
-        "Max Cycles:": "Máximo de ciclos:",
-        "Memory Size:": "Tamaño de memoria:",
-        "ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API.": "ComoRAG mejora las respuestas del LLM con razonamiento contextual y se conecta al API de OverWatch.",
         "Describe what to extract/analyze from the screen text...": "Describe qué extraer/analizar del texto en pantalla...",
         "Process the previous node's output...": "Procesar la salida del nodo anterior...",
         "Process the clipboard content...": "Procesar el contenido del portapapeles...",
@@ -180,7 +171,6 @@ TRANSLATIONS = {
         "Extract specific information from screen text using OCR + LLM.": "Extrae información específica del texto en pantalla usando OCR + LLM.",
         "Define your own system message and prompt for the LLM.": "Define tu propio mensaje del sistema y prompt para el LLM.",
         "Simple direct prompt without additional configuration.": "Prompt directo simple sin configuración adicional.",
-        "Use ComoRAG for context-aware analysis with memory and reasoning.": "Usa ComoRAG para análisis con conciencia del contexto, memoria y razonamiento.",
         "Process data from previous nodes in a multi-step workflow.": "Procesa datos de nodos anteriores en un flujo de varios pasos.",
         "Analyze text content from clipboard with detailed insights.": "Analiza el texto del portapapeles con información detallada.",
         "Summarize content extracted from screen using OCR.": "Resume contenido extraído de la pantalla usando OCR.",
@@ -190,6 +180,22 @@ TRANSLATIONS = {
 
         # Sequence dialogs
         "Sequence Properties": "Propiedades de la secuencia",
+
+        # Web sequence dialogs
+        "Web Sequence": "Secuencia web",
+        "Web Sequences": "Secuencias web",
+        "No web sequences": "No hay secuencias web",
+        "Web Sequence Properties": "Propiedades de la secuencia web",
+        "Edit Web Sequence Properties": "Editar propiedades de la secuencia web",
+        "Record Web Session": "Grabar sesión web",
+        "Record Web Session…": "Grabar sesión web…",
+        "Add Web Sequence Node": "Añadir nodo de secuencia web",
+        "Add New Web Sequence (Record)": "Añadir nueva secuencia web (grabar)",
+        "Session File:": "Archivo de sesión:",
+        "Headless (no visible browser window)": "Sin interfaz (sin ventana de navegador visible)",
+        "Speed Multiplier:": "Multiplicador de velocidad:",
+        "Native Actions (Selenium; required for browser-chrome keys: back/forward, refresh, tabs)": "Acciones nativas (Selenium; requerido para teclas del navegador: atrás/adelante, recargar, pestañas)",
+        "Open a browser, interact with the page, then press ESC (in the page or the terminal) or close the window to stop and save.": "Abre un navegador, interactúa con la página y pulsa ESC (en la página o en la terminal) o cierra la ventana para detener y guardar.",
 
         # Scheduler dialogs
         "Manage Schedules": "Gestionar programaciones",
@@ -391,7 +397,31 @@ TRANSLATIONS = {
         "Execute on Input Trigger": "Ejecutar al recibir entrada",
         "Timeout (seconds):": "Tiempo de espera (segundos):",
         "Select Python Script": "Seleccionar script de Python",
-        "Python Files (*.py);;All Files (*)": "Archivos Python (*.py);;Todos los archivos (*)"
+        "Python Files (*.py);;All Files (*)": "Archivos Python (*.py);;Todos los archivos (*)",
+
+        # Code Node Studio
+        "Code Node Studio": "Estudio de nodo de código",
+        "No Code node selected": "Ningún nodo de código seleccionado",
+        "Apply to node": "Aplicar al nodo",
+        "Run": "Ejecutar",
+        "Stop": "Detener",
+        "Send": "Enviar",
+        "Apply suggestion": "Aplicar sugerencia",
+        "Fix last error": "Arreglar último error",
+        "Connected inputs (auto-injected as variables)": "Entradas conectadas (variables auto-inyectadas)",
+        "Input variables": "Variables de entrada",
+        "Output variables": "Variables de salida",
+        "variable name": "nombre de variable",
+        "Ask the coding agent... (enter to send, /help for commands)": "Pide al agente de código... (Intro para enviar, /help para comandos)",
+        "+ add": "+ añadir",
+        "Apply failed": "Error al aplicar",
+        "No failed run yet — press Run first.": "Aún no hay ejecución fallida — pulsa Ejecutar primero.",
+        "A request is already running.": "Ya hay una petición en curso.",
+        "Suggestion applied to the editor — press Apply to save it to the node.": "Sugerencia aplicada al editor — pulsa Aplicar para guardarla en el nodo.",
+        "Unknown command: {} (try /help)": "Comando desconocido: {} (prueba /help)",
+        "Loaded node. Run it, then ask the AI to change/fix the code.": "Nodo cargado. Ejecútalo y luego pide a la IA cambiar/arreglar el código.",
+        "Advanced\u2026": "Avanzado\u2026",
+        "Full editor: dependencies, timeout, agentic loop": "Editor completo: dependencias, tiempo de espera, bucle agéntico"
     }
 }
 

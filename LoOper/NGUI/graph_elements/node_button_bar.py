@@ -376,6 +376,12 @@ class NodeButtonBarManager(QObject):
             # User requested Play button to be visible for Conditional nodes
             bar_item.set_button_visible('play', True)
             
+        elif 'input' in ntype or 'InputNode' in ntype:
+            bar_item.set_button_visible('play', False)
+            # Show the options (hamburger / three-lines) button so the user can
+            # open the input dialog without having to right-click -> context menu.
+            bar_item.set_button_visible('options', True)
+
         elif 'chain_import' in ntype or 'ChainImportNode' in ntype:
             bar_item.set_button_visible('expand', True)
 
@@ -393,14 +399,16 @@ class NodeButtonBarManager(QObject):
                 self._on_play_sequence(node)
             elif 'llm' in ntype:
                 self._on_exec_llm(node)
-            elif 'tts' in ntype:
-                self._on_exec_tts(node)
             elif 'chain_import' in ntype:
                 self._on_exec_chain_import(node)
             elif 'conditional' in ntype:
                 self._on_exec_conditional(node)
             elif 'code' in ntype:
                 self._on_exec_code(node)
+            elif 'handle' in ntype:
+                self._on_exec_handle(node)
+            elif 'mcp' in ntype:
+                self._on_exec_mcp(node)
 
     def _get_main_window(self):
         """Traverse up the widget hierarchy to find the MainWindow."""
@@ -453,6 +461,17 @@ class NodeButtonBarManager(QObject):
     def _on_record(self, node):
         """Re-record the sequence associated with this node immediately."""
         try:
+            ntype = getattr(node, '__identifier__', node.type_)
+            # Web sequence nodes record DOM-based browser sessions - never
+            # route them through the desktop ElementRecorder.
+            if 'web_sequence' in ntype:
+                logger.info(f"Re-recording web session for node: {node.id}")
+                if hasattr(self.parent, 'record_web_session'):
+                    self.parent.record_web_session(node)
+                else:
+                    logger.warning("GraphView lacks 'record_web_session' method")
+                return
+
             sequence_file = node.get_property('sequence_file')
             if sequence_file:
                 # Extract name from filename
@@ -488,13 +507,16 @@ class NodeButtonBarManager(QObject):
     def _on_exec_llm(self, node):
         self._execute_node(node)
 
-    def _on_exec_tts(self, node):
-        self._execute_node(node)
-
     def _on_exec_chain_import(self, node):
         self._execute_node(node)
 
     def _on_exec_code(self, node):
+        self._execute_node(node)
+
+    def _on_exec_handle(self, node):
+        self._execute_node(node)
+
+    def _on_exec_mcp(self, node):
         self._execute_node(node)
 
     def _on_exec_conditional(self, node):
@@ -520,6 +542,15 @@ class NodeButtonBarManager(QObject):
             self.parent.edit_node(node)
         else:
             ntype = getattr(node, '__identifier__', node.type_)
+            # Web sequence nodes are a DISTINCT node type from desktop
+            # sequences: their options open the web-specific properties dialog
+            # (record + headless + speed + native actions), never the desktop
+            # SequencePropertiesDialog - the 'sequence' substring in their
+            # identifier would otherwise match the branch below.
+            if 'web_sequence' in ntype or 'WebSequenceNode' in ntype:
+                if hasattr(self.parent, 'edit_web_sequence'):
+                    self.parent.edit_web_sequence(node)
+                return
             if 'sequence' in ntype:
                 if hasattr(self.parent, 'edit_sequence'):
                     self.parent.edit_sequence(node)
@@ -534,9 +565,6 @@ class NodeButtonBarManager(QObject):
                     self.parent.edit_llm_node(node)
                 elif hasattr(self.parent, 'edit_llm'):
                     self.parent.edit_llm(node)
-            elif 'tts' in ntype:
-                if hasattr(self.parent, 'edit_tts_node'):
-                    self.parent.edit_tts_node(node)
             elif 'chain_import' in ntype:
                 if hasattr(self.parent, 'edit_chain_import_node'):
                     self.parent.edit_chain_import_node(node)
@@ -546,3 +574,18 @@ class NodeButtonBarManager(QObject):
             elif 'context' in ntype:
                 if hasattr(self.parent, 'edit_context_node'):
                     self.parent.edit_context_node(node)
+            elif 'handle' in ntype:
+                if hasattr(self.parent, 'edit_handle_node'):
+                    self.parent.edit_handle_node(node)
+            elif 'form_filler' in ntype:
+                if hasattr(self.parent, 'edit_form_filler_node'):
+                    self.parent.edit_form_filler_node(node)
+            elif 'mcp' in ntype:
+                if hasattr(self.parent, 'edit_mcp_node'):
+                    self.parent.edit_mcp_node(node)
+            elif 'input' in ntype:
+                if hasattr(self.parent, 'edit_input_node'):
+                    self.parent.edit_input_node(node)
+            elif 'output' in ntype:
+                if hasattr(self.parent, 'edit_output_node'):
+                    self.parent.edit_output_node(node)

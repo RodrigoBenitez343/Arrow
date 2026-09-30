@@ -40,6 +40,22 @@ if (len(sys.argv) > 1
         traceback.print_exc()
         sys.exit(1)
 
+# Handle -m module invocations (e.g. pip) so subprocess calls don't spawn new GUI instances.
+if (len(sys.argv) > 1
+        and sys.argv[1] == '-m'
+        and len(sys.argv) > 2):
+    module_name = sys.argv[2]
+    sys.argv = sys.argv[2:]
+    try:
+        import runpy
+        runpy.run_module(module_name, run_name="__main__", alter_sys=True)
+        sys.exit(0)
+    except Exception as e:
+        print(f"Error running module {module_name}: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
 if sys.platform == "win32":
     try:
         if sys.stdout is None:
@@ -48,6 +64,31 @@ if sys.platform == "win32":
             sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+def _venv_launcher_python() -> str:
+    """Return the python executable that must launch main.py.
+
+    The native OCR stack (paddle/torch) is only tested inside the project
+    venv (see run_looper.bat).  Launching with the system Python runs an
+    untested paddleocr 3.x stack that has crashed natively during OCR
+    inference (WerFault / 0xc0000005 access violation), taking the whole
+    app down.  When launched outside the venv, re-exec with the venv
+    python so the tested stack is always used.
+    """
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    try:
+        root = os.path.dirname(os.path.abspath(__file__))
+        venv_py = os.path.join(root, ".venv", "Scripts", "python.exe")
+        if os.path.exists(venv_py) and os.path.normcase(
+            os.path.realpath(sys.executable)
+        ) != os.path.normcase(os.path.realpath(venv_py)):
+            print(f"[launcher] Using venv interpreter: {venv_py}")
+            return venv_py
+    except Exception:
+        pass
+    return sys.executable
+
 
 def _is_admin() -> bool:
     try:
@@ -216,68 +257,6 @@ def _run_main_app():
         run_app()
     except Exception as e:
         print(f"Error launching main app: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-
-def _run_vision_model():
-    """Import and run the vision model logic"""
-    try:
-        # Import the vision module. This will be bundled by PyInstaller.
-        if getattr(sys, 'frozen', False):
-            meipass = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-            exe_dir = os.path.dirname(sys.executable)
-            internal_dir = meipass
-            if os.path.basename(internal_dir).lower() != '_internal':
-                candidate_internal = os.path.join(exe_dir, '_internal')
-                if os.path.isdir(candidate_internal):
-                    internal_dir = candidate_internal
-                else:
-                    candidate_internal = os.path.join(meipass, '_internal')
-                    if os.path.isdir(candidate_internal):
-                        internal_dir = candidate_internal
-            
-            # Possible locations for the vision model directory
-            possible_dirs = [
-                os.path.join(internal_dir, "LoOper", "player", "Computer_vision"),
-                os.path.join(exe_dir, "LoOper", "player", "Computer_vision"),
-                os.path.join(internal_dir, "player", "Computer_vision"),
-                os.path.join(exe_dir, "player", "Computer_vision"),
-            ]
-            
-            vision_dir = None
-            for d in possible_dirs:
-                if os.path.exists(d):
-                    vision_dir = d
-                    break
-            
-            if vision_dir:
-                try:
-                    os.chdir(vision_dir)
-                except Exception:
-                    pass
-                if vision_dir not in sys.path:
-                    sys.path.insert(0, vision_dir)
-
-        # We try to import the Vision class
-        try:
-            from LoOper.player.Computer_vision.model_vision import Vision
-        except ImportError:
-            # Fallback if the path structure is flattened
-            try:
-                from player.Computer_vision.model_vision import Vision
-            except ImportError:
-                from model_vision import Vision
-
-        model_path = "Computer_Vision_1.5.3.onnx"
-        if not os.path.exists(model_path):
-             # Try absolute path in current directory or bundle
-             model_path = os.path.join(os.getcwd(), "Computer_Vision_1.5.3.onnx")
-             
-        vision = Vision(model_path)
-        vision.start_vision(1) 
-    except Exception as e:
-        print(f"Error launching vision model: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
@@ -465,41 +444,11 @@ def launch():
         # Use bundle root as cwd for the child process
         launch_cwd = base
     else:
-        # When running as script, launch main.py
-        main_cmd = [sys.executable, main_path]
+        # When running as script, launch main.py — always under the venv
+        # interpreter (the paddle/torch OCR stack is only tested there;
+        # the system Python's paddleocr 3.x has crashed natively).
+        main_cmd = [_venv_launcher_python(), main_path]
         launch_cwd = os.path.dirname(main_path)
-
-    # --- Vision Model Launch Logic ---
-    vision_proc = None
-    if "--apply_mask" in sys.argv or "-m" in sys.argv:
-        try:
-            vision_script = os.path.join(base, "LoOper", "player", "Computer_vision", "model_vision.py")
-            if getattr(sys, 'frozen', False):
-                internal_vision = os.path.join(base, "_internal", "LoOper", "player", "Computer_vision", "model_vision.py")
-                if os.path.exists(internal_vision):
-                    vision_script = internal_vision
-            
-            if os.path.exists(vision_script):
-                print(f"Launching Vision Model: {vision_script}")
-                # Use the script's directory as CWD to ensure it can find local models/files
-                v_cwd = os.path.dirname(vision_script)
-                
-                v_cmd = [sys.executable, vision_script]
-                # Note: When frozen, sys.executable is the LoOper.exe itself.
-                # LoOper.exe detects if the first argument is a .py file and executes it,
-                # behaving like a python interpreter. This allows running the unbundled script
-                # with the bundled environment.
-
-                vision_proc = subprocess.Popen(
-                    v_cmd,
-                    cwd=v_cwd,
-                    creationflags=creationflags
-                )
-            else:
-                print(f"Vision model script not found at: {vision_script}")
-        except Exception as e:
-            print(f"Failed to launch vision model: {e}")
-    # -------------------------------
 
     proc = subprocess.Popen(
         main_cmd,
@@ -549,39 +498,6 @@ def launch():
                 proc.kill()
             except Exception:
                 pass
-        
-        # Kill Vision Process if it exists
-        if vision_proc:
-            try:
-                import psutil
-                try:
-                    p = psutil.Process(vision_proc.pid)
-                    for child in p.children(recursive=True):
-                        try:
-                            child.terminate()
-                        except Exception:
-                            pass
-                    _, _ = psutil.wait_procs(p.children(recursive=True), timeout=3)
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            try:
-                if os.name == "nt":
-                    try:
-                        # Add CREATE_NO_WINDOW for taskkill
-                        subprocess.run(["taskkill", "/T", "/F", "/PID", str(vision_proc.pid)], check=False, capture_output=True, creationflags=0x08000000)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                vision_proc.terminate()
-            except Exception:
-                try:
-                    vision_proc.kill()
-                except Exception:
-                    pass
 
     def check_state():
         nonlocal ready_seen
@@ -623,12 +539,6 @@ def launch():
             except Exception:
                 pass
             QTimer.singleShot(100, app.quit)
-        
-        # Check if vision process died unexpectedly (optional, mostly for debugging)
-        if vision_proc and vision_proc.poll() is not None:
-             # Vision process died, we could restart it or just log it.
-             # For now, we do nothing.
-             pass
 
     poll = QTimer(splash)
     poll.timeout.connect(check_state)
@@ -676,6 +586,20 @@ if __name__ == "__main__":
             traceback.print_exc()
             sys.exit(1)
 
+    # Handle -m module invocations (e.g. pip) for development / subprocess guard.
+    if len(sys.argv) > 1 and sys.argv[1] == '-m' and len(sys.argv) > 2:
+        module_name = sys.argv[2]
+        sys.argv = sys.argv[2:]
+        try:
+            import runpy
+            runpy.run_module(module_name, run_name="__main__", alter_sys=True)
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error running module {module_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
     # Check if we are being called to run the main app logic
     # License check -- enforced for GUI launch only
     if "--run-main" in sys.argv:
@@ -683,10 +607,6 @@ if __name__ == "__main__":
         _run_main_app()
     elif not _check_license():
         sys.exit(1)
-    elif "--run-vision" in sys.argv:
-        # Remove the flag
-        sys.argv.remove("--run-vision")
-        _run_vision_model()
     elif "--install-deps" in sys.argv:
         try:
             print("Installing/Verifying PaddleOCR dependencies...")

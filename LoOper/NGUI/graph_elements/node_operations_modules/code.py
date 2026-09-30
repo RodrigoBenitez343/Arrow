@@ -1,3 +1,5 @@
+import json
+
 from PyQt5.QtWidgets import QMessageBox
 from .utils import get_logger
 
@@ -55,6 +57,8 @@ class CodeOperationsMixin:
                 description = code_node_data.get('description', '')
                 gen_model = code_node_data.get('gen_model', 'llama3.2:latest')
                 gen_prompt = code_node_data.get('gen_prompt', '')
+                dependencies = code_node_data.get('dependencies', [])
+                memory_context = code_node_data.get('memory_context', [])
 
                 # Set properties
                 node.set_property('code', code)
@@ -65,6 +69,8 @@ class CodeOperationsMixin:
                 node.set_property('description', description)
                 node.set_property('gen_model', gen_model)
                 node.set_property('gen_prompt', gen_prompt)
+                node.set_property('dependencies', json.dumps(dependencies))
+                node.set_property('memory_context', json.dumps(memory_context))
 
                 # Update node name
                 if file_path:
@@ -109,16 +115,27 @@ class CodeOperationsMixin:
                 
                 # Update node properties
                 node.set_property('code', config['code'])
-                node.set_property('file_path', config['file_path'])
-                node.set_property('execute_on_input', 'true' if config['execute_on_input'] else 'false')
-                node.set_property('output_variable', config['output_variable'])
-                node.set_property('timeout', str(config['timeout']))
+                node.set_property('file_path', config.get('file_path', ''))
+                node.set_property('execute_on_input', 'true' if config.get('execute_on_input', True) else 'false')
+                node.set_property('output_variable', config.get('output_variable', 'result'))
+                node.set_property('timeout', str(config.get('timeout', 30)))
                 node.set_property('gen_model', config.get('gen_model', 'llama3.2:latest'))
                 node.set_property('gen_prompt', config.get('gen_prompt', ''))
                 node.set_property('description', config.get('description', ''))
+                # New fields
+                node.set_property('dependencies', json.dumps(config.get('dependencies', [])))
+                node.set_property('memory_context', json.dumps(config.get('memory_context', [])))
+                # Custom IO ports
+                node.set_property('input_vars', json.dumps(config.get('input_vars', [])))
+                node.set_property('output_vars', json.dumps(config.get('output_vars', [])))
+                # Rebuild visual ports on the graph node
+                try:
+                    node.rebuild_ports()
+                except Exception:
+                    pass
                 
                 # Update node name? Maybe showing "Code: <file_name>" or "Code: <snippet>"
-                if config['file_path']:
+                if config.get('file_path'):
                     import os
                     name_preview = os.path.basename(config['file_path'])
                     node.set_name(f"Code: {name_preview}")

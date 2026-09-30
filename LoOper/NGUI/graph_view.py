@@ -26,25 +26,14 @@ from .i18n import _
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# Create file handler if it doesn't exist
-if not logger.handlers:
-    handler = logging.FileHandler('graphui_debug.log')
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    
-    # Also add console handler for immediate feedback
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-
 class GraphViewWidget(QWidget):
     """Widget for visualizing and managing sequence chains using NodeGraphQt"""
     
     node_selected = pyqtSignal(int, int)
     sequence_selected = pyqtSignal(int)
+    # Emitted with the selected Code node graph object when exactly one code
+    # node is selected (Code Node Studio dock).
+    code_node_selected = pyqtSignal(object)
     
     def __init__(self, parent=None):
         logger.info("Initializing GraphViewWidget")
@@ -52,19 +41,22 @@ class GraphViewWidget(QWidget):
             super().__init__(parent)
             # Initialize clipboard for copied nodes
             self.copied_nodes = []
+            # Last code-node id shown in the Code Node Studio (dedupe guard)
+            self._last_code_selected_id = None
             # Initialize paste counter for positioning
             self._paste_counter = 0
             # Track last context menu scene position for paste anchoring
             self._last_context_scene_pos = None
-            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "tts_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": []}
+            self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": [], "context_nodes": [], "input_nodes": [], "handle_nodes": [], "mcp_nodes": [], "web_sequences": []}
             self.sequence_nodes = []
             self.action_nodes = []
             self.conditional_nodes = []
             self.llm_nodes = []
-            self.tts_nodes = []
             self.form_filler_nodes = []
             self.code_nodes = []
             self.container_nodes = []
+            self.context_nodes = []
+            self.input_nodes = []
             self.current_view = 'sequence'  # Track current view: 'sequence' or 'action'
             self.current_sequence_idx = None  # Track currently selected sequence
             self.saved_sequence_state = None  # Store sequence view state when switching to action view
@@ -83,13 +75,16 @@ class GraphViewWidget(QWidget):
             
             self.sequences_folder = os.path.join(project_root, "sequences")
             self.chains_folder = os.path.join(project_root, "chains")
+            self.web_sequences_folder = os.path.join(project_root, "web_sequences")
             
-            # Ensure both folders exist
+            # Ensure all folders exist
             os.makedirs(self.sequences_folder, exist_ok=True)
             os.makedirs(self.chains_folder, exist_ok=True)
+            os.makedirs(self.web_sequences_folder, exist_ok=True)
             
             logger.debug(f"Set sequences_folder to: {self.sequences_folder}")
             logger.debug(f"Set chains_folder to: {self.chains_folder}")
+            logger.debug(f"Set web_sequences_folder to: {self.web_sequences_folder}")
             
             # Initialize modular components
             logger.debug("Initializing modular components...")
@@ -216,8 +211,34 @@ class GraphViewWidget(QWidget):
             # Supr/Delete - Remove selected nodes
             self.delete_selected_nodes()
             event.accept()
+        elif event.key() == Qt.Key_Z and event.modifiers() & Qt.ControlModifier:
+            # Ctrl+Z - Undo last operation
+            self.undo()
+            event.accept()
+        elif event.key() == Qt.Key_Y and event.modifiers() & Qt.ControlModifier:
+            # Ctrl+Y - Redo last undone operation
+            self.redo()
+            event.accept()
         else:
             super().keyPressEvent(event)
+
+    def undo(self):
+        """Undo the last graph operation via NodeGraphQt's undo stack."""
+        try:
+            stack = self.node_graph.undo_stack()
+            if stack and stack.canUndo():
+                stack.undo()
+        except Exception as e:
+            logger.debug(f"Undo failed: {e}")
+
+    def redo(self):
+        """Redo the last undone graph operation via NodeGraphQt's undo stack."""
+        try:
+            stack = self.node_graph.undo_stack()
+            if stack and stack.canRedo():
+                stack.redo()
+        except Exception as e:
+            logger.debug(f"Redo failed: {e}")
 
     def focusInEvent(self, event):
         """Handle focus in events and delegate to the graph view if available"""
@@ -284,6 +305,19 @@ class GraphViewWidget(QWidget):
                     # Only check for wrap if the user was actually dragging (not just selecting)
                     if selected and self._drag_active:
                         self._check_wrap_into_chain(selected)
+                    # Notify the Code Node Studio when exactly one Code node is selected
+                    if not self._drag_active and len(selected) == 1:
+                        try:
+                            _n = selected[0]
+                            if str(getattr(_n, '__identifier__', '') or '').lower() in (
+                                'code', 'codencode', 'code.codencode',
+                            ) or str(getattr(_n, '__identifier__', '') or '').lower().endswith('codencode'):
+                                _nid = str(getattr(_n, 'id', '') or id(_n))
+                                if _nid != getattr(self, '_last_code_selected_id', None):
+                                    self._last_code_selected_id = _nid
+                                    self.code_node_selected.emit(_n)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 finally:
@@ -432,6 +466,69 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error adding conditional node: {str(e)}", exc_info=True)
             return None
     
+    def add_web_sequence_node(self, position=None):
+        """Add a previously recorded web session node to the graph"""
+        logger.debug(f"Adding web sequence node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_web_sequence(resolved_pos)
+            logger.info(f"Web sequence node added: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding web sequence node: {str(e)}", exc_info=True)
+            return None
+
+    def add_new_web_sequence(self, position=None):
+        """Add a new web sequence node and record a session for it"""
+        logger.debug(f"Adding new web sequence node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_new_web_sequence(resolved_pos)
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding new web sequence node: {str(e)}", exc_info=True)
+            return None
+
+    def add_blank_web_sequence(self, position=None):
+        """Add an unassigned web sequence node (drag-and-drop from toolbar)"""
+        logger.debug(f"Adding blank web sequence node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_blank_web_sequence(resolved_pos)
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding blank web sequence node: {str(e)}", exc_info=True)
+            return None
+
+    def edit_web_sequence(self, node):
+        """Edit a web sequence node's properties via dialog"""
+        try:
+            self.node_operations.edit_web_sequence(node)
+        except Exception as e:
+            logger.error(f"Error editing web sequence node: {str(e)}", exc_info=True)
+
+    def record_web_session(self, node):
+        """Record a new web session and attach it to the node"""
+        try:
+            self.node_operations.record_web_session(node)
+        except Exception as e:
+            logger.error(f"Error recording web session: {str(e)}", exc_info=True)
+    
     def add_llm_node(self, position=None):
         """Add a new LLM node to the graph"""
         logger.debug(f"Adding LLM node at position: {position}")
@@ -449,13 +546,13 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error adding LLM node: {str(e)}", exc_info=True)
             return None
     
-    def add_tts_node(self, position=None):
-        """Add a new TTS node to the graph"""
-        logger.debug(f"Adding TTS node at position: {position}")
+    def add_form_filler_node(self, position=None):
+        """Add a new Form Filling node to the graph"""
+        logger.debug(f"Adding Form Filling node at position: {position}")
         try:
             resolved_pos = self._resolve_creation_pos(position)
-            result = self.node_operations.add_tts_node(resolved_pos)
-            logger.info(f"TTS node added successfully: {result.name() if result else 'None'}")
+            result = self.node_operations.add_form_filler_node(resolved_pos)
+            logger.info(f"Form Filling node added successfully: {result.name() if result else 'None'}")
             try:
                 if result and hasattr(self, 'node_button_manager'):
                     self.node_button_manager.attach(result)
@@ -463,16 +560,8 @@ class GraphViewWidget(QWidget):
                 pass
             return result
         except Exception as e:
-            logger.error(f"Error adding TTS node: {str(e)}", exc_info=True)
+            logger.error(f"Error adding Form Filling node: {str(e)}", exc_info=True)
             return None
-
-    def add_form_filler_node(self, position=None):
-        from PyQt5.QtWidgets import QMessageBox
-        try:
-            QMessageBox.information(self, _("Deprecated"), _("Form Filler node is deprecated and cannot be added."))
-        except Exception:
-            pass
-        return None
 
     def add_chain_import_node(self, position=None):
         """Add a new Chain Import node to the graph"""
@@ -526,8 +615,15 @@ class GraphViewWidget(QWidget):
             return None
 
     def edit_code_node(self, node):
-        """Edit a Code node's properties"""
-        logger.debug(f"Editing Code node: {node.name()}")
+        """Edit a Code node — opens the non-modal Code Node Studio dock."""
+        logger.debug(f"Editing Code node: {node.name() if node else 'None'}")
+        try:
+            mw = self.window()
+            if mw is not None and hasattr(mw, '_on_code_node_selected'):
+                mw._on_code_node_selected(node)
+                return
+        except Exception:
+            pass
         try:
             self.node_operations.edit_code_node(node)
         except Exception as e:
@@ -548,6 +644,106 @@ class GraphViewWidget(QWidget):
             self.node_operations.edit_context_node(node)
         except Exception as e:
             logger.error(f"Error editing Context node: {str(e)}", exc_info=True)
+
+    def add_input_node(self, position=None):
+        """Add a new Input node to the graph"""
+        logger.debug(f"Adding Input node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_input_node(resolved_pos)
+            logger.info(f"Input node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Input node: {str(e)}", exc_info=True)
+            return None
+
+    def edit_input_node(self, node):
+        """Edit an Input node's properties"""
+        logger.debug(f"Editing Input node: {node.name()}")
+        try:
+            self.node_operations.edit_input_node(node)
+        except Exception as e:
+            logger.error(f"Error editing Input node: {str(e)}", exc_info=True)
+
+    def add_handle_node(self, position=None):
+        """Add a new Handle node to the graph"""
+        logger.debug(f"Adding Handle node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_handle_node(resolved_pos)
+            logger.info(f"Handle node added successfully: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Handle node: {str(e)}", exc_info=True)
+            return None
+
+    def edit_handle_node(self, node):
+        """Edit a Handle node's properties"""
+        logger.debug(f"Editing Handle node: {node.name()}")
+        try:
+            self.node_operations.edit_handle_node(node)
+        except Exception as e:
+            logger.error(f"Error editing Handle node: {str(e)}", exc_info=True)
+
+    def add_mcp_node(self, position=None):
+        """Add a new MCP Server node."""
+        logger.debug(f"Adding MCP node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_mcp_node(resolved_pos)
+            logger.info(f"MCP node added: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding MCP node: {str(e)}", exc_info=True)
+            return None
+
+    def edit_mcp_node(self, node):
+        """Edit an MCP node's properties."""
+        logger.debug(f"Editing MCP node: {node.name()}")
+        try:
+            self.node_operations.edit_mcp_node(node)
+        except Exception as e:
+            logger.error(f"Error editing MCP node: {str(e)}", exc_info=True)
+
+    def add_output_node(self, position=None):
+        """Add a new Output node."""
+        logger.debug(f"Adding Output node at position: {position}")
+        try:
+            resolved_pos = self._resolve_creation_pos(position)
+            result = self.node_operations.add_output_node(resolved_pos)
+            logger.info(f"Output node added: {result.name() if result else 'None'}")
+            try:
+                if result and hasattr(self, 'node_button_manager'):
+                    self.node_button_manager.attach(result)
+            except Exception:
+                pass
+            return result
+        except Exception as e:
+            logger.error(f"Error adding Output node: {str(e)}", exc_info=True)
+            return None
+
+    def edit_output_node(self, node):
+        """Edit an Output node's properties."""
+        logger.debug(f"Editing Output node: {node.name()}")
+        try:
+            self.node_operations.edit_output_node(node)
+        except Exception as e:
+            logger.error(f"Error editing Output node: {str(e)}", exc_info=True)
 
     def _resolve_creation_pos(self, position):
         """Resolve a node creation position to scene coordinates list [x, y].
@@ -661,7 +857,7 @@ class GraphViewWidget(QWidget):
         logger.debug("Getting chain configuration")
         try:
             config_copy = self.config_manager.get_chain_config()
-            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('tts_nodes', []))} TTS nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes")
+            logger.debug(f"Chain config contains {len(config_copy.get('sequences', []))} sequences, {len(config_copy.get('conditional_nodes', []))} conditional nodes, {len(config_copy.get('llm_nodes', []))} LLM nodes, {len(config_copy.get('chain_import_nodes', []))} chain import nodes, {len(config_copy.get('form_filler_nodes', []))} form filler nodes, {len(config_copy.get('handle_nodes', []))} handle nodes, {len(config_copy.get('mcp_nodes', []))} mcp nodes, {len(config_copy.get('web_sequences', []))} web sequence nodes")
             return config_copy
         except Exception as e:
             logger.error(f"Error getting chain config: {e}")
@@ -774,15 +970,6 @@ class GraphViewWidget(QWidget):
         """Alias for edit_llm to support different call patterns"""
         self.edit_llm(node)
 
-    def edit_tts_node(self, node):
-        """Open the dialog to edit a TTS node"""
-        logger.debug(f"Editing TTS node: {node.name() if node else 'None'}")
-        try:
-            self.node_operations.edit_tts(node)
-            logger.info("TTS node edited successfully")
-        except Exception as e:
-            logger.error(f"Error editing TTS node: {str(e)}", exc_info=True)
-
     def edit_chain_import_node(self, node):
         """Open the dialog to edit a Chain Import node"""
         logger.debug(f"Editing Chain Import node: {node.name() if node else 'None'}")
@@ -793,11 +980,17 @@ class GraphViewWidget(QWidget):
             logger.error(f"Error editing Chain Import node: {str(e)}", exc_info=True)
 
     def edit_code_node(self, node):
-        """Open the dialog to edit a Code node"""
+        """Edit a Code node — opens the non-modal Code Node Studio dock."""
         logger.debug(f"Editing Code node: {node.name() if node else 'None'}")
         try:
+            mw = self.window()
+            if mw is not None and hasattr(mw, '_on_code_node_selected'):
+                mw._on_code_node_selected(node)
+                return
+        except Exception:
+            pass
+        try:
             self.node_operations.edit_code_node(node)
-            logger.info("Code node edited successfully")
         except Exception as e:
             logger.error(f"Error editing Code node: {str(e)}", exc_info=True)
 
@@ -826,6 +1019,21 @@ class GraphViewWidget(QWidget):
             from .dialogs.chain_expansion_dialog import ChainExpansionDialog
             dialog = ChainExpansionDialog(node, self)
             dialog.exec_()
+            # The dialog may have saved changes to the imported chain file
+            # (added/renamed Output nodes or their variable names) — reload
+            # the chain and reconcile the node's named data ports.
+            try:
+                cfg = node.get_chain_import_config()
+                node.set_chain_import_data(
+                    cfg.get('chain_file', ''),
+                    cfg.get('import_mode', 'full'),
+                    cfg.get('prefix', ''),
+                    cfg.get('loop_count', 1),
+                    cfg.get('extra_delay', 0),
+                    cfg.get('enabled', True),
+                )
+            except Exception:
+                pass
             logger.info("Chain editor dialog closed")
         except Exception as e:
             logger.error(f"Error opening chain editor: {str(e)}", exc_info=True)

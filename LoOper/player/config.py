@@ -5,7 +5,6 @@ Configuration and logging setup for the LocalOperator automation system.
 
 import logging
 import os
-import sys
 import importlib.util
 
 # Import computer vision libraries with fallback handling
@@ -30,16 +29,24 @@ OCR_AVAILABLE = bool(_paddleocr_spec is not None)
 OCR_ENGINE = "paddle" if OCR_AVAILABLE else None
 
 # --- Logging Configuration ---
-# Sets up how the script will log information. It will both save to a file ('automation.log')
-# and print to the console.
-logging.basicConfig(
-    level=logging.DEBUG,  # Sets the minimum level of messages to log (INFO, DEBUG, WARNING, ERROR).
-    format='%(asctime)s - %(levelname)s - %(message)s',  # Defines the format of the log messages.
-    handlers=[
-        logging.FileHandler("automation.log"),  # Handler to write logs to a file.
-        logging.StreamHandler(sys.stdout)       # Handler to print logs to the console.
-    ]
-)
+# Single unified telemetry dispatch (see logging_setup.py): a colorized
+# console handler, a rotating text log (logs/automation.log) and a
+# per-instance Markdown session log (logs/session_<ts>.md).  Anchored to the
+# LoOper package dir in source mode and the durable runtime dir when frozen
+# -- never cwd, which is why the old logs scattered across three directories.
+try:
+    from logging_setup import setup_logging
+
+    setup_logging()
+except Exception:
+    # Last-resort fallback so logging can never break startup.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+    )
+
+# Suppress Numba's DEBUG-level SSA rewrite logs (megabytes per JIT compile)
+logging.getLogger("numba").setLevel(logging.WARNING)
 
 # Creates a logger instance for the script.
 logger = logging.getLogger(__name__)

@@ -1,9 +1,12 @@
-# Modularized LocalOperator Package
+# player/__init__.py
 """
-This package contains the modularized version of the LocalOperator automation system.
+Modularized LocalOperator Package: recorder, player, NGUI and AI components.
 """
 
-from .config import logger, CV2_AVAILABLE
+import logging
+logger = logging.getLogger(__name__)
+
+from .config import CV2_AVAILABLE
 from .base_bot import SeleniumBot
 from .sequence_player import SequencePlayer
 from .multi_sequence_player import MultiSequencePlayer

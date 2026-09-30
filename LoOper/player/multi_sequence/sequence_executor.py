@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # sequence_executor.py
 """
 Sequence executor for multi-sequence automation.
@@ -8,10 +10,29 @@ import sys
 import json
 import time
 import re
-from ..config import logger
+import copy
 from ..sequence_player import SequencePlayer
 from ..json_cache import get_sequence
 from ..base_bot import SeleniumBot
+from ..action_handlers import CLICK_JITTER_MIN, CLICK_JITTER_MAX
+
+
+def _is_sequence_shape(path: str) -> bool:
+    """Return True when the JSON file at *path* has sequence shape.
+
+    A valid sequence file carries an ``actions`` list (plus optional
+    ``metadata``/``collection``).  Chain files (``chains/*.json``) carry
+    chain-only fields (``llm_nodes``, ``conditional_nodes``, ...) and no
+    ``actions`` — they must never be accepted as sequences.  This shape
+    check is what prevents the chains/CLOSE.json-vs-sequences/CLOSE.json
+    collision.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("actions"), list)
 
 
 class SequenceExecutor:
@@ -22,6 +43,29 @@ class SequenceExecutor:
         self.chain_file_dir = chain_file_dir  # Directory containing the chain file
         # Shared selection memory to avoid random candidate selection across sequences in a chain run
         self.selection_memory = {}
+        # ONE shared web browser PER CHAIN RUN: created by the first web
+        # sequence node, reused by every subsequent node of THIS chain
+        # (cookies, localStorage and page state persist across its nodes), and
+        # closed by close_web_session() once the workflow completes.
+        self._web_session_driver = None
+        # Temporal cursor of already-clicked repeating elements (Insert-marked),
+        # keyed by resolved session path: persists across the passes of a node
+        # AND across re-executions of the same sequence within ONE chain run, so
+        # each execution clicks the NEXT element of the kind instead of
+        # repeating the first.  Reset by close_web_session() at chain end.
+        self._web_entity_states = {}
+        # GUI playback passes ``web_chain_key`` (the shared scope): the app's
+        # durable browser is used and stays open after the run.  Non-GUI runs
+        # (agent/scheduled/CLI) instead get ``web_profile_key`` - also the
+        # shared scope - so the browser reuses the durable profile where the
+        # recording logins live.  With neither (web_isolated runs), every run
+        # gets a fresh disposable browser.
+        self.web_chain_key = None
+        self.web_profile_key = None
+        # True when the shared driver ATTACHED to a browser the user already
+        # had open (or the GUI browser): close_web_session must then leave it
+        # running instead of quitting it.
+        self._web_session_released = False
 
     def _get_expected_app_context_from_sequence(self, sequence_data):
         try:
@@ -35,6 +79,62 @@ class SequenceExecutor:
         except Exception:
             pass
         return None
+
+    def _verify_app_running(self, app_context, timeout=2.0):
+        """
+        Passively verify that the expected app process is running, WITHOUT
+        modifying window focus, z-order, or display resolution.
+
+        Sequences must not bring windows to the foreground or call
+        SetForegroundWindow / ShowWindow / BringWindowToTop, as those calls
+        can trigger DPI scaling changes and browser scroll position resets
+        on Windows.
+
+        Returns True if the process is found running (or no context given),
+        False if the process is not found within the timeout.
+        """
+        try:
+            import psutil
+        except Exception:
+            return True
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        pid_hint = (app_context or {}).get("pid")
+
+        if not exe and not proc_name and not pid_hint:
+            return True
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+        deadline = time.time() + float(timeout or 0.0)
+
+        while time.time() <= deadline:
+            try:
+                if pid_hint:
+                    try:
+                        p = psutil.Process(int(pid_hint))
+                        if p.is_running():
+                            return True
+                    except Exception:
+                        pass
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    try:
+                        if exe_norm:
+                            pexe = os.path.normcase(str(p.info.get("exe") or ""))
+                            if pexe and pexe == exe_norm:
+                                return True
+                        if proc_name_norm:
+                            pn = str(p.info.get("name") or "").lower()
+                            if pn and pn == proc_name_norm:
+                                return True
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+            time.sleep(0.05)
+
+        return False
 
     def _is_app_in_foreground(self, app_context):
         try:
@@ -391,7 +491,9 @@ class SequenceExecutor:
             # We should only return False early if it's NOT sandboxed AND there's no exe.
             if not exe and not sandboxed:
                 return False
-            if exe:
+            # Skip exe existence check when sandboxed — the exe path is from the
+            # recording machine and the target app runs inside the RDP session, not here.
+            if exe and not sandboxed:
                 try:
                     if not os.path.exists(exe):
                         logger.warning(f"Executable not found: {exe}")
@@ -460,27 +562,33 @@ class SequenceExecutor:
                     # In compiled mode it is bundled as a loose data-file inside the
                     # PyInstaller archive (see LoOperApp.spec).  Search in order:
                     #   1.  <exe_dir>/LoOper/sandbox_agent.py          (compiled, onedir / installer layout)
-                    #   2.  <exe_dir>/sandbox_agent.py                (alternative layout)
-                    #   3.  _MEIPASS/LoOper/sandbox_agent.py          (compiled, onefile spec with name='LoOper')
-                    #   4.  _MEIPASS/_internal/LoOper/sandbox_agent.py (compiled, onefile spec with name='_internal/LoOper')
-                    #   5.  _MEIPASS/sandbox_agent.py                  (root of extraction)
+                    #   2.  <exe_dir>/sandbox_agent.py                (spec dest='.', MSI root)
+                    #   3.  <exe_dir>/arrow/sandbox_agent.py          (spec dest='arrow', MSI subfolder)
+                    #   4.  _MEIPASS/LoOper/sandbox_agent.py          (compiled, onefile spec with name='LoOper')
+                    #   5.  _MEIPASS/_internal/LoOper/sandbox_agent.py (compiled, onefile spec with name='_internal/LoOper')
+                    #   6.  _MEIPASS/sandbox_agent.py                  (root of extraction)
+                    #   7.  _MEIPASS/arrow/sandbox_agent.py           (spec dest='arrow')
                     _possible_agent_paths = []
                     if getattr(sys, 'frozen', False):
                         _possible_agent_paths.extend([
                             os.path.join(_exe_dir, 'LoOper', 'sandbox_agent.py'),
                             os.path.join(_exe_dir, 'sandbox_agent.py'),
+                            os.path.join(_exe_dir, 'arrow', 'sandbox_agent.py'),
                         ])
                         _meipass = getattr(sys, '_MEIPASS', None)
                         if _meipass:
-                            for _cdir in ('LoOper', '_internal', '.'):
+                            for _cdir in ('LoOper', '_internal', 'arrow', '.'):
                                 _candidate = os.path.join(_meipass, _cdir, 'sandbox_agent.py')
                                 if os.path.exists(_candidate):
                                     _possible_agent_paths.insert(0, _candidate)
                                     break
                             # Also check _internal sub-structure directly
-                            _candidate_internal = os.path.join(_meipass, '_internal', 'LoOper', 'sandbox_agent.py')
-                            if os.path.exists(_candidate_internal) and _possible_agent_paths[0] != _candidate_internal:
-                                _possible_agent_paths.insert(0, _candidate_internal)
+                            for _cdir in ('LoOper', 'arrow'):
+                                _candidate_internal = os.path.join(_meipass, '_internal', _cdir, 'sandbox_agent.py')
+                                if os.path.exists(_candidate_internal):
+                                    if not _possible_agent_paths or _possible_agent_paths[0] != _candidate_internal:
+                                        _possible_agent_paths.insert(0, _candidate_internal)
+                                        break
                     else:
                         _possible_agent_paths.append(os.path.join(
                             os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
@@ -548,37 +656,39 @@ class SequenceExecutor:
                     except Exception:
                         port = 8000
 
-                    task_name = f"LoOperAgentStartAgent_{os.getpid()}"
-                    ps1_path = os.path.join(temp_dir, f"start_agent_task_{os.getpid()}.ps1")
-                    agent_log = os.path.join(temp_dir, "agent_log.txt")
-                    agent_task_error = os.path.join(temp_dir, "agent_task_error.txt")
-
-                    exe_dir = os.path.dirname(exe) if exe else ""
                     agent_username = str(ctx.get("rdp_username") or ctx.get("username") or "LoOperAgent")
                     agent_password = str(ctx.get("rdp_password") or ctx.get("password") or "LoOperPassword123!")
 
-                    ps_lines = [
-                        "$ErrorActionPreference = 'Stop'",
-                        f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
+                    # --- Create .bat runner script for RDP alternate shell ---
+                    runner_bat = os.path.join(temp_dir, f"agent_runner_{os.getpid()}.bat")
+                    bat_lines = [
+                        "@echo off",
+                        f"set LOOPER_AGENT_PORT={int(port)}",
                     ]
                     # Only set PYTHONPATH in source mode; in compiled mode the
                     # bundled interpreter already knows where its modules are.
                     if not getattr(sys, 'frozen', False):
-                        ps_lines.append(f"$env:PYTHONPATH = '{_src_root}'")
-                    ps_lines.append("try {")
+                        bat_lines.append(f"set PYTHONPATH={_src_root}")
                     if exe:
-                        ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
-                    ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
-                    ps_lines.extend(
-                        [
-                            "} catch {",
-                            f"  ($_ | Out-String) | Out-File -FilePath '{agent_task_error}' -Encoding utf8",
-                            "  throw",
-                            "}",
-                        ]
-                    )
-                    with open(ps1_path, "w", encoding="utf-8") as f:
-                        f.write("\n".join(ps_lines) + "\n")
+                        exe_dir = os.path.dirname(exe) if exe else ""
+                        bat_lines.append(f'start "" /D "{exe_dir or temp_dir}" "{exe}"')
+                    bat_lines.append(f'"{safe_python}" "{agent_script}" --port {int(port)}')
+                    with open(runner_bat, "w", encoding="utf-8") as f:
+                        f.write("\r\n".join(bat_lines) + "\r\n")
+
+                    # Reset LoOperAgent password and enforce no-expiry to prevent
+                    # Windows RDP password-expiration popup during authentication.
+                    try:
+                        subprocess.run(["net", "user", agent_username, agent_password, "/passwordchg:no", "/expires:never"],
+                                       capture_output=True, text=True)
+                    except Exception:
+                        pass
+
+                    # Grant execute permission to LoOperAgent
+                    try:
+                        subprocess.run(["icacls", runner_bat, "/grant", f"{agent_username}:(RX)"], capture_output=True)
+                    except Exception:
+                        pass
 
                     try:
                         q = subprocess.run(["query", "session"], capture_output=True, text=True)
@@ -600,6 +710,18 @@ class SequenceExecutor:
                     except Exception:
                         pass
 
+                    # Add credentials to Windows Vault for passwordless MSTSC login
+                    os.system(f'cmdkey /generic:TERMSRV/127.0.0.2 /user:{agent_username} /pass:{agent_password}')
+                    
+                    # Ensure agent account has full read/write access to the TempShared folder
+                    try:
+                        subprocess.run(["icacls", temp_dir, "/grant", f"{agent_username}:(OI)(CI)F", "/T"], capture_output=True)
+                    except Exception:
+                        pass
+
+                    # Create scheduled task to launch agent on RDP session logon
+                    # (password was reset above, so schtasks will accept it)
+                    task_name = f"LoOperAgentStart_{os.getpid()}"
                     subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
                     r = subprocess.run(
                         [
@@ -617,7 +739,7 @@ class SequenceExecutor:
                             "HIGHEST",
                             "/it",
                             "/tr",
-                            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"',
+                            f'cmd.exe /c "{runner_bat}"',
                             "/f",
                         ],
                         capture_output=True,
@@ -626,15 +748,6 @@ class SequenceExecutor:
                     if r.returncode != 0:
                         logger.error(f"Failed to create scheduled task for agent startup: {r.stdout} {r.stderr}")
                         return False
-
-                    # Add credentials to Windows Vault for passwordless MSTSC login
-                    os.system(f'cmdkey /generic:TERMSRV/127.0.0.2 /user:{agent_username} /pass:{agent_password}')
-                    
-                    # Ensure agent account has full read/write access to the TempShared folder
-                    try:
-                        subprocess.run(["icacls", temp_dir, "/grant", f"{agent_username}:(OI)(CI)F", "/T"], capture_output=True)
-                    except Exception:
-                        pass
 
                     # Create RDP file
                     rdp_file = os.path.join(temp_dir, "agent_session.rdp")
@@ -709,7 +822,7 @@ enablecredsspsupport:i:1
                         pass
                     
                     logger.info("Waiting for RDP Agent to become reachable...")
-                    agent_url = f"http://127.0.0.2:{int(port)}"
+                    agent_url = f"http://127.0.0.1:{int(port)}"
                     reachable = False
                     agent_info_path = os.path.join(temp_dir, "agent_info.json")
                     start_deadline = time.time() + float(ctx.get("agent_wait_timeout_s", 60.0) if isinstance(ctx, dict) else 60.0)
@@ -723,12 +836,12 @@ enablecredsspsupport:i:1
                                     p2 = info.get("port")
                                     if p2:
                                         port = int(p2)
-                                        agent_url = f"http://127.0.0.2:{int(port)}"
+                                        agent_url = f"http://127.0.0.1:{int(port)}"
                                 except Exception:
                                     pass
 
                             try:
-                                with socket.create_connection(("127.0.0.2", int(port)), timeout=0.25):
+                                with socket.create_connection(("127.0.0.1", int(port)), timeout=0.25):
                                     reachable = True
                                     break
                             except Exception:
@@ -738,18 +851,12 @@ enablecredsspsupport:i:1
                         pass
 
                     if not reachable:
+                        # Check for agent error info from the sandbox agent
                         try:
-                            if os.path.exists(agent_task_error):
-                                with open(agent_task_error, "r", encoding="utf-8", errors="ignore") as f:
-                                    logger.error(f"RDP agent task error: {f.read()}")
-                        except Exception:
-                            pass
-                        try:
-                            if os.path.exists(agent_log):
-                                with open(agent_log, "r", encoding="utf-8", errors="ignore") as f:
-                                    tail = f.read()[-5000:]
-                                    if tail:
-                                        logger.error(f"RDP agent log tail: {tail}")
+                            _agent_err = os.path.join(temp_dir, "agent_error.txt")
+                            if os.path.exists(_agent_err):
+                                with open(_agent_err, "r", encoding="utf-8", errors="ignore") as f:
+                                    logger.error(f"RDP agent error: {f.read()}")
                         except Exception:
                             pass
                         subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
@@ -764,7 +871,7 @@ enablecredsspsupport:i:1
                         self.global_app_context_override["rdp_agent_url"] = agent_url
 
                     subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
-                        
+
                     return True
                 except Exception as e:
                     logger.error(f"Failed to launch RDP session: {e}")
@@ -875,6 +982,14 @@ enablecredsspsupport:i:1
                 host = p.hostname
                 port = p.port or (80 if (p.scheme or "").lower() == "http" else 443)
                 with socket.create_connection((host, int(port)), timeout=0.35):
+                    # Nested chain imports reuse the invoker's session — keep the
+                    # computer-vision channel pointed at the same agent so OCR /
+                    # condition evaluation observes the same desktop.
+                    try:
+                        from ..computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(existing)
+                    except Exception:
+                        pass
                     return existing
             except Exception:
                 try:
@@ -996,7 +1111,13 @@ enablecredsspsupport:i:1
         node_identifier = sequence_data.get('id') or sequence_data.get('node_id', 'unknown')
         logger.info(f"Executing sequence node: {sequence_data.get('name', node_identifier)}")
         logger.info(f"Full node data: {node}")
-        
+
+        # NOTE: selection memory is deliberately NOT cleared here.  It now holds
+        # the repeating-element cursor (which sibling rows have been clicked), so
+        # a sequence replayed later in the workflow must ADVANCE that cursor
+        # instead of restarting on the first row - mirroring the web entity
+        # cursor.  The cursor is reset once per chain run (play_chain).
+
         # Execute the sequence
         success = self.execute_sequence(sequence_data, stop_flag)
         
@@ -1014,6 +1135,486 @@ enablecredsspsupport:i:1
         else:
             logger.info("No output connections found for sequence node, ending workflow")
             return "__done__"
+    
+    def execute_web_sequence_node(self, node, stop_flag):
+        """
+        Executes a web sequence node (DOM-based browser session) and returns
+        the next node ID.
+        
+        Args:
+            node (dict): The web sequence node from the workflow graph
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            str: Next node ID to execute, or None if workflow should end
+        """
+        sequence_data = node['data']
+        logger.info("=== STARTING WEB SEQUENCE NODE EXECUTION ===")
+        node_identifier = sequence_data.get('id') or sequence_data.get('node_id', 'unknown')
+        logger.info(f"Executing web sequence node: {sequence_data.get('name', node_identifier)}")
+
+        # Execute the web session
+        success = self.execute_web_sequence(sequence_data, stop_flag)
+
+        if not success:
+            logger.error(f"Web sequence execution failed: {sequence_data.get('name', node_identifier)}")
+            return None
+
+        # Find next node in the workflow
+        connections = node['connections']
+        if 'output' in connections and connections['output']:
+            next_connection = connections['output'][0]
+            return next_connection['node_id']
+        else:
+            logger.info("No output connections found for web sequence node, ending workflow")
+            return "__done__"
+    
+    def execute_web_sequence(self, item, stop_flag):
+        """
+        Execute a single web sequence (DOM-based browser session).
+        
+        The node has no start URL: the session replays on the shared web
+        browser and navigation comes from the session's own recorded actions.
+        A session recorded from a cold start (browser default page -> address
+        bar / new-tab search) carries one explicit "Open page" action that
+        positions the browser via driver.get; sessions recorded on a parked
+        page carry none and run on the browser's current page - so
+        button/element-driven dynamic chains replay as recorded.
+        
+        Args:
+            item (dict): Web sequence configuration item
+            stop_flag (callable): Stop flag function
+            
+        Returns:
+            bool: True if the web sequence executed successfully
+        """
+        session_file = item.get('session_file')
+        if not session_file:
+            name = item.get('name', '')
+            if ': ' in name:
+                # Extract filename from "Seq X: filename.json" format
+                session_file = name.split(': ', 1)[1]
+            else:
+                session_file = name
+
+            # Handle numbered names (e.g., "1.json 2" -> "1.json")
+            if session_file and re.match(r'^(.+\.json)\s+\d+$', session_file):
+                session_file = re.match(r'^(.+\.json)\s+\d+$', session_file).group(1)
+
+        if not session_file:
+            logger.error("Web sequence node has no session_file and no usable name")
+            return False
+
+        resolved = self._resolve_web_session_path(session_file)
+        if not resolved:
+            logger.error(f"Web session file not found: '{session_file}'")
+            logger.error(f"Searched in paths: {self._web_session_search_paths(session_file)}")
+            logger.error(f"Current working directory: {os.getcwd()}")
+            return False
+
+        loops = item.get('loop_count', item.get('loops', 1))
+        try:
+            loops = int(loops)
+        except (TypeError, ValueError):
+            loops = 1
+        extra_delay = item.get('extra_delay', 0)
+        try:
+            extra_delay = float(extra_delay)
+        except (TypeError, ValueError):
+            extra_delay = 0.0
+
+        logger.info(f"Executing web sequence: {resolved} (loops: {loops}, extra_delay: {extra_delay})")
+        return self._run_web_replay(item, resolved, stop_flag, loops, extra_delay)
+
+    def _run_web_replay(self, item, session_path, stop_flag, loops, extra_delay):
+        """Replay a web session for the given loop count with pacing between loops.
+
+        Imported lazily so a missing web dependency surfaces as a logged error
+        here (node failure) instead of breaking module import elsewhere.
+        """
+        try:
+            from ..web.engine import replay_config_from_item
+            from ..web.events import is_web_session, load_session
+        except Exception as exc:
+            logger.error(f"Web automation module unavailable: {exc}")
+            return False
+
+        try:
+            if not is_web_session(session_path):
+                logger.error(f"File is not a web session (missing mode=web marker): {session_path}")
+                return False
+            data = load_session(session_path)
+            logger.info(f"Web session loaded: {len(data['actions'])} actions from {session_path}")
+        except Exception as exc:
+            logger.error(f"Failed to load web session {session_path}: {exc}")
+            return False
+
+        config = replay_config_from_item(item)
+        # A repeating element (marked by holding Insert while clicking) turns the
+        # node's loop into a cursor over the matching set: each pass clicks the
+        # NEXT element of that kind instead of the recorded instance, so dynamic
+        # lists whose inner content changes are navigated by kind, not by a
+        # fixed element.  There is no dialog toggle - the marking IS the
+        # definition.
+        has_entity = any(getattr(a, "entity", None) for a in data["actions"])
+        # The cursor (already-clicked identities) PERSISTS across the passes of
+        # this node AND across re-executions of this sequence within one chain
+        # run, so the same sequence advances element by element instead of
+        # re-clicking the first one every time.  close_web_session() resets it
+        # when the chain run ends.
+        entity_state = None
+        if has_entity:
+            entity_state = self._web_entity_states.setdefault(str(session_path), {})
+            logger.info(
+                "Web sequence has a repeating-element action - clicking the next "
+                "matching element each pass"
+            )
+
+        entity_exhausted = False
+        for i in range(loops):
+            if stop_flag and stop_flag():
+                logger.info("Web sequence execution stopped by user request")
+                return False
+
+            logger.info(f"Starting loop {i + 1}/{loops} for web sequence: {session_path}")
+            stats = self._replay_web_once(session_path, config, stop_flag, entity_state)
+            if stats is None:
+                return False
+
+            if stats.get("attempted", 0) > 0 and stats.get("ok", 0) == 0:
+                logger.error(f"All web actions failed for {session_path}; aborting sequence")
+                return False
+
+            # Every matching element has already been clicked: stop early.
+            if has_entity and stats.get("entity_exhausted"):
+                logger.info(
+                    f"Web sequence: no more matching element to click "
+                    f"(after {i + 1} pass(es))"
+                )
+                entity_exhausted = True
+                break
+
+            # Add extra delay between loops if specified
+            if i < loops - 1 and extra_delay > 0:
+                logger.info(f"Extra delay between loops: {extra_delay} seconds")
+                if not self._wait_cancellable(extra_delay, stop_flag):
+                    return False
+
+        # Capture the user-selected page data (toggled in the web sequence
+        # dialog) for the data-only ctx_out port.  ponytail: the item set is
+        # fixed here; a new toggle in web_sequence_dialogs.py needs one more
+        # elif.  Capture failure degrades to {} — never fails the replay.
+        self._web_page_data = {}
+        try:
+            driver = self._get_or_create_web_driver(config)
+            for key in (item.get('extract_items') or []):
+                if key == 'page_text':
+                    self._web_page_data[key] = (driver.execute_script(
+                        "return document.body ? document.body.innerText : ''") or "")
+                elif key == 'page_html':
+                    self._web_page_data[key] = (driver.execute_script(
+                        "return document.documentElement ? document.documentElement.outerHTML : ''") or "")
+                elif key == 'title':
+                    self._web_page_data[key] = driver.title or ""
+                elif key == 'url':
+                    self._web_page_data[key] = driver.current_url or ""
+        except Exception:
+            self._web_page_data = {}
+
+        # Repeating-element status is a replay fact, not a page item, so it is
+        # published even when the page capture above failed.  A code or LLM
+        # conditional downstream branches on it when the element set is done.
+        if 'entity_exhausted' in (item.get('extract_items') or []):
+            self._web_page_data['entity_exhausted'] = (
+                'true' if entity_exhausted else 'false'
+            )
+
+        return True
+
+    def _replay_web_once(self, session_path, config, stop_flag, entity_state=None):
+        """One replay pass of a web session; returns stats or None on failure."""
+        try:
+            from ..web.engine import replay_session
+        except Exception as exc:
+            logger.error(f"Web automation module unavailable: {exc}")
+            return None
+        try:
+            stats = replay_session(
+                str(session_path), config, stop_flag=stop_flag,
+                driver=self._get_or_create_web_driver(config),
+                # Reconnect mid-run when the browser window dies ("no such
+                # window") - reuse the same shared-browser factory the
+                # executor consults between nodes.
+                driver_factory=lambda: self._get_or_create_web_driver(config),
+                entity_state=entity_state,
+            )
+        except Exception as exc:
+            logger.error(f"Error replaying web session {session_path}: {exc}")
+            return None
+        logger.info(
+            f"Web replay stats: {stats.get('ok')}/{stats.get('attempted')} actions OK "
+            f"in {stats.get('duration_sec')}s"
+        )
+        for failed in stats.get("failed", []):
+            logger.warning(
+                f"[FAIL] action #{failed.get('index')} ({failed.get('type')}): "
+                f"{failed.get('error')}"
+            )
+        return stats
+
+    def _wait_cancellable(self, seconds, stop_flag):
+        """Sleep in small slices, aborting early when the stop flag flips."""
+        remaining = float(seconds)
+        while remaining > 0:
+            if stop_flag and stop_flag():
+                logger.info("Web sequence execution stopped during delay")
+                return False
+            sleep_time = min(0.1, remaining)
+            time.sleep(sleep_time)
+            remaining -= sleep_time
+        return True
+
+    # ------------------------------------------------------------------
+    # Shared web browser lifecycle (one Chrome instance per chain run)
+    # ------------------------------------------------------------------
+
+    def _get_or_create_web_driver(self, config):
+        """Return this chain's shared web browser, creating it on first use.
+
+        All web sequence nodes of one chain share a single Chrome instance so
+        the session (cookies, localStorage, current page) persists across the
+        nodes of that chain - each node continues where the previous one left
+        off.  Two flavours, both on the app-wide SHARED durable profile (the
+        same one recordings use, so logins recorded once are present in every
+        run mode and survive app restarts):
+        - ``web_chain_key`` set (GUI playback): the app's durable browser is
+          used - the run continues with the recorded cookies/history and the
+          browser stays open afterwards for inspection.
+        - ``web_profile_key`` set (agent / scheduled / CLI runs): the same
+          durable profile is used (attach to the still-open shared browser
+          when there is one, else launch/relaunch it).  Visible runs close
+          their self-launched browser at the end (profile kept); a still-open
+          shared browser is attached, not killed.  Headless runs open the
+          durable profile without a window.
+        - neither (web_isolated run - playback while a web recording is
+          capturing, or a chain config with no file identity): every chain
+          run gets its own disposable browser, terminated by
+          ``close_web_session``.
+        """
+        driver = getattr(self, "_web_session_driver", None)
+        if driver is not None and self._web_driver_alive(driver):
+            return driver
+        if driver is not None:
+            logger.warning("Shared web browser died mid-chain; relaunching")
+            try:
+                from ..web.session import cleanup_session
+                cleanup_session(driver)
+            except Exception:
+                pass
+            self._web_session_driver = None
+        chain_key = getattr(self, "web_chain_key", None)
+        if chain_key:
+            # Shared app browser (GUI playback): reuse/relaunch the app-wide
+            # durable profile.  It is inherently visible (headless is
+            # ignored) and stays open after the run for inspection.
+            from ..web.session import ensure_workbench_session
+            logger.info(
+                "Using shared web browser (scope=%s; headless=%s "
+                "ignored: the shared browser is visible); reused by all web "
+                "sequence nodes", chain_key, config.headless,
+            )
+            self._web_session_driver = ensure_workbench_session(chain_key=chain_key)
+            self._web_session_released = True
+            return self._web_session_driver
+        profile_key = getattr(self, "web_profile_key", None)
+        if profile_key:
+            # Shared durable profile for non-GUI runs: cookies/history
+            # (recording logins) persist across runs and app restarts.  The
+            # last page is never restored - launches start on the browser's
+            # default page, like the recording workbench.
+            from ..web.session import (
+                _chain_scope_dir,
+                _find_workbench_browser,
+                create_session,
+                ensure_workbench_session,
+            )
+            if not config.headless:
+                # Visible run: attach to the still-open shared browser when
+                # there is one (recording left it up - attaching keeps the
+                # live login instead of failing on the locked profile); a
+                # manually opened browser without a debug port cannot be
+                # attached to, so fall back to an isolated browser.  Otherwise
+                # launch on the durable profile; the browser is quit at the
+                # end of the run so cookies are flushed to the profile.
+                live = _find_workbench_browser(profile_key)
+                if live is not None and live.get("port"):
+                    logger.info(
+                        "Attaching to open shared web browser (scope=%s)",
+                        profile_key,
+                    )
+                    self._web_session_driver = ensure_workbench_session(
+                        chain_key=profile_key
+                    )
+                    self._web_session_released = True
+                    return self._web_session_driver
+                if live is not None:
+                    logger.warning(
+                        "Shared web profile is open in a browser not started "
+                        "by LoOper (scope=%s) - using an isolated browser for "
+                        "this run", profile_key,
+                    )
+                    self._web_session_driver = create_session(headless=False)
+                    self._web_session_released = False
+                    return self._web_session_driver
+                logger.info(
+                    "Creating shared web browser on durable profile "
+                    "(scope=%s); reused by all web sequence nodes and kept "
+                    "for the next run", profile_key,
+                )
+                self._web_session_driver = create_session(
+                    headless=False, profile_dir=_chain_scope_dir(profile_key)
+                )
+                self._web_session_released = False
+                return self._web_session_driver
+            logger.info(
+                "Creating shared headless web browser on durable profile "
+                "(scope=%s); reused by all web sequence nodes", profile_key,
+            )
+            try:
+                self._web_session_driver = create_session(
+                    headless=True, profile_dir=_chain_scope_dir(profile_key)
+                )
+            except Exception as exc:
+                # Profile locked by a live browser (or otherwise unusable):
+                # degrade to an isolated browser so the run still happens -
+                # that run just starts logged out.
+                logger.warning(
+                    "Durable web profile unavailable for headless run (%s); "
+                    "using an isolated browser", exc,
+                )
+                self._web_session_driver = create_session(headless=True)
+            self._web_session_released = False
+            return self._web_session_driver
+        from ..web.session import create_session
+        logger.info(
+            "Creating isolated web browser for chain (headless=%s); "
+            "reused by all web sequence nodes", config.headless,
+        )
+        self._web_session_driver = create_session(headless=config.headless)
+        self._web_session_released = False
+        return self._web_session_driver
+
+    @staticmethod
+    def _web_driver_alive(driver) -> bool:
+        """Cheap liveness probe - raises fast when the session/browser is gone."""
+        try:
+            driver.execute_script("return 1")
+            return True
+        except Exception:
+            return False
+
+    def close_web_session(self) -> None:
+        """Terminate this chain's shared web browser after all web nodes ran.
+
+        A chain-linked browser (GUI playback) and any browser this run
+        ATTACHED to (a chain browser the user already had open) are left
+        running - the next recording/playback for that chain continues on its
+        persistent profile (cookies/history).  A browser this run launched on
+        a durable per-chain profile (non-GUI runs) is quit - cookies are
+        flushed to the profile, which is kept - and disposable per-run
+        browsers are closed with their profiles removed.
+        """
+        driver = getattr(self, "_web_session_driver", None)
+        self._web_session_driver = None
+        # New chain run: forget which repeating elements were already clicked.
+        self._web_entity_states = {}
+        if driver is None:
+            return
+        chain_key = getattr(self, "web_chain_key", None)
+        if chain_key or getattr(self, "_web_session_released", False):
+            logger.info(
+                "Left chain-linked web browser open (scope=%s)",
+                chain_key or getattr(self, "web_profile_key", None) or "attached",
+            )
+            return
+        try:
+            from ..web.session import cleanup_session
+            cleanup_session(driver)
+            logger.info("Closed shared web browser for chain")
+        except Exception as exc:
+            logger.warning(f"Failed to close shared web browser: {exc}")
+
+    def _web_session_root_candidates(self):
+        """Candidate project roots that may hold a web_sequences/ folder."""
+        roots = []
+        try:
+            # d:/LoOperV2/LoOper/player/multi_sequence/sequence_executor.py -> repo root
+            roots.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        except Exception:
+            pass
+        roots.append(os.getcwd())
+        if getattr(sys, 'frozen', False):
+            roots.append(os.path.dirname(sys.executable))
+        return roots
+
+    def _web_session_search_paths(self, session_file):
+        """All candidate paths for a web session file (for logging/debug)."""
+        paths = [session_file]  # original path (may already be absolute)
+        base_dir = self.chain_file_dir if self.chain_file_dir else os.getcwd()
+        is_bare = (
+            os.path.basename(session_file) == session_file
+            and "/" not in session_file and "\\" not in session_file
+        )
+        json_name = session_file if session_file.endswith('.json') else session_file + '.json'
+
+        if is_bare:
+            for root in self._web_session_root_candidates():
+                paths.append(os.path.join(root, 'web_sequences', json_name))
+                paths.append(os.path.join(root, json_name))
+            paths.append(os.path.join(base_dir, 'web_sequences', json_name))
+            paths.append(os.path.join('web_sequences', json_name))
+        else:
+            paths.append(os.path.join(base_dir, json_name))
+            paths.append(os.path.join(base_dir, 'web_sequences', json_name))
+            paths.append(os.path.join(os.getcwd(), json_name))
+            paths.append(os.path.join(os.getcwd(), 'web_sequences', json_name))
+
+        # Dedupe preserving order
+        seen = set()
+        deduped = []
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                deduped.append(p)
+        return deduped
+
+    def _resolve_web_session_path(self, session_file):
+        """Resolve a web session filename to an existing web session JSON path.
+
+        Only files carrying the mode=web marker are accepted, so desktop
+        sequences/chain files can never be picked for web replay.
+        """
+        for path in self._web_session_search_paths(session_file):
+            try:
+                if os.path.exists(path) and self._is_web_session_file(path):
+                    return path
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _is_web_session_file(path):
+        """Cheap mode=web marker check without importing the web subsystem."""
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return False
+        return (
+            isinstance(data, dict)
+            and isinstance(data.get("actions"), list)
+            and data.get("mode") == "web"
+        )
     
     def execute_sequence(self, item, stop_flag):
         """
@@ -1060,9 +1661,30 @@ enablecredsspsupport:i:1
             exe_dir = None
             if getattr(sys, 'frozen', False):
                 exe_dir = os.path.dirname(sys.executable)
+            _meipass = getattr(sys, '_MEIPASS', None)
             
             looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
             possible_paths = [seq_file]  # original path (may already be absolute)
+
+            # Frozen builds: bundled sequences live under _MEIPASS or next to
+            # the exe — search THOSE FIRST (with shape validation at selection
+            # time) so a chain-shaped chains/<name>.json can never win over
+            # the real sequence file.
+            if is_bare_filename:
+                _frozen_seq_candidates = []
+                if exe_dir:
+                    _frozen_seq_candidates.extend([
+                        os.path.join(exe_dir, 'LoOper', 'sequences', seq_file),
+                        os.path.join(exe_dir, '_internal', 'LoOper', 'sequences', seq_file),
+                        os.path.join(exe_dir, '_internal', 'sequences', seq_file),
+                        os.path.join(exe_dir, 'sequences', seq_file),
+                    ])
+                if _meipass:
+                    _frozen_seq_candidates.extend([
+                        os.path.join(_meipass, 'LoOper', 'sequences', seq_file),
+                        os.path.join(_meipass, 'sequences', seq_file),
+                    ])
+                possible_paths = _frozen_seq_candidates + possible_paths
 
             if is_bare_filename:
                 possible_paths.extend([
@@ -1072,7 +1694,9 @@ enablecredsspsupport:i:1
                     os.path.join(looper_sequences, seq_file),  # LoOper/sequences
                 ])
                 possible_paths.append(os.path.join(os.getcwd(), seq_file))
-                possible_paths.append(os.path.join(base_dir, seq_file))  # last-resort (can collide with chains/*.json)
+                # NOTE: the bare base_dir candidate is intentionally omitted —
+                # when base_dir is a chains/ directory it collides with
+                # chain-shaped files (chains/CLOSE.json vs the real sequence).
             else:
                 possible_paths.extend([
                     os.path.join(base_dir, seq_file),
@@ -1082,17 +1706,6 @@ enablecredsspsupport:i:1
                     os.path.join(os.getcwd(), 'sequences', seq_file),
                     os.path.join(looper_sequences, seq_file),
                 ])
-            
-            # Add frozen build paths if applicable
-            if exe_dir:
-                possible_paths.extend([
-                    os.path.join(exe_dir, seq_file),
-                    os.path.join(exe_dir, 'sequences', seq_file),
-                ])
-            
-            possible_paths.extend([
-                os.path.join(os.getcwd(), 'LoOper', 'sequences', seq_file),  # absolute LoOper/sequences
-            ])
             
             # Add .json extension if missing
             if not seq_file.endswith('.json'):
@@ -1106,7 +1719,6 @@ enablecredsspsupport:i:1
                         os.path.join(looper_sequences, json_name),
                     ])
                     possible_paths.append(os.path.join(os.getcwd(), json_name))
-                    possible_paths.append(os.path.join(base_dir, json_name))
                 else:
                     possible_paths.extend([
                         os.path.join(base_dir, json_name),
@@ -1117,19 +1729,38 @@ enablecredsspsupport:i:1
                         os.path.join(looper_sequences, json_name),
                         os.path.join(os.getcwd(), 'LoOper', 'sequences', json_name),
                     ])
-                if exe_dir:
+                if exe_dir and is_bare_filename:
                     possible_paths.extend([
-                        os.path.join(exe_dir, json_name),
+                        os.path.join(exe_dir, 'LoOper', 'sequences', json_name),
                         os.path.join(exe_dir, 'sequences', json_name),
                     ])
+                if _meipass and is_bare_filename:
+                    possible_paths.extend([
+                        os.path.join(_meipass, 'LoOper', 'sequences', json_name),
+                        os.path.join(_meipass, 'sequences', json_name),
+                    ])
             
-            # Find the first existing file
+            # Find the first existing file with SEQUENCE SHAPE.  A file that
+            # exists but is chain-shaped (e.g. chains/CLOSE.json with no
+            # 'actions' list) is never accepted as a sequence — the search
+            # continues so the real sequences/CLOSE.json wins.
             seq_file = None
+            _skipped_chain_shaped = []
             for path in possible_paths:
                 if os.path.exists(path):
-                    seq_file = path
-                    logger.info(f"Found sequence file at: {seq_file}")
-                    break
+                    if _is_sequence_shape(path):
+                        seq_file = path
+                        logger.info(f"Found sequence file at: {seq_file}")
+                        break
+                    _skipped_chain_shaped.append(path)
+                    logger.warning(
+                        f"Ignoring non-sequence file at {path} (chain-shaped JSON)"
+                    )
+            if not seq_file and _skipped_chain_shaped:
+                logger.error(
+                    f"Only chain-shaped files found for '{original_seq_file}': "
+                    f"{_skipped_chain_shaped}"
+                )
             
             if not seq_file:
                 logger.error(f"Sequence file not found: '{original_seq_file}'")
@@ -1165,6 +1796,11 @@ enablecredsspsupport:i:1
             
             logger.info(f"Starting loop {i + 1}/{loops} for sequence: {seq_file}")
             
+            # NOTE: selection memory is deliberately NOT cleared per iteration -
+            # it holds the repeating-element cursor, and each iteration must
+            # advance to the NEXT sibling row (like the web entity cursor), which
+            # only works while the already-clicked set survives the loop.
+
             # Load sequence data - try cache first for optimal performance
             try:
                 # First try to get from cache
@@ -1185,17 +1821,52 @@ enablecredsspsupport:i:1
                         player.sequence_file = seq_file
                     # Share selection memory and inject cached data
                     player.selection_memory = self.selection_memory
-                    player.sequence_data = sequence_data.copy()
+                    player.sequence_data = copy.deepcopy(sequence_data)
                 else:
                     # Fallback to traditional loading if not in cache
                     logger.info(f"Loading sequence from disk (not in cache): {seq_file}")
                     player = SequencePlayer(seq_file)
                     # Share selection memory with the loader instance
                     player.selection_memory = self.selection_memory
-                    sequence_data = player.sequence_data.copy()
+                    sequence_data = copy.deepcopy(player.sequence_data)
             except Exception as e:
                 logger.error(f"Failed to load sequence {seq_file}: {e}")
                 return False
+
+            # Per-sequence desktop execution settings from the node dialog
+            # (Click Drift): override the player defaults when configured.
+            try:
+                if 'click_drift_min' in item or 'click_drift_max' in item:
+                    player.click_drift_min = max(0.0, float(item.get('click_drift_min', CLICK_JITTER_MIN)))
+                    player.click_drift_max = max(0.0, float(item.get('click_drift_max', CLICK_JITTER_MAX)))
+            except (TypeError, ValueError):
+                pass
+
+            # Defensive routing: a web session (mode=web) attached to a desktop
+            # sequence node must never feed DOM-shaped actions to the desktop
+            # SequencePlayer - delegate to the web engine instead.  _run_web_replay
+            # owns the loop_count loop itself, so run it ONCE and return: looping
+            # here too would replay the session loop_count² times.
+            if isinstance(sequence_data, dict) and sequence_data.get("mode") == "web":
+                logger.info(
+                    f"Sequence file {seq_file} is a web session (mode=web); "
+                    "routing to the web engine"
+                )
+                try:
+                    loops_for_web = int(item.get('loop_count', item.get('loops', 1)))
+                except (TypeError, ValueError):
+                    loops_for_web = 1
+                try:
+                    delay_for_web = float(item.get('extra_delay', 0))
+                except (TypeError, ValueError):
+                    delay_for_web = 0.0
+                try:
+                    return self._run_web_replay(
+                        item, seq_file, stop_flag, loops_for_web, delay_for_web
+                    )
+                except Exception as _web_exc:
+                    logger.error(f"Web-session routing failed for {seq_file}: {_web_exc}")
+                    return False
 
             use_app_opened = True
             try:
@@ -1278,11 +1949,11 @@ enablecredsspsupport:i:1
                         return False
             elif isinstance(expected_app, dict) and any(expected_app.get(k) for k in ("exe", "process_name", "title", "pid")):
                 try:
-                    ok = self._ensure_app_open_and_focused(expected_app, stop_flag, attempts=int(expected_app.get("focus_attempts", 3)))
+                    ok = self._verify_app_running(expected_app, timeout=float(expected_app.get("focus_timeout", 2.0)))
                 except Exception:
                     ok = True
                 if not ok:
-                    logger.error("App focus could not be confirmed; aborting sequence execution")
+                    logger.error("Expected app is not running; aborting sequence execution")
                     return False
             
             if expected_app:
@@ -1329,6 +2000,24 @@ enablecredsspsupport:i:1
                     fallback_player = SequencePlayer(fallback_seq_name)
                     # Share selection memory with fallback player
                     fallback_player.selection_memory = self.selection_memory
+                    # Same click drift as the sequence that triggered the fallback
+                    if hasattr(player, 'click_drift_min'):
+                        fallback_player.click_drift_min = player.click_drift_min
+                    if hasattr(player, 'click_drift_max'):
+                        fallback_player.click_drift_max = player.click_drift_max
+                    try:
+                        # A sandboxed run must replay the fallback inside the
+                        # RDP session too, or it would act on the host desktop.
+                        _fb_url = getattr(player, 'sandbox_agent_url', None)
+                        if _fb_url:
+                            fallback_player.sandbox_agent_url = _fb_url
+                            fallback_player.bot.sandbox_agent_url = _fb_url
+                            if hasattr(fallback_player, 'action_handlers') and fallback_player.action_handlers:
+                                fallback_player.action_handlers.bot.sandbox_agent_url = _fb_url
+                            from ..computer_vision import set_sandbox_agent_url
+                            set_sandbox_agent_url(_fb_url)
+                    except Exception:
+                        pass
                     # Skip initial delay for faster fallback execution
                     fallback_player.play_sequence(stop_flag=stop_flag, skip_initial_delay=True)
                     logger.info(f"Fallback sequence completed. Current sequence was aborted.")
@@ -1354,12 +2043,18 @@ enablecredsspsupport:i:1
                         player.bot.sandbox_agent_url = app_ctx.get("sandbox_agent_url")
                         if hasattr(player, 'action_handlers'):
                             player.action_handlers.bot.sandbox_agent_url = app_ctx.get("sandbox_agent_url")
+                        # Keep the computer-vision channel in sync so condition/
+                        # OCR evaluation observes the same desktop the actions drive.
+                        from ..computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(app_ctx.get("sandbox_agent_url"))
                     elif app_ctx.get("rdp_agent_url"):
                         player.sandbox_agent_url = app_ctx.get("rdp_agent_url") # Map to the same variable for ActionHandlers
                         player.bot = player
                         player.bot.sandbox_agent_url = app_ctx.get("rdp_agent_url")
                         if hasattr(player, 'action_handlers'):
                             player.action_handlers.bot.sandbox_agent_url = app_ctx.get("rdp_agent_url")
+                        from ..computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(app_ctx.get("rdp_agent_url"))
                     
                 player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
                 try:

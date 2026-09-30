@@ -1,10 +1,11 @@
+import logging
+logger = logging.getLogger(__name__)
 # path_resolver.py
 """
 Path resolver module for conditional fallback handler.
 Handles resolution of relative and absolute paths for sequence files and images.
 """
 import os
-from ...config import logger
 
 
 class PathResolver:
@@ -76,7 +77,14 @@ class PathResolver:
         candidates.append(os.path.join(os.getcwd(), path))
         if add_json and not path.lower().endswith('.json'):
             candidates.append(os.path.join(os.getcwd(), path + '.json'))
-            
+
+        # Frozen / cross-machine fallback: an absolute path stored on the
+        # authoring machine (e.g. D:\LoOperV2\...\screenshots\x.png) will not
+        # exist here.  In a one-file PyInstaller build bundled assets are
+        # extracted to sys._MEIPASS, so search for the basename under the known
+        # bundled asset directories relative to _MEIPASS / exe dir / cwd.
+        candidates.extend(self._bundled_basename_candidates(path, add_json))
+
         # Return the first existing candidate
         for candidate in candidates:
             try:
@@ -88,6 +96,42 @@ class PathResolver:
                 
         logger.debug(f"Could not resolve path '{path}', returning original")
         return path
+
+    def _bundled_basename_candidates(self, path, add_json=False):
+        """Build basename-based candidates under bundled asset roots.
+
+        Handles the exported-agent case where a stored absolute path from the
+        authoring machine is invalid, but the file was bundled (extracted to
+        sys._MEIPASS for one-file builds, or next to the exe / cwd).
+        """
+        import sys as _sys
+        out = []
+        base_name = os.path.basename(path)
+        if not base_name:
+            return out
+        roots = [os.getcwd()]
+        meipass = getattr(_sys, '_MEIPASS', None)
+        if meipass:
+            roots.append(meipass)
+        if getattr(_sys, 'frozen', False):
+            roots.append(os.path.dirname(_sys.executable))
+        subdirs = [
+            '',
+            'screenshots',
+            os.path.join('sequences', 'screenshots'),
+            os.path.join('LoOper', 'sequences', 'screenshots'),
+            'sequences',
+            os.path.join('LoOper', 'sequences'),
+        ]
+        names = [base_name]
+        if add_json and not base_name.lower().endswith('.json'):
+            names.append(base_name + '.json')
+        for root in roots:
+            for sub in subdirs:
+                target_dir = os.path.join(root, sub) if sub else root
+                for nm in names:
+                    out.append(os.path.join(target_dir, nm))
+        return out
 
     def resolve_code_path(self, path):
         """
@@ -125,6 +169,9 @@ class PathResolver:
             
         # Current working directory fallback
         candidates.append(os.path.join(os.getcwd(), path))
+
+        # Frozen / cross-machine fallback (bundled under sys._MEIPASS etc.)
+        candidates.extend(self._bundled_basename_candidates(path))
         
         # Return the first existing candidate
         for candidate in candidates:

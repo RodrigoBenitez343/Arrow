@@ -36,8 +36,8 @@ class SequenceNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        in_port = _add_multi_input(self, 'input', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
-        out_port = self.add_output('output', color=out_rgb, display_name=False, multi_output=True)
+        in_port = _add_multi_input(self, 'input', in_rgb, True, data_type=UNIVERSAL_PORT_TYPE)
+        out_port = self.add_output('output', color=out_rgb, display_name=True, multi_output=True)
         # out_port.model.type_ = UNIVERSAL_PORT_TYPE
         try:
             in_port.set_multi_connection(True)
@@ -59,6 +59,12 @@ class SequenceNode(BaseNode):
         self.create_property('loop_count', '1')
         self.create_property('extra_delay', '1.0')
         self.create_property('use_app_opened', 'true')
+        # Human-readable: what this sequence DOES (orchestrator routing context).
+        self.create_property('description', '')
+        # Click drift: each click lands a random min-max px off the match centre
+        # (0-0 disables the nudge).  Editable from the sequence properties dialog.
+        self.create_property('click_drift_min', '5.0')
+        self.create_property('click_drift_max', '10.0')
 
         # Visual indicator for editable nodes (border accent)
         try:
@@ -109,6 +115,19 @@ class SequenceNode(BaseNode):
                 self.set_property('use_app_opened', 'true' if bool(use_app_opened) else 'false')
         except Exception:
             pass
+
+        # Drift bounds are optional: absent keys keep the current/default values
+        if isinstance(sequence_config, dict):
+            for prop, default in (('click_drift_min', 5.0), ('click_drift_max', 10.0)):
+                if prop in sequence_config:
+                    try:
+                        self.set_property(prop, str(float(sequence_config.get(prop))))
+                    except (TypeError, ValueError):
+                        self.set_property(prop, str(default))
+            # Same rule for the description: an absent key never wipes it.
+            if 'description' in sequence_config:
+                self.set_property(
+                    'description', str(sequence_config.get('description') or ''))
         
         has_fallbacks = any(key.startswith(f"{sequence_idx}_") for key in self.action_fallbacks.keys())
         if has_fallbacks:
@@ -123,4 +142,7 @@ class SequenceNode(BaseNode):
             'loop_count': int(self.get_property('loop_count') or 1),
             'extra_delay': float(self.get_property('extra_delay') or 1.0),
             'use_app_opened': str(self.get_property('use_app_opened') or 'true').strip().lower() in ("true", "1", "yes", "y", "on"),
+            'click_drift_min': float(self.get_property('click_drift_min') or 5.0),
+            'click_drift_max': float(self.get_property('click_drift_max') or 10.0),
+            'description': str(self.get_property('description') or ''),
         }

@@ -2,7 +2,7 @@
 """
 OverWatch UI Module
 
-PyQt5-based user interface for OverWatch vLLM API and ComoRAG management.
+PyQt5-based user interface for OverWatch vLLM API management.
 """
 
 from .app import OverWatchApp

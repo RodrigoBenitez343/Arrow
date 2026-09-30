@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # node_executor.py
 """
 Node executor module for conditional fallback handler.
@@ -5,11 +7,73 @@ Handles conditional node execution and workflow branching logic.
 """
 import json
 import os
-from ...config import logger
 
 
 class NodeExecutor:
     """Handles conditional node execution and workflow branching"""
+
+    def _verify_app_running(self, app_context, timeout=2.0):
+        """
+        Passively verify that the expected app process is running, WITHOUT
+        modifying window focus, z-order, or display resolution.
+        
+        Conditionals must only *observe* the screen — they must never bring
+        windows to the foreground or call SetForegroundWindow / ShowWindow /
+        BringWindowToTop, as those calls can trigger DPI scaling changes on
+        Windows, especially in nested chains where app_context may leak
+        from a parent chain.
+        
+        Returns True if the process is found running (or no context given),
+        False if the process is not found within the timeout.
+        """
+        try:
+            import time
+            import psutil
+        except Exception:
+            return True
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        pid_hint = (app_context or {}).get("pid")
+        sandboxed = bool((app_context or {}).get("sandboxed") or (getattr(self, "global_app_context_override", {}) or {}).get("sandboxed"))
+
+        if sandboxed:
+            return True
+
+        if not exe and not proc_name and not pid_hint:
+            return True
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+        deadline = time.time() + float(timeout or 0.0)
+
+        while time.time() <= deadline:
+            try:
+                if pid_hint:
+                    try:
+                        p = psutil.Process(int(pid_hint))
+                        if p.is_running():
+                            return True
+                    except Exception:
+                        pass
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    try:
+                        if exe_norm:
+                            pexe = os.path.normcase(str(p.info.get("exe") or ""))
+                            if pexe and pexe == exe_norm:
+                                return True
+                        if proc_name_norm:
+                            pn = str(p.info.get("name") or "").lower()
+                            if pn and pn == proc_name_norm:
+                                return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        logger.info(f"Conditional: expected app not running (exe={exe!r}, proc={proc_name!r}, pid={pid_hint!r})")
+        return False
 
     def _get_expected_app_context(self, conditional_node):
         try:
@@ -56,7 +120,7 @@ class NodeExecutor:
         proc_name = str((app_context or {}).get("process_name") or "")
         title_hint = str((app_context or {}).get("title") or "")
         pid_hint = (app_context or {}).get("pid")
-        sandboxed = (app_context or {}).get("sandboxed", False)
+        sandboxed = bool((app_context or {}).get("sandboxed") or (getattr(self, "global_app_context_override", {}) or {}).get("sandboxed"))
 
         exe_norm = os.path.normcase(exe) if exe else ""
         proc_name_norm = proc_name.lower() if proc_name else ""
@@ -224,7 +288,9 @@ class NodeExecutor:
         def _try_launch_exe():
             if not exe and not sandboxed:
                 return False
-            if exe:
+            # Skip exe existence check when sandboxed — the exe is from the recording
+            # machine and the target app runs inside the RDP session, not here.
+            if exe and not sandboxed:
                 try:
                     if not os.path.exists(exe):
                         logger.warning(f"Executable not found: {exe}")
@@ -307,33 +373,35 @@ class NodeExecutor:
                     except Exception:
                         port = 8000
 
-                    task_name = f"LoOperAgentStartAgentFallback_{os.getpid()}"
-                    ps1_path = os.path.join(temp_dir, f"start_agent_task_fallback_{os.getpid()}.ps1")
-                    agent_log = os.path.join(temp_dir, "agent_log.txt")
-                    agent_task_error = os.path.join(temp_dir, "agent_task_error.txt")
-                    exe_dir = os.path.dirname(exe) if exe else ""
-
-                    ps_lines = [
-                        "$ErrorActionPreference = 'Stop'",
-                        f"$env:LOOPER_AGENT_PORT = '{int(port)}'",
+                    # --- Create .bat runner script for RDP alternate shell ---
+                    runner_bat = os.path.join(temp_dir, f"agent_runner_fallback_{os.getpid()}.bat")
+                    bat_lines = [
+                        "@echo off",
+                        f"set LOOPER_AGENT_PORT={int(port)}",
                     ]
                     # Only set PYTHONPATH in source mode; compiled mode interpreter already knows its modules.
                     if not getattr(sys, 'frozen', False):
-                        ps_lines.append(f"$env:PYTHONPATH = '{project_root}'")
-                    ps_lines.append("try {")
+                        bat_lines.append(f"set PYTHONPATH={project_root}")
                     if exe:
-                        ps_lines.append(f"  Start-Process -FilePath '{exe}' -WorkingDirectory '{exe_dir or temp_dir}'")
-                    ps_lines.append(f"  & '{safe_python}' '{agent_script}' --port {int(port)} *>> '{agent_log}'")
-                    ps_lines.extend(
-                        [
-                            "} catch {",
-                            f"  ($_ | Out-String) | Out-File -FilePath '{agent_task_error}' -Encoding utf8",
-                            "  throw",
-                            "}",
-                        ]
-                    )
-                    with open(ps1_path, "w", encoding="utf-8") as f:
-                        f.write("\n".join(ps_lines) + "\n")
+                        exe_dir = os.path.dirname(exe) if exe else ""
+                        bat_lines.append(f'start "" /D "{exe_dir or temp_dir}" "{exe}"')
+                    bat_lines.append(f'"{safe_python}" "{agent_script}" --port {int(port)}')
+                    with open(runner_bat, "w", encoding="utf-8") as f:
+                        f.write("\r\n".join(bat_lines) + "\r\n")
+
+                    # Reset LoOperAgent password and enforce no-expiry to prevent
+                    # Windows RDP password-expiration popup during authentication.
+                    try:
+                        subprocess.run(["net", "user", "LoOperAgent", "LoOperPassword123!", "/passwordchg:no", "/expires:never"],
+                                       capture_output=True, text=True)
+                    except Exception:
+                        pass
+
+                    # Grant execute permission to LoOperAgent
+                    try:
+                        subprocess.run(["icacls", runner_bat, "/grant", "LoOperAgent:(RX)"], capture_output=True)
+                    except Exception:
+                        pass
 
                     try:
                         q = subprocess.run(["query", "session"], capture_output=True, text=True)
@@ -355,6 +423,18 @@ class NodeExecutor:
                     except Exception:
                         pass
 
+                    # Add credentials
+                    os.system('cmdkey /generic:TERMSRV/127.0.0.2 /user:LoOperAgent /pass:LoOperPassword123!')
+                    
+                    # Ensure agent account has full read/write access to the TempShared folder
+                    try:
+                        subprocess.run(["icacls", temp_dir, "/grant", "LoOperAgent:(OI)(CI)F", "/T"], capture_output=True)
+                    except Exception:
+                        pass
+                        
+                    # Create scheduled task to launch agent on RDP session logon
+                    # (password was reset above, so schtasks will accept it)
+                    task_name = f"LoOperAgentStartFallback_{os.getpid()}"
                     subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
                     r = subprocess.run(
                         [
@@ -372,7 +452,7 @@ class NodeExecutor:
                             "HIGHEST",
                             "/it",
                             "/tr",
-                            f'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "{ps1_path}"',
+                            f'cmd.exe /c "{runner_bat}"',
                             "/f",
                         ],
                         capture_output=True,
@@ -382,15 +462,6 @@ class NodeExecutor:
                         logger.error(f"Failed to create scheduled task for agent startup: {r.stdout} {r.stderr}")
                         return False
 
-                    # Add credentials
-                    os.system('cmdkey /generic:TERMSRV/127.0.0.2 /user:LoOperAgent /pass:LoOperPassword123!')
-                    
-                    # Ensure agent account has full read/write access to the TempShared folder
-                    try:
-                        subprocess.run(["icacls", temp_dir, "/grant", "LoOperAgent:(OI)(CI)F", "/T"], capture_output=True)
-                    except Exception:
-                        pass
-                        
                     # Create RDP file
                     rdp_file = os.path.join(temp_dir, "agent_session.rdp")
                     ctx = app_context if isinstance(app_context, dict) else {}
@@ -438,7 +509,7 @@ enablecredsspsupport:i:1
                     try:
                         import urllib.request
                         agent_info_path = os.path.join(temp_dir, "agent_info.json")
-                        agent_url = f"http://127.0.0.2:{int(port)}"
+                        agent_url = f"http://127.0.0.1:{int(port)}"
                         start_deadline = time.time() + 60.0
                         reachable = False
                         import socket
@@ -450,12 +521,12 @@ enablecredsspsupport:i:1
                                     p2 = info.get("port")
                                     if p2:
                                         port = int(p2)
-                                        agent_url = f"http://127.0.0.2:{int(port)}"
+                                        agent_url = f"http://127.0.0.1:{int(port)}"
                                 except Exception:
                                     pass
 
                             try:
-                                with socket.create_connection(("127.0.0.2", int(port)), timeout=0.25):
+                                with socket.create_connection(("127.0.0.1", int(port)), timeout=0.25):
                                     reachable = True
                                     break
                             except Exception:
@@ -465,18 +536,12 @@ enablecredsspsupport:i:1
                         pass
 
                     if not reachable:
+                        # Check for agent error info from the sandbox agent
                         try:
-                            if os.path.exists(agent_task_error):
-                                with open(agent_task_error, "r", encoding="utf-8", errors="ignore") as f:
-                                    logger.error(f"RDP agent task error: {f.read()}")
-                        except Exception:
-                            pass
-                        try:
-                            if os.path.exists(agent_log):
-                                with open(agent_log, "r", encoding="utf-8", errors="ignore") as f:
-                                    tail = f.read()[-5000:]
-                                    if tail:
-                                        logger.error(f"RDP agent log tail: {tail}")
+                            _agent_err = os.path.join(temp_dir, "agent_error.txt")
+                            if os.path.exists(_agent_err):
+                                with open(_agent_err, "r", encoding="utf-8", errors="ignore") as f:
+                                    logger.error(f"RDP agent error: {f.read()}")
                         except Exception:
                             pass
                         subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
@@ -484,6 +549,26 @@ enablecredsspsupport:i:1
                         return False
 
                     subprocess.run(["schtasks", "/delete", "/tn", task_name, "/f"], capture_output=True, text=True)
+                    try:
+                        # Persist the agent URL so child sequences and the
+                        # computer-vision channel route into this session.
+                        if isinstance(app_context, dict):
+                            app_context["sandbox_agent_url"] = agent_url
+                            app_context["rdp_agent_url"] = agent_url
+                    except Exception:
+                        pass
+                    try:
+                        g = getattr(self, "global_app_context_override", None)
+                        if isinstance(g, dict):
+                            g["sandbox_agent_url"] = agent_url
+                            g["rdp_agent_url"] = agent_url
+                    except Exception:
+                        pass
+                    try:
+                        from player.computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(agent_url)
+                    except Exception:
+                        pass
                     return True
                 except Exception as e:
                     logger.error(f"Failed to launch RDP Session: {e}")
@@ -586,6 +671,11 @@ enablecredsspsupport:i:1
         if stop_flag:
             self.stop_flag = stop_flag
             
+        # Web mode: route on the chain's shared browser instead of the desktop
+        # visual conditions (mirrors conditional_ops._evaluate_conditional).
+        if self._is_web_conditional(conditional_node):
+            return self._evaluate_web_condition(conditional_node, stop_flag)
+
         # Fix: The JSON stores 'trigger_type' with values like 'absence', 'presence', 'ocr'
         # We need to map these to the expected condition types for evaluation
         raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
@@ -785,11 +875,11 @@ enablecredsspsupport:i:1
         expected_app = self._get_expected_app_context(conditional_node)
         if expected_app:
             try:
-                ok = self._ensure_app_open_and_focused(expected_app, stop_flag, timeout=float(expected_app.get("focus_timeout", 2.0)))
+                ok = self._verify_app_running(expected_app, timeout=float(expected_app.get("focus_timeout", 2.0)))
             except Exception:
                 ok = True
             if not ok:
-                logger.info("Conditional gated: expected app not open/focused")
+                logger.info("Conditional gated: expected app not running")
                 return False
         
         # Execute condition checks using appropriate trigger
@@ -810,6 +900,46 @@ enablecredsspsupport:i:1
             return self.ocr_trigger.check_ocr_trigger(condition_config, stop_flag=stop_flag)
         else:
             logger.warning(f"Unknown condition type: {condition_type} (raw: {raw_trigger_type})")
+            return False
+
+    @staticmethod
+    def _is_web_conditional(conditional_node):
+        """True when the node is a web-mode conditional (routes on the browser)."""
+        value = conditional_node.get('web_mode')
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return str(conditional_node.get('condition_type') or '').strip().lower() == 'web'
+        return str(value).strip().lower() in ('true', '1', 'yes', 'y', 'on')
+
+    def _evaluate_web_condition(self, conditional_node, stop_flag=None):
+        """Evaluate a web-mode conditional on the chain's shared browser.
+
+        Uses the SAME shared browser the web sequence nodes and the element
+        picker use, so the condition observes the page the last web sequence
+        left open.
+        """
+        try:
+            from .web_conditions import evaluate as evaluate_web_condition
+        except Exception as exc:
+            logger.error("Web conditional module unavailable: %s", exc)
+            return False
+        try:
+            from player.web.session import SHARED_WEB_SCOPE, ensure_workbench_session
+            driver = ensure_workbench_session(chain_key=SHARED_WEB_SCOPE)
+        except Exception as exc:
+            logger.error("Web conditional: browser unavailable: %s", exc)
+            return False
+        if driver is None:
+            logger.error(
+                "Web conditional: no shared browser available - place the "
+                "conditional after a web sequence that opened the page"
+            )
+            return False
+        try:
+            return bool(evaluate_web_condition(conditional_node, driver, stop_flag=stop_flag))
+        except Exception as exc:
+            logger.error("Web conditional evaluation failed: %s", exc)
             return False
 
     def _evaluate_layout_match_conditional(self, conditional_node, stop_flag=None):
@@ -1083,17 +1213,33 @@ enablecredsspsupport:i:1
         Returns:
             str: Next node ID, or None if no connection found
         """
-        # Determine which branch to follow based on result
-        branch = 'true' if result else 'false'
+        # File-loop conditionals run an internal sequence/chain file until the
+        # condition stops holding, then continue the workflow — they expose a
+        # single 'output' port instead of true/false branches.
+        data = node.get('data', {}) or {}
+        loop_type = str(data.get('loop_type', '') or '').strip().lower()
+        seq_file = str(data.get('sequence_file', '') or data.get('sequence', '') or '').strip()
+        chain_file = str(data.get('chain_file', '') or data.get('chain', '') or '').strip()
+        if loop_type in ('while_present', 'while_absent', 'until_present', 'until_absent') and (seq_file or chain_file):
+            branch = 'output'
+        else:
+            # Determine which branch to follow based on result
+            branch = 'true' if result else 'false'
         
         # Get connections for this branch
         connections = node.get('connections', {})
         branch_connections = connections.get(branch, [])
+        if not branch_connections and isinstance(connections, list):
+            # List-based connection format
+            branch_connections = [
+                c for c in connections
+                if str(c.get('output_port')).lower() == branch
+            ]
         
         target_node = None
         if branch_connections:
             # Take the first connection in the branch
-            target_node = branch_connections[0].get('node_id')
+            target_node = branch_connections[0].get('node_id') or branch_connections[0].get('target_node_id')
         
         if target_node:
             logger.info(f"Following '{branch}' branch to node: {target_node}")

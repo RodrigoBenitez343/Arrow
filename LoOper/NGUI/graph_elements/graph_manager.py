@@ -1,19 +1,9 @@
 import logging
 from NodeGraphQt import NodeGraph
 from PyQt5.QtWidgets import QVBoxLayout, QSplitter
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode
+from ..nodes import SequenceNode, WebSequenceNode, ActionNode, ConditionalNode, LLMNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode, InputNode, HandleNode, MCPNode, OutputNode
 
-# Configure logging
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.FileHandler('graphui_debug.log')
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.addHandler(console_handler)
-    logger.setLevel(logging.DEBUG)
 
 
 # --- Monkey Patch for NodeGraphQt KeyError ---
@@ -101,14 +91,14 @@ class GraphManager:
         try:
             logger.debug("Registering SequenceNode")
             self.node_graph.register_node(SequenceNode)
+            logger.debug("Registering WebSequenceNode")
+            self.node_graph.register_node(WebSequenceNode)
             logger.debug("Registering ActionNode")
             self.node_graph.register_node(ActionNode)
             logger.debug("Registering ConditionalNode")
             self.node_graph.register_node(ConditionalNode)
             logger.debug("Registering LLMNode")
             self.node_graph.register_node(LLMNode)
-            logger.debug("Registering TTSNode")
-            self.node_graph.register_node(TTSNode)
             logger.debug("Registering ChainImportNode")
             self.node_graph.register_node(ChainImportNode)
             logger.debug("Registering FormFillerNode")
@@ -117,6 +107,14 @@ class GraphManager:
             self.node_graph.register_node(CodeNode)
             logger.debug("Registering ContextNode")
             self.node_graph.register_node(ContextNode)
+            logger.debug("Registering InputNode")
+            self.node_graph.register_node(InputNode)
+            logger.debug("Registering HandleNode")
+            self.node_graph.register_node(HandleNode)
+            logger.debug("Registering MCPNode")
+            self.node_graph.register_node(MCPNode)
+            logger.debug("Registering OutputNode")
+            self.node_graph.register_node(OutputNode)
             logger.info("All custom node types registered successfully")
         except Exception as e:
             logger.error(f"Error registering custom nodes: {e}")
@@ -441,6 +439,25 @@ class GraphManager:
                     if not input_port:
                         return False
                     
+            # ── Restrict LLM 'tools' port to Chain Import nodes only ──
+            # MCP/code logic must be wrapped inside a chain and imported as the
+            # tool, so the LLM node only ever calls chain-import subroutines.
+            # This guard covers programmatic wiring (clipboard paste, chain
+            # load); the interactive drag path is handled in _on_port_connected.
+            try:
+                if input_port.name() == 'tools':
+                    _out_identifier = getattr(output_node, '__identifier__', '') or ''
+                    if _out_identifier != 'chain_import':
+                        logger.warning(
+                            "Blocked tools-port connection: only Chain Import "
+                            "nodes can be used as LLM tools (got identifier "
+                            "'%s') — wrap MCP/code logic in a chain and import it",
+                            _out_identifier,
+                        )
+                        return False
+            except Exception:
+                pass
+
             # Create connection
             logger.debug(f"Creating connection: {output_port.name()} -> {input_port.name()}")
             output_port.connect_to(input_port)
@@ -473,29 +490,42 @@ class GraphManager:
         try:
             output_node = output_port.node()
             input_node = input_port.node()
-            
+
             # Get node identifiers
             output_identifier = getattr(output_node, '__identifier__', '')
             input_identifier = getattr(input_node, '__identifier__', '')
-            
-            # Check if the output comes from a Context node's 'context' output port
-            if output_identifier == 'context' and output_port.name() == 'context':
-                # Only allow connection to LLM nodes
-                if input_identifier != 'llm':
-                    logger.info(
-                        f"Context output port can only connect to LLM nodes. "
-                        f"Blocked connection from Context '{output_node.name()}' to '{input_node.name()}' ({input_identifier})"
-                    )
-                    # Disconnect the invalid connection
-                    # Use a deferred disconnect to avoid issues during signal handling
-                    from PyQt5.QtCore import QTimer
-                    QTimer.singleShot(0, lambda: self._disconnect_ports(output_port, input_port))
-                    
-                    # Show status message if parent has a status bar
-                    if hasattr(self.parent_widget, 'show_status_message'):
-                        self.parent_widget.show_status_message(
-                            "Context output can only connect to LLM nodes", 3000
+
+            # Context nodes emit JSON data — allow connection to any node
+            if output_identifier == 'context':
+                pass
+
+            # ── Restrict LLM 'tools' port to Chain Import nodes only ──
+            # The interactive drag path calls port.connect_to() directly and
+            # bypasses connect_nodes(), so undo the connection here (mirrors
+            # the existing Context-port validation pattern).
+            try:
+                if input_port.name() == 'tools':
+                    if output_identifier != 'chain_import':
+                        logger.warning(
+                            "Blocked tools-port connection: only Chain Import "
+                            "nodes can be used as LLM tools (got identifier "
+                            "'%s') — wrap MCP/code logic in a chain and import it",
+                            output_identifier,
                         )
+                        self._disconnect_ports(output_port, input_port)
+                        try:
+                            from PyQt5.QtWidgets import QMessageBox
+                            QMessageBox.warning(
+                                getattr(self, 'parent_widget', None),
+                                "Invalid Tool Connection",
+                                "Only Chain Import nodes can be used as LLM tools.\n\n"
+                                "Wrap MCP/code logic in a chain and import it as the tool.",
+                            )
+                        except Exception:
+                            pass
+                        return
+            except Exception as e:
+                logger.debug(f"Tools-port validation error: {e}")
         except Exception as e:
             logger.debug(f"Connection validation error: {e}")
 

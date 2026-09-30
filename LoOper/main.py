@@ -14,6 +14,21 @@ import io
 import os
 import sys
 
+# ── CRITICAL: Set Windows DPI awareness BEFORE any Win32 GDI/USER32 calls ──
+# This ensures pyautogui.size(), pyautogui.screenshot(), and mss.capture()
+# all agree on the coordinate space (physical pixels) on high-DPI displays.
+# Without this, pyautogui.size() returns LOGICAL pixels while screenshots
+# return PHYSICAL pixels, causing template matching to find coordinates in
+# the wrong space and clicks to land at incorrect positions.
+if sys.platform == "win32":
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()  # Legacy fallback (Vista+)
+        except Exception:
+            pass
+
 if sys.platform == "win32":
     try:
         if sys.stdout is None:
@@ -143,6 +158,10 @@ import requests
 from AI.config_loader import get_api_url, load_ai_config, should_auto_start_api
 from AI.model_cache import get_model_cache, load_models_at_startup
 from NGUI.app import main
+import logging
+from logging_setup import setup_logging, uvicorn_log_config
+
+logger = logging.getLogger("looper.main")
 
 
 def _wait_for_api(base_url: str, timeout_s: float = 60.0) -> bool:
@@ -161,23 +180,17 @@ def _wait_for_api(base_url: str, timeout_s: float = 60.0) -> bool:
 
 def _verify_and_init_api(api_url: str):
     """Verify API health and initialize components"""
-    if _wait_for_api(api_url, timeout_s=90):
+    # In compiled (frozen) mode the API can take longer to start because
+    # of PyInstaller module-loading overhead, so use a generous timeout.
+    timeout = 120 if getattr(sys, "frozen", False) else 90
+    if _wait_for_api(api_url, timeout_s=timeout):
         try:
-            url = f"{api_url}/comorag/status?init_if_needed=true"
-            r = requests.get(url, timeout=15)
-            if r.status_code == 200 and r.json().get("ready"):
-                print("✅ ComoRAG engine initialized successfully")
-                try:
-                    print("🔄 Refreshing models cache...")
-                    get_model_cache().refresh_models(api_url)
-                except Exception as e:
-                    print(f"❌ Error refreshing models: {e}")
-            else:
-                print(f"⚠️ ComoRAG engine not ready: {r.status_code} {r.text}")
+            logger.info("Refreshing models cache...")
+            get_model_cache().refresh_models(api_url)
         except Exception as e:
-            print(f"❌ ComoRAG initialization check failed: {e}")
+            logger.error(f"Error refreshing models: {e}")
     else:
-        print(f"❌ API did not become ready in time: {api_url}")
+        logger.error(f"API did not become ready in time: {api_url}")
 
 
 def start_api_server():
@@ -197,14 +210,14 @@ def start_api_server():
                     pid = parts[-1]
                     if int(pid) != os.getpid():
                         subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
-                        print(f"Killed stale PID {pid} on port {port}")
+                        logger.info(f"Killed stale PID {pid} on port {port}")
             time.sleep(1)
         except Exception:
             pass
 
-        print(f"🔍 Checking if API server is already running at {api_url}...")
+        logger.info(f"Checking if API server is already running at {api_url}...")
         if _wait_for_api(api_url, timeout_s=2):
-            print("✅ LLM API server is already running")
+            logger.info("LLM API server is already running")
 
             # We can still trigger the background initialization
             def _init_api_bg():
@@ -213,7 +226,7 @@ def start_api_server():
             threading.Thread(target=_init_api_bg, daemon=True).start()
             return None
 
-        print("🚀 Starting LLM API server...")
+        logger.info("Starting LLM API server...")
         try:
             load_ai_config()
         except Exception:
@@ -227,90 +240,16 @@ def start_api_server():
                     # Fallback if _internal is the root in sys.path
                     from api import app
 
-                import json
-                import logging
-
                 import uvicorn
 
-                host = os.getenv("TAILSCALE_SERVER_IP", "localhost") or "localhost"
+                # Local-only API gateway; remote access moved to Agent Mode
+                host = "127.0.0.1"
                 port = int(os.getenv("API_PORT", "8000"))
-                logs_dir = os.path.join(os.path.dirname(sys.executable), "logs")
-                try:
-                    os.makedirs(logs_dir, exist_ok=True)
-                except Exception:
-                    pass
-                api_log = os.path.join(logs_dir, "api.log")
-                log_config = {
-                    "version": 1,
-                    "disable_existing_loggers": False,
-                    "formatters": {
-                        "default": {
-                            "()": "uvicorn.logging.DefaultFormatter",
-                            "fmt": "%(levelprefix)s %(message)s",
-                            "use_colors": False,
-                        },
-                        "access": {
-                            "()": "uvicorn.logging.AccessFormatter",
-                            "fmt": "%(levelprefix)s %(client_addr)s - '%(request_line)s' %(status_code)s",
-                            "use_colors": False,
-                        },
-                    },
-                    "handlers": {
-                        "file": {
-                            "class": "logging.FileHandler",
-                            "filename": api_log,
-                            "formatter": "default",
-                            "level": "INFO",
-                            "encoding": "utf-8",
-                        },
-                        "access_file": {
-                            "class": "logging.FileHandler",
-                            "filename": api_log,
-                            "formatter": "access",
-                            "level": "INFO",
-                            "encoding": "utf-8",
-                        },
-                    },
-                    "loggers": {
-                        "uvicorn": {
-                            "handlers": ["file"],
-                            "level": "INFO",
-                            "propagate": False,
-                        },
-                        "uvicorn.error": {
-                            "handlers": ["file"],
-                            "level": "INFO",
-                            "propagate": False,
-                        },
-                        "uvicorn.access": {
-                            "handlers": ["access_file"],
-                            "level": "INFO",
-                            "propagate": False,
-                        },
-                    },
-                }
-
-                # Try to use actual classes for formatters in frozen environment
-                try:
-                    import uvicorn.logging
-
-                    log_config["formatters"]["default"]["()"] = (
-                        uvicorn.logging.DefaultFormatter
-                    )
-                    log_config["formatters"]["access"]["()"] = (
-                        uvicorn.logging.AccessFormatter
-                    )
-                except Exception:
-                    # Fallback to standard logging formatters
-                    log_config["formatters"]["default"] = {
-                        "format": "%(levelname)s: %(message)s"
-                    }
-                    log_config["formatters"]["access"] = {
-                        "format": "%(levelname)s: %(message)s"
-                    }
-
+                # Unified telemetry: uvicorn loggers propagate to the root
+                # dispatch (console + logs/automation.log + session md).
                 config = uvicorn.Config(
-                    app, host=host, port=port, log_level="info", log_config=log_config
+                    app, host=host, port=port, log_level="info",
+                    log_config=uvicorn_log_config(),
                 )
                 server = uvicorn.Server(config)
 
@@ -318,12 +257,12 @@ def start_api_server():
                     try:
                         server.run()
                     except Exception as se:
-                        print(f"❌ API server error: {se}")
+                        logger.error(f"API server error: {se}")
 
                 t = threading.Thread(target=run_server, daemon=True)
                 t.start()
                 api_url = get_api_url()
-                print("✅ LLM API server started successfully")
+                logger.info("LLM API server started successfully")
 
                 def _init_api_bg():
                     _verify_and_init_api(api_url)
@@ -331,12 +270,12 @@ def start_api_server():
                 threading.Thread(target=_init_api_bg, daemon=True).start()
                 return t
             except Exception as e:
-                print(f"❌ Error starting in-process API server: {e}")
+                logger.error(f"Error starting in-process API server: {e}")
                 return None
         else:
             api_path = os.path.join(os.path.dirname(__file__), "AI", "api.py")
             if not os.path.exists(api_path):
-                print(f"❌ API server file not found at: {api_path}")
+                logger.error(f"API server file not found at: {api_path}")
                 return None
             creationflags = 0
             if sys.platform == "win32":
@@ -354,10 +293,9 @@ def start_api_server():
 
             time.sleep(1)  # give it a moment to fail if port is bound
             if process.poll() is None:
-                print("✅ LLM API server started successfully")
+                logger.info("LLM API server started successfully")
 
                 # Check for API readiness in a separate thread so we don't block
-                # but we can still initialize the comorag engine
                 def _init_api_bg():
                     _verify_and_init_api(api_url)
 
@@ -365,7 +303,7 @@ def start_api_server():
 
                 def cleanup_api():
                     try:
-                        print("Stopping LLM API server...")
+                        logger.info("Stopping LLM API server...")
                         # In Windows, we might need taskkill to kill the whole process tree
                         if sys.platform == "win32":
                             subprocess.run(
@@ -409,14 +347,14 @@ def start_api_server():
                 return process
             else:
                 stdout, stderr = process.communicate()
-                print("❌ LLM API server failed to start")
+                logger.error("LLM API server failed to start")
                 if stderr:
-                    print(f"Error output: {stderr}")
+                    logger.error(f"Error output: {stderr}")
                 if stdout:
-                    print(f"Standard output: {stdout}")
+                    logger.error(f"Standard output: {stdout}")
                 return None
     except Exception as e:
-        print(f"❌ Error starting LLM API server: {e}")
+        logger.error(f"Error starting LLM API server: {e}")
         return None
 
 
@@ -425,7 +363,7 @@ def _show_license_error(title: str, message: str):
     try:
         ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
     except Exception:
-        print(f"ERROR: {title} - {message}")
+        logger.error(f"ERROR: {title} - {message}")
 
 
 def _check_license() -> bool:
@@ -463,16 +401,16 @@ def _check_license() -> bool:
             )
             if result.returncode == 0:
                 return True
-            print(f"License validation failed (exit code {result.returncode}).")
+            logger.error(f"License validation failed (exit code {result.returncode}).")
             _show_license_error(
                 "License Invalid",
                 "The arrow license on this machine is invalid or has been tampered with.\n\n"
                 "Please reinstall arrow or contact support.",
             )
         except Exception as e:
-            print(f"License validator error: {e}")
+            logger.error(f"License validator error: {e}")
     else:
-        print("license_validator.exe not found, checking license.bin header...")
+        logger.warning("license_validator.exe not found, checking license.bin header...")
         try:
             with open(license_path, "rb") as f:
                 data = f.read()
@@ -492,22 +430,24 @@ def _check_license() -> bool:
 
 def run_app():
     """Main function to start the application logic"""
+    # Install the unified telemetry dispatch (console colors + logs/ + session md)
+    setup_logging()
     # Validate license before starting (skip in dev mode)
     if not _check_license():
-        print("Exiting due to invalid license.")
+        logger.error("Exiting due to invalid license.")
         sys.exit(1)
 
     # Load AI configuration
-    print("LocalOperator starting up...")
-    print("Loading AI configuration...")
+    logger.info("LocalOperator starting up...")
+    logger.info("Loading AI configuration...")
     config = load_ai_config()
 
     if should_auto_start_api():
-        print("🔧 Auto-start API enabled - starting LLM API server...")
+        logger.info("Auto-start API enabled - starting LLM API server...")
         start_api_server_async()
     else:
-        print(
-            "ℹ️  Auto-start API disabled - LLM API server will not be started automatically"
+        logger.info(
+            "Auto-start API disabled - LLM API server will not be started automatically"
         )
 
     # Preload models asynchronously before starting the GUI
@@ -535,6 +475,24 @@ if __name__ == "__main__":
     # CRITICAL: Check if we should run in "interpreter mode" for code nodes in frozen builds.
     # This prevents recursive LoOper launches by allowing LoOper.exe to act as a Python
     # interpreter for its own bundled environment when passed a .py file.
+    # Also handle -m module invocations (e.g. pip) so subprocess calls don't spawn new GUI instances.
+    if (
+        len(sys.argv) > 1
+        and sys.argv[1] == '-m'
+        and len(sys.argv) > 2
+    ):
+        module_name = sys.argv[2]
+        sys.argv = sys.argv[2:]
+        try:
+            import runpy
+            runpy.run_module(module_name, run_name="__main__", alter_sys=True)
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error running module {module_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+
     if (
         len(sys.argv) > 1
         and sys.argv[1].endswith(".py")

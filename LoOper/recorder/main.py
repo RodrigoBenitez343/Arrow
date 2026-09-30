@@ -59,7 +59,7 @@ def start_recording():
     print("\n🟢 Recording. Try dragging now!")
     print("🖱 Drag >10px to trigger drag, else click")
     print("🡅 Scroll actions are grouped for accurate replay")
-    print("📋 Ctrl+C/V/X/A work reliably")
+    print("⌨ Any key combo works (Ctrl+Alt+Shift+X, Win+R, F-keys...)")
     print("⏹ ESC to save and exit")
 
     # Start listeners - use mouse library for all mouse events (better compatibility)

@@ -1,8 +1,12 @@
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
+import logging
 
 from .config import OCR_AVAILABLE, OCR_ENGINE
 import os
+import sys
+
+logger = logging.getLogger(__name__)
 
 # Force disable MKLDNN to avoid OneDnnContext errors
 # This must be done before importing paddle
@@ -31,7 +35,6 @@ def _normalize_language_for_paddle(language: str) -> str:
 def _get_paddle_ocr(lang: str):
     import os
     import sys
-    from .config import logger
     import importlib
 
     # Force disable MKLDNN to avoid OneDnnContext errors
@@ -58,24 +61,36 @@ def _get_paddle_ocr(lang: str):
     # Check for bundled models in frozen mode (PyInstaller)
     if getattr(sys, 'frozen', False):
         try:
-            # For PyInstaller, sys._MEIPASS is the root of the bundle
+            # In one-folder COLLECT mode, sys._MEIPASS is the directory
+            # containing the executable (e.g. dist/arrow/).
             base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-            # In our spec we added them to _internal/paddle_models
-            internal_dir = base_dir
-            if os.path.basename(internal_dir).lower() != '_internal':
-                exe_dir = os.path.dirname(sys.executable)
-                candidate_internal = os.path.join(exe_dir, '_internal')
-                if os.path.isdir(candidate_internal):
-                    internal_dir = candidate_internal
-                else:
-                    candidate_internal = os.path.join(base_dir, '_internal')
-                    if os.path.isdir(candidate_internal):
-                        internal_dir = candidate_internal
-            models_dir = os.path.join(internal_dir, 'paddle_models')
-            
-            if os.path.exists(models_dir):
+            exe_dir = os.path.dirname(sys.executable)
+
+            # Collect candidate search paths for paddle_models.
+            # Priority order:
+            #   1. _internal/ subdirectory (traditional PyInstaller layout)
+            #   2. sys._MEIPASS / exe directory root
+            #   3. exe_dir as last resort
+            candidates = []
+            if os.path.basename(base_dir).lower() != '_internal':
+                cand_internal = os.path.join(exe_dir, '_internal')
+                if os.path.isdir(cand_internal):
+                    candidates.append(cand_internal)
+            candidates.append(base_dir)
+            if exe_dir != base_dir:
+                candidates.append(exe_dir)
+
+            # Try each candidate until we find paddle_models
+            models_dir = None
+            for cand in candidates:
+                test_path = os.path.join(cand, 'paddle_models')
+                if os.path.exists(test_path):
+                    models_dir = test_path
+                    break
+
+            if models_dir:
                 logger.debug(f"Found bundled PaddleOCR models at {models_dir}")
-                
+
                 det_path = os.path.join(models_dir, 'det')
                 rec_path = os.path.join(models_dir, 'rec')
                 cls_path = os.path.join(models_dir, 'cls')
@@ -128,219 +143,88 @@ def _ensure_color_bgr(image_arr):
     return image_arr
 
 
+_OCR_WORKER_TIMEOUT = 180  # seconds; a hung worker must not hang the app
+
+
+def _ocr_via_subprocess(image: Any, min_confidence: float, language: str) -> List[Dict[str, Any]]:
+    """Run paddle OCR in an isolated worker process.
+
+    Paddle's native inference has crashed the whole app before (WerFault /
+    0xc0000005 access violation during OCR — a native fault has no Python
+    exception to catch).  In the worker the crash kills only the worker;
+    a non-zero exit or timeout yields an empty result and a warning, never
+    a dead app.  The worker also pays the model-load cost per call, which
+    is the price of crash isolation.
+    """
+    import json
+    import subprocess
+    import tempfile
+
+    tmp_img = None
+    tmp_out = None
+    try:
+        image_arr = _ensure_color_bgr(_as_numpy_image(image))
+        if image_arr is None:
+            return []
+        import cv2
+
+        fd, tmp_img = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        if not cv2.imwrite(tmp_img, image_arr):
+            return []
+        fd, tmp_out = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+
+        worker = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "ocr_worker.py"
+        )
+        lang = _normalize_language_for_paddle(language)
+        proc = subprocess.run(
+            [sys.executable, worker, tmp_img, str(float(min_confidence)), lang, tmp_out],
+            capture_output=True,
+            timeout=_OCR_WORKER_TIMEOUT,
+            creationflags=0x08000000 if os.name == "nt" else 0,  # CREATE_NO_WINDOW
+        )
+        if proc.returncode != 0:
+            _err = proc.stderr.decode("utf-8", "replace")[:300]
+            logger.warning(
+                "OCR worker crashed (rc=%s) — returning empty result%s",
+                proc.returncode, f": {_err}" if _err else "",
+            )
+            return []
+        with open(tmp_out, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("error"):
+            logger.warning("OCR worker reported an error: %s", data["error"])
+        return data.get("elements") or []
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "OCR worker timed out after %ds — returning empty result",
+            _OCR_WORKER_TIMEOUT,
+        )
+        return []
+    except Exception as exc:
+        logger.warning("OCR subprocess failed: %s", exc)
+        return []
+    finally:
+        for _p in (tmp_img, tmp_out):
+            if _p:
+                try:
+                    os.remove(_p)
+                except Exception:
+                    pass
+
+
 def extract_text_elements(image: Any, min_confidence: float = 0.6, language: str = "eng") -> List[Dict[str, Any]]:
     if not ocr_available():
         return []
 
     engine = ocr_engine()
     if engine == "paddle":
-        np = _ensure_numpy()
-        image_arr = _ensure_color_bgr(_as_numpy_image(image))
-        if image_arr is None:
-            return []
-
-        lang = _normalize_language_for_paddle(language)
-        ocr = _get_paddle_ocr(lang)
-        elements: List[Dict[str, Any]] = []
-
-        if hasattr(ocr, "ocr"):
-            try:
-                result = ocr.ocr(image_arr)
-                if not result:
-                    return []
-                
-                # PaddleOCR result structure: [ [ [ [x,y], ... ], (text, conf) ], ... ]
-                # Sometimes it returns a list of lists if multiple images (but we send one)
-                # It usually returns [ [line1], [line2], ... ] where line = [box, (text, conf)]
-                # If nothing found, it might return [None] or similar
-                
-                # Normalize result
-                try:
-                    from .config import logger
-                    logger.debug(f"RAW OCR RESULT: {result}")
-                except:
-                    print(f"RAW OCR RESULT: {result}")
-                if isinstance(result, list) and len(result) > 0:
-                    if isinstance(result[0], dict):
-                        # PaddleX format
-                        for res in result:
-                            rec_texts = res.get("rec_texts", [])
-                            rec_scores = res.get("rec_scores", [])
-                            rec_polys = res.get("rec_polys", [])
-                            
-                            for i, text in enumerate(rec_texts):
-                                score = rec_scores[i] if i < len(rec_scores) else 0.0
-                                poly = rec_polys[i] if i < len(rec_polys) else None
-                                
-                                box = []
-                                if poly is not None:
-                                    if hasattr(poly, "tolist"):
-                                        box = poly.tolist()
-                                    else:
-                                        box = poly
-                                
-                                center_x, center_y = 0, 0
-                                if box:
-                                    xs = [p[0] for p in box]
-                                    ys = [p[1] for p in box]
-                                    if len(xs) > 0 and len(ys) > 0:
-                                        center_x = sum(xs) / len(xs)
-                                        center_y = sum(ys) / len(ys)
-                                
-                                elements.append({
-                                    "text": str(text),
-                                    "confidence": float(score),
-                                    "box": box,
-                                    "center": (center_x, center_y)
-                                })
-                        return elements
-                    
-                    # Handle case where result is [ [lines] ] (batch size 1)
-                    if isinstance(result[0], list) and len(result[0]) > 0 and isinstance(result[0][0], list):
-                        # It's likely [ [line1, line2] ]
-                        # We want the inner list
-                        flat_result = result[0]
-                    else:
-                        flat_result = result
-                else:
-                    return []
-
-                for line in flat_result:
-                    if not line:
-                        continue
-                    # line structure: [ [[x1,y1],[x2,y2],[x3,y3],[x4,y4]], ("text", 0.99) ]
-                    box, (text, score) = line
-                    
-                    # Calculate center
-                    xs = [p[0] for p in box]
-                    ys = [p[1] for p in box]
-                    center_x, center_y = 0, 0
-                    if len(xs) > 0 and len(ys) > 0:
-                        center_x = sum(xs) / len(xs)
-                        center_y = sum(ys) / len(ys)
-                    
-                    elements.append({
-                        "text": text,
-                        "confidence": float(score),
-                        "box": box,
-                        "center": (center_x, center_y)
-                    })
-            except Exception as e:
-                # Log error but don't crash
-                # Use print/logging if possible, or just ignore
-                # Since we are in a cached function, logging might be tricky if not imported
-                # But we can try
-                try:
-                    from .config import logger
-                    logger.error(f"PaddleOCR internal error: {e}")
-                except:
-                    pass
-                return []
-                
-        return elements
-
-        if hasattr(ocr, "predict"):
-            results = ocr.predict(image_arr)
-            if not results:
-                return []
-
-            for res in results:
-                payload = None
-                if hasattr(res, "json"):
-                    payload = getattr(res, "json")
-                elif isinstance(res, dict):
-                    payload = res
-                elif hasattr(res, "res"):
-                    payload = getattr(res, "res")
-
-                if isinstance(payload, dict) and "res" in payload and isinstance(payload["res"], dict):
-                    payload = payload["res"]
-
-                if not isinstance(payload, dict):
-                    continue
-
-                rec_texts = payload.get("rec_texts")
-                rec_scores = payload.get("rec_scores")
-                rec_polys = payload.get("rec_polys") or payload.get("dt_polys")
-
-                if isinstance(rec_texts, list) and rec_texts:
-                    if not isinstance(rec_scores, list):
-                        rec_scores = [0.0] * len(rec_texts)
-
-                    polys_list = []
-                    if rec_polys is not None and hasattr(rec_polys, "tolist"):
-                        polys_list = rec_polys.tolist()
-                    elif isinstance(rec_polys, list):
-                        polys_list = rec_polys
-
-                    for i, text_raw in enumerate(rec_texts):
-                        text = (str(text_raw) if text_raw is not None else "").strip()
-                        conf = float(rec_scores[i] if i < len(rec_scores) else 0.0)
-                        if not text or conf < float(min_confidence):
-                            continue
-
-                        poly = polys_list[i] if i < len(polys_list) else None
-                        if not poly:
-                            continue
-
-                        xs = [p[0] for p in poly] if poly else []
-                        ys = [p[1] for p in poly] if poly else []
-                        if not xs or not ys:
-                            continue
-
-                        x1 = int(max(0, min(xs)))
-                        y1 = int(max(0, min(ys)))
-                        x2 = int(max(xs))
-                        y2 = int(max(ys))
-                        w = max(0, x2 - x1)
-                        h = max(0, y2 - y1)
-                        elements.append(
-                            {
-                                "text": text,
-                                "confidence": conf,
-                                "bbox": (x1, y1, w, h),
-                                "center": (x1 + w // 2, y1 + h // 2),
-                            }
-                        )
-                    continue
-
-                rec_text = payload.get("rec_text")
-                rec_score = payload.get("rec_score")
-                if rec_text is None:
-                    continue
-
-                text = (str(rec_text) if rec_text is not None else "").strip()
-                conf = float(rec_score or 0.0)
-                if not text or conf < float(min_confidence):
-                    continue
-
-                poly = payload.get("rec_poly") or payload.get("dt_poly")
-                if poly is not None and hasattr(poly, "tolist"):
-                    poly = poly.tolist()
-                if not poly:
-                    continue
-
-                xs = [p[0] for p in poly] if poly else []
-                ys = [p[1] for p in poly] if poly else []
-                if not xs or not ys:
-                    continue
-
-                x1 = int(max(0, min(xs)))
-                y1 = int(max(0, min(ys)))
-                x2 = int(max(xs))
-                y2 = int(max(ys))
-                w = max(0, x2 - x1)
-                h = max(0, y2 - y1)
-                elements.append(
-                    {
-                        "text": text,
-                        "confidence": conf,
-                        "bbox": (x1, y1, w, h),
-                        "center": (x1 + w // 2, y1 + h // 2),
-                    }
-                )
-
-            return elements
+        # Isolated subprocess: paddle's native inference has crashed the
+        # whole app before (WerFault / 0xc0000005).  A crash in the worker
+        # only kills the worker — the app falls back to an empty result.
+        return _ocr_via_subprocess(image, min_confidence, language)
 
     return []
 

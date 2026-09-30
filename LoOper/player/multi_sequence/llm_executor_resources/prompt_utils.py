@@ -5,17 +5,43 @@ from typing import Dict, Optional
 # interaction-history block (if any), or removes it if no history is present.
 _HISTORY_INSERT_MARKER = "\x00__HISTORY_INSERT_POINT__\x00"
 
+# Guard: prevent variable values larger than this from being dumped into the
+# prompt verbatim — small models (~4092 tokens) can't handle megabytes of raw
+# text, and embedding large content hangs the tool-retrieval pipeline.
+_MAX_VAR_LENGTH = 10_000
+
 
 def substitute_variables(prompt: str, variables: Optional[Dict[str, object]]) -> str:
-    """Replace {var} placeholders in a prompt with provided variable values."""
+    """Replace {var} placeholders in a prompt with provided variable values.
+
+    Values exceeding ``_MAX_VAR_LENGTH`` are truncated and annotated so the LLM
+    still sees a representative prefix without context-window overflow.
+
+    Internal variables (prefixed with ``_``) are excluded from substitution to
+    prevent accidental injection of internal state into LLM prompts.
+    """
     if not prompt:
         return ""
     if not variables:
         return prompt
     result = prompt
     for name, value in variables.items():
+        # Skip internal variables (prefixed with _) to prevent accidental
+        # template substitution into LLM prompts.
+        if name.startswith('_'):
+            continue
         try:
-            result = result.replace(f"{{{name}}}", str(value))
+            text = str(value)
+            if len(text) > _MAX_VAR_LENGTH:
+                text = (
+                    text[:_MAX_VAR_LENGTH]
+                    + "\n\n[TRUNCATED: original value was "
+                    + str(len(text))
+                    + " chars; showing first "
+                    + str(_MAX_VAR_LENGTH)
+                    + "]"
+                )
+            result = result.replace(f"{{{name}}}", text)
         except Exception:
             # Best-effort substitution; continue on errors
             continue

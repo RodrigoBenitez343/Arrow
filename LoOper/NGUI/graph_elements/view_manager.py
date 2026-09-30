@@ -1,26 +1,7 @@
 import logging
-from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ContextNode
+from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, ContextNode
 
-# Configure logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Create file handler
-file_handler = logging.FileHandler('graphui_debug.log')
-file_handler.setLevel(logging.DEBUG)
-
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-
-# Create formatter
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-console_handler.setFormatter(formatter)
-
-# Add handlers to logger
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
 
 
 class ViewManager:
@@ -55,7 +36,7 @@ class ViewManager:
             visible_count = 0
             hidden_count = 0
             for node in all_nodes:
-                if isinstance(node, (SequenceNode, ConditionalNode, LLMNode, TTSNode, ContextNode)):
+                if isinstance(node, (SequenceNode, ConditionalNode, LLMNode, ContextNode)):
                     node.set_disabled(False)
                     visible_count += 1
                 elif isinstance(node, ActionNode):

@@ -7,8 +7,6 @@ graphui_debug.log
 /dist/
 /build/
 /.wix/
-# json files
-*.json
 
 # Generated directories
 sequences/

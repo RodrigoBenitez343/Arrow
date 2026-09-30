@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # conditional_loop.py
 """
 Conditional loop module for conditional fallback handler.
@@ -5,7 +7,6 @@ Handles loop execution logic with various loop types and conditions.
 """
 import json
 import time
-from ...config import logger
 from ...sequence_player import SequencePlayer
 
 
@@ -35,37 +36,51 @@ class ConditionalLoop:
     
     def execute_conditional_loop(self, loop_config, sequence_player):
         """
-        Execute a conditional loop with the specified configuration.
-        
+        Execute a conditional loop until the loop condition is no longer met.
+
+        The loop is infinite by design — there is no iteration cap.  It ends
+        only when the condition stops being valid (or execution is stopped),
+        then the workflow continues via the conditional's single output port.
+
         Args:
             loop_config (dict): Loop configuration containing type, condition, etc.
             sequence_player (SequencePlayer): Player instance for executing sequences
-            
+
         Returns:
-            bool: True if loop completed successfully, False otherwise
+            bool: True if the loop completed (condition no longer met), False otherwise
         """
         try:
             loop_type = loop_config.get('type', 'while_present')
-            max_iterations = int(loop_config.get('max_iterations', 10))
             sequence_file = loop_config.get('sequence_file', '')
             iteration_delay = float(loop_config.get('iteration_delay', 0.05))
             condition = loop_config.get('condition', {})
+
+            # The caller (conditional_ops) configures the passed player with the
+            # sandbox URL; carry it into the fresh per-iteration players so the
+            # loop body acts on the same desktop the condition observes.
+            self._loop_sandbox_url = None
+            try:
+                if sequence_player is not None:
+                    self._loop_sandbox_url = getattr(sequence_player, 'sandbox_agent_url', None)
+            except Exception:
+                self._loop_sandbox_url = None
             
-            logger.info(f"Starting conditional loop: {loop_type}, max_iterations: {max_iterations}")
+            logger.info(f"Starting conditional loop: {loop_type} (runs until the condition is no longer met)")
             
-            if not sequence_file:
+            # Accept chain_file alongside sequence_file for direct chain execution in loops
+            chain_file = loop_config.get('chain_file', '') or loop_config.get('chain', '')
+            if not sequence_file and not chain_file:
                 logger.error("No sequence file specified for conditional loop")
                 return False
             
-            # Resolve sequence file path
-            resolved_sequence_file = self.path_resolver.resolve_path(sequence_file, add_json=True)
-            if not resolved_sequence_file:
-                logger.error(f"Could not resolve sequence file: {sequence_file}")
+            # Resolve the file path (sequence or chain)
+            resolved_file = self.path_resolver.resolve_path(chain_file or sequence_file, add_json=True)
+            if not resolved_file:
+                logger.error(f"Could not resolve file: {chain_file or sequence_file}")
                 return False
             
             iteration_count = 0
-            
-            while iteration_count < max_iterations:
+            while True:
                 # Check stop flag
                 if self.stop_flag and self.stop_flag():
                     logger.info("Stop flag detected during conditional loop - aborting")
@@ -88,19 +103,62 @@ class ConditionalLoop:
                 should_continue = self._evaluate_loop_condition(loop_type, condition, screen_cv)
                 
                 if not should_continue:
-                    logger.info(f"Loop condition no longer met after {iteration_count} iterations")
-                    break
+                    logger.info(f"Loop condition no longer met after {iteration_count} iteration(s) — continuing workflow")
+                    return True
                 
                 # Execute the sequence
-                logger.info(f"Executing loop iteration {iteration_count + 1}/{max_iterations}")
+                logger.info(f"Executing loop iteration {iteration_count + 1}")
                 
                 try:
-                    # Create a temporary sequence player for this iteration
-                    temp_player = SequencePlayer(resolved_sequence_file)
-                    temp_player.selection_memory = {}
-                    
-                    # Execute the sequence
-                    success = temp_player.play_sequence(stop_flag=self.stop_flag, skip_initial_delay=True)
+                    if chain_file:
+                        # Execute a full chain in this iteration
+                        import json
+                        with open(resolved_file, 'r', encoding='utf-8') as f:
+                            chain_config = json.load(f)
+                        try:
+                            from ...multi_sequence_player import MultiSequencePlayer
+                        except ImportError:
+                            from ....multi_sequence_player import MultiSequencePlayer
+                        except ImportError:
+                            from player.multi_sequence_player import MultiSequencePlayer
+                        temp_chain_player = MultiSequencePlayer(
+                            chain_config,
+                            chain_file_path=resolved_file
+                        )
+                        temp_chain_player.selection_memory = {}
+                        if getattr(self, '_loop_sandbox_url', None):
+                            try:
+                                temp_chain_player.sandbox_agent_url = self._loop_sandbox_url
+                                _ov = getattr(temp_chain_player, 'workflow_executor', None)
+                                if _ov is not None:
+                                    _g = getattr(_ov, 'global_app_context_override', None)
+                                    if not isinstance(_g, dict):
+                                        _g = {}
+                                        try:
+                                            _ov.global_app_context_override = _g
+                                        except Exception:
+                                            pass
+                                    _g['sandboxed'] = True
+                                    _g['sandbox_agent_url'] = self._loop_sandbox_url
+                            except Exception:
+                                pass
+                        success = temp_chain_player.play_chain(stop_flag=self.stop_flag, preserve_selection_memory=False)
+                    else:
+                        # Create a temporary sequence player for this iteration
+                        temp_player = SequencePlayer(resolved_file)
+                        temp_player.selection_memory = {}
+                        if getattr(self, '_loop_sandbox_url', None):
+                            try:
+                                temp_player.sandbox_agent_url = self._loop_sandbox_url
+                                temp_player.bot.sandbox_agent_url = self._loop_sandbox_url
+                                if hasattr(temp_player, 'action_handlers') and temp_player.action_handlers:
+                                    temp_player.action_handlers.bot.sandbox_agent_url = self._loop_sandbox_url
+                                from ...computer_vision import set_sandbox_agent_url
+                                set_sandbox_agent_url(self._loop_sandbox_url)
+                            except Exception:
+                                pass
+                        # Execute the sequence
+                        success = temp_player.play_sequence(stop_flag=self.stop_flag, skip_initial_delay=True)
                     
                     if not success:
                         logger.warning(f"Sequence execution failed in loop iteration {iteration_count + 1}")
@@ -123,11 +181,6 @@ class ConditionalLoop:
                         sleep_time = min(0.05, iteration_delay - elapsed)
                         time.sleep(sleep_time)
                         elapsed += sleep_time
-            
-            if iteration_count >= max_iterations:
-                logger.info(f"Loop completed maximum iterations: {max_iterations}")
-            
-            return True
             
         except Exception as e:
             logger.error(f"Error executing conditional loop: {e}")
@@ -196,8 +249,8 @@ class ConditionalLoop:
         try:
             # Reconstruct loop configuration from conditional node data
             loop_type = conditional_data.get('loop_type', 'while_present')
-            max_iterations = int(conditional_data.get('max_loops', 10))
             sequence_file = conditional_data.get('sequence_file', '')
+            chain_file = conditional_data.get('chain_file', '') or conditional_data.get('chain', '')
             iteration_delay = float(conditional_data.get('iteration_delay', 0.05))
             
             # Parse the stored loop condition
@@ -213,19 +266,20 @@ class ConditionalLoop:
                     'confidence': float(conditional_data.get('threshold', 0.8))
                 }
             
-            # Build loop configuration
+            # Build loop configuration (no iteration cap — the loop ends only
+            # when the condition is no longer met)
             loop_config = {
                 'type': loop_type,
-                'max_iterations': max_iterations,
                 'sequence_file': sequence_file,
+                'chain_file': chain_file,
                 'iteration_delay': iteration_delay,
                 'condition': condition
             }
             
-            logger.info(f"Executing conditional loop from node: {loop_type}, sequence: {sequence_file}")
+            logger.info(f"Executing conditional loop from node: {loop_type}, sequence: {sequence_file}, chain: {chain_file}")
             
             # Create a temporary SequencePlayer for loop execution
-            if not sequence_file:
+            if not sequence_file and not chain_file:
                 logger.error("No sequence file specified for conditional loop")
                 return False
             

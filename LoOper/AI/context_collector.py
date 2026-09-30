@@ -15,7 +15,7 @@ except ImportError:
     extract_text_elements_from_image_path = None
 
 class ContextCollector:
-    """Collects context data for ComoRAG integration including screenshots, automation data, and workflow state"""
+    """Collects context data for LLM integration including screenshots, automation data, and workflow state"""
     
     def __init__(self, workspace_path: str = None):
         self.workspace_path = workspace_path or os.getcwd()

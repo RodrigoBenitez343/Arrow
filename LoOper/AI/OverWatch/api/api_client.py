@@ -144,53 +144,6 @@ class OverWatchAPIClient:
         
         return self._make_request('POST', '/chat', data=data)
     
-    def comorag_reason(
-        self,
-        query: str,
-        context: Optional[str] = None,
-        model: Optional[str] = None,
-        max_cycles: int = 5,
-        memory_size: Optional[int] = None
-    ) -> Dict[str, Any]:
-        """Perform ComoRAG reasoning"""
-        data = {
-            'query': query,
-            'max_cycles': max_cycles
-        }
-        
-        if context:
-            data['context'] = context
-        if model:
-            data['model'] = model
-        if memory_size:
-            data['memory_size'] = memory_size
-        
-        return self._make_request('POST', '/comorag/reason', data=data)
-    
-    def get_memory_state(self) -> Dict[str, Any]:
-        """Get current ComoRAG memory state"""
-        return self._make_request('GET', '/comorag/memory')
-    
-    def clear_memory(self) -> Dict[str, Any]:
-        """Clear ComoRAG memory"""
-        return self._make_request('DELETE', '/comorag/memory')
-    
-    def add_memory(
-        self, 
-        content: str, 
-        source: str = "external", 
-        metadata: Optional[Dict[str, Any]] = None, 
-        image_data: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Add memory to ComoRAG"""
-        data = {
-            'content': content,
-            'source': source,
-            'metadata': metadata,
-            'image_data': image_data
-        }
-        return self._make_request('POST', '/comorag/memory', data=data)
-    
     def load_model(self, model_name: str) -> Dict[str, Any]:
         """Load a model (if API supports dynamic loading)"""
         data = {'model_name': model_name}
@@ -227,7 +180,7 @@ class OverWatchAPIClient:
             return {
                 'name': 'OverWatch API',
                 'version': 'Unknown',
-                'capabilities': ['chat', 'generate', 'comorag']
+                'capabilities': ['chat', 'generate']
             }
     
     def set_timeout(self, timeout: int):

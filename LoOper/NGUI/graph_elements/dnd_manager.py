@@ -193,8 +193,6 @@ class DragDropManager:
                                 new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
                         else:
                             new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
-                    elif node_type == 'tts':
-                        new_node = self.parent.node_operations.add_tts_node(pos=drop_pos)
                     elif node_type == 'conditional':
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
@@ -237,6 +235,26 @@ class DragDropManager:
                                 new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
                         else:
                             new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
+                    elif node_type == 'input':
+                        new_node = self.parent.node_operations.add_input_node(pos=drop_pos)
+                    elif node_type == 'handle':
+                        new_node = self.parent.node_operations.add_handle_node(pos=drop_pos)
+                    elif node_type == 'form_filler':
+                        new_node = self.parent.node_operations.add_form_filler_node(pos=drop_pos)
+                    elif node_type == 'mcp':
+                        new_node = self.parent.node_operations.add_mcp_node(pos=drop_pos)
+                    elif node_type == 'output':
+                        new_node = self.parent.node_operations.add_output_node(pos=drop_pos)
+                    elif node_type == 'web_sequence':
+                        try:
+                            if mime.hasFormat('application/x-looper-web-session-file'):
+                                fp = bytes(mime.data('application/x-looper-web-session-file')).decode('utf-8')
+                                new_node = self.parent.node_operations.add_web_sequence_from_file(fp, pos=drop_pos)
+                            else:
+                                new_node = self.parent.node_operations.add_blank_web_sequence(pos=drop_pos)
+                        except Exception as e:
+                            logger.error(f"Web sequence drop error: {e}")
+                            new_node = self.parent.node_operations.add_blank_web_sequence(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):
@@ -305,14 +323,9 @@ class DragDropManager:
                             drop_pos = [int(sp.x()), int(sp.y())]
                         except Exception:
                             drop_pos = [0, 0]
-                    try:
-                        logger.debug(f"DND computed drop_pos: {drop_pos}")
-                    except Exception:
-                        pass
 
                     new_node = None
                     if node_type == 'llm':
-                        # Check if this is a shared LLM node with configuration
                         if mime.hasFormat('application/x-looper-llm-config'):
                             import json
                             try:
@@ -320,16 +333,12 @@ class DragDropManager:
                                 config = json.loads(config_data)
                                 chain_file = config.get('chain_file', '')
                                 llm_node_data = config.get('llm_node_data', {})
-                                new_node = self.parent.node_operations.add_llm_node_with_shared_file(
-                                    chain_file, llm_node_data
-                                )
+                                new_node = self.parent.node_operations.add_llm_node_with_shared_file(chain_file, llm_node_data)
                             except Exception as e:
                                 logger.error(f"Shared LLM node drop error: {e}")
                                 new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
                         else:
                             new_node = self.parent.node_operations.add_llm_node(pos=drop_pos)
-                    elif node_type == 'tts':
-                        new_node = self.parent.node_operations.add_tts_node(pos=drop_pos)
                     elif node_type == 'conditional':
                         new_node = self.parent.node_operations.add_conditional_node(pos=drop_pos)
                     elif node_type == 'chain_import':
@@ -339,7 +348,6 @@ class DragDropManager:
                         else:
                             new_node = self.parent.node_operations.add_chain_import_node(pos=drop_pos)
                     elif node_type == 'code':
-                        # Check if this is a shared code node with configuration
                         if mime.hasFormat('application/x-looper-code-config'):
                             import json
                             try:
@@ -347,16 +355,13 @@ class DragDropManager:
                                 config = json.loads(config_data)
                                 chain_file = config.get('chain_file', '')
                                 code_node_data = config.get('code_node_data', {})
-                                new_node = self.parent.node_operations.add_code_node_with_shared_file(
-                                    chain_file, code_node_data
-                                )
+                                new_node = self.parent.node_operations.add_code_node_with_shared_file(chain_file, code_node_data)
                             except Exception as e:
                                 logger.error(f"Shared code node drop error: {e}")
                                 new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                         else:
                             new_node = self.parent.node_operations.add_code_node(pos=drop_pos)
                     elif node_type == 'context':
-                        # Check if this is a shared context node with configuration
                         if mime.hasFormat('application/x-looper-context-config'):
                             import json
                             try:
@@ -364,14 +369,32 @@ class DragDropManager:
                                 config = json.loads(config_data)
                                 chain_file = config.get('chain_file', '')
                                 context_node_data = config.get('context_node_data', {})
-                                new_node = self.parent.node_operations.add_context_node_with_shared_file(
-                                    chain_file, context_node_data
-                                )
+                                new_node = self.parent.node_operations.add_context_node_with_shared_file(chain_file, context_node_data)
                             except Exception as e:
                                 logger.error(f"Shared context node drop error: {e}")
                                 new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
                         else:
                             new_node = self.parent.node_operations.add_context_node(pos=drop_pos)
+                    elif node_type == 'input':
+                        new_node = self.parent.node_operations.add_input_node(pos=drop_pos)
+                    elif node_type == 'handle':
+                        new_node = self.parent.node_operations.add_handle_node(pos=drop_pos)
+                    elif node_type == 'form_filler':
+                        new_node = self.parent.node_operations.add_form_filler_node(pos=drop_pos)
+                    elif node_type == 'mcp':
+                        new_node = self.parent.node_operations.add_mcp_node(pos=drop_pos)
+                    elif node_type == 'output':
+                        new_node = self.parent.node_operations.add_output_node(pos=drop_pos)
+                    elif node_type == 'web_sequence':
+                        try:
+                            if mime.hasFormat('application/x-looper-web-session-file'):
+                                fp = bytes(mime.data('application/x-looper-web-session-file')).decode('utf-8')
+                                new_node = self.parent.node_operations.add_web_sequence_from_file(fp, pos=drop_pos)
+                            else:
+                                new_node = self.parent.node_operations.add_blank_web_sequence(pos=drop_pos)
+                        except Exception as e:
+                            logger.error(f"Web sequence drop error: {e}")
+                            new_node = self.parent.node_operations.add_blank_web_sequence(pos=drop_pos)
                     elif node_type == 'sequence':
                         try:
                             if mime.hasFormat('application/x-looper-sequence-file'):
@@ -396,19 +419,9 @@ class DragDropManager:
                                     else:
                                         w, h = 140, 60
                                     new_node.set_pos(int(sx - w * 0.5), int(sy - h * 0.5))
-                                    try:
-                                        fx, fy = new_node.pos()
-                                        logger.debug(f"DND final pos applied: target=({sx},{sy}), center_adjusted=({int(sx - w*0.5)},{int(sy - h*0.5)}), actual=({fx},{fy})")
-                                    except Exception:
-                                        pass
                                 except Exception:
                                     try:
                                         new_node.set_pos(sx, sy)
-                                        try:
-                                            fx, fy = new_node.pos()
-                                            logger.debug(f"DND fallback pos applied: target=({sx},{sy}), actual=({fx},{fy})")
-                                        except Exception:
-                                            pass
                                     except Exception:
                                         pass
                                 try:

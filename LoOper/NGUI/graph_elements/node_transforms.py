@@ -7,15 +7,6 @@ except Exception:
         return []
 from ..nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('graphui_debug.log'),
-        logging.StreamHandler()
-    ]
-)
 logger = logging.getLogger(__name__)
 
 

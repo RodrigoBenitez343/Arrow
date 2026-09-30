@@ -4,6 +4,7 @@
 from .dialogs import (
     ActionFallbackConfigDialog,
     SequencePropertiesDialog,
+    WebSequencePropertiesDialog,
     AdvancedConditionalDialog,
     TriggerConfigDialog,
     OCRTriggerConfigDialog,
@@ -11,6 +12,7 @@ from .dialogs import (
     ConditionalLoopDialog,
     LLMPropertiesDialog,
     TTSPropertiesDialog,
+    AgentExportDialog,
     get_default_api_url
 )
 
@@ -18,6 +20,7 @@ from .dialogs import (
 __all__ = [
     'ActionFallbackConfigDialog',
     'SequencePropertiesDialog', 
+    'WebSequencePropertiesDialog',
     'AdvancedConditionalDialog',
     'TriggerConfigDialog',
     'OCRTriggerConfigDialog',

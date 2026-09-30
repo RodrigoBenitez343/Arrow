@@ -1,10 +1,12 @@
+import logging
+logger = logging.getLogger(__name__)
 # ocr_trigger.py
 """
 OCR trigger module for conditional fallback handler.
 Handles OCR-based conditional triggers with text detection and validation.
 """
 import time
-from ...config import logger, OCR_AVAILABLE
+from ...config import OCR_AVAILABLE
 from ...ocr_engine import extract_text
 
 
@@ -25,6 +27,28 @@ class OCRTrigger:
         self.validation_cache = validation_cache
         self.path_resolver = path_resolver
         self.stop_flag = stop_flag
+
+    @staticmethod
+    def _coerce_region(value):
+        """Stored search box -> (x, y, w, h) ints, or None for whole screen.
+
+        The GUI persists it as a JSON string on the node property; a chain
+        config may carry it as a list - accept both.  Coordinates are in the
+        same space ``capture_screen`` returns (device/physical pixels), which
+        is what the element picker captures.
+        """
+        if isinstance(value, str):
+            try:
+                import json
+                value = json.loads(value)
+            except Exception:
+                return None
+        if isinstance(value, (list, tuple)) and len(value) == 4:
+            try:
+                return tuple(int(v) for v in value)
+            except (TypeError, ValueError):
+                return None
+        return None
     
     def check_ocr_trigger(self, trigger_config, stop_flag=None):
         """
@@ -48,7 +72,7 @@ class OCRTrigger:
             target_text = trigger_config.get('target_text', '') or trigger_config.get('ocr_text', '')
             case_sensitive = trigger_config.get('case_sensitive', True)
             language = trigger_config.get('language', 'eng')
-            region = trigger_config.get('region')
+            region = self._coerce_region(trigger_config.get('region'))
             timeout = float(trigger_config.get('timeout', 10))
             
             if not target_text:
@@ -176,7 +200,7 @@ class OCRTrigger:
             target_text = trigger_config.get('target_text', '') or trigger_config.get('ocr_text', '')
             case_sensitive = trigger_config.get('case_sensitive', True)
             language = trigger_config.get('language', 'eng')
-            region = trigger_config.get('region')
+            region = self._coerce_region(trigger_config.get('region'))
             
             if not target_text:
                 logger.warning("No target text specified for immediate OCR trigger")

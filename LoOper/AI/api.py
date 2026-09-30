@@ -1,7 +1,10 @@
+import atexit
 import base64
+import functools
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -9,26 +12,58 @@ from typing import Any, Dict, List, Optional, Union
 
 import requests
 import uvicorn
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Log to the shared automation.log so debug output is visible alongside chain logs
+# Ensure project root is in sys.path so 'from AI.xxx' imports work
+# When api.py runs as a subprocess, sys.path[0] is the AI/ directory
+# but we need LoOper/ (the parent) to resolve AI.config_loader etc.
+_api_dir = os.path.dirname(os.path.abspath(__file__))
+_project_root = os.path.dirname(_api_dir)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
+# Unified telemetry: records propagate to the root dispatch (see
+# logging_setup.py).  When api.py runs as its own subprocess it installs the
+# dispatch with the parent's session id (ARROW_SESSION_ID), so API logs join
+# the same session md instead of a separate file.
 _api_logger = logging.getLogger("api.llamacpp")
 _api_logger.setLevel(logging.DEBUG)
-if not _api_logger.handlers:
-    _log_dir = os.path.dirname(os.path.abspath(__file__))
-    _log_path = os.path.join(_log_dir, "..", "..", "automation.log")
-    try:
-        _fh = logging.FileHandler(os.path.normpath(_log_path))
-        _fh.setFormatter(
-            logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        )
-        _api_logger.addHandler(_fh)
-    except Exception:
-        pass
-    _api_logger.propagate = False
+try:
+    from logging_setup import setup_logging, uvicorn_log_config
+
+    setup_logging()
+except Exception:
+    pass
+
+
+_RE_CHAT_CONTROL = re.compile(
+    r"""
+    (?: <\|im_end\|>
+      | <\|im_start\|>
+      | </s>
+      | <\|endoftext\|>
+      | <\|eot_id\|>
+      | <\|end\|>
+    )
+    \s*
+    $
+    """,
+    re.VERBOSE,
+)
+
+
+def _sanitize_llamacpp_response(text: str) -> str:
+    if not text:
+        return text
+    prev = None
+    result = text
+    while result != prev:
+        prev = result
+        result = _RE_CHAT_CONTROL.sub("", result).rstrip()
+    return result
 
 
 def _subprocess_no_window_kwargs():
@@ -42,25 +77,33 @@ def _subprocess_no_window_kwargs():
 
 
 # Use absolute package imports instead of path hacking
+# OllamaEngine from OverWatch (optional — depends on aiohttp, psutil)
 try:
-    from AI.OverWatch.api.comorag_engine import ComoRAGEngine
     from AI.OverWatch.api.ollama_engine import OllamaEngine
 except ImportError:
-    # Fallback for frozen builds if paths are flattened
-    from OverWatch.api.comorag_engine import ComoRAGEngine
-    from OverWatch.api.ollama_engine import OllamaEngine
+    try:
+        from OverWatch.api.ollama_engine import OllamaEngine
+    except ImportError:
+        print("[WARNING] OverWatch OllamaEngine not available (missing deps)")
+        OllamaEngine = None
 
 # Import llama.cpp engine (optional, graceful fallback)
 try:
     from AI.llama_cpp_engine import LlamaCppEngine
     from AI.llama_cpp_engine import LlamaCppManager as llama_cpp_manager
+    from AI.llama_cpp_engine import LLAMA_BIN_NAMES, pid_image_name
 except ImportError:
     try:
         from llama_cpp_engine import LlamaCppEngine
         from llama_cpp_engine import LlamaCppManager as llama_cpp_manager
+        from llama_cpp_engine import LLAMA_BIN_NAMES, pid_image_name
     except ImportError:
         # llama.cpp not available, create stub classes
         print("[WARNING] llama.cpp engine not available, using stub")
+        LLAMA_BIN_NAMES = set()
+
+        def pid_image_name(pid: int) -> str:
+            return ""
 
         class LlamaCppEngine:
             def __init__(self, config=None):
@@ -102,23 +145,49 @@ import asyncio
 import threading
 from typing import Set
 
+# Serializes the WHOLE llama.cpp engine lifecycle: every entry point that
+# ensures (stop/start/reinit), generates, or schedules the model unload takes
+# this lock, plus the background unloader itself.  The architecture is strictly
+# sequential load -> use -> unload — a reinit can never interleave with an
+# in-flight generation, and the unloader can never stop a server a running
+# request still needs.  Without it, concurrent bursts made model instances race
+# each other and blew the RAM budget (see the lifecycle section below).
+_LLAMACPP_LIFECYCLE_LOCK = threading.RLock()
+
+
+def _engine_locked(fn):
+    """Acquire the engine lifecycle lock for the whole coroutine.
+
+    Serializes ensure -> generate -> unload-scheduling against the background
+    unloader and against the other engine entry points (/llamacpp/start,
+    /llamacpp/stop, /llamacpp/status, node /llamacpp/generate calls).
+    """
+
+    @functools.wraps(fn)
+    async def _wrapper(*args, **kwargs):
+        with _LLAMACPP_LIFECYCLE_LOCK:
+            return await fn(*args, **kwargs)
+
+    return _wrapper
+
+
 app = FastAPI(
     title="Ollama API Gateway",
-    description="API gateway to access Ollama models over Tailscale network",
+    description="Local API gateway for Ollama models",
     version="1.0.0",
 )
 
-# Configure CORS for Tailscale network access
+# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for Tailscale network access
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# Ollama server configuration - use environment variables for Tailscale support
+# Ollama server configuration - use environment variables
 def get_ollama_base_url():
     """Get Ollama base URL from environment variables"""
     ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1")
@@ -141,9 +210,9 @@ VISION_MODELS = [
 VISION_CAPABLE_CACHE: Dict[str, bool] = {}
 
 # --- Model bootstrap and auto-pull helpers ---
-HARDCODED_REQUIRED_EMBED_MODELS: List[str] = ["nomic-embed-text"]
-HARDCODED_REQUIRED_LLM_MODELS: List[str] = ["llama3.2:1b"]
-HARDCODED_REQUIRED_VISION_MODELS: List[str] = ["minicpm-v:latest"]
+HARDCODED_REQUIRED_EMBED_MODELS: List[str] = []
+HARDCODED_REQUIRED_LLM_MODELS: List[str] = []
+HARDCODED_REQUIRED_VISION_MODELS: List[str] = []
 
 
 def _list_ollama_models() -> Set[str]:
@@ -708,12 +777,19 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = None
     system: Optional[str] = None
     images: Optional[List[str]] = None  # List of base64 encoded images or file paths
+    raw_completion: Optional[bool] = False  # bypass chat template (probe generation)
+    chat_template_kwargs: Optional[Dict[str, object]] = None  # e.g. {"enable_thinking": False}
     cleanup_after: Optional[bool] = True
     # Llama.cpp specific parameters
     use_llamacpp: Optional[bool] = False
     gpu_layers: Optional[int] = None
     threads: Optional[int] = None
     context_size: Optional[int] = None
+    repeat_penalty: Optional[float] = None  # forwarded to llama-server sampling
+    # Continuation rounds for a truncated generation: short structured callers
+    # (consolidation hooks) send 1 so a rambling small model is not continued
+    # for minutes; None keeps the engine default.
+    max_rounds: Optional[int] = None
 
 
 class ChatResponse(BaseModel):
@@ -746,23 +822,17 @@ class ModelInfo(BaseModel):
 @app.get("/")
 async def root():
     """Root endpoint with API information"""
-    tailscale_ip = os.getenv("TAILSCALE_IP", "100.125.184.115")
     port = os.getenv("API_PORT", "8000")
 
     return {
         "message": "Ollama API Gateway",
         "version": "1.0.0",
-        "network": "Tailscale",
         "server_info": {
-            "host": tailscale_ip,
+            "host": "localhost",
             "port": port,
-            "access_url": f"http://{tailscale_ip}:{port}"
-            if tailscale_ip != "0.0.0.0"
-            else f"http://[TAILSCALE_IP]:{port}",
+            "access_url": f"http://localhost:{port}",
         },
         "environment_variables": {
-            "TAILSCALE_IP": "Set this to your Tailscale machine IP (server side)",
-            "TAILSCALE_SERVER_IP": "Set this to the server's Tailscale IP (client side)",
             "API_PORT": "API server port (default: 8000)",
         },
         "endpoints": {
@@ -873,7 +943,26 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
         except Exception:
             pass
         used_chat = False
-        if request.images and len(request.images) > 0:
+
+        # Structured messages format → route to Ollama /api/chat
+        if request.messages:
+            payload = {
+                "model": request.model,
+                "messages": request.messages,
+                "stream": request.stream,
+                "keep_alive": 60,
+                "options": {"num_predict": -1},
+            }
+            if request.temperature is not None:
+                payload["options"]["temperature"] = request.temperature
+            response = requests.post(
+                f"{get_ollama_base_url()}/api/chat",
+                json=payload,
+                headers={"Connection": "close"},
+            )
+            used_chat = True
+
+        elif request.images and len(request.images) > 0:
             if is_vision_model(request.model):
                 processed_images = process_images(request.images)
                 message = {
@@ -881,13 +970,13 @@ async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTask
                     "content": request.prompt,
                     "images": processed_images,
                 }
-                messages = []
+                messages_list = []
                 if request.system:
-                    messages.append({"role": "system", "content": request.system})
-                messages.append(message)
+                    messages_list.append({"role": "system", "content": request.system})
+                messages_list.append(message)
                 payload = {
                     "model": request.model,
-                    "messages": messages,
+                    "messages": messages_list,
                     "stream": request.stream,
                     "keep_alive": 60,
                     "options": {"num_predict": -1},
@@ -1415,14 +1504,67 @@ async def bootstrap_status():
 # ========== Llama.cpp Endpoints ==========
 
 
+def _find_free_port(start: int = 9090, max_attempts: int = 100) -> int:
+    """Find an available TCP port starting from `start`."""
+    import socket
+    for port in range(start, start + max_attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(('127.0.0.1', port))
+                return port
+            except OSError:
+                continue
+    _api_logger.error(
+        "No available port found for llama.cpp server (scanned %d-%d)",
+        start, start + max_attempts - 1,
+    )
+    raise HTTPException(
+        status_code=503,
+        detail=f"No available port found for llama.cpp server"
+    )
+
+
+def _port_held_by_foreign_process(port: int) -> bool:
+    """True if *port* is being listened on by a non-llama.cpp process.
+
+    Guards old-port reuse during engine reinit.  A leftover llama-server
+    is a legitimate kill target (the engine's port-scoped cleanup removes
+    it), but a foreign process — most importantly the agent web server,
+    which binds the engine's default port (8081) inside the main app
+    process — must never be killed or reused over; we pick a fresh free
+    port instead.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        _net = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=0x08000000 if os.name == "nt" else 0,
+        )
+    except Exception:
+        return False
+    for _line in _net.stdout.splitlines():
+        _parts = _line.strip().split()
+        if len(_parts) >= 2 and f":{port}" in _parts[1]:
+            _pid = _parts[-1]
+            if _pid.isdigit() and int(_pid) > 0:
+                _img = pid_image_name(int(_pid))
+                if _img and _img not in LLAMA_BIN_NAMES:
+                    return True
+    return False
+
+
 def _ensure_llamacpp_engine(
-    model_path: str, gpu_layers: int = 35, threads: int = 8, context_size: int = 4096
+    model_path: str, gpu_layers: int = 0, threads: int = -1, context_size: int = 0,
+    skip_server_if_grounding: bool = False,
 ) -> None:
     """
     Dynamically initialize or reinitialize the llama.cpp engine for the given model.
 
-    Only one model is loaded at a time: if a different model is already loaded,
-    the existing engine is stopped and a new one is created.
+    Defaults follow the CPU-first design and llama.cpp's own tuned auto
+    values: gpu_layers=0 (CPU-only), threads=-1 (auto-detect), context_size=0
+    (model's native training context).
 
     Raises HTTPException on error.
     """
@@ -1434,10 +1576,8 @@ def _ensure_llamacpp_engine(
 
     # Resolve relative model path against AI/models directory
     if not os.path.isabs(path):
-        models_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "models",
-        )
+        from AI.config_loader import get_models_dir
+        models_dir = get_models_dir()
         resolved = os.path.normpath(os.path.join(models_dir, path))
         if os.path.exists(resolved):
             path = resolved
@@ -1445,50 +1585,207 @@ def _ensure_llamacpp_engine(
     if not os.path.exists(path):
         raise HTTPException(status_code=400, detail=f"Model not found: {path}")
 
-    # Check if we need to (re)initialize the engine
+    # Guard: reject mmproj files passed as model path (common user mistake)
+    # mmproj files contain CLIP vision encoder weights and cannot be loaded
+    # as standalone language models.
+    _basename = os.path.basename(path).lower()
+    if _basename.startswith("mmproj-"):
+        _api_logger.error(
+            "Model path points to an mmproj file (%s) instead of a GGUF model. "
+            "mmproj files are projector weights for vision-language models and "
+            "cannot be loaded as a standalone model. Select the actual .gguf model "
+            "file in the same directory.",
+            path,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The selected file is an mmproj projector ({os.path.basename(path)}), "
+                f"not a language model. Please select the actual .gguf model file "
+                f"in the directory instead."
+            ),
+        )
+
+    # Check if we need to (re)initialize the engine.  The engine is compared
+    # on model path, requested context size, gpu_layers AND threads: in
+    # multi-model pipelines every node must run with ITS OWN exact params —
+    # keeping the running engine frozen when only params differ silently runs
+    # the node on the wrong configuration (observed: multi-node chains
+    # stalling while the frozen server fought the per-node model switch).
+    # Correctness wins over the seconds saved on single-model chains.
     current_model = (
         getattr(LLAMACPP_ENGINE, "model_path", "")
         if LLAMACPP_ENGINE is not None
         else ""
     )
-    needs_reinit = LLAMACPP_ENGINE is None or current_model != path
+    _engine_ctx = getattr(LLAMACPP_ENGINE, "context_size", 0) or 0
+    _want_ctx = int(context_size or 0)
+    _engine_gpu = getattr(LLAMACPP_ENGINE, "gpu_layers", 0) or 0
+    _want_gpu = int(gpu_layers or 0)
+    _engine_thr = getattr(LLAMACPP_ENGINE, "threads", -1)
+    _want_thr = int(threads if threads not in (None, "") else -1)
+    # Only an EXPLICIT positive context is a reinit trigger: a native (0)
+    # request must not restart the engine just because the running server
+    # resolved a RAM-aware effective window (e.g. 512) at startup — that
+    # would restart the server between every pair of native-context nodes.
+    needs_reinit = (
+        LLAMACPP_ENGINE is None
+        or current_model != path
+        or (_want_ctx > 0 and _engine_ctx != _want_ctx)
+        or _engine_gpu != _want_gpu
+        or _engine_thr != _want_thr
+    )
+    if needs_reinit and LLAMACPP_ENGINE is not None and current_model == path:
+        _api_logger.info(
+            "llamacpp engine reinit for the node's exact params "
+            "(engine: gpu_layers=%d threads=%d; request: gpu_layers=%d "
+            "threads=%d) — multi-model pipelines run each node with its own "
+            "configuration",
+            _engine_gpu, _engine_thr, _want_gpu, _want_thr,
+        )
 
     if needs_reinit:
-        # Stop existing engine if running
+        # Save the old port BEFORE stopping so we can reuse it for the new
+        # engine.  Reusing the old port ensures start_server() ->
+        # _ensure_port_free() -> taskkill will kill any leftover process
+        # on that port, preventing orphaned server stacking.
+        old_port = None
         if LLAMACPP_ENGINE is not None:
             try:
-                if LLAMACPP_ENGINE.is_running:
-                    LLAMACPP_ENGINE.stop_server()
+                old_port = LLAMACPP_ENGINE.server_port
+                # Call stop_server() UNCONDITIONALLY — the method is safe
+                # to call even when is_running is False (it checks
+                # self.server_process internally).  The old guard
+                # "if self.is_running:" caused orphaned server processes
+                # when the engine's state was out of sync with the actual
+                # process (e.g. after a crash).
+                LLAMACPP_ENGINE.stop_server()
             except Exception:
                 pass
 
         # Auto-detect mmproj file for vision models (same dir, starts with mmproj-)
+        # Prefer the mmproj whose quantization matches the model file name.
         mmproj_path = ""
         model_dir = os.path.dirname(path)
         if os.path.isdir(model_dir):
+            # Extract model variant (e.g. Q8_0, F16, Q4_0) from the model filename
+            model_variant = ""
+            model_base = os.path.basename(path).lower()
+            for variant in ("q8_0", "q4_0", "q4_k_m", "q5_k_m", "f16", "f32"):
+                if variant in model_base:
+                    model_variant = variant
+                    break
+
+            mmproj_candidates = []
             for fname in os.listdir(model_dir):
                 if fname.lower().startswith("mmproj-") and fname.lower().endswith(
                     ".gguf"
                 ):
                     candidate = os.path.join(model_dir, fname)
                     if os.path.exists(candidate):
-                        mmproj_path = candidate
-                        _api_logger.info(f"Auto-detected mmproj: {mmproj_path}")
-                        break
+                        # Score: matching variant = 0, non-matching = 1
+                        match = model_variant and model_variant in fname.lower()
+                        mmproj_candidates.append((0 if match else 1, candidate))
+
+            if mmproj_candidates:
+                # Sort by score (matching first), then alphabetically
+                mmproj_candidates.sort(key=lambda x: (x[0], x[1]))
+                mmproj_path = mmproj_candidates[0][1]
+                _api_logger.info(
+                    "Auto-detected mmproj: %s (match=%s)",
+                    mmproj_path,
+                    mmproj_candidates[0][0] == 0,
+                )
+
+        # Classify model capability (text-only, multimodal, grounding)
+        # to set correct server flags and inference routing.
+        try:
+            from AI.gguf_model_info import classify_model
+            model_capability = classify_model(path, mmproj_path)
+            _api_logger.info(
+                "Model capability: type=%s, arch=%s, special=%s, mtmd=%s, "
+                "native_ctx=%s",
+                model_capability.model_type,
+                model_capability.architecture,
+                model_capability.needs_special_tokens,
+                model_capability.needs_mtmd_cli,
+                model_capability.context_size or "unknown",
+            )
+        except Exception as _cap_exc:
+            _api_logger.warning("Model capability detection failed: %s", _cap_exc)
+            model_capability = None
 
         engine_config = {
             "model_path": path,
             "mmproj_path": mmproj_path,
-            "server_port": 8081,
+            # Reuse the old port if available.  This prevents stacking:
+            # an orphaned llama-server left on this port is killed by
+            # start_server() → _ensure_port_free() → taskkill.  If the
+            # port is held by a FOREIGN process (e.g. the agent web
+            # server on the shared default 8081), never reuse it — the
+            # engine would either fail to start or (pre-fix) taskkill the
+            # main app process.  Pick a fresh free port instead.
+            "server_port": (
+                old_port
+                if (old_port and not _port_held_by_foreign_process(old_port))
+                else _find_free_port()
+            ),
             "gpu_layers": gpu_layers,
             "threads": threads,
-            "context_size": context_size,
-            "batch_size": 512,
+            # Context size: 0 means the model's native training context
+            # (the engine resolves it and applies a RAM-aware cap at
+            # start_server).  A positive caller value is capped by the
+            # model's native context as a practical infrastructure limit
+            # (memory, hardware constraints).
+            "context_size": (
+                min(context_size, model_capability.context_size)
+                if (context_size and context_size > 0
+                    and model_capability and model_capability.context_size > 0)
+                else (context_size if context_size and context_size > 0 else 0)
+            ),
+            "batch_size": 2048,
         }
+        _api_logger.info(
+            "Allocated port %d for llama.cpp engine (model=%s, ctx=%d)",
+            engine_config["server_port"],
+            os.path.basename(path),
+            engine_config["context_size"],
+        )
         LLAMACPP_ENGINE = LlamaCppEngine(engine_config)
+        if model_capability is not None:
+            LLAMACPP_ENGINE.capability = model_capability
 
-    # Start server if not running
-    if not LLAMACPP_ENGINE.is_running:
+            # Safety: clear mmproj for text-only models.  An incompatible
+            # mmproj from a sibling model in the same directory will crash
+            # the server with an n_embd mismatch.
+            if model_capability.model_type == "text" and LLAMACPP_ENGINE.mmproj_path:
+                _api_logger.warning(
+                    "Model is text-only — clearing incompatible mmproj: %s",
+                    LLAMACPP_ENGINE.mmproj_path,
+                )
+                LLAMACPP_ENGINE.mmproj_path = ""
+
+    # Start server if not running.  Models whose engine preference is
+    # llama-mtmd-cli (grounding models like LocateAnything, and LFM vision
+    # variants whose server load hangs) skip the server entirely: their
+    # inference runs in llama-mtmd-cli as a one-shot process, so loading the
+    # model into the server too would double the memory footprint and
+    # OOM-crash the mtmd-cli subprocess.  The engine choice follows the
+    # MODEL's own default preference (capability.needs_mtmd_cli) — it must
+    # never depend on the chain's execution order.
+    _cap = getattr(LLAMACPP_ENGINE, "capability", None)
+    _skip_server = bool(
+        skip_server_if_grounding
+        and _cap is not None
+        and _cap.needs_mtmd_cli
+    )
+    if _skip_server:
+        _api_logger.info(
+            "Model (%s) prefers llama-mtmd-cli — server skipped; "
+            "inference via one-shot mtmd",
+            getattr(_cap, "architecture", "?"),
+        )
+    elif not LLAMACPP_ENGINE.is_running:
         if not LLAMACPP_ENGINE.start_server(blocking=True):
             raise HTTPException(
                 status_code=503, detail="Failed to start llama.cpp server"
@@ -1496,28 +1793,65 @@ def _ensure_llamacpp_engine(
 
 
 @app.post("/llamacpp/chat")
-async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks):
+@_engine_locked
+async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks, raw_request: Request):
     """Chat with a model using llama.cpp engine.
 
     Dynamically initializes the engine from the request's `model` field,
     so only one model is loaded at a time (ideal for low-end PCs).
+
+    Node-execution calls (/llamacpp/generate) follow a sequential load -> use
+    -> unload lifecycle, serialized by the lifecycle lock: the executor keeps
+    the model loaded through its whole burst (main generation + consolidation
+    probes + recursion) via cleanup_after=False and releases it with one
+    /llamacpp/release when the burst is done — never on a fixed idle clock, so
+    a slow probe never gets its server unloaded underneath it.  The
+    interactive /llamacpp/chat dialog keeps the model warm instead.
     """
     try:
         global LLAMACPP_ENGINE
 
+        # Only the node-execution endpoint unloads after use.
+        _unload_after = raw_request.url.path.rstrip("/") == "/llamacpp/generate"
+        _req_seq = _bump_llamacpp_request_seq()
+
         _ensure_llamacpp_engine(
             model_path=request.model,
-            gpu_layers=request.gpu_layers or 35,
-            threads=request.threads or 8,
-            context_size=request.context_size or 4096,
+            gpu_layers=request.gpu_layers or 0,
+            threads=request.threads or -1,
+            context_size=request.context_size or 0,
+            skip_server_if_grounding=bool(request.images),
         )
 
-        # Build messages — include images for vision-capable GGUF models
-        if request.messages:
-            result = LLAMACPP_ENGINE.chat(
-                messages=request.messages,
+        # Initialize locals for all code paths (avoids UnboundLocalError
+        # on older Python versions or edge-case control flow)
+        messages = None
+        processed_images = None
+
+        # Raw completion mode: bypasses the chat template so no reasoning/
+        # think block is generated — the model must output its answer
+        # immediately.  Used by probe generation, where a small model
+        # otherwise spends the whole token budget "thinking" and the chat
+        # path then strips the thinking, returning an empty response.
+        if request.raw_completion and not request.images:
+            # Keep ``messages`` as an empty list (not None): the response
+            # block below iterates it for the _debug payload.
+            messages = []
+            result = LLAMACPP_ENGINE.generate(
+                prompt=request.prompt or "",
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
+                max_rounds=request.max_rounds,
+            )
+        # Build messages — include images for vision-capable GGUF models
+        elif request.messages:
+            messages = request.messages
+            result = LLAMACPP_ENGINE.chat(
+                messages=messages,
+                max_tokens=request.max_tokens,
+                temperature=request.temperature,
+                max_rounds=request.max_rounds,
+                chat_template_kwargs=request.chat_template_kwargs,
             )
         else:
             messages = []
@@ -1525,7 +1859,6 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks)
                 messages.append({"role": "system", "content": request.system})
 
             # Process images if present
-            processed_images = None
             if request.images:
                 _api_logger.info(f"Received {len(request.images)} image(s) in request")
                 try:
@@ -1560,13 +1893,57 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks)
                 messages=messages,
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
+                max_rounds=request.max_rounds,
+                chat_template_kwargs=request.chat_template_kwargs,
             )
 
         if "error" in result:
-            raise HTTPException(status_code=500, detail=result["error"])
+            _err_body = str(result["error"])
+            if (
+                "exceed_context_size_error" in _err_body
+                or "exceeds the available" in _err_body
+            ):
+                # Deterministic prompt-overflow: the payload cannot fit the
+                # effective context no matter how often it is retried.  Return
+                # 4xx so callers trim/shrink the prompt instead of retrying
+                # the identical body (previously mapped to 500, which every
+                # retry layer treated as transient and re-sent verbatim).
+                raise HTTPException(status_code=400, detail=_err_body)
+            raise HTTPException(status_code=500, detail=_err_body)
+
+        # Warn if engine returned empty response despite success
+        resp_text = result.get("response") or ""
+        if not resp_text:
+            _api_logger.warning(
+                "llamacpp_chat: engine returned empty response. "
+                "Engine keys: %s, usage: %s, result: %s",
+                list(result.keys()),
+                result.get("usage", {}),
+                str(result)[:500],
+            )
+            print(
+                f"[API_DEBUG] llamacpp_chat empty response! "
+                f"Keys: {list(result.keys())}, "
+                f"usage: {result.get('usage', {})}, "
+                f"result: {str(result)[:300]}",
+                flush=True,
+            )
+
+        # Release the model once the response is done (load -> use -> unload)
+        # — unless the client keeps its burst alive: the executor sends
+        # cleanup_after=False on every call of a node's consolidation burst so
+        # the model survives the whole burst (probe after probe) and is
+        # released by one explicit /llamacpp/release when the burst ends,
+        # instead of on a fixed idle clock.
+        if (
+            _unload_after
+            and request.cleanup_after is not False
+            and LLAMACPP_ENGINE is not None
+        ):
+            background_tasks.add_task(_unload_llamacpp_after_idle, _req_seq)
 
         return {
-            "response": result.get("response", ""),
+            "response": _sanitize_llamacpp_response(resp_text),
             "model": result.get("model", request.model),
             "_debug": {
                 "images_received": bool(request.images),
@@ -1584,6 +1961,7 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks)
             },
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "done": result.get("done", True),
+            "truncated": result.get("truncated", False),
             "usage": result.get("usage", {}),
         }
     except HTTPException as e:
@@ -1593,9 +1971,32 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks)
 
 
 @app.post("/llamacpp/generate")
-async def llamacpp_generate(request: ChatRequest, background_tasks: BackgroundTasks):
-    """Generate text using llama.cpp engine (alias for chat)"""
-    return await llamacpp_chat(request, background_tasks)
+@_engine_locked
+async def llamacpp_generate(request: ChatRequest, background_tasks: BackgroundTasks, raw_request: Request):
+    """Generate text using llama.cpp engine (alias for chat) - node execution path"""
+    return await llamacpp_chat(request, background_tasks, raw_request)
+
+
+@app.post("/llamacpp/release")
+async def llamacpp_release():
+    """Burst-end release: unload the current model as soon as it is no longer
+    needed, with NO fixed keep-alive clock.
+
+    The node executor fires this once its whole call burst (main generation +
+    consolidation probes + recursion) has finished.  The unload is
+    seq-guarded under the lifecycle lock: if a newer inference request already
+    claimed the engine, the model stays loaded for it.
+    """
+    with _LLAMACPP_LIFECYCLE_LOCK:
+        _eng = LLAMACPP_ENGINE
+        if _eng is not None and getattr(_eng, "is_running", False):
+            _seq = _bump_llamacpp_request_seq()
+            threading.Thread(
+                target=_unload_llamacpp_after_idle,
+                args=(_seq,),
+                daemon=True,
+            ).start()
+    return {"status": "ok"}
 
 
 @app.post("/llamacpp/generate_stream")
@@ -1604,27 +2005,51 @@ async def llamacpp_generate_stream(request: ChatRequest):
     try:
         global LLAMACPP_ENGINE
 
-        _ensure_llamacpp_engine(
-            model_path=request.model,
-            gpu_layers=request.gpu_layers or 35,
-            threads=request.threads or 8,
-            context_size=request.context_size or 4096,
-        )
-
-        # Build prompt
-        prompt = request.prompt or ""
-        if request.system:
-            prompt = f"System: {request.system}\n\nUser: {prompt}\n\nAssistant: "
-
+        # The lifecycle lock is held for the WHOLE stream (ensure -> generate
+        # chunks -> unload scheduling), so a reinit from a concurrent request
+        # can never stop the model out from under an active stream.
         async def stream_generator():
-            accumulated = ""
-            for chunk in LLAMACPP_ENGINE.generate_stream(
-                prompt=prompt,
-                max_tokens=request.max_tokens,
-                temperature=request.temperature,
-            ):
-                accumulated += chunk
-                yield json.dumps({"text": accumulated}) + "\n"
+            with _LLAMACPP_LIFECYCLE_LOCK:
+                _req_seq = _bump_llamacpp_request_seq()
+
+                _ensure_llamacpp_engine(
+                    model_path=request.model,
+                    gpu_layers=request.gpu_layers or 0,
+                    threads=request.threads or -1,
+                    context_size=request.context_size or 0,
+                )
+
+                # Build messages so the model's chat template is applied
+                # server-side (raw completion prompts produce garbled
+                # instruction following).
+                messages = []
+                if request.system:
+                    messages.append({"role": "system", "content": request.system})
+                messages.append({"role": "user", "content": request.prompt or ""})
+
+                accumulated = ""
+                try:
+                    for chunk in LLAMACPP_ENGINE.chat_stream(
+                        messages=messages,
+                        max_tokens=request.max_tokens,
+                        temperature=request.temperature,
+                        repeat_penalty=request.repeat_penalty,
+                    ):
+                        accumulated += chunk
+                        yield json.dumps({"text": accumulated}) + "\n"
+                finally:
+                    # Unload the model once the stream ends (load -> use ->
+                    # unload) unless the client keeps its burst alive via
+                    # cleanup_after=False.
+                    if (
+                        request.cleanup_after is not False
+                        and LLAMACPP_ENGINE is not None
+                    ):
+                        threading.Thread(
+                            target=_unload_llamacpp_after_idle,
+                            args=(_req_seq,),
+                            daemon=True,
+                        ).start()
 
         return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
     except HTTPException as e:
@@ -1637,9 +2062,8 @@ async def llamacpp_generate_stream(request: ChatRequest):
 async def llamacpp_list_models():
     """List available GGUF models"""
     try:
-        models_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "unsloth"
-        )
+        from AI.config_loader import get_models_dir
+        models_dir = get_models_dir()
         gguf_models = []
 
         if os.path.exists(models_dir):
@@ -1647,10 +2071,7 @@ async def llamacpp_list_models():
                 for file in files:
                     if file.endswith(".gguf"):
                         model_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(
-                            model_path,
-                            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        )
+                        rel_path = os.path.relpath(model_path, models_dir)
                         file_size = os.path.getsize(model_path)
                         gguf_models.append(
                             {
@@ -1667,6 +2088,7 @@ async def llamacpp_list_models():
 
 
 @app.post("/llamacpp/start")
+@_engine_locked
 async def llamacpp_start_server(body: Dict[str, Any]):
     """Start llama.cpp server with specific model"""
     try:
@@ -1678,16 +2100,89 @@ async def llamacpp_start_server(body: Dict[str, Any]):
                 status_code=400, detail=f"Model not found: {model_path}"
             )
 
+        # Guard: reject mmproj files passed as model path
+        if os.path.basename(model_path).lower().startswith("mmproj-"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The selected file is an mmproj projector "
+                    f"({os.path.basename(model_path)}), not a language model. "
+                    f"Please select the actual .gguf model file instead."
+                ),
+            )
+
         config = {
             "model_path": model_path,
-            "server_port": int(body.get("server_port", 8081)),
-            "gpu_layers": int(body.get("gpu_layers", 35)),
-            "threads": int(body.get("threads", 8)),
-            "context_size": int(body.get("context_size", 4096)),
-            "batch_size": int(body.get("batch_size", 512)),
+            "server_port": _find_free_port(),
+            "gpu_layers": int(body.get("gpu_layers", 0)),
+            "threads": int(body.get("threads", -1)),
+            # Placeholder — will be overridden below after model detection
+            "context_size": 0,
+            "batch_size": int(body.get("batch_size", 2048)),
         }
 
+        # Auto-detect mmproj for vision models
+        mmproj_path = ""
+        model_dir = os.path.dirname(model_path)
+        if os.path.isdir(model_dir):
+            for fname in os.listdir(model_dir):
+                if fname.lower().startswith("mmproj-") and fname.lower().endswith(".gguf"):
+                    candidate = os.path.join(model_dir, fname)
+                    if os.path.exists(candidate):
+                        mmproj_path = candidate
+                        config["mmproj_path"] = mmproj_path
+                        break
+
         LLAMACPP_ENGINE = LlamaCppEngine(config)
+
+        # Classify model and set capability for proper server flags/routing
+        try:
+            from AI.gguf_model_info import classify_model
+            model_capability = classify_model(model_path, mmproj_path)
+            LLAMACPP_ENGINE.capability = model_capability
+            _api_logger.info(
+                "[/llamacpp/start] Model capability: type=%s, arch=%s",
+                model_capability.model_type,
+                model_capability.architecture,
+            )
+
+            # Safety: clear mmproj for text-only models
+            if model_capability.model_type == "text" and LLAMACPP_ENGINE.mmproj_path:
+                _api_logger.warning(
+                    "[/llamacpp/start] Model is text-only - "
+                    "clearing incompatible mmproj: %s",
+                    LLAMACPP_ENGINE.mmproj_path,
+                )
+                LLAMACPP_ENGINE.mmproj_path = ""
+
+            # Auto-detect context size from model metadata
+            if model_capability.context_size > 0:
+                caller_ctx = int(body.get("context_size", 0))
+                # 0 (or unset) means the model's native training context —
+                # passed through as 0 so the engine applies its RAM-aware
+                # cap at start_server.  A positive caller value is capped
+                # by the native context.
+                effective_ctx = (
+                    0
+                    if not caller_ctx or caller_ctx <= 0
+                    else min(caller_ctx, model_capability.context_size)
+                )
+                LLAMACPP_ENGINE.context_size = effective_ctx
+                _api_logger.info(
+                    "[/llamacpp/start] Context: %s (caller: %d, native: %d)",
+                    "native (RAM-capped at start)" if effective_ctx == 0 else effective_ctx,
+                    caller_ctx,
+                    model_capability.context_size,
+                )
+        except Exception as _cap_exc:
+            _api_logger.warning(
+                "[/llamacpp/start] Capability detection failed: %s", _cap_exc
+            )
+
+        # Safeguard: if context_size was never set (detection failed),
+        # fall back to the caller-provided value; 0 = native model context.
+        if LLAMACPP_ENGINE.context_size <= 0:
+            LLAMACPP_ENGINE.context_size = int(body.get("context_size", 0)) or 0
 
         if not LLAMACPP_ENGINE.start_server(blocking=True):
             raise HTTPException(
@@ -1702,6 +2197,7 @@ async def llamacpp_start_server(body: Dict[str, Any]):
 
 
 @app.post("/llamacpp/stop")
+@_engine_locked
 async def llamacpp_stop_server():
     """Stop llama.cpp server"""
     try:
@@ -1716,6 +2212,7 @@ async def llamacpp_stop_server():
 
 
 @app.get("/llamacpp/status")
+@_engine_locked
 async def llamacpp_status():
     """Get llama.cpp server status"""
     try:
@@ -1731,33 +2228,114 @@ async def llamacpp_status():
 # ========== End Llama.cpp Endpoints ==========
 
 
-class ComoRAGReasonRequest(BaseModel):
-    query: str
-    model: str
-    max_cycles: Optional[int] = 5
-    memory_size: Optional[int] = 1000
-    context: Optional[str] = None
-    images: Optional[List[str]] = None
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
-
-
-class ComoRAGAddMemoryRequest(BaseModel):
-    content: str
-    source: str = "external"
-    metadata: Optional[Dict[str, Any]] = None
-    image_data: Optional[str] = None
-
-
-COMORAG_ENGINE: Optional[ComoRAGEngine] = None
-OLLAMA_ENGINE: Optional[OllamaEngine] = None
+OLLAMA_ENGINE = None  # Optional[OllamaEngine] when available
 LLAMACPP_ENGINE: Optional[LlamaCppEngine] = None
 SETTINGS: Any = None
+
+# ---------------------------------------------------------------------------
+# llama.cpp model lifecycle: sequential load -> use -> unload (burst-scoped)
+# ---------------------------------------------------------------------------
+# Every inference request bumps this counter.  A scheduled unload only fires
+# if NO newer request has started in the meantime, so a just-started request
+# never gets its server killed out from under it.  The model is released when
+# the BURST that used it finishes — not on a fixed idle clock:
+#   - Node-execution clients keep the model through their whole burst by
+#     sending cleanup_after=False on every call (the executor does this for a
+#     node's consolidation probes + main generation + recursion), so a slow
+#     probe never gets its server unloaded underneath it.
+#   - When the burst is done the client fires one explicit /llamacpp/release,
+#     which schedules the (seq-guarded) unload immediately.
+#   - Clients that do not manage bursts keep the old per-call behavior: the
+#     unload is scheduled right after the response and fires as soon as no
+#     newer request claimed the engine (opt-in grace below).
+# The old unconditional "keep the server resident forever" behavior
+# OOM-crashed big-model workflows such as Handle nodes on low-RAM machines and
+# leaked llama-server/mtmd-cli processes at app exit; the fixed 20s idle clock
+# that replaced it unloaded MID-burst on slow/CPU-first runs (the consolidation
+# pause between probe phases), forcing a reload that re-ran the RAM-aware
+# context cap while the embedding server was resident — collapsing the context
+# window to its 1024-token floor and 400-rejecting every subsequent probe.
+_LLAMACPP_REQUEST_SEQ = 0
+# Optional operator grace AFTER a request finishes before the model is unloaded
+# (LLAMACPP_KEEP_ALIVE_SECONDS).  Default 0: unload as soon as the request that
+# scheduled it is done and no newer request has claimed the engine.
+_LLAMACPP_UNLOAD_IDLE_SECONDS = float(
+    os.getenv("LLAMACPP_KEEP_ALIVE_SECONDS", "0") or 0
+)
+
+
+def _bump_llamacpp_request_seq() -> int:
+    """Mark a new inference request; returns the seq the unloader compares."""
+    global _LLAMACPP_REQUEST_SEQ
+    _LLAMACPP_REQUEST_SEQ += 1
+    return _LLAMACPP_REQUEST_SEQ
+
+
+def _unload_llamacpp_after_idle(seq_at_schedule: int) -> None:
+    """Stop the llama.cpp server once the request/burst that used it is done.
+
+    Runs in a background thread (never blocks the event loop) and takes the
+    lifecycle lock, so it can never race an in-flight generation or a reinit.
+    Guards:
+    - lock: serialized against ensure/generate/release — a running generation
+      holds the lock for its whole duration, so the server is never stopped
+      out from under it;
+    - seq check: if a newer request started after this one was scheduled,
+      the model stays loaded for it;
+    - process-identity check: only the exact server process this request
+      used is stopped — a server a newer request has already spawned is
+      left alone;
+    - quick stop: terminate only that process, never sweep the port (the
+      next request's start_server() does its own port cleanup), so a
+      concurrently starting server on the same port is never killed.
+    """
+    global LLAMACPP_ENGINE, _LLAMACPP_REQUEST_SEQ
+    # Optional operator grace; 0 (default) unloads as soon as the burst ends.
+    if _LLAMACPP_UNLOAD_IDLE_SECONDS > 0:
+        time.sleep(_LLAMACPP_UNLOAD_IDLE_SECONDS)
+    with _LLAMACPP_LIFECYCLE_LOCK:
+        if _LLAMACPP_REQUEST_SEQ != seq_at_schedule:
+            return  # a newer request is using the engine - keep it loaded
+        engine = LLAMACPP_ENGINE
+        if engine is None:
+            return
+        proc = getattr(engine, "server_process", None)
+        if proc is None:
+            return
+        if getattr(engine, "server_process", None) is not proc:
+            return  # a newer server took over - do not touch it
+        try:
+            engine.stop_server(quick=True)
+            _api_logger.info(
+                "[llamacpp] Model unloaded (load -> use -> unload per burst)"
+            )
+        except Exception as exc:
+            _api_logger.warning("[llamacpp] Model unload failed: %s", exc)
+
+
+def _shutdown_llamacpp() -> None:
+    """Stop every llama.cpp server owned by this process at exit."""
+    global LLAMACPP_ENGINE
+    if LLAMACPP_ENGINE is not None:
+        try:
+            LLAMACPP_ENGINE.stop_server()
+            _api_logger.info("[llamacpp] Engine stopped at exit")
+        except Exception as exc:
+            _api_logger.warning("[llamacpp] Engine stop failed at exit: %s", exc)
+        finally:
+            LLAMACPP_ENGINE = None
+    try:
+        llama_cpp_manager.stop_all()
+    except Exception:
+        pass
+
+
+atexit.register(_shutdown_llamacpp)
 
 
 @app.on_event("startup")
 async def startup_event():
-    global OLLAMA_ENGINE, COMORAG_ENGINE, LLAMACPP_ENGINE, SETTINGS
+    global OLLAMA_ENGINE, LLAMACPP_ENGINE, SETTINGS
 
     # Initialize Ollama Engine (using settings from LoOper config or defaults)
     try:
@@ -1779,58 +2357,43 @@ async def startup_event():
         SETTINGS.ollama = MockSettings()
         SETTINGS.ollama.base_url = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
-    try:
-        OLLAMA_ENGINE = OllamaEngine(
-            SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-        )
-    except Exception as e:
-        print(f"Warning: Failed to create Ollama engine: {e}")
+    if OllamaEngine is not None:
+        try:
+            OLLAMA_ENGINE = OllamaEngine(
+                SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create Ollama engine: {e}")
+            OLLAMA_ENGINE = None
+    else:
         OLLAMA_ENGINE = None
-
-    try:
-        COMORAG_ENGINE = ComoRAGEngine(settings=SETTINGS, ollama_engine=OLLAMA_ENGINE)
-    except Exception as e:
-        print(f"Warning: Failed to create ComoRAG engine: {e}")
-        COMORAG_ENGINE = None
 
     # Initialize llama.cpp Engine
     try:
-        # Load llama.cpp config
-        config_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "config.json"
-        )
-        llamacpp_config = {
-            "enabled": True,
-            "llama_cpp_path": os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "utils",
-                "llama.cpp",
-            ),
-            "model_path": "",
-            "server_port": 8081,
-            "gpu_layers": 35,
-            "threads": 8,
-            "context_size": 4096,
-            "batch_size": 512,
-        }
+        print("[LLAMA.CPP] Reading llamacpp configuration...")
+        # Use config_loader which handles frozen-build path resolution
+        try:
+            from AI.config_loader import get_llamacpp_config
+        except ImportError:
+            get_llamacpp_config = lambda: {
+                "enabled": False, "model_path": "",
+                "server_port": 9090, "gpu_layers": 0,
+                "threads": -1, "context_size": 0, "batch_size": 2048,
+            }
+        llamacpp_config = get_llamacpp_config().copy()
 
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                config = json.load(f)
-                if "LLAMA_CPP" in config:
-                    lc = config["LLAMA_CPP"]
-                    llamacpp_config.update(lc)
-                    # Resolve model path
-                    if "default_model_path" in lc:
-                        model_path = lc["default_model_path"]
-                        if not os.path.isabs(model_path):
-                            model_path = os.path.join(
-                                os.path.dirname(
-                                    os.path.dirname(os.path.abspath(__file__))
-                                ),
-                                model_path,
-                            )
-                        llamacpp_config["model_path"] = model_path
+        # Resolve model_path — it may be just a filename in bundled configs.
+        # Absolute paths come from source-tree configs; basenames come from
+        # patched build configs.  Both need to resolve to the actual file.
+        model_path = llamacpp_config.get("model_path", "")
+        if model_path and not os.path.isabs(model_path):
+            from AI.config_loader import get_models_dir
+            resolved = os.path.join(get_models_dir(), model_path)
+            if os.path.exists(resolved):
+                llamacpp_config["model_path"] = resolved
+                _api_logger.info(
+                    "Resolved model filename '%s' -> '%s'", model_path, resolved
+                )
 
         if llamacpp_config.get("enabled", False) and llamacpp_config.get("model_path"):
             LLAMACPP_ENGINE = LlamaCppEngine(llamacpp_config)
@@ -1845,17 +2408,12 @@ async def startup_event():
         LLAMACPP_ENGINE = None
 
     async def _init_engines_in_background():
-        global OLLAMA_ENGINE, COMORAG_ENGINE
+        global OLLAMA_ENGINE
         try:
             if OLLAMA_ENGINE is not None:
                 await OLLAMA_ENGINE.initialize()
         except Exception as e:
             print(f"Warning: Failed to initialize Ollama engine: {e}")
-        try:
-            if COMORAG_ENGINE is not None and not COMORAG_ENGINE.is_ready():
-                await COMORAG_ENGINE.initialize()
-        except Exception as e:
-            print(f"Warning: Failed to initialize ComoRAG engine: {e}")
 
     try:
         asyncio.create_task(_init_engines_in_background())
@@ -1863,342 +2421,11 @@ async def startup_event():
         print(f"Warning: Failed to start background engine initialization: {e}")
 
 
-@app.post("/comorag/reason")
-async def comorag_reason(request: ComoRAGReasonRequest):
-    """Perform ComoRAG reasoning locally using the integrated engine"""
-    try:
-        global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-
-        # Attempt to create engine if missing (Lazy Creation)
-        if COMORAG_ENGINE is None:
-            if SETTINGS is None:
-                # Try to load settings if not loaded (should rely on startup but just in case)
-                try:
-                    from AI.settings import Settings
-
-                    SETTINGS = Settings()
-                except:
-                    pass
-
-            if OLLAMA_ENGINE is None and SETTINGS:
-                try:
-                    OLLAMA_ENGINE = OllamaEngine(
-                        SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                    )
-                except:
-                    pass
-
-            if SETTINGS:
-                try:
-                    COMORAG_ENGINE = ComoRAGEngine(
-                        settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                    )
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=503,
-                        detail=f"ComoRAG engine creation failed: {str(e)}",
-                    )
-
-        if COMORAG_ENGINE is None:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not created")
-
-        if not COMORAG_ENGINE.is_ready():
-            try:
-                # Attempt lazy initialization if not ready
-                await COMORAG_ENGINE.initialize()
-            except Exception as e:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"ComoRAG engine initialization failed: {str(e)}",
-                )
-
-        ctx = request.context or ""
-        imgs = process_images(request.images) if request.images else None
-
-        result = await COMORAG_ENGINE.reason(
-            query=request.query,
-            context=ctx,
-            model=request.model,
-            max_cycles=int(request.max_cycles or 5),
-            memory_size=request.memory_size,
-            images=imgs,
-        )
-        return result
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ComoRAG error: {str(e)}")
-
-
-@app.post("/comorag/reason/stream")
-async def comorag_reason_stream(request: ComoRAGReasonRequest):
-    """Stream ComoRAG reasoning locally"""
-    try:
-        global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-
-        # Attempt to create engine if missing (Lazy Creation)
-        if COMORAG_ENGINE is None:
-            if SETTINGS is None:
-                try:
-                    from AI.settings import Settings
-
-                    SETTINGS = Settings()
-                except:
-                    pass
-            if OLLAMA_ENGINE is None and SETTINGS:
-                try:
-                    OLLAMA_ENGINE = OllamaEngine(
-                        SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                    )
-                except:
-                    pass
-            if SETTINGS:
-                try:
-                    COMORAG_ENGINE = ComoRAGEngine(
-                        settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                    )
-                except Exception:
-                    pass
-
-        if COMORAG_ENGINE is None:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not created")
-
-        if not COMORAG_ENGINE.is_ready():
-            try:
-                # Attempt lazy initialization if not ready
-                await COMORAG_ENGINE.initialize()
-            except Exception as e:
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"ComoRAG engine initialization failed: {str(e)}",
-                )
-
-        ctx = request.context or ""
-        imgs = process_images(request.images) if request.images else None
-
-        async def event_generator():
-            try:
-                async for step in COMORAG_ENGINE.reason_stream(
-                    query=request.query,
-                    context=ctx,
-                    model=request.model,
-                    max_cycles=int(request.max_cycles or 5),
-                    memory_size=request.memory_size,
-                    images=imgs,
-                ):
-                    yield json.dumps(step) + "\n"
-            except Exception as e:
-                yield json.dumps({"type": "error", "message": str(e)}) + "\n"
-
-        return StreamingResponse(event_generator(), media_type="application/x-ndjson")
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Streaming failed: {str(e)}")
-
-
-@app.get("/comorag/status")
-async def comorag_status(init_if_needed: bool = True):
-    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-    init_error = None
-    if init_if_needed:
-        if COMORAG_ENGINE is None:
-            if SETTINGS is None:
-                try:
-                    from AI.settings import Settings
-
-                    SETTINGS = Settings()
-                except:
-                    pass
-            if OLLAMA_ENGINE is None and SETTINGS:
-                try:
-                    OLLAMA_ENGINE = OllamaEngine(
-                        SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                    )
-                except:
-                    pass
-            if SETTINGS:
-                try:
-                    COMORAG_ENGINE = ComoRAGEngine(
-                        settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                    )
-                except Exception as e:
-                    init_error = f"Creation failed: {str(e)}"
-        if COMORAG_ENGINE and (not COMORAG_ENGINE.is_ready()):
-            try:
-                await COMORAG_ENGINE.initialize()
-            except Exception as e:
-                init_error = f"Init failed: {str(e)}"
-                print(f"ComoRAG lazy init failed: {e}")
-    ready = COMORAG_ENGINE is not None and COMORAG_ENGINE.is_ready()
-    resp = {"ready": ready}
-    if init_error:
-        resp["error"] = init_error
-    return resp
-
-
-@app.post("/comorag/init")
-async def comorag_init(memory_size: Optional[int] = 1000):
-    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-    if COMORAG_ENGINE is None:
-        if SETTINGS is None:
-            try:
-                from AI.settings import Settings
-
-                SETTINGS = Settings()
-            except:
-                pass
-        if OLLAMA_ENGINE is None and SETTINGS:
-            try:
-                OLLAMA_ENGINE = OllamaEngine(
-                    SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                )
-            except:
-                pass
-        if SETTINGS:
-            try:
-                COMORAG_ENGINE = ComoRAGEngine(
-                    settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=503, detail=f"ComoRAG engine creation failed: {str(e)}"
-                )
-    if COMORAG_ENGINE is None:
-        raise HTTPException(status_code=503, detail="ComoRAG engine not created")
-    try:
-        if not COMORAG_ENGINE.is_ready():
-            await COMORAG_ENGINE.initialize()
-    except Exception as e:
-        raise HTTPException(
-            status_code=503, detail=f"ComoRAG engine initialization failed: {str(e)}"
-        )
-    return {
-        "ready": COMORAG_ENGINE.is_ready(),
-        "memory_size": COMORAG_ENGINE.memory_workspace.max_size
-        if COMORAG_ENGINE.memory_workspace
-        else 0,
-    }
-
-
-@app.get("/comorag/memory")
-async def comorag_memory():
-    global COMORAG_ENGINE
-    if COMORAG_ENGINE is None or not COMORAG_ENGINE.is_ready():
-        return {"memory_items": 0, "max_memory_size": 0}
-
-    try:
-        ws = COMORAG_ENGINE.memory_workspace
-        return {
-            "memory_items": len(ws.memory_pool) if ws else 0,
-            "max_memory_size": ws.max_size if ws else 0,
-            "recent_access": list(ws.access_history)[-10:] if ws else [],
-        }
-    except Exception:
-        # Fallback or different structure
-        return {"memory_items": -1, "status": "unknown structure"}
-
-
-@app.post("/comorag/memory")
-async def add_comorag_memory(request: ComoRAGAddMemoryRequest):
-    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-
-    # Attempt to create engine if missing
-    if COMORAG_ENGINE is None:
-        if SETTINGS is None:
-            try:
-                from AI.settings import Settings
-
-                SETTINGS = Settings()
-            except:
-                pass
-        if OLLAMA_ENGINE is None and SETTINGS:
-            try:
-                OLLAMA_ENGINE = OllamaEngine(
-                    SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                )
-            except:
-                pass
-        if SETTINGS:
-            try:
-                COMORAG_ENGINE = ComoRAGEngine(
-                    settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                )
-            except Exception:
-                pass
-
-    if COMORAG_ENGINE is None:
-        raise HTTPException(status_code=503, detail="ComoRAG engine not created")
-
-    if not COMORAG_ENGINE.is_ready():
-        try:
-            await COMORAG_ENGINE.initialize()
-        except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"ComoRAG engine initialization failed: {str(e)}",
-            )
-
-    await COMORAG_ENGINE.add_memory(
-        content=request.content,
-        source=request.source,
-        metadata=request.metadata,
-        image_data=request.image_data,
-    )
-    return {"status": "memory_added"}
-
-
-@app.delete("/comorag/memory")
-async def clear_comorag_memory():
-    global COMORAG_ENGINE, OLLAMA_ENGINE, SETTINGS
-
-    # Attempt to create engine if missing
-    if COMORAG_ENGINE is None:
-        if SETTINGS is None:
-            try:
-                from AI.settings import Settings
-
-                SETTINGS = Settings()
-            except:
-                pass
-        if OLLAMA_ENGINE is None and SETTINGS:
-            try:
-                OLLAMA_ENGINE = OllamaEngine(
-                    SETTINGS.ollama if hasattr(SETTINGS, "ollama") else None
-                )
-            except:
-                pass
-        if SETTINGS:
-            try:
-                COMORAG_ENGINE = ComoRAGEngine(
-                    settings=SETTINGS, ollama_engine=OLLAMA_ENGINE
-                )
-            except Exception:
-                pass
-
-    if COMORAG_ENGINE is None:
-        raise HTTPException(status_code=503, detail="ComoRAG engine not created")
-
-    if not COMORAG_ENGINE.is_ready():
-        try:
-            await COMORAG_ENGINE.initialize()
-        except Exception as e:
-            raise HTTPException(
-                status_code=503,
-                detail=f"ComoRAG engine initialization failed: {str(e)}",
-            )
-
-    await COMORAG_ENGINE.clear_memory()
-    return {"status": "memory_cleared"}
-
-
 if __name__ == "__main__":
     bind_host = os.getenv("API_BIND_HOST") or "0.0.0.0"
-    tailscale_ip = os.getenv("TAILSCALE_IP") or bind_host
     port = int(os.getenv("API_PORT", "8000"))
 
     print(f"Starting Ollama API Gateway on {bind_host}:{port}")
-    print(f"Access via Tailscale: http://{tailscale_ip}:{port}")
 
     # Start model bootstrap in background so API binds immediately
     def _run_bootstrap_async():
@@ -2214,59 +2441,13 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[BOOTSTRAP] Failed to start background bootstrap thread: {e}")
 
-    # Safe logging configuration for frozen environments
-    log_config = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "default": {
-                "()": "uvicorn.logging.DefaultFormatter",
-                "fmt": "%(levelprefix)s %(message)s",
-                "use_colors": False,
-            },
-            "access": {
-                "()": "uvicorn.logging.AccessFormatter",
-                "fmt": '%(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s',
-                "use_colors": False,
-            },
-        },
-        "handlers": {
-            "default": {
-                "formatter": "default",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-            },
-            "access": {
-                "formatter": "access",
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-            },
-        },
-        "loggers": {
-            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
-            "uvicorn.error": {"level": "INFO"},
-            "uvicorn.access": {
-                "handlers": ["access"],
-                "level": "INFO",
-                "propagate": False,
-            },
-        },
-    }
-
-    try:
-        import uvicorn.logging
-
-        log_config["formatters"]["default"]["()"] = uvicorn.logging.DefaultFormatter
-        log_config["formatters"]["access"]["()"] = uvicorn.logging.AccessFormatter
-    except Exception:
-        log_config["formatters"]["default"] = {"format": "%(levelname)s: %(message)s"}
-        log_config["formatters"]["access"] = {"format": "%(levelname)s: %(message)s"}
-
+    # Unified telemetry: let uvicorn loggers propagate to the root dispatch
+    # (colorized console + logs/automation.log + session md).
     uvicorn.run(
         app,
         host=bind_host,
         port=port,
         reload=False,
         log_level="info",
-        log_config=log_config,
+        log_config=uvicorn_log_config(),
     )

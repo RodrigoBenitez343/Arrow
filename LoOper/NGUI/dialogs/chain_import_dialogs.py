@@ -5,7 +5,8 @@ from .toggle_switch import ModernToggle
 import os
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QDialogButtonBox, QPushButton, QFileDialog, QComboBox, 
-                             QTextEdit, QGroupBox, QMessageBox)
+                             QTextEdit, QGroupBox, QMessageBox, QListWidget,
+                             QListWidgetItem)
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from ..i18n import _
@@ -19,8 +20,8 @@ class ChainImportDialog(ModernDialog):
     def __init__(self, chain_import_config=None, parent=None):
         super().__init__(parent, title=_("Chain Import Configuration"), help_topic="chain-import-dialog")
         self.setModal(True)
-        self.resize(600, 450)
-        self.setMinimumSize(600, 450)
+        self.resize(620, 620)
+        self.setMinimumSize(600, 520)
         
         # Style logic moved to ModernDialog
         
@@ -31,7 +32,9 @@ class ChainImportDialog(ModernDialog):
             'prefix': '',
             'loop_count': 1,
             'extra_delay': 0,
-            'enabled': True
+            'enabled': True,
+            'emit_data': False,
+            'data_output_nodes': []
         }
         
         self.setup_ui()
@@ -127,6 +130,37 @@ class ChainImportDialog(ModernDialog):
         
         layout.addWidget(config_group)
         
+        # Output content sent to the outer connection (the tool consumer /
+        # agent context).  No ports are involved: the selected Output nodes'
+        # content is delivered directly.
+        data_group = QGroupBox(_("Output content for the outer connection"))
+        data_layout = QVBoxLayout(data_group)
+        data_layout.setContentsMargins(10, 15, 10, 10)
+        data_layout.setSpacing(8)
+
+        self.emit_data_toggle = ModernToggle(
+            text=_("Send only the selected Output nodes' content"))
+        self.emit_data_toggle.setToolTip(
+            _("When enabled, only the Output nodes checked below have their "
+              "content delivered to the outer connection (the tool consumer / "
+              "agent context).  When disabled, every Output node's content is "
+              "delivered.")
+        )
+        data_layout.addWidget(self.emit_data_toggle)
+
+        data_layout.addWidget(QLabel(_("Output nodes to send (none checked = all):")))
+        self.data_outputs_list = QListWidget()
+        self.data_outputs_list.setMaximumHeight(120)
+        self.data_outputs_list.setEnabled(self.emit_data_toggle.isChecked())
+        self.emit_data_toggle.toggled.connect(self.data_outputs_list.setEnabled)
+        data_layout.addWidget(self.data_outputs_list)
+
+        self.data_warning_label = QLabel("")
+        self.data_warning_label.setWordWrap(True)
+        data_layout.addWidget(self.data_warning_label)
+
+        layout.addWidget(data_group)
+        
         # Sandbox execution options
         sandbox_group = QGroupBox(_("Sandbox Execution"))
         sandbox_layout = QVBoxLayout()
@@ -182,11 +216,13 @@ class ChainImportDialog(ModernDialog):
         
         if not file_path:
             self.chain_info.setText(_("No file selected"))
+            self._populate_data_outputs([])
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
             return
         
         if not os.path.exists(file_path):
             self.chain_info.setText(_("File does not exist"))
+            self._populate_data_outputs([])
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
             return
         
@@ -200,25 +236,54 @@ class ChainImportDialog(ModernDialog):
             conditionals = len(chain_config.get('conditional_nodes', []))
             llm_nodes = len(chain_config.get('llm_nodes', []))
             tts_nodes = len(chain_config.get('tts_nodes', []))
-            total_nodes = sequences + conditionals + llm_nodes + tts_nodes
+            web_sequences = len(chain_config.get('web_sequences', []))
+            total_nodes = sequences + conditionals + llm_nodes + tts_nodes + web_sequences
             
             info_text = _(
-                "Chain: {filename}\nTotal Nodes: {total}\n  - Sequences: {seq}\n  - Conditionals: {cond}\n  - LLM Nodes: {llm}\n  - TTS Nodes: {tts}"
+                "Chain: {filename}\nTotal Nodes: {total}\n  - Sequences: {seq}\n  - Conditionals: {cond}\n  - LLM Nodes: {llm}\n  - TTS Nodes: {tts}\n  - Web Sequences: {web}"
             ).format(
                 filename=os.path.basename(file_path),
                 total=total_nodes,
                 seq=sequences,
                 cond=conditionals,
                 llm=llm_nodes,
-                tts=tts_nodes
+                tts=tts_nodes,
+                web=web_sequences
             )
             
             self.chain_info.setText(info_text)
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(total_nodes > 0)
+            self._populate_data_outputs(chain_config.get('output_nodes', []))
             
         except Exception as e:
             self.chain_info.setText(_("Error reading chain file: {error}").format(error=str(e)))
+            self._populate_data_outputs([])
             self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
+    
+    def _populate_data_outputs(self, output_nodes):
+        """Rebuild the Output-node checklist from the selected chain file.
+
+        Every Output node of the imported chain can be selected; its content
+        is what gets delivered to the outer connection.  Items already present
+        in the stored config stay checked so editing the node does not
+        silently drop the selection.
+        """
+        self.data_outputs_list.clear()
+        selected = {str(v) for v in (self.config.get('data_output_nodes') or [])}
+        for out_cfg in output_nodes or []:
+            if not isinstance(out_cfg, dict):
+                continue
+            node_id = str(out_cfg.get('node_id') or out_cfg.get('id') or '')
+            if not node_id:
+                continue
+            label = str(out_cfg.get('label') or '')
+            item = QListWidgetItem(label or node_id)
+            item.setToolTip(node_id)
+            item.setData(Qt.UserRole, node_id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if node_id in selected else Qt.Unchecked)
+            self.data_outputs_list.addItem(item)
+        self.data_warning_label.setText("")
     
     def load_config(self):
         """Load configuration into the dialog"""
@@ -228,8 +293,9 @@ class ChainImportDialog(ModernDialog):
         self.loop_count_input.setText(str(self.config.get('loop_count', 1)))
         self.extra_delay_input.setText(str(self.config.get('extra_delay', 0)))
         self.enabled_checkbox.setChecked(self.config.get('enabled', True))
+        self.emit_data_toggle.setChecked(bool(self.config.get('emit_data')))
         
-        # Validate the loaded file
+        # Validate the loaded file (also rebuilds the Output-node checklist)
         self.validate_chain_file()
     
     def set_config(self, config):
@@ -240,7 +306,9 @@ class ChainImportDialog(ModernDialog):
             'prefix': '',
             'loop_count': 1,
             'extra_delay': 0,
-            'enabled': True
+            'enabled': True,
+            'emit_data': False,
+            'data_output_nodes': []
         }
         self.load_config()
     
@@ -261,7 +329,13 @@ class ChainImportDialog(ModernDialog):
             'extra_delay': extra_delay,
             'enabled': self.enabled_checkbox.isChecked(),
             'run_in_sandbox': self.sandbox_toggle.isChecked(),
-            'show_sandbox_window': self.show_sandbox_window_toggle.isChecked()
+            'show_sandbox_window': self.show_sandbox_window_toggle.isChecked(),
+            'emit_data': self.emit_data_toggle.isChecked(),
+            'data_output_nodes': [
+                self.data_outputs_list.item(i).data(Qt.UserRole)
+                for i in range(self.data_outputs_list.count())
+                if self.data_outputs_list.item(i).checkState() == Qt.Checked
+            ]
         }
     
     def accept(self):

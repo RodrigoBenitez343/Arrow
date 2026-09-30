@@ -22,23 +22,14 @@ except Exception:
 from ..constants import (
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, ACCENT_COLOR,
     BLOCK_COLOR, BLOCK_HOVER,
-    LLM_COLOR, TTS_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR,
-    CODE_NODE_COLOR, CONTEXT_NODE_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
+    LLM_COLOR, CONDITIONAL_COLOR, CHAIN_IMPORT_COLOR, FORM_FILLER_COLOR,
+    CODE_NODE_COLOR, CONTEXT_NODE_COLOR, INPUT_NODE_COLOR, HANDLE_NODE_COLOR, MCP_NODE_COLOR, OUTPUT_NODE_COLOR, WEB_SEQUENCE_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
 )
 from ..dialogs.base_dialog import ModernDialog
 from ..i18n import _
 
 
 logger = logging.getLogger(__name__)
-if not logger.handlers:
-    fh = logging.FileHandler('graphui_debug.log')
-    ch = logging.StreamHandler()
-    fmt = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    fh.setFormatter(fmt)
-    ch.setFormatter(fmt)
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-    logger.setLevel(logging.DEBUG)
 
 
 # Module-level helper for modern chevron icons with robust fallback
@@ -198,44 +189,14 @@ def _fallback_node_icon(node_type: str, size: int, pad: int = 3) -> QIcon:
         p.drawEllipse(ox + int(0.6*s), oy + int(0.38*s), int(0.08*s), int(0.08*s))
         p.drawLine(ox + int(0.4*s), oy + int(0.6*s), ox + int(0.6*s), oy + int(0.6*s))
         p.drawRect(ox + int(0.45*s), oy + int(0.17*s), int(0.1*s), int(0.08*s))
-    elif node_type == 'tts':
-        try:
-            try:
-                pen = p.pen()
-                pen.setWidthF(2.0)
-                pen.setCapStyle(Qt.RoundCap)
-                pen.setJoinStyle(Qt.RoundJoin)
-                p.setPen(pen)
-            except Exception:
-                pass
-            fs = float(size) * dpr - 2*pad*dpr
-            fx = float(ox)
-            fy = float(oy)
-            bw = fs * 0.22
-            bh = fs * 0.42
-            bx = fx + fs * 0.08
-            by = fy + fs * 0.29
-            p.drawRect(QRectF(bx, by, bw, bh))
-            cone_x = bx + bw
-            cone_t = by - fs * 0.06
-            cone_b = by + bh + fs * 0.06
-            cone_out = fs * 0.18
-            p.drawPolygon(QPolygonF([
-                QPointF(cone_x, cone_t),
-                QPointF(cone_x + cone_out, by + bh * 0.28),
-                QPointF(cone_x, cone_b)
-            ]))
-            aw1 = fs * 0.28
-            aw2 = fs * 0.40
-            p.drawArc(QRectF(cone_x + fs*0.04, by + bh*0.10 - aw1*0.5, aw1, aw1), 90*16, -180*16)
-            p.drawArc(QRectF(cone_x + fs*0.04, by + bh*0.10 - aw2*0.5, aw2, aw2), 90*16, -180*16)
-        except Exception:
-            p.drawPolygon(QPoint(ox + int(0.25*s), oy + int(0.35*s)), QPoint(ox + int(0.45*s), oy + int(0.5*s)), QPoint(ox + int(0.25*s), oy + int(0.65*s)))
-            p.drawLine(ox + int(0.55*s), oy + int(0.38*s), ox + int(0.55*s), oy + int(0.62*s))
-            p.drawLine(ox + int(0.62*s), oy + int(0.34*s), ox + int(0.62*s), oy + int(0.66*s))
     elif node_type == 'chain_import':
         p.drawRoundedRect(ox + int(0.18*s), oy + int(0.18*s), int(0.64*s), int(0.64*s), 4, 4)
         p.drawRoundedRect(ox + int(0.26*s), oy + int(0.26*s), int(0.48*s), int(0.48*s), 4, 4)
+    elif node_type == 'web_sequence':
+        # Globe: circle + horizontal meridian + vertical line (browser/world)
+        p.drawEllipse(ox + int(0.12*s), oy + int(0.12*s), int(0.76*s), int(0.76*s))
+        p.drawEllipse(ox + int(0.30*s), oy + int(0.12*s), int(0.40*s), int(0.76*s))
+        p.drawLine(ox + int(0.12*s), oy + int(0.5*s), ox + int(0.88*s), oy + int(0.5*s))
     p.end()
     try:
         pix.setDevicePixelRatio(dpr)
@@ -317,61 +278,6 @@ def _painter_icon_llm(size: int) -> QIcon:
     p.drawEllipse(QRectF(cx + s*0.14 - eye_r, cy - s*0.08 - eye_r, 2*eye_r, 2*eye_r))
     p.drawLine(QPointF(cx - s*0.12, cy + s*0.12), QPointF(cx + s*0.12, cy + s*0.12))
     p.drawRect(QRectF(cx - s*0.06, cy - h*0.5 - s*0.06, s*0.12, s*0.06))
-    p.end()
-    try:
-        pix.setDevicePixelRatio(dpr)
-    except Exception:
-        pass
-    return QIcon(pix)
-
-def _painter_icon_tts(size: int) -> QIcon:
-    dpr = 1.0
-    try:
-        scr = QApplication.primaryScreen()
-        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
-    except Exception:
-        dpr = 1.0
-    w = int(size * dpr)
-    h = int(size * dpr)
-    pix = QPixmap(w, h)
-    pix.fill(Qt.transparent)
-    p = QPainter(pix)
-    p.setRenderHint(QPainter.Antialiasing)
-    p.setRenderHint(QPainter.HighQualityAntialiasing)
-    pen = p.pen()
-    pen.setColor(QColor(TEXT_COLOR))
-    try:
-        pen.setWidthF(2.0)
-    except Exception:
-        pen.setWidth(2)
-    pen.setCapStyle(Qt.RoundCap)
-    pen.setJoinStyle(Qt.RoundJoin)
-    p.setPen(pen)
-    s = float(size) * dpr
-    cx = s * 0.5
-    cy = s * 0.5
-
-    p.setBrush(Qt.NoBrush)
-    lh = s * 0.28
-    bh = s * 0.44
-    lx = cx - s * 0.38
-    rx = cx - s * 0.06
-    p.drawPolygon(QPolygonF([
-        QPointF(lx, cy - lh * 0.5),
-        QPointF(rx, cy - bh * 0.5),
-        QPointF(rx, cy + bh * 0.5),
-        QPointF(lx, cy + lh * 0.5)
-    ]))
-
-    gap = s * 0.06
-    wx = rx + gap + s * 0.02
-    r1 = s * 0.18
-    r2 = s * 0.28
-    r3 = s * 0.38
-    p.drawArc(QRectF(wx - r1, cy - r1, 2*r1, 2*r1), int(-40*16), int(80*16))
-    p.drawArc(QRectF(wx - r2, cy - r2, 2*r2, 2*r2), int(-40*16), int(80*16))
-    p.drawArc(QRectF(wx - r3, cy - r3, 2*r3, 2*r3), int(-40*16), int(80*16))
-
     p.end()
     try:
         pix.setDevicePixelRatio(dpr)
@@ -507,6 +413,329 @@ def _painter_icon_context(size: int) -> QIcon:
         pass
     return QIcon(pix)
 
+def _painter_icon_input(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    # Draw a text-input icon: rounded rect with cursor and right-arrow
+    box_w = s * 0.55
+    box_h = s * 0.44
+    box_x = cx - box_w * 0.5 + s * 0.08
+    box_y = cy - box_h * 0.5
+    p.drawRoundedRect(QRectF(box_x, box_y, box_w, box_h), 4, 4)
+    # Vertical cursor line inside the box
+    cursor_x = box_x + s * 0.12
+    p.drawLine(QPointF(cursor_x, box_y + s * 0.12), QPointF(cursor_x, box_y + box_h - s * 0.12))
+    # Right-pointing arrow entering from the left
+    arrow_tip_x = box_x - s * 0.02
+    arrow_start_x = box_x - s * 0.26
+    arrow_y = cy
+    p.drawLine(QPointF(arrow_start_x, arrow_y), QPointF(arrow_tip_x, arrow_y))
+    # Arrowhead
+    p.drawLine(QPointF(arrow_tip_x, arrow_y), QPointF(arrow_tip_x - s * 0.08, arrow_y - s * 0.06))
+    p.drawLine(QPointF(arrow_tip_x, arrow_y), QPointF(arrow_tip_x - s * 0.08, arrow_y + s * 0.06))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+
+def _painter_icon_output(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    # Mirrored horizontally from _painter_icon_input:
+    # box shifted left (mirror of input's right shift)
+    box_w = s * 0.55
+    box_h = s * 0.44
+    box_x = cx - box_w * 0.5 - s * 0.08
+    box_y = cy - box_h * 0.5
+    p.drawRoundedRect(QRectF(box_x, box_y, box_w, box_h), 4, 4)
+    # Vertical cursor line on the right side of the box (mirrored)
+    cursor_x = box_x + box_w - s * 0.12
+    p.drawLine(QPointF(cursor_x, box_y + s * 0.12), QPointF(cursor_x, box_y + box_h - s * 0.12))
+    # Right-pointing arrow exiting from the right side
+    arrow_tip_x = box_x + box_w + s * 0.02
+    arrow_end_x = box_x + box_w + s * 0.26
+    arrow_y = cy
+    p.drawLine(QPointF(arrow_tip_x, arrow_y), QPointF(arrow_end_x, arrow_y))
+    # Arrowhead
+    p.drawLine(QPointF(arrow_tip_x, arrow_y), QPointF(arrow_tip_x + s * 0.08, arrow_y - s * 0.06))
+    p.drawLine(QPointF(arrow_tip_x, arrow_y), QPointF(arrow_tip_x + s * 0.08, arrow_y + s * 0.06))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+
+def _painter_icon_folder(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+    # Folder tab at top-left
+    tab_w = s * 0.25
+    tab_h = s * 0.12
+    tab_x = cx - s * 0.35
+    tab_y = cy - s * 0.30
+    p.drawRect(QRectF(tab_x, tab_y, tab_w, tab_h))
+    # Folder body
+    body_y = tab_y + tab_h
+    body_h = s * 0.48 - tab_h
+    p.drawRoundedRect(QRectF(cx - s*0.38, body_y, s*0.76, body_h), 3, 3)
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+
+def _painter_icon_handle(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    # Draw a simplified pointing hand / cursor icon
+    # Palm (rounded rect)
+    palm_w = s * 0.36
+    palm_h = s * 0.40
+    palm_x = cx - palm_w * 0.5 + s * 0.04
+    palm_y = cy - palm_h * 0.2
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(palm_x, palm_y, palm_w, palm_h), 4, 4)
+    p.drawPath(path)
+
+    # Index finger (pointing up-left)
+    finger_w = s * 0.14
+    finger_h = s * 0.32
+    finger_x = palm_x + s * 0.02
+    finger_y = palm_y - finger_h + s * 0.08
+    path2 = QPainterPath()
+    path2.addRoundedRect(QRectF(finger_x, finger_y, finger_w, finger_h), 3, 3)
+    p.drawPath(path2)
+
+    # Thumb (pointing left)
+    thumb_w = s * 0.22
+    thumb_h = s * 0.12
+    thumb_x = palm_x - thumb_w + s * 0.04
+    thumb_y = palm_y + s * 0.12
+    path3 = QPainterPath()
+    path3.addRoundedRect(QRectF(thumb_x, thumb_y, thumb_w, thumb_h), 3, 3)
+    p.drawPath(path3)
+
+    # Click ripple (concentric small circle at fingertip)
+    tip_cx = finger_x + finger_w * 0.5
+    tip_cy = finger_y
+    p.drawEllipse(QPointF(tip_cx, tip_cy), s * 0.06, s * 0.06)
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+
+def _painter_icon_mcp(size: int) -> QIcon:
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+    cx = s * 0.5
+    cy = s * 0.5
+
+    # Plug/connector icon representing MCP's connection nature
+    # Plug body (rounded rectangle)
+    body_w = s * 0.42
+    body_h = s * 0.38
+    body_x = cx - body_w * 0.5 + s * 0.02
+    body_y = cy - body_h * 0.5
+    p.drawRoundedRect(QRectF(body_x, body_y, body_w, body_h), 3, 3)
+
+    # Prongs (two small rects on the right)
+    prong_w = s * 0.10
+    prong_h = s * 0.14
+    prong_gap = s * 0.06
+    prong_x = body_x + body_w
+    prong1_y = cy - prong_h - prong_gap * 0.5
+    prong2_y = cy + prong_gap * 0.5
+    p.drawRect(QRectF(prong_x, prong1_y, prong_w, prong_h))
+    p.drawRect(QRectF(prong_x, prong2_y, prong_w, prong_h))
+
+    # Cable (line on the left)
+    cable_start = body_x
+    p.drawLine(QPointF(cable_start, cy), QPointF(cable_start - s * 0.18, cy))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
+
+def _painter_icon_form_filler(size: int) -> QIcon:
+    """Form-filling glyph: a document with labelled input rows."""
+    dpr = 1.0
+    try:
+        scr = QApplication.primaryScreen()
+        dpr = float(getattr(scr, 'devicePixelRatio', lambda: 1.0)()) if scr else 1.0
+    except Exception:
+        dpr = 1.0
+    w = int(size * dpr)
+    h = int(size * dpr)
+    pix = QPixmap(w, h)
+    pix.fill(Qt.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.HighQualityAntialiasing)
+    pen = p.pen()
+    pen.setColor(QColor(TEXT_COLOR))
+    try:
+        pen.setWidthF(2.0)
+    except Exception:
+        pen.setWidth(2)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    s = float(size) * dpr
+
+    # Outer document rectangle
+    rect_w = s * 0.62
+    rect_h = s * 0.76
+    x = s * 0.19
+    y = s * 0.12
+    p.drawRoundedRect(QRectF(x, y, rect_w, rect_h), s * 0.06, s * 0.06)
+
+    # Field rows: a short label line + a small input box, top to bottom
+    top = y + rect_h * 0.20
+    gap = rect_h * 0.24
+    for i in range(3):
+        ry = top + i * gap
+        p.drawLine(QPointF(x + rect_w * 0.10, ry), QPointF(x + rect_w * 0.40, ry))
+        p.drawRect(QRectF(x + rect_w * 0.48, ry - s * 0.05, rect_w * 0.40, s * 0.10))
+
+    p.end()
+    try:
+        pix.setDevicePixelRatio(dpr)
+    except Exception:
+        pass
+    return QIcon(pix)
+
 _ICON_CACHE = {}
 
 def get_node_icon(node_type: str, size: int) -> QIcon:
@@ -515,7 +744,7 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
     if cached and not cached.isNull():
         return cached
     icon = None
-    if TablerIcons and OutlineIcon and node_type != 'tts':
+    if TablerIcons and OutlineIcon:
         try:
             icon_map = {
                 'conditional': ['HELP_CIRCLE'],
@@ -523,6 +752,12 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
                 'chain_import': ['BOX_MULTIPLE'],
                 'code': ['CODE', 'TERMINAL_2', 'TERMINAL'],
                 'context': ['DATABASE'],
+                'input': ['CIRCLE_DOT', 'POINTER', 'ARROW_BACK_UP', 'INPUT'],
+                'handle': ['HAND_CLICK', 'POINTER', 'CURSOR_OFF', 'HAND_STOP'],
+                'form_filler': ['CLIPBOARD_TEXT', 'LIST_DETAILS', 'FORMS', 'CHECKBOX'],
+                'mcp': ['PLUG_CONNECTED', 'API_APP', 'PLUG'],
+                'output': ['ARROW_BACK', 'ARROW_BACK_UP', 'CIRCLE_DOT', 'INPUT'],
+                'web_sequence': ['GLOBE', 'WORLD', 'BROWSER', 'WORLD_WWW'],
             }
             names = icon_map.get(node_type)
             if names:
@@ -539,10 +774,14 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
         painter_map = {
             'conditional': _painter_icon_conditional,
             'llm': _painter_icon_llm,
-            'tts': _painter_icon_tts,
             'chain_import': _painter_icon_chain,
             'code': _painter_icon_code,
             'context': _painter_icon_context,
+            'input': _painter_icon_input,
+            'handle': _painter_icon_handle,
+            'form_filler': _painter_icon_form_filler,
+            'mcp': _painter_icon_mcp,
+            'output': _painter_icon_output,
         }
         maker = painter_map.get(node_type)
         icon = maker(size) if maker else _fallback_node_icon(node_type, size, pad=2)
@@ -559,19 +798,20 @@ class DraggableButton(QPushButton):
         self._drag_start_pos = None
         self._click_handler = click_handler
         self.setCursor(Qt.OpenHandCursor)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumHeight(30)
         # Colored background to reflect node type
         self.setStyleSheet(
             f"""
             QPushButton {{
                 background-color: {bg_color};
                 color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
+                border: 1px solid #14FFFFFF;
+                border-top: 1px solid #33FFFFFF;
                 padding: 4px 10px;
                 border-radius: 12px;
                 min-width: 96px;
-                min-height: 42px;
+                min-height: 30px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -579,7 +819,7 @@ class DraggableButton(QPushButton):
                 border-color: {ACCENT_COLOR};
             }}
             QPushButton:pressed {{
-                background-color: rgba(255, 255, 255, 0.12);
+                background-color: #1FFFFFFF;
             }}
             """
         )
@@ -888,13 +1128,42 @@ class ModernDeleteDialog(ModernDialog):
 
 
 class TrashBinWidget(QPushButton):
-    """A drop target for deleting sequences."""
-    
+    """A drop target for deleting saved files and shared library nodes."""
+
+    # Drag mime types accepted by the bin; these mirror the formats set by the
+    # sequence/chain/web-sequence library cards when a drag starts.
+    _DROP_FORMATS = (
+        'application/x-looper-sequence-file',
+        'application/x-looper-chain-file',
+        'application/x-looper-web-session-file',
+    )
+
+    # LLM/Code/Context library cards drag a JSON config referencing a node
+    # entry inside a chain file; those drops are delegated to the registered
+    # node drop handler instead of a plain file removal.
+    _NODE_CONFIG_FORMATS = (
+        'application/x-looper-llm-config',
+        'application/x-looper-context-config',
+        'application/x-looper-code-config',
+    )
+    _NODE_CONFIG_KIND = {
+        'application/x-looper-llm-config': 'llm',
+        'application/x-looper-context-config': 'context',
+        'application/x-looper-code-config': 'code',
+    }
+    _NODE_CONFIG_KEY = {
+        'application/x-looper-llm-config': 'llm_node_data',
+        'application/x-looper-context-config': 'context_node_data',
+        'application/x-looper-code-config': 'code_node_data',
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setText(_("🗑 Drop to Delete"))
-        self.setToolTip(_("Drag sequence/chain files here to delete them"))
+        self.setToolTip(_("Drag sequence/chain/web session files here to delete them"))
+        # Optional callback used for LLM/Code/Context library node drops.
+        self._node_drop_handler = None
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setStyleSheet(
             f"""
@@ -905,7 +1174,7 @@ class TrashBinWidget(QPushButton):
                 border-radius: 10px;
                 padding: 8px;
                 font-weight: bold;
-                min-height: 40px;
+                min-height: 36px;
             }}
             QPushButton:hover {{
                 border-color: #FF6B6B;
@@ -915,8 +1184,15 @@ class TrashBinWidget(QPushButton):
             """
         )
 
+    def set_node_drop_handler(self, handler):
+        """Register a handler for deleting shared library nodes."""
+        self._node_drop_handler = handler
+
     def dragEnterEvent(self, event):
-        if event.mimeData().hasFormat('application/x-looper-sequence-file') or event.mimeData().hasFormat('application/x-looper-chain-file'):
+        mime = event.mimeData()
+        if any(mime.hasFormat(fmt) for fmt in self._DROP_FORMATS) or any(
+            mime.hasFormat(fmt) for fmt in self._NODE_CONFIG_FORMATS
+        ):
             event.accept()
             self.setStyleSheet(
                 f"""
@@ -927,7 +1203,7 @@ class TrashBinWidget(QPushButton):
                     border-radius: 10px;
                     padding: 8px;
                     font-weight: bold;
-                    min-height: 40px;
+                    min-height: 36px;
                 }}
                 """
             )
@@ -944,7 +1220,7 @@ class TrashBinWidget(QPushButton):
                 border-radius: 10px;
                 padding: 8px;
                 font-weight: bold;
-                min-height: 40px;
+                min-height: 36px;
             }}
             QPushButton:hover {{
                 border-color: #FF6B6B;
@@ -956,17 +1232,42 @@ class TrashBinWidget(QPushButton):
         super().dragLeaveEvent(event)
 
     def dropEvent(self, event):
-        if event.mimeData().hasFormat('application/x-looper-sequence-file') or event.mimeData().hasFormat('application/x-looper-chain-file'):
+        mime = event.mimeData()
+        cfg_format = next(
+            (fmt for fmt in self._NODE_CONFIG_FORMATS if mime.hasFormat(fmt)), None
+        )
+        if cfg_format:
+            if self._node_drop_handler:
+                try:
+                    payload = json.loads(str(mime.data(cfg_format), 'utf-8'))
+                    handled = self._node_drop_handler(
+                        self._NODE_CONFIG_KIND[cfg_format],
+                        payload.get('chain_file', ''),
+                        payload.get(self._NODE_CONFIG_KEY[cfg_format], {}) or {},
+                    )
+                    if handled:
+                        event.accept()
+                except Exception as e:
+                    logger.error(f"Error processing library node drop in trash bin: {e}")
+            else:
+                event.ignore()
+            # Restore style
+            self.dragLeaveEvent(None)
+            return
+
+        file_format = next(
+            (fmt for fmt in self._DROP_FORMATS if mime.hasFormat(fmt)), None
+        )
+        if file_format:
             try:
-                file_format = 'application/x-looper-sequence-file' if event.mimeData().hasFormat('application/x-looper-sequence-file') else 'application/x-looper-chain-file'
-                file_path_bytes = event.mimeData().data(file_format)
+                file_path_bytes = mime.data(file_format)
                 file_path = str(file_path_bytes, 'utf-8')
-                
+
                 if not os.path.exists(file_path):
                     return
 
                 filename = os.path.basename(file_path)
-                
+
                 dialog = ModernDeleteDialog(self, filename)
                 if dialog.exec_() == QDialog.Accepted:
                     try:
@@ -988,6 +1289,7 @@ class CollapsibleToolbar(QWidget):
 
     scheduler_requested = pyqtSignal()
     ai_settings_requested = pyqtSignal()
+    agent_mode_requested = pyqtSignal()
 
     def __init__(self, graph_view, parent=None):
         super().__init__(parent)
@@ -999,7 +1301,7 @@ class CollapsibleToolbar(QWidget):
         # Start expanded
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
         self.setMinimumWidth(160)
-        self.setMaximumWidth(160)
+        # No maximum – let the splitter resize us
         main_layout = QVBoxLayout(self)
         # Minimal margins so we can shrink to near-zero
         main_layout.setContentsMargins(0, 0, 4, 0)
@@ -1020,105 +1322,71 @@ class CollapsibleToolbar(QWidget):
         content_layout.setContentsMargins(8, 8, 8, 8)
         content_layout.setSpacing(6)
 
-        top_cluster = QFrame(self._content_frame)
-        top_cluster.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._top_layout = QVBoxLayout(top_cluster)
-        self._top_layout.setContentsMargins(0, 0, 0, 0)
-        self._top_layout.setSpacing(1)
+        # Node creation buttons – directly in content layout, no scroll area
+        for label, ntype, color, handler, tip in [
+            (_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), _("Add LLM Node")),
+            (_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), _("Add Chain Import Node")),
+            (_("Code"), "code", CODE_NODE_COLOR, lambda: self.graph_view.add_code_node(), _("Add Code Node")),
+            (_("Input"), "input", INPUT_NODE_COLOR, lambda: self.graph_view.add_input_node(), _("Add Input Node")),
+            (_("Handle"), "handle", HANDLE_NODE_COLOR, lambda: self.graph_view.add_handle_node(), _("Add Handle Node")),
+            (_("Form"), "form_filler", FORM_FILLER_COLOR, lambda: self.graph_view.add_form_filler_node(), _("Add Form Filling Node")),
+            (_("MCP"), "mcp", MCP_NODE_COLOR, lambda: self.graph_view.add_mcp_node(), _("Add MCP Server Node")),
+            (_("Output"), "output", OUTPUT_NODE_COLOR, lambda: self.graph_view.add_output_node(), _("Add Output Node")),
+            (_("Context"), "context", CONTEXT_NODE_COLOR, lambda: self.graph_view.add_context_node(), _("Add Context Node")),
+            (_("Cond"), "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), _("Add Conditional Node")),
+            (_("Web"), "web_sequence", WEB_SEQUENCE_COLOR, lambda: self.graph_view.add_web_sequence_node(), _("Add Web Sequence Node")),
+        ]:
+            btn = self._make_node_button(label, ntype, color, handler, tooltip=tip)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            btn.setMinimumHeight(30)
+            content_layout.addWidget(btn, 1)
 
-        # Trash Bin
-        self.trash_bin = TrashBinWidget(self._content_frame)
-        self._top_layout.addWidget(self.trash_bin)
-        self._top_layout.addSpacing(4)
+        # Bottom action buttons in a vertical column
+        bottom_row = QVBoxLayout()
+        bottom_row.setSpacing(6)
+        bottom_row.setContentsMargins(0, 0, 0, 0)
 
-        nodes_col = QVBoxLayout()
-        nodes_col.setSpacing(6)
-        nodes_col.setContentsMargins(0, 0, 0, 0)
-        nodes_col.addWidget(self._make_node_button(_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), tooltip=_("Add LLM Node")))
-        nodes_col.addWidget(self._make_node_button(_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), tooltip=_("Add Chain Import Node")))
-        nodes_col.addWidget(self._make_node_button(_("Code"), "code", CODE_NODE_COLOR, lambda: self.graph_view.add_code_node(), tooltip=_("Add Code Node")))
-        nodes_col.addWidget(self._make_node_button(_("Context"), "context", CONTEXT_NODE_COLOR, lambda: self.graph_view.add_context_node(), tooltip=_("Add Context Node")))
-        nodes_col.addWidget(self._make_node_button(_("TTS"), "tts", TTS_COLOR, lambda: self.graph_view.add_tts_node(), tooltip=_("Add TTS Node")))
-        nodes_col.addWidget(self._make_node_button(_("Cond"), "conditional", CONDITIONAL_COLOR, lambda: self.graph_view.add_conditional_node(), tooltip=_("Add Conditional Node")))
-        self._top_layout.addLayout(nodes_col)
-        content_layout.addWidget(top_cluster)
+        btn_specs = [
+            (_("Scheduler"), OutlineIcon.CALENDAR, self.scheduler_requested),
+            (_("Agent Mode"), OutlineIcon.USER, self.agent_mode_requested),
+            (_("AI Settings"), OutlineIcon.SETTINGS, self.ai_settings_requested),
+        ]
+        for label, icon_enum, signal in btn_specs:
+            btn = QPushButton(label)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFixedHeight(32)
+            try:
+                if TablerIcons and icon_enum is not None:
+                    ico = TablerIcons.load(icon_enum, size=16, color='#00E0B8').toqpixmap()
+                    btn.setIcon(QIcon(ico))
+                    btn.setIconSize(QSize(16, 16))
+            except Exception:
+                pass
+            btn.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background-color: {BLOCK_COLOR};
+                    color: {TEXT_COLOR};
+                    border: 1px solid #1AFFFFFF;
+                    border-radius: 8px;
+                    font-weight: bold;
+                    font-size: 11px;
+                    padding: 2px 4px;
+                }}
+                QPushButton:hover {{
+                    background-color: {BLOCK_HOVER};
+                    border: 1px solid {ACCENT_COLOR};
+                }}
+                QPushButton:pressed {{
+                    background-color: {ACCENT_COLOR};
+                    color: {DARK_GREY};
+                }}
+                """
+            )
+            btn.clicked.connect(signal.emit)
+            bottom_row.addWidget(btn)
 
-        # Scheduler button at the bottom
-        content_layout.addStretch()
-        sched_btn = QPushButton(_("Scheduler"))
-        sched_btn.setCursor(Qt.PointingHandCursor)
-        sched_btn.setFixedHeight(36)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            ico = TablerIcons.load(OutlineIcon.CALENDAR, size=18, color='#00E0B8').toqpixmap()
-            sched_btn.setIcon(QIcon(ico))
-            sched_btn.setIconSize(QSize(18, 18))
-        except Exception:
-            pass
-        sched_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {BLOCK_HOVER};
-                border: 1px solid {ACCENT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
-            }}
-            """
-        )
-        sched_btn.clicked.connect(self.scheduler_requested.emit)
-        content_layout.addWidget(sched_btn)
-
-        # AI Settings button below scheduler
-        ai_btn = QPushButton(_("AI Settings"))
-        ai_btn.setCursor(Qt.PointingHandCursor)
-        ai_btn.setFixedHeight(36)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            ico = TablerIcons.load(OutlineIcon.SETTINGS, size=18, color='#00E0B8').toqpixmap()
-            ai_btn.setIcon(QIcon(ico))
-            ai_btn.setIconSize(QSize(18, 18))
-        except Exception:
-            pass
-        ai_btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 4px;
-            }}
-            QPushButton:hover {{
-                background-color: {BLOCK_HOVER};
-                border: 1px solid {ACCENT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
-            }}
-            """
-        )
-        ai_btn.clicked.connect(self.ai_settings_requested.emit)
-        content_layout.addWidget(ai_btn)
-
-        content_layout.addSpacing(8)
-        try:
-            content_layout.setStretch(0, 1)
-        except Exception:
-            pass
+        content_layout.addLayout(bottom_row)
 
         main_layout.addWidget(self._content_frame)
 
@@ -1131,7 +1399,7 @@ class CollapsibleToolbar(QWidget):
         self._toggle_btn_nodes.setFixedSize(24, 28)
         self._toggle_btn_nodes.setStyleSheet(
             f"QToolButton {{ background-color: transparent; border: none; }}"
-            f"QToolButton:hover {{ background-color: rgba(255,255,255,0.06); border-radius: 4px; }}"
+            f"QToolButton:hover {{ background-color: #0FFFFFFF; border-radius: 4px; }}"
         )
         self._toggle_btn_nodes.clicked.connect(self._toggle_nodes_toolbar)
         
@@ -1179,6 +1447,7 @@ class CollapsibleToolbar(QWidget):
 
     def _on_expand_finished(self):
         self.setMinimumWidth(160)
+        self.setMaximumWidth(16777215)  # clear fixed max so splitter can resize
         QTimer.singleShot(0, self._position_nodes_toggle)
 
 
@@ -1188,6 +1457,31 @@ class CollapsibleToolbar(QWidget):
 
     def _position_nodes_toggle(self):
         # Position the button relative to the toolbar's position on the screen
+        #
+        # Stale-object guard: this slot is scheduled via QTimer.singleShot(0
+        # and 250ms) and can fire after the widget tree was already destroyed
+        # (window closed, test teardown).  Calling into a deleted C++ widget
+        # raises a NATIVE access violation (not a catchable RuntimeError), so
+        # bail out via sip before touching anything Qt-side.
+        try:
+            try:
+                from PyQt5 import sip as _sip
+            except Exception:
+                import sip as _sip  # type: ignore
+            _gv = getattr(self, 'graph_view', None)
+            _btn = getattr(self, '_toggle_btn_nodes', None)
+            if _gv is None or _btn is None:
+                return
+            if _sip.isdeleted(self) or _sip.isdeleted(_gv) or _sip.isdeleted(_btn):
+                return
+            # A toolbar whose window is already gone (test teardown, closed
+            # main window) is not visible — never map coordinates for it:
+            # Qt crashes natively mapping to a destroyed native window even
+            # when the wrappers are not flagged deleted.
+            if not self.isVisible():
+                return
+        except Exception:
+            return
         if hasattr(self, '_toggle_btn_nodes') and self._toggle_btn_nodes:
             try:
                 # Map our (0,0) to the parent (graph_view)
@@ -1219,10 +1513,10 @@ class CollapsibleToolbar(QWidget):
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
         btn = DraggableButton(label, node_type, color, click_handler, self)
-        icon = get_node_icon(node_type, 26)
+        icon = get_node_icon(node_type, 22)
         try:
             btn.setIcon(icon)
-            btn.setIconSize(QSize(26, 26))
+            btn.setIconSize(QSize(22, 22))
         except Exception:
             pass
         if tooltip:

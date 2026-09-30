@@ -72,7 +72,7 @@ class SchedulerService:
             schedule['next_run'] = self._compute_next_run(schedule)
             self._schedules[sid] = schedule
             self._save()
-            return self._with_next_run_str(schedule.copy())
+        return self._with_next_run_str(schedule.copy())
 
     def update_schedule(self, schedule: Dict) -> Dict:
         sid = schedule.get('id')
@@ -87,7 +87,7 @@ class SchedulerService:
             new_sched['next_run'] = self._compute_next_run(new_sched)
             self._schedules[sid] = new_sched
             self._save()
-            return self._with_next_run_str(new_sched.copy())
+        return self._with_next_run_str(new_sched.copy())
 
     def remove_schedule(self, schedule_id: str):
         with self._lock:
@@ -115,6 +115,32 @@ class SchedulerService:
             # After manual run, advance next_run for recurring schedules
             schedule['next_run'] = self._compute_next_run(schedule, from_time=datetime.now())
             self._save()
+
+    def run_chain_now(self, chain_path: str, ask_user_callback=None,
+                      stop_flag=None, on_complete=None):
+        """Execute *chain_path* immediately, in-process (manual / web playback).
+
+        Reuses the schedule launcher so sandbox overrides, stop handling and
+        background threading behave identically to a scheduled run.  The
+        caller may override three things on the schedule dict:
+
+        ``ask_user_callback`` — where an Input node's question goes.  Without
+        it the node falls back to a desktop dialog, which is wrong for a run
+        the user started from the phone.
+        ``stop_flag`` — the caller's own abort flag (the phone's Stop button),
+        instead of the global ESC monitor alone.
+        ``on_complete`` — fired once when execution ends, success or failure,
+        so the caller can clear its "running" state.
+        """
+        if not chain_path:
+            raise ValueError('chain_path required')
+        self._launch_chain({
+            'chain_path': chain_path,
+            'id': f'manual-{uuid.uuid4().hex[:8]}',
+            'ask_user_callback': ask_user_callback,
+            'stop_flag': stop_flag,
+            'on_complete': on_complete,
+        })
 
     # ----------------------- Internal Methods ----------------------
     def _loop(self):
@@ -255,13 +281,18 @@ class SchedulerService:
             """Run the chain in a background thread, matching manual playback flow."""
             try:
                 logger.info(f"[Scheduler] Starting in-process chain execution: {chain_path}")
+                try:
+                    from player.agentic_ops import run_memory
+                    run_memory.record_schedule(schedule_id, chain_path, 'fired')
+                except Exception:
+                    pass
 
                 # Load chain config
                 with open(chain_path, 'r', encoding='utf-8') as f:
                     chain_config = json.load(f)
 
                 # Import player modules (same as main_window.py execute_chain_config)
-                from player.multi_sequence_player import MultiSequencePlayer
+                from player.multi_sequence_player import play_chain_with_tailcalls
                 from player.keyboard_monitor import start_global_monitoring, stop_global_monitoring, create_stop_flag
 
                 # Clear JSON cache for fresh execution
@@ -271,11 +302,11 @@ class SchedulerService:
                 except Exception:
                     pass
 
-                # Create the player
-                player = MultiSequencePlayer(chain_config, chain_path)
-
-                # Apply sandbox context if configured
-                if run_in_sandbox:
+                # Apply sandbox context to every constructed player (including
+                # self-callback handoff rebuilds)
+                def _apply_sandbox(player):
+                    if not run_in_sandbox:
+                        return
                     sandbox_ctx = {
                         "sandboxed": True,
                         "show_window": show_sandbox_window,
@@ -288,12 +319,28 @@ class SchedulerService:
                         player.sequence_executor.global_app_context_override = sandbox_ctx
                     logger.info(f"[Scheduler] Sandbox mode enabled for chain. Show window: {show_sandbox_window}")
 
-                # Start ESC key monitoring
+                # Start ESC key monitoring (scheduled runs: the global flag
+                # is the only abort source; a caller-run chain supplies its
+                # own stop_flag and/or ask surface instead).
                 start_global_monitoring()
-                stop_flag = create_stop_flag()
+                _ask_cb = schedule.get('ask_user_callback')
+                stop_flag = schedule.get('stop_flag') or create_stop_flag()
+                if _ask_cb is None:
+                    # No caller surface: Input nodes fall back to the desktop
+                    # prompt, which ask_text marshals to the GUI thread.
+                    logger.info(
+                        "[Scheduler] No ask_user_callback — Input nodes will "
+                        "prompt on the desktop"
+                    )
 
                 try:
-                    result = player.play_chain(stop_flag=stop_flag)
+                    # Self-callback handoffs are followed in a flat loop
+                    result, _player = play_chain_with_tailcalls(
+                        chain_path, stop_flag=stop_flag,
+                        ask_user_callback=_ask_cb,
+                        player_setup_callback=_apply_sandbox,
+                        run_source="schedule",
+                    )
                     logger.info(f"[Scheduler] Chain execution completed with result: {result}")
                 finally:
                     stop_global_monitoring()
@@ -306,6 +353,17 @@ class SchedulerService:
                 # Always remove from running set when done
                 with self._lock:
                     self._running_schedules.discard(schedule_id)
+                try:
+                    from player.agentic_ops import run_memory
+                    run_memory.record_schedule(schedule_id, chain_path, 'completed')
+                except Exception:
+                    pass
+                _done = schedule.get('on_complete')
+                if _done is not None:
+                    try:
+                        _done()
+                    except Exception:
+                        logger.exception("[Scheduler] on_complete callback failed")
 
         # Launch in a background thread (non-blocking, same as manual playback)
         t = threading.Thread(target=_execute, name=f"SchedulerChain-{schedule_id}", daemon=True)

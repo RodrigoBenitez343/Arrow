@@ -1,4 +1,5 @@
-from ...config import logger
+import logging
+logger = logging.getLogger(__name__)
 
 class WorkflowNavigator:
     """Navigates through workflow graphs and finds nodes"""
@@ -31,7 +32,7 @@ class WorkflowNavigator:
         
         # If no node without inputs found, default to first sequence if available
         for node_id, node_data in self.workflow_graph.items():
-            if node_data['type'] == 'sequence':
+            if node_data['type'] in ('sequence', 'web_sequence'):
                 logger.info("No clear starting node found, defaulting to first sequence")
                 return node_id
         
@@ -58,7 +59,7 @@ class WorkflowNavigator:
         # Get the current node ID from the workflow graph
         current_node_id = None
         for node_id, node_data in self.workflow_graph.items():
-            if (node_data['type'] == 'sequence' and 
+            if (node_data['type'] in ('sequence', 'web_sequence') and 
                 node_data['index'] == current_node['index']):
                 current_node_id = node_id
                 break
@@ -92,7 +93,7 @@ class WorkflowNavigator:
         
         # Find sequence with next index
         for node_id, node_data in self.workflow_graph.items():
-            if (node_data['type'] == 'sequence' and 
+            if (node_data['type'] in ('sequence', 'web_sequence') and 
                 node_data.get('index') == next_index):
                 logger.info(f"No connections found, proceeding to next sequence: {node_id}")
                 return node_id

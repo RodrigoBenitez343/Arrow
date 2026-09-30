@@ -1,3 +1,4 @@
+import json
 import os
 from NodeGraphQt import BaseNode
 from .base_node import _add_multi_input
@@ -6,6 +7,7 @@ from ..constants import (
     DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
+    PORT_FALSE_COLOR,
     UNIVERSAL_PORT_TYPE
 )
 
@@ -39,17 +41,19 @@ class CodeNode(BaseNode):
         # Port color mapping
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        err_rgb = tuple(int(PORT_FALSE_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
         # Inputs
         # Main execution trigger / input data
-        in_port = _add_multi_input(self, 'input', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
+        in_port = _add_multi_input(self, 'input', in_rgb, True, data_type=UNIVERSAL_PORT_TYPE)
         
         # Outputs
-        out_port = self.add_output('output', color=out_rgb, display_name=False, multi_output=True)
-        # out_port.model.type_ = UNIVERSAL_PORT_TYPE
+        out_port = self.add_output('output', color=out_rgb, display_name=True, multi_output=True)
+        # Error output port (visible counterpart of the executor's error routing)
+        err_port = self.add_output('error', color=err_rgb, display_name=True)
         
         # Configure multi-connection
-        for p in [in_port, out_port]:
+        for p in [in_port, out_port, err_port]:
             try:
                 if hasattr(p, 'set_multi_connection'):
                     p.set_multi_connection(True)
@@ -70,11 +74,42 @@ class CodeNode(BaseNode):
         # Llama.cpp support for code generation
         self.create_property('use_llamacpp', 'false')
         self.create_property('llamacpp_model_path', '')
-        self.create_property('llamacpp_gpu_layers', '35')
-        self.create_property('llamacpp_threads', '8')
+        self.create_property('llamacpp_gpu_layers', '0')
+        self.create_property('llamacpp_threads', '-1')
+        # Dependency management
+        self.create_property('dependencies', '[]')
+        # Continuous memory (conversation history)
+        self.create_property('memory_context', '[]')
+        # Custom IO port declarations (per-instance var table)
+        self.create_property('input_vars', '[]')   # JSON: [{"name": "...", "type": "string"}, ...]
+        self.create_property('output_vars', '[]')  # JSON: [{"name": "...", "type": "string"}, ...]
+        
+        # Track custom port names for cleanup on rebuild
+        self._custom_input_ports = []
+        self._custom_output_ports = []
             
     def get_code_config(self):
         """Get the configuration for this node"""
+        deps_raw = self.get_property('dependencies') or '[]'
+        try:
+            dependencies = json.loads(deps_raw) if isinstance(deps_raw, str) else []
+        except Exception:
+            dependencies = []
+        mem_raw = self.get_property('memory_context') or '[]'
+        try:
+            memory_context = json.loads(mem_raw) if isinstance(mem_raw, str) else []
+        except Exception:
+            memory_context = []
+        iv_raw = self.get_property('input_vars') or '[]'
+        try:
+            input_vars = json.loads(iv_raw) if isinstance(iv_raw, str) else []
+        except Exception:
+            input_vars = []
+        ov_raw = self.get_property('output_vars') or '[]'
+        try:
+            output_vars = json.loads(ov_raw) if isinstance(ov_raw, str) else []
+        except Exception:
+            output_vars = []
         return {
             'code': self.get_property('code'),
             'file_path': self.get_property('file_path'),
@@ -87,9 +122,72 @@ class CodeNode(BaseNode):
             # Llama.cpp config
             'use_llamacpp': self.get_property('use_llamacpp') == 'true',
             'llamacpp_model_path': self.get_property('llamacpp_model_path') or '',
-            'llamacpp_gpu_layers': int(self.get_property('llamacpp_gpu_layers') or 35),
-            'llamacpp_threads': int(self.get_property('llamacpp_threads') or 8)
+            'llamacpp_gpu_layers': int(self.get_property('llamacpp_gpu_layers') or 0),
+            'llamacpp_threads': int(self.get_property('llamacpp_threads') or -1),
+            # New fields
+            'dependencies': dependencies,
+            'memory_context': memory_context,
+            'input_vars': input_vars,
+            'output_vars': output_vars,
         }
+
+    def rebuild_ports(self):
+        """Rebuild custom IO ports from input_vars/output_vars properties."""
+        # Remove old custom input ports
+        for name in self._custom_input_ports:
+            try:
+                self.delete_input(name)
+            except Exception:
+                pass
+        self._custom_input_ports = []
+
+        # Remove old custom output ports (keep built-in 'output' and 'error')
+        for name in self._custom_output_ports:
+            try:
+                self.delete_output(name)
+            except Exception:
+                pass
+        self._custom_output_ports = []
+
+        # Read current declarations
+        try:
+            input_vars = json.loads(self.get_property('input_vars') or '[]')
+        except Exception:
+            input_vars = []
+        try:
+            output_vars = json.loads(self.get_property('output_vars') or '[]')
+        except Exception:
+            output_vars = []
+
+        in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+        out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
+
+        # Create custom input ports
+        for iv in input_vars:
+            name = iv.get('name', '')
+            if name and name not in ('input', 'args', 'code'):
+                try:
+                    p = self.add_input(name, color=in_rgb, display_name=True)
+                    try:
+                        if hasattr(p, 'set_multi_connection'):
+                            p.set_multi_connection(True)
+                        else:
+                            setattr(p, '_multi_connection', True)
+                    except Exception:
+                        pass
+                    self._custom_input_ports.append(name)
+                except Exception:
+                    pass
+
+        # Create custom output ports
+        for ov in output_vars:
+            name = ov.get('name', '')
+            if name and name not in ('output', 'error'):
+                try:
+                    p = self.add_output(name, color=out_rgb, display_name=True, multi_output=True)
+                    self._custom_output_ports.append(name)
+                except Exception:
+                    pass
 
     def execute_code(self, input_data=None, args=None, runtime_code=None):
         """

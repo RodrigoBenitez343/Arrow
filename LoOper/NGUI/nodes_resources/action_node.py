@@ -35,8 +35,8 @@ class ActionNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
 
-        in_port = _add_multi_input(self, 'input', in_rgb, False)
-        out_port = self.add_output('output', color=out_rgb, display_name=False)
+        in_port = _add_multi_input(self, 'input', in_rgb, True)
+        out_port = self.add_output('output', color=out_rgb, display_name=True)
         try:
             in_port.set_multi_connection(True)
         except Exception:

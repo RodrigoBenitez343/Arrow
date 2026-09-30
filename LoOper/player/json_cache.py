@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # json_cache.py
 """
 JSON caching system for LoOper to eliminate redundant file loading.
@@ -9,7 +11,22 @@ import os
 import sys
 import time
 from typing import Dict, Any, Optional, Set
-from .config import logger
+
+
+def _is_sequence_shape(path: str) -> bool:
+    """Return True when the JSON file at *path* has sequence shape.
+
+    A valid sequence file carries an ``actions`` list.  Chain files
+    (``chains/*.json``) carry chain-only fields and no ``actions`` — they
+    must never be accepted as sequences.  This check prevents the
+    chains/CLOSE.json-vs-sequences/CLOSE.json collision during preload.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("actions"), list)
 
 
 class JSONCache:
@@ -266,11 +283,32 @@ class JSONCache:
         exe_dir = None
         if getattr(sys, 'frozen', False):
             exe_dir = os.path.dirname(sys.executable)
+        _meipass = getattr(sys, '_MEIPASS', None)
         
         # Try multiple path resolution strategies
         looper_sequences = os.path.join(os.getcwd(), 'LoOper', 'sequences')
 
         possible_paths = [sequence_file]  # Original path (may be absolute)
+
+        # Frozen builds: bundled sequences live under _MEIPASS or next to
+        # the exe — search THOSE FIRST (with shape validation at selection
+        # time) so a chain-shaped chains/<name>.json can never win over
+        # the real sequence file.
+        if is_bare_filename:
+            _frozen_seq_candidates = []
+            if exe_dir:
+                _frozen_seq_candidates.extend([
+                    os.path.join(exe_dir, 'LoOper', 'sequences', sequence_file),
+                    os.path.join(exe_dir, '_internal', 'LoOper', 'sequences', sequence_file),
+                    os.path.join(exe_dir, '_internal', 'sequences', sequence_file),
+                    os.path.join(exe_dir, 'sequences', sequence_file),
+                ])
+            if _meipass:
+                _frozen_seq_candidates.extend([
+                    os.path.join(_meipass, 'LoOper', 'sequences', sequence_file),
+                    os.path.join(_meipass, 'sequences', sequence_file),
+                ])
+            possible_paths = _frozen_seq_candidates + possible_paths
 
         if is_bare_filename:
             possible_paths.extend([
@@ -299,6 +337,17 @@ class JSONCache:
             possible_paths.extend([
                 os.path.join(exe_dir, sequence_file),
                 os.path.join(exe_dir, 'sequences', sequence_file),
+            ])
+
+        # One-file frozen build: bundled data is extracted to sys._MEIPASS
+        # (a temp dir), NOT next to the exe.  Exported agents bundle
+        # sequences under _MEIPASS/LoOper/sequences, so search there too.
+        _meipass = getattr(sys, '_MEIPASS', None)
+        if _meipass:
+            possible_paths.extend([
+                os.path.join(_meipass, sequence_file),
+                os.path.join(_meipass, 'sequences', sequence_file),
+                os.path.join(_meipass, 'LoOper', 'sequences', sequence_file),
             ])
         possible_paths.append(os.path.join(os.getcwd(), 'LoOper', 'sequences', sequence_file))
         
@@ -329,10 +378,15 @@ class JSONCache:
                     os.path.join(looper_sequences, json_name),
                     os.path.join(os.getcwd(), 'LoOper', 'sequences', json_name),
                 ])
-            if exe_dir:
+            if exe_dir and is_bare_filename:
                 possible_paths.extend([
-                    os.path.join(exe_dir, json_name),
+                    os.path.join(exe_dir, 'LoOper', 'sequences', json_name),
                     os.path.join(exe_dir, 'sequences', json_name),
+                ])
+            if _meipass and is_bare_filename:
+                possible_paths.extend([
+                    os.path.join(_meipass, 'LoOper', 'sequences', json_name),
+                    os.path.join(_meipass, 'sequences', json_name),
                 ])
         nested_sequences = os.path.join(os.getcwd(), 'sequences', 'sequences')
         possible_paths.extend([
@@ -347,12 +401,19 @@ class JSONCache:
                 os.path.join(nested_exe, sequence_file + '.json') if not sequence_file.endswith('.json') else os.path.join(nested_exe, sequence_file),
             ])
         
-        # Find the first existing file
+        # Find the first existing file with SEQUENCE SHAPE.  A file that
+        # exists but is chain-shaped (e.g. chains/CLOSE.json with no
+        # 'actions' list) is never accepted as a sequence — the search
+        # continues so the real sequences/CLOSE.json wins.
         for path in possible_paths:
             if os.path.exists(path):
-                resolved_path = os.path.abspath(path)
-                self._path_cache[cache_key] = resolved_path
-                return resolved_path
+                if _is_sequence_shape(path):
+                    resolved_path = os.path.abspath(path)
+                    self._path_cache[cache_key] = resolved_path
+                    return resolved_path
+                logger.warning(
+                    f"Ignoring non-sequence file at {path} (chain-shaped JSON)"
+                )
         
         logger.error(f"Sequence file not found: '{original_seq_file}' (searched {len(possible_paths)} paths)")
         return None

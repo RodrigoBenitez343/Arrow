@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # validation_cache.py
 """
 Validation cache module for conditional fallback handler.
@@ -6,7 +8,6 @@ Handles caching of validation results with thread safety and screen change detec
 import threading
 import hashlib
 import time
-from ...config import logger
 
 
 class ValidationCache:

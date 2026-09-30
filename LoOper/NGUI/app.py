@@ -55,7 +55,7 @@ def main():
     QMenuBar {{
         background-color: {MEDIUM_GREY};
         color: {TEXT_COLOR};
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid #14FFFFFF;
         border-radius: 3px;
     }}
     
@@ -76,7 +76,7 @@ def main():
     QMenu {{
         background-color: {MEDIUM_GREY};
         color: {TEXT_COLOR};
-        border: 1px solid rgba(255, 255, 255, 0.08);
+        border: 1px solid #14FFFFFF;
         border-radius: 3px;
     }}
     

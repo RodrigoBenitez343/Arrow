@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # base_bot.py
 """
 Base automation bot class with core functionality.
@@ -14,9 +16,9 @@ pyautogui.FAILSAFE = False
 from numpy import random as np_random
 import random as py_random
 from datetime import datetime
-from .config import logger
 from .action_handlers import ActionHandlers
 from .screenshot_cleanup import get_cleanup_manager, register_temporal_screenshot
+from .execution_overlay_bus import bus as _exec_bus
 
 
 class SeleniumBot:
@@ -69,15 +71,28 @@ class SeleniumBot:
         Temporal screenshots are kept in-memory only (no disk write).
         Non-temporal screenshots are saved to the specified directory.
 
+        In sandboxed runs the screenshot is taken from the RDP agent so the
+        evidence/verification image shows the desktop the action affected.
+
         Args:
             directory (str): Directory where permanent screenshots will be saved.
             prefix (str): Filename prefix for the screenshot.
             is_temporal (bool): If True, screenshot is ephemeral (memory-only).
         """
+        agent_url = getattr(self, 'sandbox_agent_url', None)
+        screenshot = None
+        if agent_url:
+            try:
+                screenshot = self.action_handlers._get_screen_pil()
+            except Exception as e:
+                logger.warning(f"Agent screenshot failed ({e}); falling back to host capture")
+                screenshot = None
+
         if is_temporal:
             # Ephemeral mode: capture but don't save to disk
             try:
-                pyautogui.screenshot()
+                if screenshot is None:
+                    pyautogui.screenshot()
                 logger.debug(f"Temporal screenshot captured (in-memory): {prefix}")
                 return
             except Exception as e:
@@ -92,7 +107,8 @@ class SeleniumBot:
         filename = f"{prefix}_{timestamp}.png"
         path = os.path.join(directory, filename)
         try:
-            screenshot = pyautogui.screenshot()
+            if screenshot is None:
+                screenshot = pyautogui.screenshot()
             screenshot.save(path)
             logger.debug(f"Screenshot saved to {path}")
         except Exception as e:
@@ -123,18 +139,20 @@ class SeleniumBot:
             return None # Should not be reached if an exception is always raised.
         return wrapper
 
-    def human_mouse_move(self, x, y):
+    def _build_human_path(self, x, y, start=None):
         """
-        Moves the mouse cursor to a target coordinate (x, y) in a human-like, curved path.
-        This avoids straight, robotic mouse movements. It uses a quadratic Bézier curve.
-        OPTIMIZED: Reduced delays for faster movement.
+        Build the waypoints for a human-like, curved mouse path from *start*
+        (default: current cursor position) to (x, y), using a quadratic Bézier
+        curve plus Perlin noise. Returns the waypoint list.
 
-        Args:
-            x (int): The target x-coordinate.
-            y (int): The target y-coordinate.
+        The waypoints are used directly by the host path and are also sent to
+        the RDP sandbox agent so in-session cursor travel keeps the same
+        graceful, non-robotic feel as the direct path.
         """
-        logger.debug(f"Moving mouse to ({x}, {y})")
-        start_x, start_y = pyautogui.position()
+        if start is None:
+            start_x, start_y = pyautogui.position()
+        else:
+            start_x, start_y = start
         distance = math.hypot(x - start_x, y - start_y)
         ctrl_x = (start_x + x) / 2 + np_random.uniform(-distance/3, distance/3)
         ctrl_y = (start_y + y) / 2 + np_random.uniform(-distance/3, distance/3)
@@ -149,13 +167,43 @@ class SeleniumBot:
             bx += nfx * amp
             by += nfy * amp
             points.append((bx, by))
+        return points
+
+    def human_mouse_move(self, x, y):
+        """
+        Moves the mouse cursor to a target coordinate (x, y) in a human-like, curved path.
+        This avoids straight, robotic mouse movements. It uses a quadratic Bézier curve.
+        OPTIMIZED: Reduced delays for faster movement.
+
+        Args:
+            x (int): The target x-coordinate.
+            y (int): The target y-coordinate.
+        """
+        logger.debug(f"Moving mouse to ({x}, {y})")
+        start_x, start_y = pyautogui.position()
+        points = self._build_human_path(x, y, start=(start_x, start_y))
+        # Feed the execution overlay's cursor trail.  The waypoints are a ~1 ms
+        # burst, so an overlay that only polls pyautogui.position() would keep
+        # the endpoints and lose the path.
+        _exec_bus.add_trail(start_x, start_y)
         for point in points:
             pyautogui.moveTo(point[0], point[1], duration=0.0001)
+            _exec_bus.add_trail(point[0], point[1])
         pyautogui.moveTo(x, y, duration=0.001)
+        _exec_bus.add_trail(x, y)
+        # The destination is where the next click lands: name it so the overlay
+        # boxes the element about to be acted on (it does not follow the cursor).
+        _exec_bus.set_target(x, y)
         self.mouse_movement_history.append((start_x, start_y, x, y))
 
     def human_click(self, button='left', double=False):
         count = 2 if bool(double) else 1
+        # Pulse the execution overlay's click marker at the live position.
+        try:
+            _cx, _cy = pyautogui.position()
+            _exec_bus.add_click(_cx, _cy)
+        except Exception:
+            pass
         for i in range(count):
             dx = np_random.uniform(-1.5, 1.5)
             dy = np_random.uniform(-1.5, 1.5)
@@ -229,7 +277,10 @@ class SeleniumBot:
         if stop_flag and stop_flag():
             logger.info("Action execution stopped by user request")
             return True
-            
+
+        # Tell the execution overlay what is about to run ("what will be clicked next").
+        _exec_bus.set_action(f"{idx}: {action.get('type', 'action')}")
+
         # Get the delay before the action, or use a default random delay.
         delay = action.get('delay_before', np_random.uniform(0.001, 0.01))  # Reduced from 0.01-0.05
         logger.debug(f"Action {idx}: Waiting {delay:.2f}s before action")
@@ -254,6 +305,8 @@ class SeleniumBot:
                     return False  # Fallback was triggered
             elif action['type'] == 'move_to':
                 self.action_handlers.handle_move_to_action(idx, action, stop_flag)
+            elif action['type'] == 'relative_click':
+                self.action_handlers.handle_relative_click_action(idx, action, stop_flag)
             elif action['type'] == 'absolute_click':
                 self.action_handlers.handle_absolute_click_action(idx, action, stop_flag)
                     
@@ -263,23 +316,29 @@ class SeleniumBot:
             elif action['type'] == 'keystroke':
                 self.action_handlers.handle_keystroke_action(idx, action, stop_flag)
                 
+            elif action['type'] == 'key_event':
+                self.action_handlers.handle_key_event_action(idx, action, stop_flag)
+                
             elif action['type'] == 'scroll':
                 self.action_handlers.handle_scroll_action(idx, action, stop_flag)
                 
             elif action['type'] in ['clipboard', 'copy', 'paste', 'cut', 'select_all']:
                 self.action_handlers.handle_clipboard_action(idx, action)
                 
-            elif action['type'] in ['drag_start', 'drag_end', 'drag_drop']:
+            elif action['type'] in ['drag_start', 'drag_end', 'drag_drop', 'relative_drag_drop']:
                 self.action_handlers.handle_drag_actions(idx, action)
             
             # After a click action, add a very short random delay.
-            if action['type'] in ['click', 'double_click', 'ctrl_click', 'shift_click', 'absolute_click']:
+            if action['type'] in ['click', 'double_click', 'ctrl_click', 'shift_click', 'relative_click', 'absolute_click']:
                 self.random_delay(0.001, 0.01)  # Reduced from 0.01-0.05
 
             # After every successfully executed action, capture a screenshot of the entire screen
             try:
                 # Mark action screenshots as temporal since they're used for debugging/verification
-                self.take_screenshot(prefix=f"action_{idx}", is_temporal=True)
+                # key_event chords are skipped: a screenshot between a key press
+                # and its release would distort chord timing.
+                if action['type'] != 'key_event':
+                    self.take_screenshot(prefix=f"action_{idx}", is_temporal=True)
             except Exception as e:
                 logger.warning(f"Failed to capture screenshot after action {idx}: {e}")
                 

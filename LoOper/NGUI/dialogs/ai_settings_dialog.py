@@ -55,11 +55,11 @@ class APIServerThread(QThread):
                 del sys.modules["AI.api"]
 
             from AI.api import app
-            from AI.config_loader import load_ai_config
 
-            cfg = load_ai_config()
-            host = cfg.get("TAILSCALE_SERVER_IP", "localhost") or "localhost"
-            port = int(cfg.get("API_PORT", "8000"))
+            # Local-only API gateway; remote access now happens through
+            # Agent Mode (Tailscale QR) instead of a Tailscale-exposed API.
+            host = "127.0.0.1"
+            port = int(os.getenv("API_PORT", "8000"))
             import uvicorn
 
             # Safe logging configuration for frozen environments
@@ -213,39 +213,6 @@ class AISettingsDialog(ModernDialog):
         api_help_row.addWidget(self._make_help_button("sandboxing"))
         api_layout.addLayout(api_help_row)
 
-        # Remote API Configuration
-        remote_group = QGroupBox(_("Remote API Configuration"))
-        remote_layout = QFormLayout()
-
-        self.tailscale_ip_edit = QLineEdit()
-        self.tailscale_ip_edit.setPlaceholderText(_("e.g., 100.64.1.2 or localhost"))
-        remote_layout.addRow(_("Tailscale Server IP:"), self.tailscale_ip_edit)
-
-        self.api_port_edit = QSpinBox()
-        self.api_port_edit.setRange(1000, 65535)
-        self.api_port_edit.setValue(8000)
-        remote_layout.addRow(_("API Port:"), self.api_port_edit)
-
-        self.ollama_host_edit = QLineEdit()
-        self.ollama_host_edit.setPlaceholderText(_("e.g., localhost or 100.64.1.3"))
-        remote_layout.addRow(_("Ollama Host:"), self.ollama_host_edit)
-
-        self.ollama_port_edit = QSpinBox()
-        self.ollama_port_edit.setRange(1000, 65535)
-        self.ollama_port_edit.setValue(11434)
-        remote_layout.addRow(_("Ollama Port:"), self.ollama_port_edit)
-
-        # Test connection button
-        test_btn_layout = QHBoxLayout()
-        self.test_connection_btn = QPushButton(_("Test Connection"))
-        self.test_connection_btn.clicked.connect(self.test_connection)
-        test_btn_layout.addWidget(self.test_connection_btn)
-        test_btn_layout.addStretch()
-
-        remote_layout.addRow(test_btn_layout)
-        remote_group.setLayout(remote_layout)
-        api_layout.addWidget(remote_group)
-
         # Local API Server
         local_group = QGroupBox(_("Local API Server"))
         local_layout = QVBoxLayout()
@@ -255,6 +222,22 @@ class AISettingsDialog(ModernDialog):
         )
         info_label.setWordWrap(True)
         local_layout.addWidget(info_label)
+
+        local_form = QFormLayout()
+        self.api_port_edit = QSpinBox()
+        self.api_port_edit.setRange(1000, 65535)
+        self.api_port_edit.setValue(8000)
+        local_form.addRow(_("API Port:"), self.api_port_edit)
+
+        self.ollama_host_edit = QLineEdit()
+        self.ollama_host_edit.setPlaceholderText(_("e.g., localhost"))
+        local_form.addRow(_("Ollama Host:"), self.ollama_host_edit)
+
+        self.ollama_port_edit = QSpinBox()
+        self.ollama_port_edit.setRange(1000, 65535)
+        self.ollama_port_edit.setValue(11434)
+        local_form.addRow(_("Ollama Port:"), self.ollama_port_edit)
+        local_layout.addLayout(local_form)
 
         server_btn_layout = QHBoxLayout()
         self.start_server_btn = QPushButton(_("Start Local Server"))
@@ -285,6 +268,14 @@ class AISettingsDialog(ModernDialog):
         self.models_text.setReadOnly(True)
         status_layout.addWidget(QLabel(_("Available Models:")))
         status_layout.addWidget(self.models_text)
+
+        # Test connection button
+        test_btn_layout = QHBoxLayout()
+        self.test_connection_btn = QPushButton(_("Test Connection"))
+        self.test_connection_btn.clicked.connect(self.test_connection)
+        test_btn_layout.addWidget(self.test_connection_btn)
+        test_btn_layout.addStretch()
+        status_layout.addLayout(test_btn_layout)
 
         status_group.setLayout(status_layout)
         api_layout.addWidget(status_group)
@@ -361,7 +352,6 @@ class AISettingsDialog(ModernDialog):
 
             cfg = load_ai_config()
 
-            self.tailscale_ip_edit.setText(cfg.get("TAILSCALE_SERVER_IP", ""))
             self.api_port_edit.setValue(int(cfg.get("API_PORT", "8000")))
             self.ollama_host_edit.setText(cfg.get("OLLAMA_HOST", "localhost"))
             self.ollama_port_edit.setValue(int(cfg.get("OLLAMA_PORT", "11434")))
@@ -371,7 +361,6 @@ class AISettingsDialog(ModernDialog):
             )
         except Exception:
             # Fallback to environment variables
-            self.tailscale_ip_edit.setText(os.getenv("TAILSCALE_SERVER_IP", ""))
             self.api_port_edit.setValue(int(os.getenv("API_PORT", "8000")))
             self.ollama_host_edit.setText(os.getenv("OLLAMA_HOST", "localhost"))
             self.ollama_port_edit.setValue(int(os.getenv("OLLAMA_PORT", "11434")))
@@ -392,21 +381,28 @@ class AISettingsDialog(ModernDialog):
             if not os.path.exists(config_dir):
                 os.makedirs(config_dir)
 
-            config = {
-                "TAILSCALE_SERVER_IP": self.tailscale_ip_edit.text(),
+            # Merge into the existing file so unrelated keys (LLAMA_CPP,
+            # AGENT_TAILSCALE_IP) survive a save from this dialog.
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    config = json.load(f)
+            except Exception:
+                config = {}
+            config.update({
                 "API_PORT": str(self.api_port_edit.value()),
                 "OLLAMA_HOST": self.ollama_host_edit.text(),
                 "OLLAMA_PORT": str(self.ollama_port_edit.value()),
                 "API_TIMEOUT": str(self.timeout_edit.value()),
                 "AUTO_START_API": str(self.auto_start_checkbox.isChecked()).lower(),
-            }
+            })
 
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
 
-            # Set environment variables for current session
+            # Set environment variables for current session (flat string keys)
             for key, value in config.items():
-                os.environ[key] = value
+                if isinstance(value, str):
+                    os.environ[key] = value
 
             # After saving, refresh and cache models once using the configured API URL
             try:
@@ -441,13 +437,10 @@ class AISettingsDialog(ModernDialog):
             )
 
     def test_connection(self):
-        """Test connection to the API server"""
+        """Test connection to the local API server"""
         try:
-            tailscale_ip = (
-                self.tailscale_ip_edit.text() or "localhost"
-            )  # Default to localhost if empty
             port = self.api_port_edit.value()
-            url = f"http://{tailscale_ip}:{port}/health"
+            url = f"http://localhost:{port}/health"
 
             response = requests.get(url, timeout=10)
             response.raise_for_status()
@@ -475,13 +468,10 @@ class AISettingsDialog(ModernDialog):
     def check_api_status(self):
         """Check API status and update display"""
         try:
-            tailscale_ip = (
-                self.tailscale_ip_edit.text() or "localhost"
-            )  # Default to localhost if empty
             port = self.api_port_edit.value()
 
             # Check health
-            health_url = f"http://{tailscale_ip}:{port}/health"
+            health_url = f"http://localhost:{port}/health"
             health_response = requests.get(health_url, timeout=5)
             health_data = health_response.json()
 
@@ -489,7 +479,7 @@ class AISettingsDialog(ModernDialog):
                 self.status_label.setText("✅ API server is healthy and accessible")
 
                 # Get models
-                models_url = f"http://{tailscale_ip}:{port}/models"
+                models_url = f"http://localhost:{port}/models"
                 models_response = requests.get(models_url, timeout=5)
                 models_data = models_response.json()
 

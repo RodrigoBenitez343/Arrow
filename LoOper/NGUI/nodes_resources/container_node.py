@@ -42,10 +42,10 @@ class ContainerNode(BaseNode):
 
         # Inputs
         # Main execution trigger / input data
-        in_port = _add_multi_input(self, 'input', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
+        in_port = _add_multi_input(self, 'input', in_rgb, True, data_type=UNIVERSAL_PORT_TYPE)
         
         # Outputs
-        out_port = self.add_output('output', color=out_rgb, display_name=False, multi_output=True)
+        out_port = self.add_output('output', color=out_rgb, display_name=True, multi_output=True)
         
         # Configure multi-connection
         for p in [in_port, out_port]:

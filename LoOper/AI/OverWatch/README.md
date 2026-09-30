@@ -1,14 +1,12 @@
-# OverWatch - Ollama API with ComoRAG Integration
+# OverWatch - Ollama API
 
-🔍 **OverWatch** is a comprehensive Ollama API server with FastAPI and ComoRAG (Cognitive-Inspired Memory-Organized RAG) integration for advanced language model inference and reasoning.
+🔍 **OverWatch** is a comprehensive Ollama API server with FastAPI integration for advanced language model inference.
 
 ## Features
 
 - **🚀 Ollama Integration**: High-performance inference for local language models
-- **🧠 ComoRAG System**: Advanced reasoning with dynamic memory workspace
-- **🖥️ PyQt5 GUI**: User-friendly interface for model management and reasoning
+- **🖥️ PyQt5 GUI**: User-friendly interface for model management
 - **🌐 FastAPI Server**: RESTful API with automatic documentation
-- **🔗 Tailscale Support**: Secure LAN networking for remote access
 - **⚙️ Flexible Configuration**: JSON-based settings with environment variable support
 - **📊 Real-time Monitoring**: Memory usage, model status, and system health
 
@@ -22,7 +20,6 @@ OverWatch/
 ├── api/                    # API modules
 │   ├── __init__.py
 │   ├── ollama_engine.py   # Ollama model management
-│   ├── comorag_engine.py  # ComoRAG reasoning engine
 │   └── api_client.py      # API client for GUI
 ├── config/                 # Configuration management
 │   ├── __init__.py
@@ -125,8 +122,6 @@ The FastAPI server provides the following endpoints:
 - **List Models**: `GET /models`
 - **Chat Completion**: `POST /chat`
 - **Text Generation**: `POST /generate`
-- **ComoRAG Reasoning**: `POST /comorag/reason`
-- **Memory Management**: `GET/DELETE /comorag/memory`
 
 #### Example API Usage
 
@@ -147,14 +142,6 @@ chat_data = {
 }
 response = requests.post("http://localhost:8000/chat", json=chat_data)
 print(response.json())
-
-# ComoRAG reasoning
-reasoning_data = {
-    "query": "Explain the relationship between AI and machine learning",
-    "max_cycles": 5
-}
-response = requests.post("http://localhost:8000/comorag/reason", json=reasoning_data)
-print(response.json())
 ```
 
 ### GUI Application
@@ -162,10 +149,8 @@ print(response.json())
 The PyQt5 GUI provides:
 
 1. **Model Management**: Load/unload HuggingFace models
-2. **Reasoning Interface**: Interactive ComoRAG reasoning
-3. **Memory Viewer**: Inspect ComoRAG memory state
-4. **System Logs**: Real-time application logging
-5. **Settings**: Configure API and model parameters
+2. **System Logs**: Real-time application logging
+3. **Settings**: Configure API and model parameters
 
 ## Configuration
 
@@ -184,16 +169,6 @@ Edit `config/config.json` to customize settings:
     "gpu_memory_utilization": 0.8,
     "max_model_len": 4096,
     "default_models": []
-  },
-  "comorag": {
-    "memory_size": 1000,
-    "max_reasoning_cycles": 5,
-    "embedding_model": "all-MiniLM-L6-v2"
-  },
-  "tailscale": {
-    "enabled": false,
-    "server_ip": "",
-    "api_port": 8000
   }
 }
 ```
@@ -206,64 +181,7 @@ Override settings with environment variables:
 export OVERWATCH_API_HOST="127.0.0.1"
 export OVERWATCH_API_PORT="8080"
 export OVERWATCH_VLLM_GPU_MEMORY="0.9"
-export TAILSCALE_SERVER_IP="100.64.0.1"
 ```
-
-## ComoRAG (Cognitive-Inspired Memory-Organized RAG)
-
-ComoRAG implements advanced reasoning capabilities based on the research paper: [https://arxiv.org/abs/2508.10419](https://arxiv.org/abs/2508.10419)
-
-### Key Features
-
-- **Dynamic Memory Workspace**: Maintains context across reasoning cycles
-- **Multi-Cycle Reasoning**: Iterative query refinement and evidence gathering
-- **Confidence Scoring**: Evaluates reasoning quality
-- **Memory Consolidation**: Efficient storage and retrieval of reasoning artifacts
-
-### Usage Example
-
-```python
-from api.api_client import OverWatchAPIClient
-
-client = OverWatchAPIClient("http://localhost:8000")
-
-# Perform ComoRAG reasoning
-result = client.comorag_reason(
-    query="How does climate change affect ocean ecosystems?",
-    context="Focus on marine biodiversity and food chains",
-    max_cycles=7
-)
-
-print(f"Result: {result['result']}")
-print(f"Confidence: {result['confidence']}")
-print(f"Reasoning cycles: {len(result['reasoning_cycles'])}")
-```
-
-## Tailscale Integration
-
-For secure remote access:
-
-1. **Enable Tailscale in configuration**:
-   ```json
-   {
-     "tailscale": {
-       "enabled": true,
-       "server_ip": "100.64.0.1",
-       "api_port": 8000
-     }
-   }
-   ```
-
-2. **Set environment variables**:
-   ```bash
-   export TAILSCALE_SERVER_IP="your-tailscale-ip"
-   export TAILSCALE_API_PORT="8000"
-   ```
-
-3. **Access remotely**:
-   ```bash
-   curl http://your-tailscale-ip:8000/health
-   ```
 
 ## Advanced Usage
 

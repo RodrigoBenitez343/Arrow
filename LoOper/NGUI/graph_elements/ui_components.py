@@ -5,26 +5,7 @@ from PyQt5.QtGui import QFont
 from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, CENTER_BG, GRAPH_PLANE)
 from ..widgets.collapsible_toolbar import CollapsibleToolbar
 
-# Configure logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Create file handler
-file_handler = logging.FileHandler('graphui_debug.log')
-file_handler.setLevel(logging.DEBUG)
-
-# Create console handler
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-
-# Create formatter
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-console_handler.setFormatter(formatter)
-
-# Add handlers to logger
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
 
 
 class UIComponents:
@@ -116,6 +97,9 @@ class UIComponents:
             center_container_layout.addWidget(actions_toolbar, 0)
             center_container_layout.addWidget(self.parent_widget.node_graph_widget, 1)
             splitter.addWidget(center_container)
+            # Expose the center column (graph's real estate, between the left/right
+            # bars) so the Code Node Studio can be hosted here and inherit its width.
+            self.parent_widget._center_layout = center_container_layout
             
             # Right-side collapsible toolbar (spans full height to the top)
             logger.debug("Creating right-side collapsible toolbar")

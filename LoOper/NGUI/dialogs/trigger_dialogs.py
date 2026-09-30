@@ -9,6 +9,9 @@ This module contains dialog classes for configuring various types of triggers:
 
 import os
 import time
+import json
+import logging
+import threading
 from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 from PyQt5.QtWidgets import (
@@ -20,6 +23,8 @@ from PyQt5.QtGui import QGuiApplication, QPainter, QColor, QCursor, QPen
 from ..constants import TEXT_COLOR
 from ..i18n import _
 
+logger = logging.getLogger(__name__)
+
 
 def _get_main_window_from_widget(widget):
     try:
@@ -27,6 +32,13 @@ def _get_main_window_from_widget(widget):
         while w is not None:
             parent = w.parent()
             if parent is None:
+                # If the topmost parent is a QDialog (not the real main window),
+                # search for the actual QMainWindow among top-level widgets.
+                from PyQt5.QtWidgets import QMainWindow, QDialog
+                if isinstance(w, QDialog):
+                    for tl in QApplication.topLevelWidgets():
+                        if isinstance(tl, QMainWindow):
+                            return tl
                 return w
             w = parent
     except Exception:
@@ -35,6 +47,14 @@ def _get_main_window_from_widget(widget):
         aw = QApplication.instance().activeWindow()
         if aw is not None:
             return aw
+    except Exception:
+        pass
+    # Last resort: search all top-level widgets for a QMainWindow
+    try:
+        from PyQt5.QtWidgets import QMainWindow
+        for tl in QApplication.topLevelWidgets():
+            if isinstance(tl, QMainWindow):
+                return tl
     except Exception:
         pass
     return None
@@ -903,18 +923,20 @@ class LayoutMatchConfigDialog(ModernDialog):
                 except Exception:
                     pass
                 try:
+                    accepted_after_capture = True
                     self.accept()
                 except Exception:
-                    pass
+                    accepted_after_capture = False
         finally:
-            try:
-                if self._capture_original_geo is not None:
-                    self.setGeometry(self._capture_original_geo)
-                self.show()
-                self.raise_()
-                self.activateWindow()
-            except Exception:
-                pass
+            if not accepted_after_capture:
+                try:
+                    if self._capture_original_geo is not None:
+                        self.setGeometry(self._capture_original_geo)
+                    self.show()
+                    self.raise_()
+                    self.activateWindow()
+                except Exception:
+                    pass
             try:
                 if self._main_window is not None:
                     self._main_window.showNormal()
@@ -1001,6 +1023,250 @@ class LayoutMatchConfigDialog(ModernDialog):
             }
 
 
+class ElementPickOverlay(QDialog):
+    """Full-screen desktop element picker (UI Automation).
+
+    Hovering spotlights the real element under the cursor - the same UI
+    Automation hit-test the recorder overlay uses - and a left click captures
+    its bounding box; ESC or right-click cancels.  The box is in device
+    (physical) pixels, the space ``capture_screen`` normalizes to, so the OCR
+    trigger can crop straight to it.
+
+    The overlay must be the window under the cursor to receive the pick click,
+    yet UI Automation must see THROUGH it to report the element beneath.
+    WS_EX_TRANSPARENT is therefore toggled on for just the duration of each
+    hit-test: UIA skips click-through windows (the recorder overlay relies on
+    the same behaviour).
+    """
+    picked = pyqtSignal(object)  # (l, t, r, b) device px, or None on cancel
+
+    _VK_ESCAPE = 0x1B
+    _GWL_EXSTYLE = -20
+    _WS_EX_TRANSPARENT = 0x20
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hit = None
+        self._done = False
+        self._dpr = 1.0
+        self._hwnd = None
+        self._kill = threading.Event()
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setCursor(Qt.CrossCursor)
+        self.setFocusPolicy(Qt.StrongFocus)
+        try:
+            self._dpr = float(QApplication.primaryScreen().devicePixelRatio()) or 1.0
+        except Exception:
+            self._dpr = 1.0
+        self._label = QLabel(self)
+        self._label.setStyleSheet(
+            "background:#00e0b8; color:#00201a; padding:1px 6px;"
+            "border-radius:3px; font:11px monospace;"
+        )
+        self._label.hide()
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._tick)
+        # Hit-testing runs on a worker thread so a slow or hung UI Automation
+        # provider can never freeze the picker (the recorder overlay does the
+        # same - ElementFromPoint on the GUI thread can stall for seconds).
+        self._worker = threading.Thread(target=self._loop, daemon=True)
+        try:
+            self.setGeometry(_get_virtual_desktop_geometry())
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------- lifecycle
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._done:
+            return
+        # winId() must be resolved on the GUI thread; the worker only reads it.
+        if self._hwnd is None:
+            try:
+                self._hwnd = int(self.winId())
+            except Exception:
+                self._hwnd = None
+            logger.info("Element picker opened")
+        self.raise_()
+        self.activateWindow()
+        self.setFocus(Qt.OtherFocusReason)
+        if not self._worker.is_alive():
+            self._worker.start()
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def _cleanup(self):
+        try:
+            self._timer.stop()
+        except Exception:
+            pass
+        self._kill.set()
+
+    def closeEvent(self, event):
+        self._done = True
+        self._cleanup()
+        super().closeEvent(event)
+
+    # ------------------------------------------------------------------ pick
+    def _tick(self):
+        # GUI side only: ESC and repaint.  No UI Automation here, so a slow
+        # provider can never block the event loop.
+        if self._done:
+            return
+        try:
+            import ctypes
+            if ctypes.windll.user32.GetAsyncKeyState(self._VK_ESCAPE) & 0x8000:
+                self._finish(None)
+                return
+        except Exception:
+            pass
+        self.update()
+
+    def _loop(self):
+        """Worker: poll the cursor and publish the UIA element under it."""
+        try:
+            import pyautogui
+        except Exception as exc:
+            logger.debug("Element picker: pyautogui unavailable: %s", exc)
+            return
+        try:
+            from ..widgets.recording_overlay import element_at
+        except Exception as exc:
+            logger.debug("Element picker: UI Automation unavailable: %s", exc)
+            element_at = None
+        last = None
+        while not self._kill.is_set():
+            try:
+                x, y = pyautogui.position()
+                xy = (int(x), int(y))
+            except Exception:
+                time.sleep(0.05)
+                continue
+            if xy != last:
+                last = xy
+                hit = self._element_under_cursor(*xy) if element_at is not None else None
+                self._hit = hit
+                if hit and hit.get("rect"):
+                    logger.debug("Element picker hover %s %s",
+                                 hit.get("rect"), hit.get("label"))
+            time.sleep(0.02)
+
+    def _element_under_cursor(self, x, y):
+        """UIA element at (x, y) with this overlay ignored (see class docstring).
+
+        Runs on the worker thread; the overlay HWND is resolved by the GUI
+        thread in showEvent (winId() is not thread-safe).
+        """
+        try:
+            from ..widgets.recording_overlay import element_at
+        except Exception:
+            return None
+        hwnd, saved, toggled = self._hwnd, 0, False
+        if hwnd is not None:
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                user32.GetWindowLongW.argtypes = (ctypes.c_void_p, ctypes.c_int)
+                user32.GetWindowLongW.restype = ctypes.c_long
+                user32.SetWindowLongW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_long)
+                user32.SetWindowLongW.restype = ctypes.c_long
+                saved = user32.GetWindowLongW(hwnd, self._GWL_EXSTYLE)
+                user32.SetWindowLongW(hwnd, self._GWL_EXSTYLE, saved | self._WS_EX_TRANSPARENT)
+                toggled = True
+            except Exception:
+                toggled = False
+        try:
+            return element_at(x, y)
+        finally:
+            if toggled:
+                try:
+                    import ctypes
+                    ctypes.windll.user32.SetWindowLongW(
+                        hwnd, self._GWL_EXSTYLE, saved)
+                except Exception:
+                    pass
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            # Use the worker's latest hit: never run UIA on the GUI thread.
+            hit = self._hit
+            if hit and hit.get("rect"):
+                l, t, r, b = hit["rect"]
+                self._finish((int(l), int(t), int(r), int(b)))
+            return
+        if event.button() == Qt.RightButton:
+            self._finish(None)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self._finish(None)
+            return
+        super().keyPressEvent(event)
+
+    def _finish(self, rect):
+        if self._done:
+            return
+        self._done = True
+        self._cleanup()
+        logger.info("Element picker %s: %s",
+                    "picked" if rect else "cancelled", rect)
+        self.picked.emit(rect)
+        self.accept()
+
+    # --------------------------------------------------------------- painting
+    def _to_logical(self, rect):
+        dpr = self._dpr or 1.0
+        l, t, r, b = rect
+        return (int(round(l / dpr)), int(round(t / dpr)),
+                int(round(r / dpr)), int(round(b / dpr)))
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        # A layered (translucent) window is click-through on fully transparent
+        # pixels, and the spotlight leaves the element area at alpha 0 - exactly
+        # where the user clicks to pick it.  A 1/255 base keeps every pixel
+        # hit-testable for the pick click while staying visually invisible.
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
+        dim = QColor(0, 0, 0, 110)
+        hit = self._hit
+        rect = None
+        if hit and hit.get("rect"):
+            l, t, r, b = self._to_logical(hit["rect"])
+            local = QRect(l - self.x(), t - self.y(), r - l, b - t)
+            if local.width() >= 2 and local.height() >= 2:
+                rect = local
+        if rect is None:
+            painter.fillRect(self.rect(), dim)
+            self._label.hide()
+            return
+        # Spotlight: dim everything except the element box, then border it.
+        w, h = self.width(), self.height()
+        painter.fillRect(QRect(0, 0, w, max(0, rect.top())), dim)
+        painter.fillRect(QRect(0, rect.bottom() + 1, w, max(0, h - rect.bottom() - 1)), dim)
+        painter.fillRect(QRect(0, rect.top(), max(0, rect.left()), rect.height()), dim)
+        painter.fillRect(QRect(rect.right() + 1, rect.top(),
+                               max(0, w - rect.right() - 1), rect.height()), dim)
+        pen = QPen(QColor(0, 224, 184, 255))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawRect(rect)
+        label = (hit.get("label") or "").strip()
+        if label:
+            self._label.setText(label)
+            self._label.adjustSize()
+            ly = rect.top() - self._label.height() - 2
+            if ly < 0:
+                ly = rect.bottom() + 2
+            self._label.move(max(0, rect.left()), ly)
+            self._label.show()
+        else:
+            self._label.hide()
+
+
 class OCRTriggerConfigDialog(ModernDialog):
     """Dialog for configuring OCR-based triggers"""
     
@@ -1009,6 +1275,10 @@ class OCRTriggerConfigDialog(ModernDialog):
         self.config = config
         self.setModal(True)
         self.resize(450, 350)
+        self._region = None            # [x, y, w, h] device px, or None = full screen
+        self._pick_in_progress = False
+        self._main_window = None
+        self._capture_original_geo = None
         self.setup_ui()
         if self.config:
             self.load_config()
@@ -1018,6 +1288,18 @@ class OCRTriggerConfigDialog(ModernDialog):
         self.target_text_entry.setText(self.config.get('target_text', ''))
         self.confidence_spin.setValue(self.config.get('confidence', 0.8))
         self.case_sensitive_check.setChecked(self.config.get('case_sensitive', False))
+        region = self.config.get('region')
+        if isinstance(region, str):
+            try:
+                region = json.loads(region)
+            except Exception:
+                region = None
+        if isinstance(region, (list, tuple)) and len(region) == 4:
+            try:
+                self._region = [int(v) for v in region]
+            except (TypeError, ValueError):
+                self._region = None
+        self._sync_area_ui()
     
     def setup_ui(self):
         """Setup the UI"""
@@ -1030,6 +1312,28 @@ class OCRTriggerConfigDialog(ModernDialog):
         self.target_text_entry = QLineEdit()
         text_layout.addWidget(self.target_text_entry)
         layout.addLayout(text_layout)
+
+        # Search area: whole screen (default) or a picked element's box, so OCR
+        # only reads the target's text instead of scanning the whole screen.
+        area_layout = QHBoxLayout()
+        area_layout.addWidget(QLabel(_("Search area:")))
+        self.area_combo = QComboBox()
+        self.area_combo.addItems([_("Whole screen"), _("Element")])
+        self.area_combo.currentIndexChanged.connect(self._on_area_changed)
+        area_layout.addWidget(self.area_combo)
+        area_layout.addStretch()
+        layout.addLayout(area_layout)
+
+        self.region_row = QWidget()
+        region_layout = QHBoxLayout(self.region_row)
+        region_layout.setContentsMargins(0, 0, 0, 0)
+        self.region_label = QLabel(_("No element picked"))
+        region_layout.addWidget(self.region_label, 1)
+        self.pick_btn = QPushButton(_("Pick element"))
+        self.pick_btn.clicked.connect(self.pick_element)
+        region_layout.addWidget(self.pick_btn)
+        layout.addWidget(self.region_row)
+        self.region_row.setVisible(False)
         
         # Confidence
         conf_layout = QHBoxLayout()
@@ -1049,7 +1353,7 @@ class OCRTriggerConfigDialog(ModernDialog):
         case_layout.addStretch()
         layout.addLayout(case_layout)
         
-        # Note: Language and region removed - OCR now uses full screen with default English
+        # Note: OCR language is fixed to English; the search area is set above.
         
         # Buttons
         button_layout = QHBoxLayout()
@@ -1072,8 +1376,112 @@ class OCRTriggerConfigDialog(ModernDialog):
             'confidence': self.confidence_spin.value(),
             'case_sensitive': self.case_sensitive_check.isChecked()
         }
+        try:
+            if self.area_combo.currentIndex() == 1 and self._region:
+                config['region'] = [int(v) for v in self._region]
+        except Exception:
+            pass
         
         return config
+
+    # ------------------------------------------------------- element picking
+    def _sync_area_ui(self):
+        """Reflect the loaded region in the search-area controls."""
+        try:
+            self.area_combo.setCurrentIndex(1 if self._region else 0)
+        except Exception:
+            pass
+        try:
+            self._on_area_changed(self.area_combo.currentIndex())
+        except Exception:
+            pass
+        self._update_region_label()
+
+    def _on_area_changed(self, index):
+        try:
+            self.region_row.setVisible(int(index) == 1)
+        except Exception:
+            pass
+
+    def _update_region_label(self):
+        try:
+            if self._region:
+                x, y, w, h = self._region
+                self.region_label.setText(
+                    _("Element region: x={x}, y={y}, w={w}, h={h}").format(
+                        x=x, y=y, w=w, h=h)
+                )
+            else:
+                self.region_label.setText(_("No element picked"))
+        except Exception:
+            pass
+
+    def pick_element(self):
+        """Hide the dialogs and let the user click an element on screen."""
+        if self._pick_in_progress:
+            return
+        self._pick_in_progress = True
+        self._main_window = _get_main_window_from_widget(self.parent())
+        try:
+            self._capture_original_geo = self.geometry()
+        except Exception:
+            self._capture_original_geo = None
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._main_window is not None:
+                self._main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(450, self._start_pick)
+
+    def _start_pick(self):
+        try:
+            overlay = ElementPickOverlay(parent=None)
+        except Exception as exc:
+            logger.error(f"Element picker unavailable: {exc}")
+            self._restore_after_pick()
+            return
+        self._pick_overlay = overlay
+        overlay.picked.connect(self._on_element_picked)
+        try:
+            overlay.exec_()
+        except Exception as exc:
+            logger.error(f"Element picker failed: {exc}")
+        finally:
+            # Idempotent: also covers the overlay being closed without a pick.
+            self._restore_after_pick()
+
+    def _on_element_picked(self, rect):
+        if rect:
+            l, t, r, b = rect
+            self._region = [int(l), int(t), max(1, int(r) - int(l)), max(1, int(b) - int(t))]
+        # No window restore here: that is done by _start_pick's finally, AFTER
+        # the modal overlay's exec_() has fully returned.  Showing the dialog
+        # while the overlay is still modal deadlocks the modal handoff.
+        self._update_region_label()
+
+    def _restore_after_pick(self):
+        self._pick_in_progress = False
+        try:
+            if getattr(self, '_capture_original_geo', None) is not None:
+                self.setGeometry(self._capture_original_geo)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_main_window', None) is not None:
+                self._main_window.showNormal()
+                self._main_window.raise_()
+                self._main_window.activateWindow()
+        except Exception:
+            pass
 
 
 class WaitConditionDialog(ModernDialog):
@@ -1246,6 +1654,7 @@ class WaitConditionDialog(ModernDialog):
         QTimer.singleShot(450, self._start_capture)
 
     def _start_capture(self):
+        accepted_after_capture = False
         try:
             screen, virtual_geo, dpr = _get_screen_info_for_capture()
             if screen is None:
@@ -1346,7 +1755,6 @@ class ConditionalLoopDialog(ModernDialog):
         """Load existing configuration"""
         self.type_combo.setCurrentText(self.config.get('type', 'while_present'))
         self.sequence_file_entry.setText(self.config.get('sequence_file', ''))
-        self.max_iterations_spin.setValue(self.config.get('max_iterations', 10))
         self.iteration_delay_spin.setValue(self.config.get('iteration_delay', 1.0))
         
         condition = self.config.get('condition', {})
@@ -1439,28 +1847,23 @@ class ConditionalLoopDialog(ModernDialog):
         layout.addWidget(self.ocr_widget)
         self.ocr_widget.hide()  # Initially hidden
         
-        # Parameters
+        # Parameters — no iteration cap: the loop runs until the condition is
+        # no longer met, then the workflow continues via the single output.
         params_layout = QGridLayout()
         
-        params_layout.addWidget(QLabel(_("Max Iterations:")), 0, 0)
-        self.max_iterations_spin = QSpinBox()
-        self.max_iterations_spin.setRange(1, 100)
-        self.max_iterations_spin.setValue(10)
-        params_layout.addWidget(self.max_iterations_spin, 0, 1)
-        
-        params_layout.addWidget(QLabel(_("Iteration Delay (s):")), 1, 0)
+        params_layout.addWidget(QLabel(_("Iteration Delay (s):")), 0, 0)
         self.iteration_delay_spin = QDoubleSpinBox()
         self.iteration_delay_spin.setRange(0.1, 60.0)
         self.iteration_delay_spin.setSingleStep(0.1)
         self.iteration_delay_spin.setValue(1.0)
-        params_layout.addWidget(self.iteration_delay_spin, 1, 1)
+        params_layout.addWidget(self.iteration_delay_spin, 0, 1)
         
-        params_layout.addWidget(QLabel(_("Confidence:")), 2, 0)
+        params_layout.addWidget(QLabel(_("Confidence:")), 1, 0)
         self.confidence_spin = QDoubleSpinBox()
         self.confidence_spin.setRange(0.1, 1.0)
         self.confidence_spin.setSingleStep(0.1)
         self.confidence_spin.setValue(0.8)
-        params_layout.addWidget(self.confidence_spin, 2, 1)
+        params_layout.addWidget(self.confidence_spin, 1, 1)
         
         layout.addLayout(params_layout)
         
@@ -1617,7 +2020,6 @@ class ConditionalLoopDialog(ModernDialog):
         return {
             'type': loop_type,
             'sequence_file': self.sequence_file_entry.text(),
-            'max_iterations': self.max_iterations_spin.value(),
             'iteration_delay': self.iteration_delay_spin.value(),
             'condition': condition
         }

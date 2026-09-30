@@ -306,20 +306,30 @@ class LicenseDialog:
         raw_key = self.key_var.get().strip()
         if not raw_key:
             self.status_var.set("Please enter a license key.")
+            self.status_label.config(fg="#ff6b6b")
             return
 
         inner = parse_formatted_key(raw_key)
         if not inner:
             self.status_var.set("Invalid key format. Check and try again.")
+            self.status_label.config(fg="#ff6b6b")
             return
 
-        result = _activate_with_key(self.install_folder, inner)
+        try:
+            result = _activate_with_key(self.install_folder, inner)
+        except Exception as e:
+            self.status_var.set(f"Error: {e}")
+            self.status_label.config(fg="#ff6b6b")
+            self.root.update_idletasks()
+            return
+
         if result == 0:
             self.status_var.set("License activated successfully!\nBound to this machine.")
             self.status_label.config(fg="#4ec9b0")
             self.root.after(1500, self._accept)
         else:
             self.status_var.set("License activation failed. Check the key or contact support.")
+            self.status_label.config(fg="#ff6b6b")
 
     def _accept(self):
         self.result = True
@@ -339,20 +349,38 @@ class LicenseDialog:
 # ---------------------------------------------------------------------------
 
 
+def _log(msg: str):
+    """Write to stderr if available (frozen --noconsole may have None)."""
+    try:
+        if sys.stderr is not None:
+            sys.stderr.write(msg + "\n")
+            sys.stderr.flush()
+    except Exception:
+        pass
+
+
 def _activate_with_key(install_folder: str, inner_key: str) -> int:
     """Validate the inner key and create license.bin. Returns 0 on success."""
     payload = _verify_inner_key(inner_key)
     if payload is None:
-        print("ERROR: Invalid or expired license key.")
+        _log("ERROR: Invalid or expired license key.")
         return 1
 
     mobo = get_motherboard_serial()
     blob = create_hardware_bound_license(mobo, inner_key)
     license_path = os.path.join(install_folder, "license.bin")
-    os.makedirs(install_folder, exist_ok=True)
-    with open(license_path, "wb") as f:
-        f.write(blob)
-    print(f"License activated for {payload.get('user')} bound to this machine.")
+    try:
+        os.makedirs(install_folder, exist_ok=True)
+    except Exception as e:
+        _log(f"ERROR: Cannot create {install_folder}: {e}")
+        raise
+    try:
+        with open(license_path, "wb") as f:
+            f.write(blob)
+    except Exception as e:
+        _log(f"ERROR: Cannot write {license_path}: {e}")
+        raise
+    _log(f"License activated for {payload.get('user')} bound to this machine.")
     return 0
 
 
@@ -363,6 +391,8 @@ def _activate_with_key(install_folder: str, inner_key: str) -> int:
 
 def cmd_install(install_folder: str) -> int:
     """GUI dialog. Returns 0 on success."""
+    # Normalize path: Windows command-line parsing can mangle trailing backslash + quote
+    install_folder = os.path.normpath(install_folder.strip().strip('\"'))
     license_path = os.path.join(install_folder, "license.bin")
     if os.path.exists(license_path):
         try:
@@ -378,6 +408,7 @@ def cmd_install(install_folder: str) -> int:
 
 def cmd_check(install_folder: str) -> int:
     """Silent check of license.bin. Returns 0 if valid."""
+    install_folder = os.path.normpath(install_folder.strip().strip('\"'))
     license_path = os.path.join(install_folder, "license.bin")
     if not os.path.exists(license_path):
         print("license.bin not found.")
@@ -394,6 +425,7 @@ def cmd_check(install_folder: str) -> int:
 
 
 def cmd_reinstall(install_folder: str) -> int:
+    install_folder = os.path.normpath(install_folder.strip().strip('\"'))
     dialog = LicenseDialog(install_folder)
     return 0 if dialog.run() else 1
 
@@ -413,7 +445,8 @@ def main():
         sys.exit(1)
 
     mode = sys.argv[1]
-    folder = sys.argv[2]
+    # Normalize path: strip trailing backslash + quote from command-line parsing
+    folder = os.path.normpath(sys.argv[2].strip().strip('\"'))
 
     key_arg = None
     for i, arg in enumerate(sys.argv):

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # presence_trigger.py
 """
 Presence trigger module for conditional fallback handler.
@@ -6,7 +8,6 @@ Handles presence-based conditional triggers using template matching.
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from ...config import logger
 
 
 class PresenceTrigger:
@@ -169,6 +170,12 @@ class PresenceTrigger:
         Returns:
             bool: True if element is found within timeout
         """
+        # If timeout is zero or negative, do a single immediate check (no waiting).
+        # This is used by graph loop re-evaluation (_maybe_loop_graph_conditional)
+        # where we want a fast one-shot answer, not a wait loop.
+        if timeout <= 0:
+            return self.check_presence_trigger(trigger_config)
+        
         # Use check_interval from trigger_config if provided, otherwise default to 0.5s
         if check_interval is None:
             check_interval = float(trigger_config.get('check_interval', 0.5))

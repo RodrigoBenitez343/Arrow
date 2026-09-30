@@ -1,8 +1,80 @@
-from ....config import logger
+import logging
 import os
+logger = logging.getLogger(__name__)
+try:
+    from logging_setup import log_block
+except Exception:
+    def log_block(logger, level, title, content, lang="text"):
+        text = content if isinstance(content, str) else repr(content)
+        logger.log(level, "=== %s ===\n%s", title, text)
 from ...llm_executor_resources.executor import _strip_think_tags
+from ...llm_executor_resources.config_utils import get_default_api_url
+from ....screenshot_cleanup import cleanup_screenshot
 
 class ConditionalMixin:
+    def _verify_app_running(self, app_context, timeout=2.0):
+        """
+        Passively verify that the expected app process is running, WITHOUT
+        modifying window focus, z-order, or display resolution.
+        
+        Conditionals must only *observe* the screen — they must never bring
+        windows to the foreground or call SetForegroundWindow / ShowWindow /
+        BringWindowToTop, as those calls can trigger DPI scaling changes on
+        Windows, especially in nested chains where last_app_context may leak
+        from a parent chain.
+        
+        Returns True if the process is found running (or no context given),
+        False if the process is not found within the timeout.
+        """
+        try:
+            import time
+            import psutil
+        except Exception:
+            return True
+
+        exe = str((app_context or {}).get("exe") or "")
+        proc_name = str((app_context or {}).get("process_name") or "")
+        pid_hint = (app_context or {}).get("pid")
+        sandboxed = bool((app_context or {}).get("sandboxed") or (getattr(self, "global_app_context_override", {}) or {}).get("sandboxed"))
+
+        if sandboxed:
+            return True
+
+        if not exe and not proc_name and not pid_hint:
+            return True
+
+        exe_norm = os.path.normcase(exe) if exe else ""
+        proc_name_norm = proc_name.lower() if proc_name else ""
+        deadline = time.time() + float(timeout or 0.0)
+
+        while time.time() <= deadline:
+            try:
+                if pid_hint:
+                    try:
+                        p = psutil.Process(int(pid_hint))
+                        if p.is_running():
+                            return True
+                    except Exception:
+                        pass
+                for p in psutil.process_iter(["pid", "name", "exe"]):
+                    try:
+                        if exe_norm:
+                            pexe = os.path.normcase(str(p.info.get("exe") or ""))
+                            if pexe and pexe == exe_norm:
+                                return True
+                        if proc_name_norm:
+                            pn = str(p.info.get("name") or "").lower()
+                            if pn and pn == proc_name_norm:
+                                return True
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            time.sleep(0.1)
+
+        logger.info(f"Conditional: expected app not running (exe={exe!r}, proc={proc_name!r}, pid={pid_hint!r})")
+        return False
+
     def _get_expected_app_context(self, conditional_node):
         try:
             if isinstance(conditional_node, dict):
@@ -243,6 +315,57 @@ class ConditionalMixin:
 
         return False
 
+    @staticmethod
+    def _is_web_conditional(conditional_node):
+        """True when the node is a web-mode conditional (routes on the browser)."""
+        value = conditional_node.get('web_mode')
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return str(conditional_node.get('condition_type') or '').strip().lower() == 'web'
+        return str(value).strip().lower() in ('true', '1', 'yes', 'y', 'on')
+
+    def _evaluate_web_condition(self, conditional_node, stop_flag, node_inputs=None):
+        """Evaluate a web-mode conditional on the chain's shared browser.
+
+        The browser is the SAME shared instance the web sequence nodes use, so
+        the condition observes the page the last sequence left open - place the
+        conditional after a web sequence that navigated to the page.
+
+        Resolved straight through the shared workbench session: this graph
+        executor owns no web driver (``_get_or_create_web_driver`` lives on the
+        sequence executor), so asking it for one always raised and every web
+        conditional in a chain run evaluated False.
+        """
+        try:
+            from ...conditional_fallback_resources.web_conditions import evaluate as evaluate_web_condition
+        except Exception as exc:
+            logger.error(f"Web conditional module unavailable: {exc}")
+            return False
+
+        try:
+            from ....web.session import SHARED_WEB_SCOPE, ensure_workbench_session
+            driver = ensure_workbench_session(chain_key=SHARED_WEB_SCOPE)
+        except Exception as exc:
+            logger.error(f"Web conditional: browser unavailable: {exc}")
+            return False
+        if driver is None:
+            logger.error(
+                "Web conditional: no shared browser available - place the "
+                "conditional after a web sequence that opened the page"
+            )
+            return False
+
+        try:
+            return bool(evaluate_web_condition(
+                conditional_node, driver,
+                llm_evaluator=self._evaluate_llm_condition,
+                stop_flag=stop_flag,
+            ))
+        except Exception as exc:
+            logger.error(f"Web conditional evaluation failed: {exc}")
+            return False
+
     def _evaluate_conditional(self, conditional_node, stop_flag, node_inputs=None):
         """
         Evaluate a conditional node to determine which branch to take.
@@ -254,9 +377,15 @@ class ConditionalMixin:
         Returns:
             bool: True if condition is met, False otherwise
         """
+        # Web mode: route on the chain's shared browser instead of the desktop
+        # visual conditions (see conditional_fallback_resources/web_conditions.py).
+        if self._is_web_conditional(conditional_node):
+            return self._evaluate_web_condition(conditional_node, stop_flag, node_inputs=node_inputs)
         raw_trigger_type = conditional_node.get('trigger_type') or conditional_node.get('condition_type', 'presence')
         if str(raw_trigger_type).lower() in ('code', 'code_conditional', 'python'):
             return self._evaluate_code_condition(conditional_node, stop_flag, node_inputs=node_inputs)
+        if str(raw_trigger_type).strip().lower() in ('llm', 'llm_conditional', 'llm_condition', 'ai_conditional'):
+            return self._evaluate_llm_condition(conditional_node, stop_flag, node_inputs=node_inputs)
         if str(raw_trigger_type).strip().lower() in ('layout_match', 'layout_match_conditional', 'layout_match_trigger', 'layout_match_condition'):
             return self._evaluate_layout_match_conditional(conditional_node, stop_flag)
         condition_type_mapping = {
@@ -309,11 +438,11 @@ class ConditionalMixin:
                 pass
         if expected_app:
             try:
-                ok = self._ensure_app_open_and_focused(expected_app, stop_flag, timeout=float(expected_app.get("focus_timeout", 2.0)))
+                ok = self._verify_app_running(expected_app, timeout=float(expected_app.get("focus_timeout", 2.0)))
             except Exception:
                 ok = True
             if not ok:
-                logger.info("Conditional gated: expected app not open/focused")
+                logger.info("Conditional gated: expected app not running")
                 return False
         
         # Set stop flag for the fallback handler
@@ -589,10 +718,24 @@ class ConditionalMixin:
                 from_node_id = inp.get('from_node')
                 input_port = str(inp.get('input_port') or 'input')
                 output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
-                if output_type == 'context':
-                    val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
+                # Strict source-port resolution: 'data' edges carry the value
+                # on node_<id>_data, ctx_out/context on node_<id>_context.
+                # Exec-only edges (base output, true/false branches) read
+                # node_<id>_output — Input nodes publish nothing there, so an
+                # Input's value never leaks through control branches.
+                ctx_val = None
+                out_val = None
+                if output_type == 'data':
+                    out_val = self.llm_executor.get_variable(f"node_{from_node_id}_data")
+                elif output_type in ('ctx_out', 'context'):
+                    ctx_val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
                 else:
-                    val = self.llm_executor.get_variable(f"node_{from_node_id}_output")
+                    # Named output port only — base/branch ports carry no data.
+                    named = None
+                    if output_type not in ('output', '', 'true', 'false', 'error', 'route'):
+                        named = self.llm_executor.get_variable(f"node_{from_node_id}_output_{output_type}")
+                    out_val = named
+                val = out_val if (out_val is not None and str(out_val).strip()) else ctx_val
                 if input_port == 'args':
                     if isinstance(val, dict):
                         args.update(val)
@@ -600,7 +743,7 @@ class ConditionalMixin:
                     input_data_list.append(val)
             except Exception:
                 continue
-
+                
         if len(input_data_list) == 1:
             input_data = input_data_list[0]
         elif len(input_data_list) == 0:
@@ -660,6 +803,19 @@ class ConditionalMixin:
             exec_scope['set_variable'] = getattr(self.llm_executor, 'set_variable', lambda n, v: shared_vars.__setitem__(n, v))
             exec_scope['os'] = os
             exec_scope['__name__'] = '__main__'
+
+            # Inject GraphRAG context query into conditional execution namespace
+            try:
+                _ctx_chain_id = os.path.splitext(
+                    os.path.basename(
+                        getattr(self, 'chain_id', None)
+                        or getattr(self, 'chain_file', 'default_chain')
+                    )
+                )[0]
+                exec_scope['context_query'] = lambda node_id="", question="", scope=None, chain_id=_ctx_chain_id: self._query_context_node(node_id, question, scope, chain_id)
+                exec_scope['graphrag'] = self._get_graph_rag()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -757,6 +913,307 @@ class ConditionalMixin:
 
         return result_bool
     
+    def _evaluate_llm_condition(self, conditional_node, stop_flag, node_inputs=None):
+        """
+        Evaluate an LLM-based conditional by calling a small LLM (Ollama or llama.cpp)
+        with the upstream node's output as context and a user-defined prompt.
+        
+        When llm_use_vision is enabled (for VL models), captures a live screenshot
+        and sends it alongside the prompt so the model can evaluate the screen visually.
+        
+        Args:
+            conditional_node (dict): The conditional node configuration
+            stop_flag (callable): Stop flag function
+            node_inputs (list): List of input connection info from upstream nodes
+            
+        Returns:
+            bool: True if LLM responds True, False otherwise
+        """
+        import threading
+        import time
+        import os
+        
+        llm_prompt = conditional_node.get('llm_prompt') or conditional_node.get('prompt') or ''
+        if not str(llm_prompt or '').strip():
+            logger.warning("LLM conditional: no prompt configured")
+            return False
+        
+        llm_engine = str(conditional_node.get('llm_engine') or 'ollama').strip().lower()
+        llm_model = str(conditional_node.get('llm_model') or conditional_node.get('model') or '').strip()
+        if not llm_model:
+            # The conditional dialog's model combo can save empty when the
+            # model cache was cold at edit time.  Fall back to the chain's
+            # own LLM node model (matching engine) so the conditional
+            # actually evaluates instead of silently returning False with
+            # "no model configured" every time.
+            try:
+                for _wnode in (self.workflow_graph or {}).values():
+                    if _wnode.get('type') != 'llm':
+                        continue
+                    _wdata = _wnode.get('data', {}) or {}
+                    _conf = _wdata.get('llm_configuration', {}) or {}
+                    _merged = dict(_wdata)
+                    _merged.update(_conf)
+                    if llm_engine in ('llamacpp', 'llama.cpp', 'llama_cpp'):
+                        _m = str(_merged.get('llamacpp_model_path') or '').strip()
+                    else:
+                        _m = str(_merged.get('model') or '').strip()
+                    if _m:
+                        llm_model = _m
+                        logger.info(
+                            "LLM conditional: no model configured — using "
+                            "chain LLM node model %s", llm_model,
+                        )
+                        break
+            except Exception:
+                pass
+        if not llm_model:
+            logger.warning("LLM conditional: no model configured")
+            return False
+        
+        try:
+            timeout_s = float(conditional_node.get('llm_timeout') or conditional_node.get('timeout') or 10.0)
+        except Exception:
+            timeout_s = 10.0
+        
+        # Vision / screenshot support — reuse the same pipeline as LLM nodes
+        use_vision_raw = conditional_node.get('llm_use_vision', 'false')
+        use_vision = str(use_vision_raw).strip().lower() in ('true', '1', 'yes')
+        images = None
+        if use_vision:
+            try:
+                if stop_flag and stop_flag():
+                    return False
+                from ...llm_executor_resources.vision_utils import prepare_vision_images
+                images, _ocr_text = prepare_vision_images(True, True, stop_flag)
+                if images:
+                    logger.info(f"LLM conditional: captured vision screenshot ({len(images)} image(s))")
+                else:
+                    logger.warning("LLM conditional: screenshot capture returned no images, falling back to text-only")
+                    use_vision = False
+            except Exception as e:
+                logger.warning(f"LLM conditional: screenshot capture failed: {e}, falling back to text-only")
+                use_vision = False
+
+        def _cleanup_vision_images():
+            """Delete the screenshots captured for this conditional once it is done."""
+            if images:
+                for _p in images:
+                    try:
+                        cleanup_screenshot(_p)
+                    except Exception:
+                        pass
+        
+        # Collect input_data from upstream nodes (same pattern as _evaluate_code_condition)
+        input_data_list = []
+        for inp in (node_inputs or []):
+            try:
+                from_node_id = inp.get('from_node')
+                input_port = str(inp.get('input_port') or 'input')
+                output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
+                # Strict source-port resolution: 'data' edges carry the value
+                # on node_<id>_data, ctx_out/context on node_<id>_context.
+                # Exec-only edges (base output, true/false branches) read
+                # node_<id>_output — Input nodes publish nothing there, so an
+                # Input's value never leaks through control branches.
+                ctx_val = None
+                out_val = None
+                if output_type == 'data':
+                    out_val = self.llm_executor.get_variable(f"node_{from_node_id}_data")
+                elif output_type in ('ctx_out', 'context'):
+                    ctx_val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
+                else:
+                    # Named output port only — base/branch ports carry no data.
+                    named = None
+                    if output_type not in ('output', '', 'true', 'false', 'error', 'route'):
+                        named = self.llm_executor.get_variable(f"node_{from_node_id}_output_{output_type}")
+                    out_val = named
+                val = out_val if (out_val is not None and str(out_val).strip()) else ctx_val
+                if input_port != 'args':
+                    input_data_list.append(val)
+            except Exception:
+                continue
+        
+        # Deduplicate identical upstream values: a node's 'output' and
+        # 'context' ports frequently resolve to the SAME text (both fall
+        # back to node_<id>_output), so without this the context injected
+        # into the classifier prompt is doubled.
+        try:
+            _seen_vals = set()
+            _deduped = []
+            for _v in input_data_list:
+                _key = str(_v)
+                if _key not in _seen_vals:
+                    _seen_vals.add(_key)
+                    _deduped.append(_v)
+            input_data_list = _deduped
+        except Exception:
+            pass
+        
+        if len(input_data_list) == 1:
+            input_data = input_data_list[0]
+        elif len(input_data_list) == 0:
+            input_data = None
+        else:
+            input_data = '\n---\n'.join([str(d) for d in input_data_list if d])
+        
+        # Strip CoT/reasoning tags from input_data
+        try:
+            if input_data is not None and isinstance(input_data, str):
+                input_data = _strip_think_tags(input_data)
+        except Exception:
+            pass
+        
+        # Build the final prompt with context injected (skip context for vision-only evaluation)
+        full_prompt = str(llm_prompt)
+        if not use_vision and input_data is not None and str(input_data).strip():
+            full_prompt = f"{full_prompt}\n\nContext:\n{str(input_data)}"
+        
+        node_id = str(conditional_node.get('id') or conditional_node.get('node_id') or '')
+        
+        out = {'result': None, 'error': None}
+        
+        def _runner():
+            try:
+                if llm_engine in ('llamacpp', 'llama.cpp', 'llama_cpp'):
+                    # Use llama.cpp endpoint via API — no timeout, wait for model
+                    # Same path as regular LLM nodes: chat template applied,
+                    # truncated generations continued until the model finishes,
+                    # and the engine strips the thinking so only the final
+                    # answer reaches the parser.  The token budget must be large
+                    # enough for thinking + answer (SmolLM3 burned a 32-token
+                    # budget on a <think> block alone, which stripped to an
+                    # empty response and defaulted the parser to False).
+                    import requests as _requests
+                    api_url = get_default_api_url()
+                    api_url = api_url.rstrip('/')
+                    payload = {
+                        "model": llm_model,
+                        "prompt": full_prompt,
+                        "temperature": 0.1,
+                        "max_tokens": 256,
+                        "stream": False,
+                        "use_llamacpp": True,
+                        "gpu_layers": 0,
+                        "threads": -1,
+                        "context_size": 0,
+                    }
+                    if use_vision and images:
+                        payload["images"] = images
+                        logger.info(f"LLM conditional: including {len(images)} image(s) in llama.cpp payload")
+                    resp = _requests.post(
+                        f"{api_url}/llamacpp/generate",
+                        json=payload,
+                        timeout=None,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        text = data.get('response', '')
+                    else:
+                        out['error'] = f"llama.cpp error ({resp.status_code}): {resp.text[:200]}"
+                        return
+                else:
+                    # Use Ollama via API — no timeout, wait for model
+                    from AI.consult import OllamaClient
+                    client = OllamaClient(base_url=get_default_api_url())
+                    images_arg = images if use_vision and images else None
+                    response = client.chat(
+                        model=llm_model,
+                        prompt=full_prompt,
+                        temperature=0.1,
+                        max_tokens=256,
+                        images=images_arg,
+                    )
+                    if isinstance(response, dict):
+                        text = response.get('response') or response.get('text') or ''
+                    else:
+                        text = str(response)
+                
+                # Parse the response for True/False — strict word-boundary matching
+                text = (text or '').strip()
+                # Show response on terminal for user visibility
+                log_block(
+                    logger, logging.INFO,
+                    f"LLM Conditional Raw Response ({len(text)} chars)", text,
+                )
+                
+                import re as _re
+                text_lower = text.lower()
+                
+                # Strip CoT / think tags (models may wrap reasoning in <｜end▁of▁thinking｜> response tags)
+                text_clean = _re.sub(r'<[^>]*think[^>]*>.*?</[^>]*think[^>]*>', '', text_lower, flags=_re.DOTALL)
+                text_clean = text_clean.strip()
+                if not text_clean:
+                    text_clean = text_lower
+                
+                # Find all standalone occurrences of "true" and "false" (whole words)
+                true_matches = list(_re.finditer(r'\btrue\b', text_clean))
+                false_matches = list(_re.finditer(r'\bfalse\b', text_clean))
+                
+                result_value = None
+                
+                if true_matches and not false_matches:
+                    result_value = True
+                elif false_matches and not true_matches:
+                    result_value = False
+                elif true_matches and false_matches:
+                    # Both appear — pick the LAST one (models tend to reason then conclude)
+                    last_true = true_matches[-1].start()
+                    last_false = false_matches[-1].start()
+                    result_value = last_true > last_false
+                    logger.info(
+                        f"LLM conditional: both true/false found, using last occurrence "
+                        f"(true at {last_true}, false at {last_false} -> {result_value})"
+                    )
+                else:
+                    # Neither standalone word found — try first word
+                    first_word = text_clean.split()[0] if text_clean.split() else ''
+                    first_word = first_word.strip('.,;:!?\'"()[]{}')
+                    if first_word in ('true', 'yes', 'y', '1'):
+                        result_value = True
+                    elif first_word in ('false', 'no', 'n', '0'):
+                        result_value = False
+                    else:
+                        # No clear signal — default False and log warning
+                        logger.warning(
+                            f"LLM conditional: could not parse True/False from response. "
+                            f"First 200 chars: {text[:200]}"
+                        )
+                        result_value = False
+                
+                out['result'] = result_value
+                            
+            except Exception as e:
+                out['error'] = str(e)
+        
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        
+        # Wait for the thread to finish — no timeout, only stop via ESC
+        while t.is_alive():
+            if stop_flag and stop_flag():
+                logger.warning("LLM conditional: stopped by flag")
+                _cleanup_vision_images()
+                return False
+            time.sleep(0.05)
+        
+        if out.get('error') is not None:
+            logger.error(f"LLM conditional execution failed: {out['error']}")
+            _cleanup_vision_images()
+            return False
+        
+        result_bool = bool(out.get('result'))
+        
+        try:
+            if node_id:
+                self.llm_executor.set_variable(f"node_{node_id}_conditional_result", result_bool)
+        except Exception:
+            pass
+        
+        logger.info(f"LLM conditional result: {result_bool}")
+        _cleanup_vision_images()
+        return result_bool
+    
     def _execute_conditional_loop(self, conditional_data, stop_flag):
         """
         Execute a conditional loop by reconstructing the loop configuration and calling the fallback handler.
@@ -774,11 +1231,11 @@ class ConditionalMixin:
             expected_app = self._get_expected_app_context(conditional_data)
             if expected_app:
                 try:
-                    ok = self._ensure_app_open_and_focused(expected_app, stop_flag, timeout=float(expected_app.get("focus_timeout", 2.0)))
+                    ok = self._verify_app_running(expected_app, timeout=float(expected_app.get("focus_timeout", 2.0)))
                 except Exception:
                     ok = True
                 if not ok:
-                    logger.info("Conditional loop gated: expected app not open/focused")
+                    logger.info("Conditional loop gated: expected app not running")
                     return False
             
             condition_type = str(conditional_data.get('condition_type') or conditional_data.get('trigger_type') or '').strip().lower()
@@ -788,19 +1245,10 @@ class ConditionalMixin:
             if not loop_type:
                 loop_type = 'while_present'
 
-            max_iterations_raw = (
-                conditional_data.get('max_loops')
-                if conditional_data.get('max_loops') is not None
-                else conditional_data.get('max_iterations')
-            )
-            if max_iterations_raw is None:
-                max_iterations_raw = conditional_data.get('max_attempts')
-            try:
-                max_iterations = int(max_iterations_raw if max_iterations_raw is not None else 10)
-            except Exception:
-                max_iterations = 10
-            max_iterations = max(1, max_iterations)
+            # No iteration cap: the loop runs until the condition is no longer
+            # met, then the workflow continues via the single output port.
 
+            chain_file = conditional_data.get('chain_file', '') or conditional_data.get('chain', '')
             sequence_file = conditional_data.get('sequence_file', '') or conditional_data.get('sequence', '')
             try:
                 iteration_delay = float(
@@ -858,16 +1306,17 @@ class ConditionalMixin:
                         'confidence': conf
                     }
             
-            # Build loop configuration
+            # Build loop configuration (no iteration cap — the loop ends only
+            # when the condition is no longer met)
             loop_config = {
                 'type': loop_type,
-                'max_iterations': max_iterations,
                 'sequence_file': sequence_file,
+                'chain_file': chain_file,
                 'iteration_delay': iteration_delay,
                 'condition': condition
             }
             
-            logger.info(f"Executing conditional loop: {loop_type}, sequence: {sequence_file}, max_iterations: {max_iterations}")
+            logger.info(f"Executing conditional loop: {loop_type}, sequence: {sequence_file}, chain: {chain_file}")
             
             # Set stop flag for the fallback handler
             self.fallback_handler.stop_flag = stop_flag
@@ -875,8 +1324,8 @@ class ConditionalMixin:
             # Execute the conditional loop using the fallback handler
             # Create a temporary SequencePlayer for loop execution with the sequence file
             sequence_file = loop_config.get('sequence_file', '')
-            if not sequence_file:
-                logger.error(f"No sequence file specified for conditional loop")
+            if not sequence_file and not chain_file:
+                logger.error(f"No sequence or chain file specified for conditional loop")
                 return False
             
             temp_sequence_player = SequencePlayer(sequence_file)
@@ -888,6 +1337,10 @@ class ConditionalMixin:
                         temp_sequence_player.sandbox_agent_url = aurl
                         if hasattr(temp_sequence_player, "action_handlers") and temp_sequence_player.action_handlers:
                             temp_sequence_player.action_handlers.bot.sandbox_agent_url = aurl
+                        # Keep the computer-vision channel in sync so the loop
+                        # condition and its body observe the same desktop.
+                        from ....computer_vision import set_sandbox_agent_url
+                        set_sandbox_agent_url(aurl)
             except Exception:
                 pass
             # Share selection memory with temporary sequence player
@@ -915,12 +1368,28 @@ class ConditionalMixin:
         # Convert the result to a strict boolean first
         result = bool(result)
         
-        # Determine which branch to follow based on result
-        branch = 'true' if result else 'false'
+        # File-loop conditionals run an internal sequence/chain file until the
+        # condition stops holding, then continue the workflow — they expose a
+        # single 'output' port instead of true/false branches.
+        data = node.get('data', {}) or {}
+        loop_type = str(data.get('loop_type', '') or '').strip().lower()
+        seq_file = str(data.get('sequence_file', '') or data.get('sequence', '') or '').strip()
+        chain_file = str(data.get('chain_file', '') or data.get('chain', '') or '').strip()
+        if str(node.get('type')) == 'orchestrator':
+            # Fulfilment branch: an achieved goal continues via 'output'; an
+            # unfulfilled run hands the goal to the next region via 'route'.
+            branch = 'output' if result else 'route'
+        elif loop_type in ('while_present', 'while_absent', 'until_present', 'until_absent') and (seq_file or chain_file):
+            branch = 'output'
+        else:
+            # Determine which branch to follow based on result
+            branch = 'true' if result else 'false'
+        node_id = str(node.get('id') or node.get('node_id') or '')
         logger.info(f"Conditional result evaluated to: {result}, looking for branch: '{branch}'")
         
         # Get connections for this branch
         connections = node.get('connections', {})
+        conn_type = type(connections).__name__
         if isinstance(connections, list):
             # Format from older saves or list-based connections
             branch_connections = [c for c in connections if str(c.get('output_port')).lower() == branch or str(c.get('output_port')).lower() == str(result).lower()]
@@ -953,10 +1422,10 @@ class ConditionalMixin:
             target_node = conn.get('target_node_id') or conn.get('node_id')
         
         if target_node:
-            logger.info(f"Following '{branch}' branch to node: {target_node}")
+            logger.info(f"[COND-BRANCH] Node {node_id}: following '{branch}' branch to node: {target_node} (conn_type={conn_type})")
             return target_node
         else:
-            logger.info(f"No connection for '{branch}' branch, ending workflow path")
+            logger.info(f"[COND-BRANCH] Node {node_id}: No connection for '{branch}' branch (conn_type={conn_type}, conns={str(connections)[:200]})")
             return None
 
     def _mark_skipped(self, conditional_id, chosen_port, unchosen_port, completed_nodes=None):
@@ -1004,31 +1473,139 @@ class ConditionalMixin:
                 seen.add(nid)
                 nd = self.workflow_graph.get(nid, {})
                 conns = nd.get('connections', {}) or {}
-                
+
+                # Execution ports ONLY.  Data ports (ctx_out, tools, query,
+                # ctx_in, context-to-non-context) carry data, never branch
+                # membership.  'context' is followed only toward context-type
+                # targets (mirrors _get_output_connected_nodes) so a Context
+                # node fed via the LLM 'context' port is still reachable.
+                EXEC_PORTS = ('output', 'true', 'false', 'error', 'route')
+
                 # Check for dict-style connections (e.g. {'output': [{'node_id': '...'}]})
                 if isinstance(conns, dict):
-                    for _, lst in conns.items():
+                    for port_name, lst in conns.items():
                         if not isinstance(lst, list):
                             continue
+                        if port_name not in EXEC_PORTS:
+                            if port_name != 'context':
+                                continue
                         for c in lst:
                             tid = c.get('node_id') or c.get('target_node_id')
-                            if tid and tid not in seen:
-                                q.append(tid)
-                
+                            if not tid or tid in seen:
+                                continue
+                            if port_name == 'context' and self.workflow_graph.get(tid, {}).get('type') != 'context':
+                                continue
+                            q.append(tid)
+
                 # Check for list-style connections (e.g. [{'output_port': 'output', 'target_node_id': '...'}] from new JSON format)
                 elif isinstance(conns, list):
                     for c in conns:
+                        op = str(c.get('output_port') or 'output').lower()
+                        if op not in EXEC_PORTS:
+                            if op != 'context':
+                                continue
                         tid = c.get('target_node_id') or c.get('node_id')
-                        if tid and tid not in seen:
-                            q.append(tid)
-                            
+                        if not tid or tid in seen:
+                            continue
+                        if op == 'context' and self.workflow_graph.get(tid, {}).get('type') != 'context':
+                            continue
+                        q.append(tid)
+
             return seen
 
         chosen_reach = _reachable(chosen_starts)
         unchosen_reach = _reachable(unchosen_starts)
+
+        # ── Branch-gated computation ──
+        # A node is branch-gated by THIS conditional when ALL of its exec input
+        # sources are (transitively) gated by it.  Nodes whose exec input comes
+        # from a non-gated node (a loop-shared router LLM, an Input node, a
+        # merge point) execute regardless of the branch decision and must never
+        # be swept.  This protects the BASE_SYSTEM_CHAIN Context node, whose
+        # exec input is the router LLM (sibling of the conditional) while its
+        # ctx_out data feeds the chosen branch.
+        gated = {conditional_id}
+        _changed = True
+        while _changed:
+            _changed = False
+            for _nid, _nd in self.workflow_graph.items():
+                if _nid in gated:
+                    continue
+                _inputs = _nd.get('inputs') or []
+                _exec_sources = [
+                    _inp.get('from_node') for _inp in _inputs
+                    if str(_inp.get('input_port', 'input')) in ('input', '', None)
+                ]
+                if _exec_sources and all(_s in gated for _s in _exec_sources):
+                    gated.add(_nid)
+                    _changed = True
+
+        def _may_sweep(nid):
+            """True only for genuinely branch-exclusive nodes: a graph node
+            (never a context node) whose every exec input source is gated by
+            this conditional.  Nodes without exec inputs (starting/terminal
+            nodes) or with shared exec sources are protected."""
+            nd = self.workflow_graph.get(nid, {})
+            if nd.get('type') == 'context':
+                return False
+            _inputs = nd.get('inputs') or []
+            _exec_sources = [
+                _inp.get('from_node') for _inp in _inputs
+                if str(_inp.get('input_port', 'input')) in ('input', '', None)
+            ]
+            if not _exec_sources:
+                return False
+            return all(_s in gated for _s in _exec_sources)
+
         exclusive = unchosen_reach.difference(chosen_reach)
-        exclusive = {n for n in exclusive if n not in completed_nodes}
+        exclusive = {n for n in exclusive
+                     if n not in completed_nodes and _may_sweep(n)}
 
         if exclusive:
             self.skipped_nodes.update(exclusive)
-            logger.info(f"Marked {len(exclusive)} nodes as skipped from unchosen branch '{unchosen_port}' of {conditional_id}")
+            logger.info(f"[MARK-SKIP] Cond {conditional_id}: marked {len(exclusive)} nodes as skipped from unchosen branch '{unchosen_port}': {list(exclusive)[:10]}")
+        else:
+            logger.info(f"[MARK-SKIP] Cond {conditional_id}: no exclusive nodes to skip (chosen_reach={len(chosen_reach)}, unchosen_reach={len(unchosen_reach)})")
+
+        # ── a7: also skip unchosen-branch tool-provider nodes ──
+        # Tool providers (chain_import/code/mcp subroutines) of the unchosen
+        # branch — even with zero exec inputs — are dead once the other branch
+        # is chosen.  Their exec inputs (if any) come exclusively from the
+        # unchosen branch, so they would stay 'remaining' forever and stall
+        # the workflow.  Skipping them is safe: inline tool selection by an
+        # LLM (llm_ops) does not consult skipped_nodes, so a shared tool can
+        # still execute when explicitly selected.
+        _extra_skip = set()
+        for _nid in unchosen_reach:
+            if _nid in completed_nodes or _nid in exclusive or _nid in self.skipped_nodes:
+                continue
+            _nd = self.workflow_graph.get(_nid, {})
+            if _nd.get('type') not in ('chain_import', 'code', 'mcp'):
+                continue
+            _inputs = _nd.get('inputs') or []
+            _has_exec_input = any(
+                str(inp.get('input_port', 'input')) in ('input', '', None)
+                for inp in _inputs
+            )
+            if not _has_exec_input:
+                _extra_skip.add(_nid)
+                continue
+            # Exec inputs must all originate inside the unchosen branch
+            _all_from_unchosen = True
+            for _inp in _inputs:
+                if str(_inp.get('input_port', 'input')) not in ('input', '', None):
+                    continue
+                _src = _inp.get('from_node')
+                if (_src not in unchosen_reach
+                        and _src not in unchosen_starts):
+                    _all_from_unchosen = False
+                    break
+            if _all_from_unchosen:
+                _extra_skip.add(_nid)
+        if _extra_skip:
+            self.skipped_nodes.update(_extra_skip)
+            logger.info(
+                f"[MARK-SKIP] Cond {conditional_id}: also skipped "
+                f"{len(_extra_skip)} unchosen-branch tool provider(s): "
+                f"{list(_extra_skip)[:10]}"
+            )

@@ -6,12 +6,15 @@ prompt configuration, generation parameters, and vision capabilities.
 """
 
 import json
+import logging
 import os
 import sys
+import threading
 import uuid
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import QSize, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -46,6 +49,8 @@ from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 from .utils import get_default_api_url
 
+logger = logging.getLogger(__name__)
+
 # Add the parent directory to sys.path to import AI modules
 sys.path.append(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,12 +62,8 @@ from AI.model_cache import get_cached_models, get_model_cache, get_real_cached_m
 def get_llamacpp_models():
     """Scan for GGUF models in the LoOper/AI/models directory"""
     try:
-        # Get the models directory path - go up from NGUI/dialogs to LoOper/AI/models
-        current_file = os.path.abspath(__file__)
-        # current_file is in LoOper/NGUI/dialogs/llm_dialogs.py
-        # We need to go up 2 levels to get to LoOper/
-        looper_dir = os.path.dirname(os.path.dirname(os.path.dirname(current_file)))
-        models_dir = os.path.join(looper_dir, "AI", "models")
+        from AI.config_loader import get_models_dir
+        models_dir = get_models_dir()
 
         if not os.path.exists(models_dir):
             print(f"Warning: Models directory not found: {models_dir}")
@@ -134,8 +135,69 @@ class SkillGeneratorThread(QThread):
             self.error.emit(str(e))
 
 
+class _WebPickThread(QThread):
+    """Runs the blocking browser element picker off the GUI thread.
+
+    Local copy of the conditional dialog's thread: importing it from
+    ``conditional_dialogs`` would create an import cycle (that module already
+    imports this one for ``get_llamacpp_models``).
+    """
+
+    picked = pyqtSignal(object)
+
+    def run(self):
+        try:
+            try:
+                from ...player.web.picker import pick_element
+            except Exception:
+                from player.web.picker import pick_element
+        except Exception as exc:
+            logger.error(f"Element picker unavailable: {exc}")
+            self.picked.emit(None)
+            return
+        try:
+            self.picked.emit(pick_element())
+        except Exception as exc:
+            logger.error(f"Element picker failed: {exc}")
+            self.picked.emit(None)
+
+
+class _ShrinkTabWidget(QTabWidget):
+    """QTabWidget that reports the CURRENT page's size, not the tallest one.
+
+    QTabWidget/QStackedWidget report the max sizeHint AND minimumSizeHint over
+    every page, so a short tab inherits the tallest tab's height and shows a
+    block of dead space.  Reporting only the current page keeps the dialog
+    tight when switching tabs (mirrors conditional_dialogs._ShrinkStack).
+    """
+
+    def _bar(self):
+        try:
+            return self.tabBar().sizeHint()
+        except Exception:
+            return QSize(0, 0)
+
+    def sizeHint(self):
+        page = self.currentWidget()
+        if page is None:
+            return super().sizeHint()
+        hint = page.sizeHint()
+        bar = self._bar()
+        return QSize(max(hint.width(), bar.width()), hint.height() + bar.height())
+
+    def minimumSizeHint(self):
+        page = self.currentWidget()
+        if page is None:
+            return super().minimumSizeHint()
+        hint = page.minimumSizeHint()
+        bar = self._bar()
+        return QSize(hint.width(), hint.height() + bar.height())
+
+
 class LLMPropertiesDialog(ModernDialog):
     """Dialog for configuring LLM node properties"""
+
+    _refresh_complete_signal = pyqtSignal(list, str, object)
 
     def __init__(self, parent, current_config=None):
         super().__init__(
@@ -143,9 +205,23 @@ class LLMPropertiesDialog(ModernDialog):
         )
         self.current_config = current_config or {}
 
+        # Do NOT let the scroll area STRETCH its content: a stretched content
+        # widget keeps the TALLEST page's height, so every short tab shows a
+        # block of vertical dead space.  With resizing off, _apply_fit sizes the
+        # content to the current tab and the scroll area only adds scrollbars
+        # when the content is genuinely taller than the dialog.
+        try:
+            self.scroll_area.setWidgetResizable(False)
+        except Exception:
+            pass
+
         self.setModal(True)
-        self.resize(600, 500)  # Increased height for tabbed interface
-        self.setMinimumSize(600, 500)
+        # No fixed size: the dialog is fitted to the current tab's content
+        # (see _refit_to_current_tab) so short tabs leave no dead space.
+        self.setMinimumSize(460, 260)
+
+        # Connect async refresh signal
+        self._refresh_complete_signal.connect(self._on_refresh_complete)
 
         # Style logic moved to ModernDialog, but we can keep specific overrides if needed
         # or rely on ModernDialog's theme.
@@ -155,21 +231,40 @@ class LLMPropertiesDialog(ModernDialog):
 
     def get_available_models(self):
         # Return models from cache only; do not trigger API calls here
-        return get_real_cached_models(timeout=5.0)
+        # Use a short timeout so UI does not freeze when API is still starting
+        return get_real_cached_models(timeout=2.0)
 
     def refresh_models(self):
+        """Refresh Ollama model list asynchronously to avoid UI freeze."""
         api_url = self.api_url_entry.text() or get_default_api_url()
         current_model = self.model_combo.currentText()
-        cache = get_model_cache()
-        cache.refresh_models(api_url)
-        available_models = get_real_cached_models(timeout=5.0)
 
+        # Disable button to prevent double-clicks while loading
+        refresh_btn = self.sender()
+        if isinstance(refresh_btn, QPushButton):
+            refresh_btn.setEnabled(False)
+            refresh_btn.setText(_("Loading..."))
+
+        def _do_refresh():
+            cache = get_model_cache()
+            cache.refresh_models(api_url)
+            available_models = get_real_cached_models(timeout=5.0)
+            # Schedule UI update on the main thread
+            QThread.currentThread()  # no-op, we're in a worker thread
+            self._refresh_complete_signal.emit(available_models, current_model, refresh_btn)
+
+        threading.Thread(target=_do_refresh, daemon=True).start()
+
+    def _on_refresh_complete(self, available_models, current_model, refresh_btn):
+        """Called on main thread when model refresh finishes."""
         self.model_combo.clear()
         self.model_combo.addItems(available_models)
-
-        # Restore selection if it still exists in the new list
         if current_model in available_models:
             self.model_combo.setCurrentText(current_model)
+        # Re-enable the button
+        if isinstance(refresh_btn, QPushButton):
+            refresh_btn.setEnabled(True)
+            refresh_btn.setText(_("Refresh Models"))
 
     def on_engine_changed(self, engine):
         """Handle engine selection change"""
@@ -182,24 +277,55 @@ class LLMPropertiesDialog(ModernDialog):
         self.llamacpp_model_combo.setVisible(use_llamacpp)
         self.llamacpp_model_label.setVisible(use_llamacpp)
 
+        # Refresh GGUF model list when switching to llama.cpp
+        # so newly downloaded models are visible immediately
+        if use_llamacpp:
+            current_llamacpp = self.llamacpp_model_combo.currentText()
+            gguf_models = get_llamacpp_models()
+            self.llamacpp_model_combo.clear()
+            if gguf_models:
+                self.llamacpp_model_combo.addItems(gguf_models)
+                if current_llamacpp in gguf_models:
+                    self.llamacpp_model_combo.setCurrentText(current_llamacpp)
+            else:
+                self.llamacpp_model_combo.setPlaceholderText(
+                    "No GGUF models found in AI/models/"
+                )
+
         # Also show/hide API URL (not needed for llama.cpp)
         # We'll keep it visible but could hide it if desired
+
+        # Keep the RAG embedding model aligned with the selected engine:
+        # llama.cpp → local embeddinggemma GGUF; Ollama → nomic-embed-text.
+        # Only rewrite empty/auto/legacy values — never a custom model.
+        _rag_entry = getattr(self, "rag_embedding_model_entry", None)
+        if _rag_entry is not None:
+            _cur_rag = (_rag_entry.text() or "").strip().lower()
+            if _cur_rag in (
+                "", "auto", "default",
+                "nomic-embed-text", "nomic-embed-text:v1.5",
+            ) or (not use_llamacpp and _cur_rag == "embeddinggemma-300m-q8_0.gguf"):
+                _rag_entry.setText(
+                    "embeddinggemma-300M-Q8_0.gguf"
+                    if use_llamacpp
+                    else "nomic-embed-text"
+                )
 
     def setup_ui(self):
         # Use content_layout from ModernDialog instead of creating a new layout on self
         layout = self.content_layout
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        self.tab_widget = QTabWidget()
+        self.tab_widget = _ShrinkTabWidget()
         # Stylesheet removed as ModernDialog handles it
-        self.create_basic_tab()
+        self.tab_widget.currentChanged.connect(self._refit_to_current_tab)
+        self.create_model_tab()
         self.create_prompt_tab()
-        self.create_advanced_tab()
-        self.create_features_tab()
-        self.create_rag_tab()
-        self.create_tools_tab()
-        self.create_skills_tab()
+        self.create_output_tab()
+        self.create_knowledge_tab()
+        self.create_tools_skills_tab()
         layout.addWidget(self.tab_widget)
+        self.setup_signal_connections()
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_btn = button_box.button(QDialogButtonBox.Ok)
         cancel_btn = button_box.button(QDialogButtonBox.Cancel)
@@ -210,13 +336,133 @@ class LLMPropertiesDialog(ModernDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+        self._refit_to_current_tab()
 
-    def create_basic_tab(self):
-        """Create the Basic Configuration tab"""
-        basic_tab = QWidget()
-        layout = QVBoxLayout(basic_tab)
+    def _refit_to_current_tab(self):
+        """Re-fit the dialog to the tab that just became current.
+
+        A plain tab widget forces the tallest page's height on every tab; the
+        _ShrinkTabWidget reports only the current page.  This drops the parent
+        layout's CACHED size — otherwise the scroll area keeps the content
+        widget as tall as the TALLEST page and every short tab shows a block of
+        vertical dead space — then fits on the next loop tick so the resize
+        reads the post-invalidate sizes.
+        """
+        try:
+            if self.tab_widget.currentWidget() is None:
+                return
+            self.tab_widget.updateGeometry()
+            self.content_layout.invalidate()
+            self.content_widget.updateGeometry()
+            self.scroll_area.updateGeometry()
+        except Exception:
+            pass
+        QTimer.singleShot(0, self._apply_fit)
+
+    def _apply_fit(self):
+        """Size the content AND the dialog to the current tab's content."""
+        try:
+            if self.tab_widget.currentWidget() is None:
+                return
+            hint = self.content_layout.sizeHint()
+            # Pin the content to the current tab so the tab widget is never
+            # stretched past its content (with widgetResizable off the scroll
+            # area keeps this size and only adds scrollbars when needed).
+            self.content_widget.setFixedSize(hint.width(), hint.height())
+            # Chrome = everything around the scroll viewport (title bar, grip, borders).
+            chrome = self.size() - self.scroll_area.viewport().size()
+            width = max(460, hint.width() + max(chrome.width(), 34))
+            height = max(260, hint.height() + max(chrome.height(), 60))
+            scr = QApplication.primaryScreen()
+            if scr is not None:
+                avail = scr.availableGeometry()
+                width = min(width, avail.width() - 60)
+                height = min(height, avail.height() - 60)
+            self.resize(width, height)
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._refit_to_current_tab()
+
+    def create_model_tab(self):
+        """Model tab: which model to run and how it runs."""
+        model_tab = QWidget()
+        layout = QVBoxLayout(model_tab)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
+
+        # Node Mode: a SWITCH.  OFF = vanilla LLM node.  ON = orchestrator: the
+        # node gains the orchestrator ports (trace/route), runs the goal loop
+        # over the chains wired to its 'tools' port, and picks the next worker
+        # with Laya (fixed — no choice).
+        mode_group = QGroupBox(_("Node Mode"))
+        mode_layout = QGridLayout(mode_group)
+        mode_layout.setContentsMargins(8, 12, 8, 8)
+        mode_layout.setSpacing(6)
+        self.orchestrator_mode_check = ModernToggle(
+            text=_("Orchestrator mode (this node becomes an orchestrator)")
+        )
+        mode_layout.addWidget(self.orchestrator_mode_check, 0, 0, 1, 2)
+
+        mode_help = QLabel(
+            _("ON: goal loop over the chains wired to this node's 'tools' port, "
+              "next worker picked by Laya.  OFF: a plain LLM node.")
+        )
+        mode_help.setWordWrap(True)
+        mode_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        mode_layout.addWidget(mode_help, 1, 0, 1, 2)
+        layout.addWidget(mode_group)
+
+        # Orchestrator settings — shown only while the switch is ON.
+        self.orch_group = QGroupBox(_("Orchestrator"))
+        orch_layout = QGridLayout(self.orch_group)
+        orch_layout.setContentsMargins(8, 12, 8, 8)
+        orch_layout.setSpacing(6)
+
+        orch_layout.addWidget(QLabel(_("Max steps:")), 0, 0)
+        self.orch_max_steps_spin = QSpinBox()
+        self.orch_max_steps_spin.setRange(1, 50)
+        self.orch_max_steps_spin.setValue(15)
+        self.orch_max_steps_spin.setToolTip(_("Per-activation step cap"))
+        orch_layout.addWidget(self.orch_max_steps_spin, 0, 1)
+
+        # Fixed goal for the loop.  A goal wired to the node's 'prompt' port
+        # OVERRIDES it (the port wins; this is the fallback).
+        orch_layout.addWidget(QLabel(_("Goal:")), 1, 0)
+        self.orch_goal_edit = QTextEdit()
+        self.orch_goal_edit.setPlaceholderText(
+            _("Fixed goal for the loop (used when nothing is wired to the prompt port)"))
+        self.orch_goal_edit.setMaximumHeight(60)
+        orch_layout.addWidget(self.orch_goal_edit, 1, 1)
+
+        self.orch_synthesize_check = ModernToggle(
+            text=_("Synthesize a final answer from the trace")
+        )
+        orch_layout.addWidget(self.orch_synthesize_check, 2, 0, 1, 2)
+
+        orch_layout.addWidget(QLabel(_("Synthesis system:")), 3, 0)
+        self.orch_synthesis_system_edit = QLineEdit()
+        self.orch_synthesis_system_edit.setPlaceholderText(_("optional system message"))
+        orch_layout.addWidget(self.orch_synthesis_system_edit, 3, 1)
+
+        self.orch_use_goal_ledger_check = ModernToggle(
+            text=_("Use long-term goal ledger")
+        )
+        orch_layout.addWidget(self.orch_use_goal_ledger_check, 4, 0, 1, 2)
+
+        orch_note = QLabel(_("Worker picker: Laya (fixed)."))
+        orch_note.setStyleSheet("color: #888; font-size: 10px;")
+        orch_layout.addWidget(orch_note, 5, 0, 1, 2)
+        self.orch_group.setVisible(False)
+        layout.addWidget(self.orch_group)
+
+        # Swap the dialog contents with the switch.
+        try:
+            self.orchestrator_mode_check.toggled.connect(self._apply_node_mode_visibility)
+        except Exception:
+            pass
 
         # Model Configuration Group
         model_group = QGroupBox(_("Model Configuration"))
@@ -236,26 +482,20 @@ class LLMPropertiesDialog(ModernDialog):
         self.model_label = model_layout.itemAtPosition(1, 0).widget()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-
         # Populate model list from cache only (no API calls on dialog open)
-        available_models = self.get_available_models()
-        self.model_combo.addItems(available_models)
-
+        self.model_combo.addItems(self.get_available_models())
         model_layout.addWidget(self.model_combo, 1, 1)
 
         # llama.cpp model selection (initially hidden)
         model_layout.addWidget(QLabel(_("GGUF Model:")), 2, 0)
         self.llamacpp_model_combo = QComboBox()
         self.llamacpp_model_combo.setEditable(True)
-
-        # Populate GGUF models
         gguf_models = get_llamacpp_models()
         self.llamacpp_model_combo.addItems(gguf_models)
         if not gguf_models:
             self.llamacpp_model_combo.setPlaceholderText(
                 "No GGUF models found in AI/models/"
             )
-
         model_layout.addWidget(self.llamacpp_model_combo, 2, 1)
         self.llamacpp_model_combo.setVisible(False)
         self.llamacpp_model_label = model_layout.itemAtPosition(2, 0).widget()
@@ -267,52 +507,31 @@ class LLMPropertiesDialog(ModernDialog):
         self.api_url_entry = QLineEdit()
         self.api_url_entry.setPlaceholderText(get_default_api_url())
         api_url_layout.addWidget(self.api_url_entry)
-
-        # Refresh models button
         refresh_btn = QPushButton(_("Refresh Models"))
         refresh_btn.clicked.connect(self.refresh_models)
         api_url_layout.addWidget(refresh_btn)
-
         model_layout.addLayout(api_url_layout, 3, 1)
 
         layout.addWidget(model_group)
 
-        # Generation Parameters Group
-        params_group = QGroupBox(_("Generation Parameters"))
-        params_layout = QGridLayout(params_group)
-        params_layout.setContentsMargins(8, 12, 8, 8)
-        params_layout.setSpacing(6)
-
-        # Temperature
-        params_layout.addWidget(QLabel(_("Temperature:")), 0, 0)
+        # Generation Group
+        gen_group = QGroupBox(_("Generation"))
+        gen_layout = QGridLayout(gen_group)
+        gen_layout.setContentsMargins(8, 12, 8, 8)
+        gen_layout.setSpacing(6)
+        gen_layout.addWidget(QLabel(_("Temperature:")), 0, 0)
         self.temperature_spin = QDoubleSpinBox()
         self.temperature_spin.setRange(0.0, 2.0)
         self.temperature_spin.setSingleStep(0.1)
         self.temperature_spin.setValue(0.7)
-        params_layout.addWidget(self.temperature_spin, 0, 1)
+        gen_layout.addWidget(self.temperature_spin, 0, 1)
+        layout.addWidget(gen_group)
 
-        # Max tokens
-        params_layout.addWidget(QLabel(_("Max Tokens:")), 1, 0)
-        self.max_tokens_spin = QSpinBox()
-        self.max_tokens_spin.setRange(1, 4096)
-        self.max_tokens_spin.setValue(4096)
-        params_layout.addWidget(self.max_tokens_spin, 1, 1)
-
-        # Output variable
-        params_layout.addWidget(QLabel(_("Output Variable:")), 2, 0)
-        self.output_variable_entry = QLineEdit()
-        self.output_variable_entry.setPlaceholderText("llm_output")
-        params_layout.addWidget(self.output_variable_entry, 2, 1)
-
-        layout.addWidget(params_group)
-
-        # Template Selection Group
+        # Quick Templates Group
         template_group = QGroupBox(_("Quick Templates"))
         template_layout = QVBoxLayout(template_group)
         template_layout.setContentsMargins(8, 12, 8, 8)
         template_layout.setSpacing(6)
-
-        # Template selection combo
         template_layout.addWidget(QLabel(_("Apply Template:")))
         self.template_combo = QComboBox()
         self.template_combo.addItems(
@@ -322,7 +541,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "Form Filling (Vision + LLM)",
                 "Custom Instructions",
                 "Direct Prompt",
-                # "ComoRAG Analysis",
                 "Data Processing Chain",
                 "Text Analysis",
                 "Content Summarization",
@@ -332,22 +550,96 @@ class LLMPropertiesDialog(ModernDialog):
         )
         self.template_combo.currentTextChanged.connect(self.apply_template)
         template_layout.addWidget(self.template_combo)
-
-        # Template description
         self.template_description = QLabel()
         self.template_description.setWordWrap(True)
         self.template_description.setStyleSheet(
             "color: #888; font-size: 10px; margin-top: 3px;"
         )
         template_layout.addWidget(self.template_description)
-
         layout.addWidget(template_group)
 
+        # Llama.cpp Runtime Group
+        llamacpp_group = QGroupBox(_("Llama.cpp Runtime"))
+        llamacpp_layout = QGridLayout(llamacpp_group)
+        llamacpp_layout.setContentsMargins(8, 12, 8, 8)
+        llamacpp_layout.setSpacing(6)
+        llamacpp_layout.addWidget(QLabel(_("Context Size:")), 0, 0)
+        self.context_size_spin = QSpinBox()
+        # 0 = model's native training context (the server resolves --ctx-size 0
+        # to the model's own value); anything above 0 is a manual cap.
+        self.context_size_spin.setRange(0, 131072)
+        self.context_size_spin.setSingleStep(512)
+        self.context_size_spin.setValue(0)
+        self.context_size_spin.setToolTip(
+            _(
+                "llama.cpp context window in tokens (--ctx-size). 0 = the "
+                "model's native training context (recommended). A positive "
+                "value caps the window and is bounded by the model's trained "
+                "context and your RAM/VRAM. Responses are not capped — the "
+                "model generates until it finishes or this context fills."
+            )
+        )
+        llamacpp_layout.addWidget(self.context_size_spin, 0, 1)
+
+        llamacpp_layout.addWidget(QLabel(_("GPU Layers:")), 1, 0)
+        self.gpu_layers_spin = QSpinBox()
+        # 0 = CPU-first (default).  Positive values offload that many layers
+        # to a GPU backend (Vulkan/CUDA) when the server binary supports one.
+        self.gpu_layers_spin.setRange(0, 200)
+        self.gpu_layers_spin.setValue(0)
+        self.gpu_layers_spin.setToolTip(
+            _(
+                "Layers offloaded to the GPU (--gpu-layers). 0 = CPU-only "
+                "(recommended default). Set >0 to use a Vulkan/CUDA backend "
+                "if available (e.g. integrated graphics) for acceleration."
+            )
+        )
+        llamacpp_layout.addWidget(self.gpu_layers_spin, 1, 1)
+
+        llamacpp_help_label = QLabel(
+            _(
+                "There is no output token cap: llama.cpp generates up to the "
+                "maximum the model + hardware can handle (context-bounded). "
+                "If the context exceeds the model or your RAM/VRAM, the "
+                "llama.cpp server fails to start — check automation.log."
+            )
+        )
+        llamacpp_help_label.setWordWrap(True)
+        llamacpp_help_label.setStyleSheet(
+            "color: #888; font-size: 10px; margin-top: 3px;"
+        )
+        llamacpp_layout.addWidget(llamacpp_help_label, 2, 0, 1, 2)
+        layout.addWidget(llamacpp_group)
+
+        # Async Processing Group
+        async_group = QGroupBox(_("Async Processing"))
+        async_layout = QGridLayout(async_group)
+        async_layout.setContentsMargins(8, 12, 8, 8)
+        async_layout.setSpacing(6)
+        async_layout.addWidget(QLabel(_("Enable Async:")), 0, 0)
+        self.use_async_checkbox = ModernToggle(
+            text=_("Process requests asynchronously")
+        )
+        self.use_async_checkbox.setChecked(True)
+        self.use_async_checkbox.setToolTip(
+            _("Enable asynchronous processing for better performance")
+        )
+        async_layout.addWidget(self.use_async_checkbox, 0, 1)
+        async_help_label = QLabel(
+            _(
+                "Async processing allows the workflow to continue while waiting for LLM responses."
+            )
+        )
+        async_help_label.setWordWrap(True)
+        async_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        async_layout.addWidget(async_help_label, 1, 0, 1, 2)
+        layout.addWidget(async_group)
+
         layout.addStretch()
-        self.tab_widget.addTab(basic_tab, _("Basic"))
+        self.tab_widget.addTab(model_tab, _("Model"))
 
     def create_prompt_tab(self):
-        """Create the Prompt Configuration tab"""
+        """Prompt tab: what the model sees (prompt + input readers + vision)."""
         prompt_tab = QWidget()
         layout = QVBoxLayout(prompt_tab)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -377,30 +669,54 @@ class LLMPropertiesDialog(ModernDialog):
 
         layout.addWidget(prompt_group)
 
-        # Input Source Configuration Group
-        input_source_group = QGroupBox(_("Input Source"))
+        # Web Mode: route input/vision/write on the chain's shared browser
+        # instead of the desktop screen (mirrors the conditional's web mode).
+        self.web_mode_checkbox = ModernToggle(
+            text=_("Web Mode (run on the chain's shared browser)")
+        )
+        self.web_mode_checkbox.setChecked(False)
+        try:
+            self.web_mode_checkbox.toggled.connect(self._on_web_mode_toggled)
+        except Exception:
+            try:
+                self.web_mode_checkbox.stateChanged.connect(self._on_web_mode_toggled)
+            except Exception:
+                pass
+        layout.addWidget(self.web_mode_checkbox)
+
+        # External input Group — only NON-connection readers live here. Text
+        # from other nodes arrives through the 'prompt' and 'context' ports (a
+        # connection IS the instruction), exactly like a web sequence's output
+        # port feeding a code/conditional/LLM node.
+        input_source_group = QGroupBox(_("External input (not from connections)"))
         input_source_layout = QVBoxLayout(input_source_group)
         input_source_layout.setContentsMargins(8, 12, 8, 8)
         input_source_layout.setSpacing(6)
 
-        # Input source radio buttons
         self.input_source_group = QButtonGroup(self)
-        self.input_none_radio = QRadioButton(_("No input (direct prompt)"))
+        self.input_none_radio = QRadioButton(
+            _("None (use connected inputs / direct prompt)"))
         self.input_none_radio.setChecked(True)
         self.input_source_group.addButton(self.input_none_radio, 0)
 
-        self.input_ocr_radio = QRadioButton(_("Extract text from screen (OCR)"))
+        self.input_ocr_radio = QRadioButton(
+            _("OCR — desktop: screen region; web: browser element"))
         self.input_source_group.addButton(self.input_ocr_radio, 1)
 
-        self.input_previous_radio = QRadioButton(_("Use output from previous node"))
-        self.input_source_group.addButton(self.input_previous_radio, 2)
+        self.input_page_text_radio = QRadioButton(
+            _("Read browser page text (web mode only)"))
+        self.input_page_text_radio.setToolTip(
+            _("Reads the visible text of the chain's browser page "
+              "(only meaningful in Web Mode)")
+        )
+        self.input_source_group.addButton(self.input_page_text_radio, 2)
 
-        self.input_clipboard_radio = QRadioButton(_("Use clipboard content"))
+        self.input_clipboard_radio = QRadioButton(_("Clipboard content"))
         self.input_source_group.addButton(self.input_clipboard_radio, 3)
 
         input_source_layout.addWidget(self.input_none_radio)
         input_source_layout.addWidget(self.input_ocr_radio)
-        input_source_layout.addWidget(self.input_previous_radio)
+        input_source_layout.addWidget(self.input_page_text_radio)
         input_source_layout.addWidget(self.input_clipboard_radio)
 
         # OCR Configuration (visible when OCR is selected)
@@ -433,45 +749,109 @@ class LLMPropertiesDialog(ModernDialog):
         )
         ocr_config_layout.addWidget(self.ocr_preprocessing_combo, 1, 1)
 
+        # OCR region: limit OCR to a picked area.  Desktop uses the on-screen
+        # element overlay; web mode uses the browser picker (a picked element's
+        # region).  Empty = full screen / whole viewport.
+        self._ocr_region = ""
+        self._web_ocr_locator = ""
+        self.ocr_region_label = QLabel(_("No region picked (full screen)"))
+        self.ocr_region_label.setWordWrap(True)
+        self.ocr_region_pick_btn = QPushButton(_("Pick region"))
+        self.ocr_region_pick_btn.clicked.connect(self._pick_ocr_region)
+        self.ocr_region_clear_btn = QPushButton(_("Clear"))
+        self.ocr_region_clear_btn.clicked.connect(self._clear_ocr_region)
+        ocr_region_row = QHBoxLayout()
+        ocr_region_row.setSpacing(6)
+        ocr_region_row.addWidget(self.ocr_region_label, 1)
+        ocr_region_row.addWidget(self.ocr_region_pick_btn)
+        ocr_region_row.addWidget(self.ocr_region_clear_btn)
+        ocr_config_layout.addLayout(ocr_region_row, 2, 0, 1, 2)
+
         input_source_layout.addWidget(self.ocr_config_widget)
 
         layout.addWidget(input_source_group)
 
+        # Vision (screenshot input) Group
+        vision_group = QGroupBox(_("Vision (screenshot input)"))
+        vision_layout = QGridLayout(vision_group)
+        vision_layout.setContentsMargins(8, 12, 8, 8)
+        vision_layout.setSpacing(6)
+        vision_layout.addWidget(QLabel(_("Use Vision:")), 0, 0)
+        self.use_vision_checkbox = ModernToggle(
+            text=_("Enable vision capabilities for this model")
+        )
+        self.use_vision_checkbox.setChecked(False)
+        vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
+        vision_layout.addWidget(QLabel(_("Screenshot:")), 1, 0)
+        self.screenshot_enabled_checkbox = ModernToggle(
+            text=_("Take screenshot automatically for vision models")
+        )
+        self.screenshot_enabled_checkbox.setChecked(True)
+        vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
+        vision_help = QLabel(
+            _(
+                "Screenshots come from the desktop screen, or from the chain's "
+                "browser when Web Mode is on."
+            )
+        )
+        vision_help.setWordWrap(True)
+        vision_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        vision_layout.addWidget(vision_help, 2, 0, 1, 2)
+        layout.addWidget(vision_group)
+
         layout.addStretch()
         self.tab_widget.addTab(prompt_tab, _("Prompt"))
 
-    def create_advanced_tab(self):
-        """Create the Advanced Configuration tab"""
-        advanced_tab = QWidget()
-        layout = QVBoxLayout(advanced_tab)
+    def create_output_tab(self):
+        """Output tab: what the node publishes and how it writes text."""
+        output_tab = QWidget()
+        layout = QVBoxLayout(output_tab)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        # Output Configuration Group
-        output_group = QGroupBox(_("Output Configuration"))
-        output_layout = QGridLayout(output_group)
-        output_layout.setContentsMargins(8, 12, 8, 8)
-        output_layout.setSpacing(6)
+        # Output variable Group
+        var_group = QGroupBox(_("Output"))
+        var_layout = QGridLayout(var_group)
+        var_layout.setContentsMargins(8, 12, 8, 8)
+        var_layout.setSpacing(6)
+        var_layout.addWidget(QLabel(_("Output Variable:")), 0, 0)
+        self.output_variable_entry = QLineEdit()
+        self.output_variable_entry.setPlaceholderText("llm_output")
+        var_layout.addWidget(self.output_variable_entry, 0, 1)
+        var_help = QLabel(
+            _(
+                "Downstream nodes read this value from the node's output / "
+                "context port — no wiring is needed here."
+            )
+        )
+        var_help.setWordWrap(True)
+        var_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        var_layout.addWidget(var_help, 1, 0, 1, 2)
+        layout.addWidget(var_group)
 
-        # Write text option
-        output_layout.addWidget(QLabel(_("Write Text:")), 0, 0)
+        # Write Generated Text Group
+        write_group = QGroupBox(_("Write Generated Text"))
+        write_layout = QGridLayout(write_group)
+        write_layout.setContentsMargins(8, 12, 8, 8)
+        write_layout.setSpacing(6)
+
+        write_layout.addWidget(QLabel(_("Write Text:")), 0, 0)
         self.write_text_checkbox = ModernToggle(
             text=_("Automatically write generated text")
         )
         self.write_text_checkbox.setChecked(True)
-        output_layout.addWidget(self.write_text_checkbox, 0, 1)
+        write_layout.addWidget(self.write_text_checkbox, 0, 1)
 
-        # Typing speed parameters (only visible when write_text is checked)
-        output_layout.addWidget(QLabel(_("Typing Batch Size:")), 1, 0)
+        write_layout.addWidget(QLabel(_("Typing Batch Size:")), 1, 0)
         self.typing_batch_size_spin = QSpinBox()
         self.typing_batch_size_spin.setRange(1, 100)
         self.typing_batch_size_spin.setValue(20)
         self.typing_batch_size_spin.setToolTip(
             _("Number of characters to type at once (higher = faster typing)")
         )
-        output_layout.addWidget(self.typing_batch_size_spin, 1, 1)
+        write_layout.addWidget(self.typing_batch_size_spin, 1, 1)
 
-        output_layout.addWidget(QLabel(_("Typing Batch Delay:")), 2, 0)
+        write_layout.addWidget(QLabel(_("Typing Batch Delay:")), 2, 0)
         self.typing_batch_delay_spin = QDoubleSpinBox()
         self.typing_batch_delay_spin.setRange(0.01, 1.0)
         self.typing_batch_delay_spin.setSingleStep(0.01)
@@ -479,220 +859,218 @@ class LLMPropertiesDialog(ModernDialog):
         self.typing_batch_delay_spin.setToolTip(
             _("Delay between typing batches in seconds (lower = faster typing)")
         )
-        output_layout.addWidget(self.typing_batch_delay_spin, 2, 1)
+        write_layout.addWidget(self.typing_batch_delay_spin, 2, 1)
 
-        # Connect write_text checkbox to enable/disable typing speed controls
         self.write_text_checkbox.toggled.connect(self.typing_batch_size_spin.setEnabled)
         self.write_text_checkbox.toggled.connect(
             self.typing_batch_delay_spin.setEnabled
         )
-
-        layout.addWidget(output_group)
-
-        # Async Processing Group
-        async_group = QGroupBox(_("Async Processing"))
-        async_layout = QGridLayout(async_group)
-        async_layout.setContentsMargins(8, 12, 8, 8)
-        async_layout.setSpacing(6)
-
-        # Use async checkbox
-        async_layout.addWidget(QLabel(_("Enable Async:")), 0, 0)
-        self.use_async_checkbox = ModernToggle(
-            text=_("Process requests asynchronously")
-        )
-        self.use_async_checkbox.setChecked(True)
-        self.use_async_checkbox.setToolTip(
-            _("Enable asynchronous processing for better performance")
-        )
-        async_layout.addWidget(self.use_async_checkbox, 0, 1)
-
-        # Add help text for async
-        async_help_label = QLabel(
+        write_help = QLabel(
             _(
-                "Async processing allows the workflow to continue while waiting for LLM responses."
+                "Desktop: types into the focused window. Web Mode: types into "
+                "the browser's focused input field."
             )
         )
-        async_help_label.setWordWrap(True)
-        async_help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        async_layout.addWidget(async_help_label, 1, 0, 1, 2)
-
-        layout.addWidget(async_group)
+        write_help.setWordWrap(True)
+        write_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
+        write_layout.addWidget(write_help, 3, 0, 1, 2)
+        layout.addWidget(write_group)
 
         layout.addStretch()
-        self.tab_widget.addTab(advanced_tab, _("Advanced"))
-
-    def create_features_tab(self):
-        """Create the Features Configuration tab"""
-        features_tab = QWidget()
-        layout = QVBoxLayout(features_tab)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        # Vision Configuration Group
-        vision_group = QGroupBox(_("Vision Configuration"))
-        vision_layout = QGridLayout(vision_group)
-        vision_layout.setContentsMargins(8, 12, 8, 8)
-        vision_layout.setSpacing(6)
-
-        # Use vision checkbox
-        vision_layout.addWidget(QLabel(_("Use Vision:")), 0, 0)
-        self.use_vision_checkbox = ModernToggle(
-            text=_("Enable vision capabilities for this model")
-        )
-        self.use_vision_checkbox.setChecked(False)
-        vision_layout.addWidget(self.use_vision_checkbox, 0, 1)
-
-        # Screenshot enabled checkbox
-        vision_layout.addWidget(QLabel(_("Screenshot:")), 1, 0)
-        self.screenshot_enabled_checkbox = ModernToggle(
-            text=_("Take screenshot automatically for vision models")
-        )
-        self.screenshot_enabled_checkbox.setChecked(True)
-        vision_layout.addWidget(self.screenshot_enabled_checkbox, 1, 1)
-
-        # Use advanced vision checkbox
-        vision_layout.addWidget(QLabel(_("Use Advanced Vision:")), 2, 0)
-        self.use_advanced_vision_checkbox = ModernToggle(
-            text=_("Enable multi-model vision pipeline")
-        )
-        self.use_advanced_vision_checkbox.setChecked(False)
-        vision_layout.addWidget(self.use_advanced_vision_checkbox, 2, 1)
-
-        # Add help text
-        help_label = QLabel(
-            _(
-                "Note: When vision is enabled, screenshots are passed directly to the model. Advanced vision runs a multi-model pipeline."
-            )
-        )
-        help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        vision_layout.addWidget(help_label, 3, 0, 1, 2)
-
-        layout.addWidget(vision_group)
-
-        # ComoRAG Configuration Group
-        comorag_group = QGroupBox(_("Context-Aware Features (ComoRAG)"))
-        comorag_layout = QGridLayout(comorag_group)
-        comorag_layout.setContentsMargins(8, 12, 8, 8)
-        comorag_layout.setSpacing(6)
-
-        # Enable ComoRAG checkbox
-        comorag_layout.addWidget(QLabel(_("Enable ComoRAG:")), 0, 0)
-        self.use_comorag_checkbox = ModernToggle(
-            text=_("Use context-aware reasoning with OverWatch")
-        )
-        self.use_comorag_checkbox.setChecked(False)
-        comorag_layout.addWidget(self.use_comorag_checkbox, 0, 1)
-
-        # Max reasoning cycles
-        comorag_layout.addWidget(QLabel(_("Max Cycles:")), 1, 0)
-        self.max_cycles_spin = QSpinBox()
-        self.max_cycles_spin.setRange(1, 10)
-        self.max_cycles_spin.setValue(5)
-        self.max_cycles_spin.setToolTip(
-            _("Maximum number of reasoning cycles for ComoRAG")
-        )
-        comorag_layout.addWidget(self.max_cycles_spin, 1, 1)
-
-        # Memory size
-        comorag_layout.addWidget(QLabel(_("Memory Size:")), 2, 0)
-        self.memory_size_spin = QSpinBox()
-        self.memory_size_spin.setRange(100, 5000)
-        self.memory_size_spin.setSingleStep(100)
-        self.memory_size_spin.setValue(1000)
-        self.memory_size_spin.setToolTip(_("Memory size for ComoRAG context retention"))
-        comorag_layout.addWidget(self.memory_size_spin, 2, 1)
-
-        # Add help text for ComoRAG
-        comorag_help_label = QLabel(
-            _(
-                "ComoRAG enhances LLM responses with context-aware reasoning and connects to OverWatch API."
-            )
-        )
-        comorag_help_label.setWordWrap(True)
-        comorag_help_label.setStyleSheet(
-            "color: #888; font-size: 10px; margin-top: 3px;"
-        )
-        comorag_layout.addWidget(comorag_help_label, 3, 0, 1, 2)
-
-        layout.addWidget(comorag_group)
-
-        layout.addStretch()
-        self.tab_widget.addTab(features_tab, _("Features"))
-
-        # Connect signals for UI elements
-        self.setup_signal_connections()
+        self.tab_widget.addTab(output_tab, _("Output"))
 
     def setup_signal_connections(self):
-        """Setup signal connections for UI elements"""
-        # Input source changes
-        self.input_source_group.buttonClicked.connect(
-            self.update_input_source_visibility
-        )
-        self.input_source_group.buttonClicked.connect(self.update_template_description)
+        """Wire cross-widget signals once every tab exists."""
+        # External-input change: show/hide the OCR settings block.
+        try:
+            self.input_source_group.buttonClicked.connect(
+                self.update_input_source_visibility
+            )
+        except Exception:
+            pass
+        # Template selection is wired in create_model_tab (apply_template).
 
-        # Template selection
-        self.template_combo.currentTextChanged.connect(self.apply_template)
-        self.template_combo.currentTextChanged.connect(self.update_template_description)
+    # --------------------------------------------------------------- web mode
+    def _on_web_mode_toggled(self, enabled):
+        """Web mode swaps the OCR screenshot source between screen and browser."""
+        try:
+            enabled = bool(enabled)
+        except Exception:
+            enabled = False
+        try:
+            self.input_page_text_radio.setEnabled(enabled)
+            if not enabled and self.input_page_text_radio.isChecked():
+                self.input_none_radio.setChecked(True)
+        except Exception:
+            pass
+        try:
+            self.ocr_region_pick_btn.setText(
+                _("Pick element") if enabled else _("Pick region")
+            )
+        except Exception:
+            pass
+        self._update_ocr_region_label()
 
-    def create_templates_tab(self):
-        """Create the Templates Configuration tab"""
-        templates_tab = QWidget()
-        layout = QVBoxLayout(templates_tab)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
+    @staticmethod
+    def _locator_summary(locator):
+        if not isinstance(locator, dict):
+            return ''
+        parts = [str(locator.get('tag') or 'element')]
+        if locator.get('id'):
+            parts.append('#' + str(locator['id']))
+        text = str(locator.get('text') or '').strip()
+        if text:
+            parts.append('"' + text[:40] + '"')
+        return ' '.join(parts)
 
-        # Template Selection Group
-        template_group = QGroupBox("Quick Templates")
-        template_layout = QVBoxLayout(template_group)
-        template_layout.setContentsMargins(8, 12, 8, 8)
-        template_layout.setSpacing(6)
+    @staticmethod
+    def _safe_locator(value):
+        if isinstance(value, dict):
+            return value
+        try:
+            return json.loads(value)
+        except Exception:
+            return None
 
-        # Template selection combo
-        template_layout.addWidget(QLabel("Apply Template:"))
-        self.template_combo = QComboBox()
-        self.template_combo.addItems(
-            [
-                "Custom (no template)",
-                "Information Extraction (OCR + LLM)",
-                "Form Filling (Vision + LLM)",
-                "Custom Instructions",
-                "Direct Prompt",
-                # "ComoRAG Analysis",
-                "Data Processing Chain",
-                "Text Analysis",
-                "Content Summarization",
-                "Tool Selection (LLM Tools)",
-                "Python Code Generation",
-            ]
-        )
-        self.template_combo.currentTextChanged.connect(self.apply_template)
-        template_layout.addWidget(self.template_combo)
+    def _update_ocr_region_label(self):
+        try:
+            web = bool(self.web_mode_checkbox.isChecked())
+        except Exception:
+            web = False
+        try:
+            if web:
+                locator = self._safe_locator(self._web_ocr_locator)
+                if locator:
+                    self.ocr_region_label.setText(
+                        _("OCR element: {summary}").format(
+                            summary=self._locator_summary(locator))
+                    )
+                else:
+                    self.ocr_region_label.setText(
+                        _("No element picked (whole browser viewport)"))
+            elif self._ocr_region:
+                x, y, w, h = self._ocr_region
+                self.ocr_region_label.setText(
+                    _("OCR region: x={x}, y={y}, w={w}, h={h}").format(
+                        x=x, y=y, w=w, h=h)
+                )
+            else:
+                self.ocr_region_label.setText(_("No region picked (full screen)"))
+        except Exception:
+            pass
 
-        # Template description
-        self.template_description = QLabel()
-        self.template_description.setWordWrap(True)
-        self.template_description.setStyleSheet(
-            "color: #888; font-size: 10px; margin-top: 3px;"
-        )
-        template_layout.addWidget(self.template_description)
+    def _clear_ocr_region(self):
+        self._ocr_region = ""
+        self._web_ocr_locator = ""
+        self._update_ocr_region_label()
 
-        layout.addWidget(template_group)
+    def _pick_ocr_region(self):
+        """Pick an OCR area with the overlay (desktop) or the browser (web)."""
+        try:
+            web = bool(self.web_mode_checkbox.isChecked())
+        except Exception:
+            web = False
+        if web:
+            self._pick_web_ocr_element()
+        else:
+            self._pick_desktop_ocr_region()
 
-        layout.addStretch()
-        self.tab_widget.addTab(templates_tab, "Templates")
+    def _pick_desktop_ocr_region(self):
+        """Hide this dialog and let the user drag a box on screen."""
+        try:
+            from .trigger_dialogs import (
+                ElementPickOverlay, _get_main_window_from_widget)
+        except Exception as exc:
+            logger.error(f"Element picker unavailable: {exc}")
+            return
+        self._pick_main_window = _get_main_window_from_widget(self.parent())
+        try:
+            self._pick_original_geo = self.geometry()
+        except Exception:
+            self._pick_original_geo = None
+        try:
+            self.move(-10000, -10000)
+            QApplication.processEvents()
+        except Exception:
+            pass
+        try:
+            if self._pick_main_window is not None:
+                self._pick_main_window.showMinimized()
+                QApplication.processEvents()
+        except Exception:
+            pass
+        QTimer.singleShot(
+            450, lambda: self._run_desktop_pick(ElementPickOverlay))
 
-        # Add dialog buttons after all tabs are created
-        self.create_dialog_buttons()
+    def _run_desktop_pick(self, overlay_cls):
+        try:
+            overlay = overlay_cls(parent=None)
+        except Exception as exc:
+            logger.error(f"Element picker unavailable: {exc}")
+            self._restore_after_pick()
+            return
+        overlay.picked.connect(self._on_desktop_region_picked)
+        try:
+            overlay.exec_()
+        except Exception as exc:
+            logger.error(f"Element picker failed: {exc}")
+        finally:
+            self._restore_after_pick()
 
-    def create_dialog_buttons(self):
-        """Create dialog buttons at the bottom"""
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
+    def _on_desktop_region_picked(self, rect):
+        if rect:
+            l, t, r, b = rect
+            self._ocr_region = [int(l), int(t),
+                                max(1, int(r) - int(l)), max(1, int(b) - int(t))]
+        self._update_ocr_region_label()
 
-        # Add buttons to main layout
-        self.main_layout.addWidget(button_box)
+    def _restore_after_pick(self):
+        try:
+            if getattr(self, '_pick_original_geo', None) is not None:
+                self.setGeometry(self._pick_original_geo)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_pick_main_window', None) is not None:
+                self._pick_main_window.showNormal()
+                self._pick_main_window.raise_()
+                self._pick_main_window.activateWindow()
+        except Exception:
+            pass
+
+    def _pick_web_ocr_element(self):
+        """Arm the browser picker off the GUI thread and store the locator."""
+        try:
+            self.setModal(False)
+            self.showMinimized()
+        except Exception:
+            pass
+        self._web_pick_thread = _WebPickThread(self)
+        self._web_pick_thread.picked.connect(self._on_web_locator_picked)
+        self._web_pick_thread.start()
+
+    def _on_web_locator_picked(self, result):
+        try:
+            self.setModal(True)
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            pass
+        if not result or (isinstance(result, dict) and result.get('cancelled')):
+            return
+        locator = dict(result.get('locator') or {})
+        # Where the element lives: a frame-relative css/xpath must be re-applied
+        # to the SAME document (see the web conditional's picker callback).
+        locator['_frame_path'] = result.get('frame_path') or []
+        locator['_cross_origin'] = bool(result.get('cross_origin_frame'))
+        if result.get('_window_ordinal') is not None:
+            locator['_window_ordinal'] = int(result['_window_ordinal'])
+        self._web_ocr_locator = json.dumps(locator)
+        self._update_ocr_region_label()
 
     def load_current_config(self):
         """Load current configuration into the dialog"""
@@ -708,9 +1086,10 @@ class LLMPropertiesDialog(ModernDialog):
             else:
                 self.engine_combo.setCurrentText("Ollama")
 
-            # Basic tab settings
+            # Basic tab settings — empty by default: llama.cpp nodes run
+            # their GGUF, Ollama nodes pick a model explicitly.
             self.model_combo.setCurrentText(
-                self.current_config.get("model", "llama3.2")
+                self.current_config.get("model") or ""
             )
 
             # Load llama.cpp model if applicable
@@ -722,10 +1101,37 @@ class LLMPropertiesDialog(ModernDialog):
                 self.current_config.get("api_url", get_default_api_url())
             )
             self.temperature_spin.setValue(self.current_config.get("temperature", 0.7))
-            self.max_tokens_spin.setValue(self.current_config.get("max_tokens", 150))
+            # Restore the llama.cpp context size (0 = model's native context).
+            self.context_size_spin.setValue(
+                int(self.current_config.get("llamacpp_context_size", 0))
+            )
+            # Restore the GPU layers (0 = CPU-first).
+            self.gpu_layers_spin.setValue(
+                int(self.current_config.get("llamacpp_gpu_layers", 0))
+            )
             self.output_variable_entry.setText(
                 self.current_config.get("output_variable", "llm_output")
             )
+            self.orchestrator_mode_check.setChecked(
+                bool(self.current_config.get("orchestrator_mode", False))
+            )
+            try:
+                self.orch_max_steps_spin.setValue(
+                    int(self.current_config.get("orch_max_steps", 15) or 15))
+            except Exception:
+                pass
+            self.orch_synthesize_check.setChecked(
+                bool(self.current_config.get("orch_synthesize", True)))
+            self.orch_goal_edit.setPlainText(
+                self.current_config.get("orch_goal") or "")
+            self.orch_synthesis_system_edit.setText(
+                self.current_config.get("orch_synthesis_system") or "")
+            self.orch_use_goal_ledger_check.setChecked(
+                bool(self.current_config.get("orch_use_goal_ledger", False)))
+            try:
+                self._apply_node_mode_visibility()
+            except Exception:
+                pass
 
             # Prompt tab settings
             self.system_message_edit.setPlainText(
@@ -735,14 +1141,44 @@ class LLMPropertiesDialog(ModernDialog):
                 self.current_config.get("prompt", "Enter your prompt here...")
             )
 
-            # Input source configuration
-            input_source = self.current_config.get("input_source", 0)
-            button = self.input_source_group.button(input_source)
-            if button:
-                button.setChecked(True)
+            # External input (connection-driven values are NOT listed here — a
+            # connection into the input/context port already feeds the node).
+            # Legacy "previous"/"input"/"input_node" values fall back to none.
+            input_source = str(
+                self.current_config.get("input_source", "none") or "none"
+            ).lower()
+            _radio_by_source = {
+                "none": self.input_none_radio,
+                "ocr": self.input_ocr_radio,
+                "page_text": self.input_page_text_radio,
+                "clipboard": self.input_clipboard_radio,
+            }
+            radio = _radio_by_source.get(input_source)
+            if radio is not None:
+                radio.setChecked(True)
             self.ocr_confidence_spin.setValue(
                 self.current_config.get("ocr_confidence", 0.7)
             )
+
+            # Web mode + OCR region (page-text radio is enabled by the toggle).
+            try:
+                self.web_mode_checkbox.setChecked(
+                    bool(self.current_config.get("web_mode", False)))
+            except Exception:
+                pass
+            _region = self.current_config.get("ocr_region", "")
+            if isinstance(_region, str):
+                try:
+                    _region = json.loads(_region)
+                except Exception:
+                    _region = None
+            if isinstance(_region, (list, tuple)) and len(_region) == 4:
+                try:
+                    self._ocr_region = [int(v) for v in _region]
+                except (TypeError, ValueError):
+                    self._ocr_region = ""
+            self._web_ocr_locator = self.current_config.get("web_ocr_locator", "") or ""
+            self._update_ocr_region_label()
 
             ocr_preprocessing = self.current_config.get("ocr_preprocessing", "None")
             index = self.ocr_preprocessing_combo.findText(ocr_preprocessing)
@@ -773,24 +1209,29 @@ class LLMPropertiesDialog(ModernDialog):
                 self.current_config.get("use_vision", False)
             )
             # vision_model is no longer used — images go directly to the main model
-            self.use_advanced_vision_checkbox.setChecked(
-                self.current_config.get("use_advanced_vision", False)
-            )
             self.screenshot_enabled_checkbox.setChecked(
                 self.current_config.get("screenshot_enabled", True)
             )
 
-            self.use_comorag_checkbox.setChecked(
-                self.current_config.get("use_comorag", True)
-            )
-            self.max_cycles_spin.setValue(self.current_config.get("max_cycles", 5))
-            self.memory_size_spin.setValue(self.current_config.get("memory_size", 1000))
             self.use_direct_rag_checkbox.setChecked(
                 self.current_config.get("use_direct_rag", False)
             )
-            self.rag_embedding_model_entry.setText(
-                self.current_config.get("rag_embedding_model", "nomic-embed-text")
-            )
+            # Engine-aware default: llama.cpp nodes embed with the local
+            # embeddinggemma GGUF; Ollama nodes with nomic-embed-text.  Only
+            # rewrite empty/auto/legacy values — never a custom model.
+            _rag_model = str(
+                self.current_config.get("rag_embedding_model", "") or ""
+            ).strip()
+            if _rag_model.lower() in ("", "auto", "default") or (
+                use_llamacpp
+                and _rag_model.lower() in ("nomic-embed-text", "nomic-embed-text:v1.5")
+            ):
+                _rag_model = (
+                    "embeddinggemma-300M-Q8_0.gguf"
+                    if use_llamacpp
+                    else "nomic-embed-text"
+                )
+            self.rag_embedding_model_entry.setText(_rag_model)
             self.rag_chunk_size_spin.setValue(
                 self.current_config.get("rag_chunk_size", 500)
             )
@@ -813,6 +1254,29 @@ class LLMPropertiesDialog(ModernDialog):
             for p in docs:
                 self.rag_documents_list.addItem(p)
 
+            # Context Consolidation config (opt-in — disabled by default)
+            self.use_consolidation_checkbox.setChecked(
+                self.current_config.get("use_context_consolidation", False)
+            )
+            self.consolidation_chunk_size_spin.setValue(
+                self.current_config.get("consolidation_chunk_size", 1000)
+            )
+            self.consolidation_overlap_spin.setValue(
+                self.current_config.get("consolidation_overlap", 200)
+            )
+            self.consolidation_top_k_spin.setValue(
+                self.current_config.get("consolidation_top_k", 5)
+            )
+            self.consolidation_max_tokens_spin.setValue(
+                self.current_config.get("consolidation_max_tokens", 64)
+            )
+            self.consolidation_max_probes_spin.setValue(
+                self.current_config.get("consolidation_max_probes", 6)
+            )
+            self.consolidation_min_facts_spin.setValue(
+                self.current_config.get("consolidation_min_facts", 3)
+            )
+
             # Load template
             template_applied = self.current_config.get(
                 "template_applied", "Custom (no template)"
@@ -831,179 +1295,31 @@ class LLMPropertiesDialog(ModernDialog):
             # Update visibility based on input source
         self.update_input_source_visibility()
 
-    def apply_template(self, template_name):
-        """Apply a predefined template configuration"""
-        templates = {
-            "Information Extraction (OCR + LLM)": {
-                "system_message": "You are an AI assistant that extracts specific information from text. Follow the user's instructions carefully and provide only the requested information.",
-                "prompt": "Extract the following information from the provided text: [SPECIFY WHAT TO EXTRACT]. Return only the extracted information, nothing else.",
-                "temperature": 0.1,
-                "max_tokens": 4096,
-                "input_source": 1,  # OCR
-                "ocr_confidence": 0.8,
-                "ocr_preprocessing": "Enhance contrast",
-                "output_variable": "extracted_info",
-            },
-            "Custom Instructions": {
-                "system_message": "You are a helpful AI assistant. Follow the user's instructions carefully.",
-                "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
-                "temperature": 0.7,
-                "max_tokens": 4096,
-                "input_source": 0,  # No input
-                "output_variable": "llm_output",
-            },
-            # "ComoRAG Analysis": {
-            #     "system_message": "You are an AI assistant with memory and context awareness. Use the provided context to give informed responses.",
-            #     "prompt": "Analyze the following information and provide insights based on the context: [DESCRIBE ANALYSIS GOAL]",
-            #     "temperature": 0.3,
-            #     "max_tokens": 4096,
-            #     "input_source": 2,  # Previous node output
-            #     "use_comorag": True,
-            #     "max_cycles": 3,
-            #     "memory_size": 2000,
-            #     "output_variable": "analysis_result"
-            # },
-            "Data Processing Chain": {
-                "system_message": "You are a data processing assistant. Process the input data according to the specified requirements.",
-                "prompt": "Process the input data as follows: [DESCRIBE PROCESSING STEPS]",
-                "temperature": 0.2,
-                "max_tokens": 4096,
-                "input_source": 2,  # Previous node output
-                "output_variable": "processed_data",
-            },
-            "Text Analysis": {
-                "system_message": "You are a text analysis expert. Analyze the provided text thoroughly.",
-                "prompt": "Analyze the following text and provide: 1) Main themes, 2) Key points, 3) Sentiment, 4) Actionable insights: [DESCRIBE ANALYSIS FOCUS]",
-                "temperature": 0.4,
-                "max_tokens": 4096,
-                "input_source": 3,  # Clipboard
-                "output_variable": "text_analysis",
-            },
-            "Content Summarization": {
-                "system_message": "You are a content summarization expert. Create concise, accurate summaries.",
-                "prompt": "Summarize the following content in [SPECIFY LENGTH] focusing on [SPECIFY FOCUS AREAS]: ",
-                "temperature": 0.3,
-                "max_tokens": 4096,
-                "input_source": 1,  # OCR
-                "ocr_confidence": 0.7,
-                "output_variable": "summary",
-            },
-            "Tool Selection (LLM Tools)": {
-                "system_message": "You select tools to fulfill the user's request. Choose exactly one tool that best matches the request using the available descriptions. When a tool is needed, respond ONLY with 'USE_TOOL:<id>' and nothing else.",
-                "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
-                "temperature": 0.1,
-                "max_tokens": 150,
-                "input_source": 0,
-                "output_variable": "llm_output",
-            },
-            "Python Code Generation": {
-                "system_message": "You are a Python code generator. Your ONLY task is to output executable Python code.\\n1. Output the entire script in a SINGLE markdown code block (```python ... ```).\\n2. Do NOT split the code into multiple blocks.\\n3. Do NOT add any explanations, comments, steps, or text outside the code block.\\n4. Ensure all imports and logic are contained within that one block.",
-                "prompt": "Write a complete, single-file Python script to: [TASK_DESCRIPTION]\\n\\nIMPORTANT: Provide ONLY the raw python code inside a single ```python``` block. No other text.",
-                "temperature": 0.2,
-                "max_tokens": 4096,
-                "input_source": 0,
-                "output_variable": "llm_output",
-            },
-        }
-
-        if template_name in templates:
-            self.apply_template_config(templates[template_name])
-
-    def apply_template_config(self, config):
-        """Apply template configuration to dialog"""
-        if "system_message" in config:
-            self.system_message_edit.setPlainText(config["system_message"])
-        if "prompt" in config:
-            self.prompt_edit.setPlainText(config["prompt"])
-        if "temperature" in config:
-            self.temperature_spin.setValue(config["temperature"])
-        if "max_tokens" in config:
-            self.max_tokens_spin.setValue(config["max_tokens"])
-        if "output_variable" in config:
-            self.output_variable_entry.setText(config["output_variable"])
-        if "input_source" in config:
-            button = self.input_source_group.button(config["input_source"])
-            if button:
-                button.setChecked(True)
-        if "ocr_confidence" in config:
-            self.ocr_confidence_spin.setValue(config["ocr_confidence"])
-        if "ocr_preprocessing" in config:
-            index = self.ocr_preprocessing_combo.findText(config["ocr_preprocessing"])
-            if index >= 0:
-                self.ocr_preprocessing_combo.setCurrentIndex(index)
-        if "use_comorag" in config:
-            self.use_comorag_checkbox.setChecked(config["use_comorag"])
-        if "use_direct_rag" in config:
-            self.use_direct_rag_checkbox.setChecked(config["use_direct_rag"])
-        if "max_cycles" in config:
-            self.max_cycles_spin.setValue(config["max_cycles"])
-        if "memory_size" in config:
-            self.memory_size_spin.setValue(config["memory_size"])
-
-        self.update_input_source_visibility()
-
-    def update_input_source_visibility(self):
-        """Update UI visibility based on selected input source"""
-        selected_button = self.input_source_group.checkedButton()
-        if not selected_button:
-            return
-
-        input_source = self.input_source_group.id(selected_button)
-
-        # Show/hide OCR configuration
-        ocr_visible = input_source == 1  # OCR
-        self.ocr_config_widget.setVisible(ocr_visible)
-        # Show/hide previous input mode controls
-        self.previous_mode_widget.setVisible(input_source == 2)
-
-        # Update prompt placeholder based on input source
-        if input_source == 0:  # No input
-            self.prompt_edit.setPlaceholderText("Enter your prompt here...")
-        elif input_source == 1:  # OCR
-            self.prompt_edit.setPlaceholderText(
-                "Describe what to extract/analyze from the screen text..."
-            )
-        elif input_source == 2:  # Previous node output
-            self.prompt_edit.setPlaceholderText("Process the previous node's output...")
-        elif input_source == 3:  # Clipboard
-            self.prompt_edit.setPlaceholderText("Process the clipboard content...")
-
-    def update_template_description(self):
-        """Update template description based on current selection"""
-        template_name = self.template_combo.currentText()
-        descriptions = {
-            "Custom (no template)": _(
-                "Use custom configuration without predefined template."
-            ),
-            "Information Extraction (OCR + LLM)": _(
-                "Extract specific information from screen text using OCR + LLM."
-            ),
-            "Form Filling (Vision + LLM)": _(
-                "Analyze screen using Vision model to extract form fields, and fill them one by one using LLM & RAG context."
-            ),
-            "Custom Instructions": _(
-                "Define your own system message and prompt for the LLM."
-            ),
-            "Direct Prompt": _(
-                "Simple direct prompt without additional configuration."
-            ),
-            "Data Processing Chain": _(
-                "Process data from previous nodes in a multi-step workflow."
-            ),
-            "Text Analysis": _(
-                "Analyze text content from clipboard with detailed insights."
-            ),
-            "Content Summarization": _(
-                "Summarize content extracted from screen using OCR."
-            ),
-            "Tool Selection (LLM Tools)": _(
-                "Configure base system prompt for tool use. Respond only with 'USE_TOOL:<id>'."
-            ),
-            "Python Code Generation": _(
-                "Generate executable Python code in a single block."
-            ),
-        }
-        self.template_description.setText(descriptions.get(template_name, ""))
+    def _apply_node_mode_visibility(self, *args):
+        """Show the orchestrator fields (hide the chat tabs) while ON."""
+        try:
+            on = bool(self.orchestrator_mode_check.isChecked())
+        except Exception:
+            on = False
+        try:
+            self.orch_group.setVisible(on)
+        except Exception:
+            pass
+        try:
+            tabs = self.tab_widget
+            for i in range(tabs.count()):
+                if tabs.tabText(i) == _("Model"):
+                    continue
+                try:
+                    tabs.setTabVisible(i, not on)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            self._refit_to_current_tab()
+        except Exception:
+            pass
 
     def get_config(self):
         """Get the LLM configuration from the dialog"""
@@ -1016,41 +1332,44 @@ class LLMPropertiesDialog(ModernDialog):
             "llamacpp_model_path": self.llamacpp_model_combo.currentText()
             if use_llamacpp
             else "",
-            "llamacpp_gpu_layers": 35,  # Default, can be made configurable
-            "llamacpp_threads": 8,  # Default, can be made configurable
-            "llamacpp_context_size": 4096,  # Default, can be made configurable
+            "llamacpp_gpu_layers": self.gpu_layers_spin.value(),  # 0 = CPU-first
+            "llamacpp_threads": -1,  # -1 = auto-detect
+            "llamacpp_context_size": self.context_size_spin.value(),
             "api_url": self.api_url_entry.text() or get_default_api_url(),
             "system_message": self.system_message_edit.toPlainText(),
             "prompt": self.prompt_edit.toPlainText(),
             "temperature": self.temperature_spin.value(),
-            "max_tokens": self.max_tokens_spin.value(),
             "output_variable": self.output_variable_entry.text() or "llm_output",
+            "orchestrator_mode": self.orchestrator_mode_check.isChecked(),
+            "orch_max_steps": self.orch_max_steps_spin.value(),
+            "orch_goal": self.orch_goal_edit.toPlainText(),
+            "orch_synthesize": self.orch_synthesize_check.isChecked(),
+            "orch_synthesis_system": self.orch_synthesis_system_edit.text(),
+            "orch_use_goal_ledger": self.orch_use_goal_ledger_check.isChecked(),
             "write_text": self.write_text_checkbox.isChecked(),
             "use_async": self.use_async_checkbox.isChecked(),
             "use_vision": self.use_vision_checkbox.isChecked(),
             "vision_model": "",  # No separate vision model — images go directly to the main model
-            "use_advanced_vision": self.use_advanced_vision_checkbox.isChecked(),
             "screenshot_enabled": self.screenshot_enabled_checkbox.isChecked(),
             # Typing speed parameters
             "typing_batch_size": self.typing_batch_size_spin.value(),
             "typing_batch_delay": self.typing_batch_delay_spin.value(),
-            # ComoRAG configuration
-            "use_comorag": self.use_comorag_checkbox.isChecked(),
-            "max_cycles": self.max_cycles_spin.value(),
-            "memory_size": self.memory_size_spin.value(),
         }
 
         # Add input source configuration
         selected_button = self.input_source_group.checkedButton()
         if selected_button:
             source_id = self.input_source_group.id(selected_button)
-            mapping = {0: "none", 1: "ocr", 2: "previous", 3: "clipboard"}
+            mapping = {0: "none", 1: "ocr", 2: "page_text", 3: "clipboard"}
             config["input_source"] = mapping.get(source_id, "none")
         else:
             config["input_source"] = "none"
 
         config["ocr_confidence"] = self.ocr_confidence_spin.value()
         config["ocr_preprocessing"] = self.ocr_preprocessing_combo.currentText()
+        config["web_mode"] = bool(self.web_mode_checkbox.isChecked())
+        config["ocr_region"] = self._ocr_region or ""
+        config["web_ocr_locator"] = self._web_ocr_locator or ""
         config["template_applied"] = self.template_combo.currentText()
 
         # Determine RAG usage directly from RAG tab toggle
@@ -1058,8 +1377,7 @@ class LLMPropertiesDialog(ModernDialog):
         config.update(
             {
                 "use_direct_rag": use_direct_rag_value,
-                "rag_embedding_model": self.rag_embedding_model_entry.text()
-                or "nomic-embed-text",
+                "rag_embedding_model": self.rag_embedding_model_entry.text().strip(),
                 "rag_chunk_size": self.rag_chunk_size_spin.value(),
                 "rag_overlap": self.rag_overlap_spin.value(),
                 "rag_top_k": self.rag_top_k_spin.value(),
@@ -1069,6 +1387,14 @@ class LLMPropertiesDialog(ModernDialog):
                     self.rag_documents_list.item(i).text()
                     for i in range(self.rag_documents_list.count())
                 ],
+                # Context Consolidation config
+                "use_context_consolidation": self.use_consolidation_checkbox.isChecked(),
+                "consolidation_chunk_size": self.consolidation_chunk_size_spin.value(),
+                "consolidation_overlap": self.consolidation_overlap_spin.value(),
+                "consolidation_top_k": self.consolidation_top_k_spin.value(),
+                "consolidation_max_tokens": self.consolidation_max_tokens_spin.value(),
+                "consolidation_max_probes": self.consolidation_max_probes_spin.value(),
+                "consolidation_min_facts": self.consolidation_min_facts_spin.value(),
             }
         )
         td = {}
@@ -1088,7 +1414,7 @@ class LLMPropertiesDialog(ModernDialog):
 
         return config
 
-    def create_rag_tab(self):
+    def create_knowledge_tab(self):
         rag_tab = QWidget()
         layout = QVBoxLayout(rag_tab)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -1105,7 +1431,9 @@ class LLMPropertiesDialog(ModernDialog):
         params_layout.addWidget(self.use_direct_rag_checkbox, 0, 1)
         params_layout.addWidget(QLabel("Embedding Model:"), 1, 0)
         self.rag_embedding_model_entry = QLineEdit()
-        self.rag_embedding_model_entry.setText("nomic-embed-text")
+        self.rag_embedding_model_entry.setPlaceholderText(
+            "auto — llama.cpp: embeddinggemma / Ollama: nomic-embed-text"
+        )
         params_layout.addWidget(self.rag_embedding_model_entry, 1, 1)
         params_layout.addWidget(QLabel("Chunk Size:"), 2, 0)
         self.rag_chunk_size_spin = QSpinBox()
@@ -1133,6 +1461,71 @@ class LLMPropertiesDialog(ModernDialog):
         self.rag_max_chars_spin.setValue(1500)
         params_layout.addWidget(self.rag_max_chars_spin, 6, 1)
         layout.addWidget(params_group)
+
+        # ── Context Consolidation section ──
+        cons_group = QGroupBox("Context Consolidation (ComoRAG)")
+        cons_layout = QGridLayout(cons_group)
+        cons_layout.setContentsMargins(8, 12, 8, 8)
+        cons_layout.setSpacing(6)
+
+        cons_layout.addWidget(QLabel("Enable Consolidation:"), 0, 0)
+        self.use_consolidation_checkbox = ModernToggle(
+            text="Probe-based context consolidation (opt-in)"
+        )
+        self.use_consolidation_checkbox.setChecked(False)
+        cons_layout.addWidget(self.use_consolidation_checkbox, 0, 1)
+
+        cons_layout.addWidget(QLabel("Chunk Size:"), 1, 0)
+        self.consolidation_chunk_size_spin = QSpinBox()
+        self.consolidation_chunk_size_spin.setRange(100, 5000)
+        self.consolidation_chunk_size_spin.setValue(1000)
+        cons_layout.addWidget(self.consolidation_chunk_size_spin, 1, 1)
+
+        cons_layout.addWidget(QLabel("Overlap:"), 2, 0)
+        self.consolidation_overlap_spin = QSpinBox()
+        self.consolidation_overlap_spin.setRange(0, 1000)
+        self.consolidation_overlap_spin.setValue(200)
+        cons_layout.addWidget(self.consolidation_overlap_spin, 2, 1)
+
+        cons_layout.addWidget(QLabel("Top K (per probe):"), 3, 0)
+        self.consolidation_top_k_spin = QSpinBox()
+        self.consolidation_top_k_spin.setRange(1, 20)
+        self.consolidation_top_k_spin.setValue(5)
+        cons_layout.addWidget(self.consolidation_top_k_spin, 3, 1)
+
+        cons_layout.addWidget(QLabel("Probe Max Tokens:"), 4, 0)
+        self.consolidation_max_tokens_spin = QSpinBox()
+        self.consolidation_max_tokens_spin.setRange(64, 2048)
+        self.consolidation_max_tokens_spin.setValue(64)
+        self.consolidation_max_tokens_spin.setToolTip(
+            "Max tokens per LLM-generated retrieval probe. Probes are written "
+            "by the node's own model; failures fall back to lexical probes."
+        )
+        cons_layout.addWidget(self.consolidation_max_tokens_spin, 4, 1)
+
+        cons_layout.addWidget(QLabel("Max Probes (cycle ceiling):"), 5, 0)
+        self.consolidation_max_probes_spin = QSpinBox()
+        self.consolidation_max_probes_spin.setRange(1, 12)
+        self.consolidation_max_probes_spin.setValue(6)
+        self.consolidation_max_probes_spin.setToolTip(
+            "Ceiling on probing cycles. The sweep normally stops earlier — "
+            "the moment the judge's answer is grounded, or when a cycle "
+            "adds no new on-topic fact."
+        )
+        cons_layout.addWidget(self.consolidation_max_probes_spin, 5, 1)
+
+        cons_layout.addWidget(QLabel("Min Facts / Cycle:"), 6, 0)
+        self.consolidation_min_facts_spin = QSpinBox()
+        self.consolidation_min_facts_spin.setRange(1, 8)
+        self.consolidation_min_facts_spin.setValue(3)
+        self.consolidation_min_facts_spin.setToolTip(
+            "Composed facts a cycle must accumulate before it counts as done. "
+            "Cycles producing no facts are invalid and re-probe with feedback."
+        )
+        cons_layout.addWidget(self.consolidation_min_facts_spin, 6, 1)
+
+        layout.addWidget(cons_group)
+
         docs_group = QGroupBox("Documents")
         docs_layout = QVBoxLayout(docs_group)
         self.rag_documents_list = QListWidget()
@@ -1147,13 +1540,16 @@ class LLMPropertiesDialog(ModernDialog):
         docs_layout.addLayout(btns)
         layout.addWidget(docs_group)
         layout.addStretch()
-        self.tab_widget.addTab(rag_tab, "RAG")
+        self.tab_widget.addTab(rag_tab, _("Knowledge"))
 
-    def create_tools_tab(self):
-        tools_tab = QWidget()
-        layout = QVBoxLayout(tools_tab)
+    def create_tools_skills_tab(self):
+        """Tools & Skills tab: connected tools and the skills library."""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
+
+        # ── Connected tools ──
         group = QGroupBox(_("Tools Configuration"))
         gl = QGridLayout(group)
         gl.setContentsMargins(8, 12, 8, 8)
@@ -1174,8 +1570,6 @@ class LLMPropertiesDialog(ModernDialog):
         btn_row.addWidget(rem_btn)
         gl.addLayout(btn_row, 4, 0, 1, 2)
         layout.addWidget(group)
-        layout.addStretch()
-        self.tab_widget.addTab(tools_tab, _("Tools"))
 
         def on_add():
             try:
@@ -1256,29 +1650,12 @@ class LLMPropertiesDialog(ModernDialog):
         self.tools_list.itemSelectionChanged.connect(on_select)
         self.tools_list.itemDoubleClicked.connect(on_double_click)
 
-    def load_tool_descriptions(self, mapping):
-        try:
-            self.tools_list.clear()
-            if isinstance(mapping, dict):
-                for k, v in mapping.items():
-                    self.tools_list.addItem(f"{k}: {v}")
-        except Exception:
-            pass
-
-    def create_skills_tab(self):
-        """Create the Skills Configuration tab"""
-        skills_tab = QWidget()
-        layout = QVBoxLayout(skills_tab)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        # Section A: Skills List (top ~40%)
+        # ── Skills list ──
         skills_list_group = QGroupBox(_("Skills List"))
         skills_list_layout = QVBoxLayout(skills_list_group)
         skills_list_layout.setContentsMargins(8, 12, 8, 8)
         skills_list_layout.setSpacing(6)
 
-        # Skills table
         self.skills_table = QTableWidget()
         self.skills_table.setColumnCount(5)
         self.skills_table.setHorizontalHeaderLabels(
@@ -1298,38 +1675,28 @@ class LLMPropertiesDialog(ModernDialog):
         self.skills_table.itemSelectionChanged.connect(self.on_skill_selected)
         skills_list_layout.addWidget(self.skills_table)
 
-        # Add/Remove buttons
-        btn_layout = QHBoxLayout()
+        skill_btn_layout = QHBoxLayout()
         add_skill_btn = QPushButton(_("Add Skill"))
         remove_skill_btn = QPushButton(_("Remove Skill"))
         add_skill_btn.clicked.connect(self.add_new_skill)
         remove_skill_btn.clicked.connect(self.remove_selected_skill)
-        btn_layout.addWidget(add_skill_btn)
-        btn_layout.addWidget(remove_skill_btn)
-        btn_layout.addStretch()
-        skills_list_layout.addLayout(btn_layout)
+        skill_btn_layout.addWidget(add_skill_btn)
+        skill_btn_layout.addWidget(remove_skill_btn)
+        skill_btn_layout.addStretch()
+        skills_list_layout.addLayout(skill_btn_layout)
+        layout.addWidget(skills_list_group)
 
-        layout.addWidget(skills_list_group, 2)
-
-        # Section B: Skill Editor / AI Generator (middle ~50%)
-        editor_scroll = QWidget()
-        editor_layout = QVBoxLayout(editor_scroll)
-        editor_layout.setContentsMargins(0, 0, 0, 0)
-        editor_layout.setSpacing(10)
-
-        # Skill Editor Group
+        # ── Skill editor ──
         editor_group = QGroupBox(_("Skill Editor"))
         editor_grid = QGridLayout(editor_group)
         editor_grid.setContentsMargins(8, 12, 8, 8)
         editor_grid.setSpacing(6)
 
-        # Skill Name
         editor_grid.addWidget(QLabel(_("Skill Name:")), 0, 0)
         self.skill_name_edit = QLineEdit()
         self.skill_name_edit.setPlaceholderText(_("e.g., Data Extraction"))
         editor_grid.addWidget(self.skill_name_edit, 0, 1)
 
-        # Description
         editor_grid.addWidget(QLabel(_("Description:")), 1, 0)
         self.skill_desc_edit = QLineEdit()
         self.skill_desc_edit.setPlaceholderText(
@@ -1337,7 +1704,6 @@ class LLMPropertiesDialog(ModernDialog):
         )
         editor_grid.addWidget(self.skill_desc_edit, 1, 1)
 
-        # Trigger Keywords
         editor_grid.addWidget(QLabel(_("Trigger Keywords:")), 2, 0)
         self.skill_keywords_edit = QLineEdit()
         self.skill_keywords_edit.setPlaceholderText(
@@ -1345,7 +1711,6 @@ class LLMPropertiesDialog(ModernDialog):
         )
         editor_grid.addWidget(self.skill_keywords_edit, 2, 1)
 
-        # Instructions
         editor_grid.addWidget(QLabel(_("Instructions:")), 3, 0)
         self.skill_instructions_edit = QTextEdit()
         self.skill_instructions_edit.setPlaceholderText(
@@ -1354,32 +1719,27 @@ class LLMPropertiesDialog(ModernDialog):
         self.skill_instructions_edit.setMaximumHeight(80)
         editor_grid.addWidget(self.skill_instructions_edit, 3, 1)
 
-        # Priority
         editor_grid.addWidget(QLabel(_("Priority:")), 4, 0)
         self.skill_priority_spin = QSpinBox()
         self.skill_priority_spin.setRange(1, 10)
         self.skill_priority_spin.setValue(5)
         editor_grid.addWidget(self.skill_priority_spin, 4, 1)
 
-        # Save Skill button
         save_skill_btn = QPushButton(_("Save Skill"))
         save_skill_btn.clicked.connect(self.save_current_skill)
         editor_grid.addWidget(save_skill_btn, 5, 0, 1, 2)
+        layout.addWidget(editor_group)
 
-        editor_layout.addWidget(editor_group)
-
-        # AI Skill Generator Group
+        # ── AI skill generator ──
         ai_group = QGroupBox(_("AI Skill Generator"))
         ai_layout = QGridLayout(ai_group)
         ai_layout.setContentsMargins(8, 12, 8, 8)
         ai_layout.setSpacing(6)
 
-        # Model selector + Refresh
         ai_layout.addWidget(QLabel(_("Model:")), 0, 0)
         model_layout = QHBoxLayout()
         self.skill_gen_model_combo = QComboBox()
         self.skill_gen_model_combo.setEditable(True)
-        # Populate models
         try:
             models = get_real_cached_models(timeout=2.0)
             if models:
@@ -1389,13 +1749,11 @@ class LLMPropertiesDialog(ModernDialog):
         except Exception:
             self.skill_gen_model_combo.addItem("llama3.2:latest")
         model_layout.addWidget(self.skill_gen_model_combo)
-
         refresh_btn = QPushButton(_("Refresh"))
         refresh_btn.clicked.connect(self.refresh_skill_gen_models)
         model_layout.addWidget(refresh_btn)
         ai_layout.addLayout(model_layout, 0, 1)
 
-        # Generation prompt
         ai_layout.addWidget(QLabel(_("What should this skill do?")), 1, 0)
         self.skill_gen_prompt_edit = QTextEdit()
         self.skill_gen_prompt_edit.setPlaceholderText(
@@ -1404,30 +1762,24 @@ class LLMPropertiesDialog(ModernDialog):
         self.skill_gen_prompt_edit.setMaximumHeight(60)
         ai_layout.addWidget(self.skill_gen_prompt_edit, 1, 1)
 
-        # Generate button
         gen_skill_btn = QPushButton(_("Generate Skill"))
         gen_skill_btn.clicked.connect(self.generate_skill)
         ai_layout.addWidget(gen_skill_btn, 2, 0, 1, 2)
 
-        # Status label
         self.skill_gen_status = QLabel("")
         self.skill_gen_status.setStyleSheet("color: #888; font-style: italic;")
         self.skill_gen_status.setAlignment(Qt.AlignCenter)
         ai_layout.addWidget(self.skill_gen_status, 3, 0, 1, 2)
+        layout.addWidget(ai_group)
 
-        editor_layout.addWidget(ai_group)
-        layout.addWidget(editor_scroll, 3)
-
-        # Section C: Routing Toggle (bottom)
+        # ── Skill routing ──
         routing_group = QGroupBox(_("Skill Routing"))
         routing_layout = QVBoxLayout(routing_group)
         routing_layout.setContentsMargins(8, 12, 8, 8)
         routing_layout.setSpacing(6)
-
         self.skill_routing_check = QCheckBox(_("Enable context-aware skill routing"))
         self.skill_routing_check.setChecked(True)
         routing_layout.addWidget(self.skill_routing_check)
-
         routing_info = QLabel(
             _(
                 "When enabled, skills are selected based on context from connected Context nodes. When disabled, all enabled skills are injected."
@@ -1436,10 +1788,19 @@ class LLMPropertiesDialog(ModernDialog):
         routing_info.setWordWrap(True)
         routing_info.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         routing_layout.addWidget(routing_info)
-
         layout.addWidget(routing_group)
 
-        self.tab_widget.addTab(skills_tab, _("Skills"))
+        layout.addStretch()
+        self.tab_widget.addTab(tab, _("Tools & Skills"))
+
+    def load_tool_descriptions(self, mapping):
+        try:
+            self.tools_list.clear()
+            if isinstance(mapping, dict):
+                for k, v in mapping.items():
+                    self.tools_list.addItem(f"{k}: {v}")
+        except Exception:
+            pass
 
     def refresh_skill_gen_models(self):
         """Refresh models for skill generator"""
@@ -1685,7 +2046,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Extract the following information from the text: [SPECIFY WHAT TO EXTRACT]",
                 "temperature": 0.3,
                 "max_tokens": 4096,
-                "use_comorag": False,
                 "ocr_confidence": 0.7,
                 "ocr_preprocessing": "Clean formatting",
             },
@@ -1696,7 +2056,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Analyze the UI elements provided in the JSON_SCREEN_MAP and provide a multi-step plan (1-10 actions) to progress the task.\nUse the attached RAG context for any necessary information. Output only action commands.",
                 "temperature": 0.1,
                 "max_tokens": 512,
-                "use_comorag": True,  # Enable RAG to allow loading resumes/documents
                 "use_direct_rag": True,
                 "ocr_confidence": 0.7,
             },
@@ -1707,7 +2066,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "[ENTER YOUR CUSTOM INSTRUCTIONS HERE]",
                 "temperature": 0.7,
                 "max_tokens": 4096,
-                "use_comorag": False,
             },
             "Direct Prompt": {
                 "description": "Simple direct prompt without any special configuration",
@@ -1716,27 +2074,14 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "[ENTER YOUR PROMPT HERE]",
                 "temperature": 0.7,
                 "max_tokens": 4096,
-                "use_comorag": False,
-            },
-            "ComoRAG Analysis": {
-                "description": "Use ComoRAG for context-aware analysis and reasoning",
-                "input_source": 0,  # No input
-                "system_message": "You are an intelligent assistant with access to context-aware reasoning. Analyze the request and provide comprehensive insights.",
-                "prompt": "[ENTER YOUR ANALYSIS REQUEST]",
-                "temperature": 0.5,
-                "max_tokens": 4096,
-                "use_comorag": True,
-                "max_cycles": 5,
-                "memory_size": 1000,
             },
             "Data Processing Chain": {
                 "description": "Process data from previous node for multi-step automation",
-                "input_source": 2,  # Previous node
+                "input_source": 0,  # connections feed the data
                 "system_message": "You are a data processing node in an automation chain. Process the input data according to the specified requirements.",
                 "prompt": "Process the input data to: [SPECIFY PROCESSING REQUIREMENTS]",
                 "temperature": 0.3,
                 "max_tokens": 4096,
-                "use_comorag": False,
             },
             "Text Analysis": {
                 "description": "Analyze text content with OCR input",
@@ -1745,7 +2090,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Analyze the text and provide: [SPECIFY ANALYSIS REQUIREMENTS]",
                 "temperature": 0.4,
                 "max_tokens": 4096,
-                "use_comorag": False,
                 "ocr_confidence": 0.6,
                 "ocr_preprocessing": "Remove extra spaces",
             },
@@ -1756,7 +2100,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Summarize the key points from the content. Focus on the most important information.",
                 "temperature": 0.3,
                 "max_tokens": 4096,
-                "use_comorag": False,
                 "ocr_confidence": 0.6,
                 "ocr_preprocessing": "Clean formatting",
             },
@@ -1767,7 +2110,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Decide which connected tool best solves the user's request and respond ONLY with 'USE_TOOL:<tool_id>'.",
                 "temperature": 0.1,
                 "max_tokens": 150,
-                "use_comorag": False,
             },
             "Python Code Generation": {
                 "description": "Generate executable Python code in a single block.",
@@ -1776,7 +2118,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "prompt": "Write a complete, single-file Python script to: [TASK_DESCRIPTION]\\n\\nIMPORTANT: Provide ONLY the raw python code inside a single ```python``` block. No other text.",
                 "temperature": 0.2,
                 "max_tokens": 4096,
-                "use_comorag": False,
             },
         }
 
@@ -1813,20 +2154,6 @@ class LLMPropertiesDialog(ModernDialog):
         if "temperature" in template:
             self.temperature_spin.setValue(template["temperature"])
 
-        # Max tokens
-        if "max_tokens" in template:
-            self.max_tokens_spin.setValue(template["max_tokens"])
-
-        # ComoRAG settings
-        if "use_comorag" in template:
-            self.use_comorag_checkbox.setChecked(template["use_comorag"])
-
-        if "max_cycles" in template:
-            self.max_cycles_spin.setValue(template["max_cycles"])
-
-        if "memory_size" in template:
-            self.memory_size_spin.setValue(template["memory_size"])
-
         # OCR settings
         if "ocr_confidence" in template:
             self.ocr_confidence_spin.setValue(template["ocr_confidence"])
@@ -1837,28 +2164,17 @@ class LLMPropertiesDialog(ModernDialog):
                 self.ocr_preprocessing_combo.setCurrentIndex(index)
 
     def update_input_source_visibility(self):
-        """Update visibility of input source configuration widgets"""
+        """Show the OCR settings only while OCR is the chosen external reader."""
         input_source_id = self.input_source_group.checkedId()
-
-        # Show/hide OCR configuration
-        self.ocr_config_widget.setVisible(input_source_id == 1)  # OCR
-        # Show/hide previous input mode controls
-        if hasattr(self, "previous_mode_widget"):
-            self.previous_mode_widget.setVisible(input_source_id == 2)
-
-        # Update prompt placeholder based on input source
-        if input_source_id == 1:  # OCR
-            if "Extract" not in self.prompt_edit.toPlainText():
-                self.prompt_edit.setPlaceholderText(
-                    "Enter instructions for processing the extracted text..."
-                )
-        elif input_source_id == 2:  # Previous node
-            self.prompt_edit.setPlaceholderText(
-                "Enter instructions for processing the input from previous node..."
-            )
-        elif input_source_id == 3:  # Clipboard
-            self.prompt_edit.setPlaceholderText(
-                "Enter instructions for processing the clipboard content..."
-            )
-        else:  # No input
-            self.prompt_edit.setPlaceholderText("Enter your prompt here...")
+        try:
+            self.ocr_config_widget.setVisible(input_source_id == 1)  # OCR
+        except Exception:
+            pass
+        # Web page text is only meaningful on the chain's browser.
+        try:
+            web_mode = bool(self.web_mode_checkbox.isChecked())
+            self.input_page_text_radio.setEnabled(web_mode)
+            if not web_mode and self.input_page_text_radio.isChecked():
+                self.input_none_radio.setChecked(True)
+        except Exception:
+            pass

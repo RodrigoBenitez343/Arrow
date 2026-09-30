@@ -2,7 +2,7 @@
 """
 OverWatch Main Window
 
-Main window for the OverWatch application providing ComoRAG configuration and management.
+Main window for the OverWatch a  pplication providing API management.
 """
 
 import logging
@@ -17,10 +17,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QIcon, QFont
 
 from .widgets.api_status_widget import APIStatusWidget
-from .widgets.comorag_config_widget import ComoRAGConfigWidget
 from .widgets.model_management_widget import ModelManagementWidget
-from .widgets.reasoning_widget import ReasoningWidget
-from .widgets.memory_viewer_widget import MemoryViewerWidget
 from .dialogs.settings_dialog import SettingsDialog
 from .dialogs.about_dialog import AboutDialog
 from ..api.api_client import OverWatchAPIClient
@@ -55,7 +52,7 @@ class MainWindow(QMainWindow):
     
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("OverWatch - vLLM API & ComoRAG Management")
+        self.setWindowTitle("OverWatch - vLLM API Management")
         self.setGeometry(100, 100, 1200, 800)
         
         # Create central widget
@@ -122,19 +119,6 @@ class MainWindow(QMainWindow):
         refresh_models_action.triggered.connect(self.refresh_models)
         api_menu.addAction(refresh_models_action)
         
-        # ComoRAG menu
-        comorag_menu = menubar.addMenu('&ComoRAG')
-        
-        # Clear memory action
-        clear_memory_action = QAction('&Clear Memory', self)
-        clear_memory_action.triggered.connect(self.clear_comorag_memory)
-        comorag_menu.addAction(clear_memory_action)
-        
-        # Export memory action
-        export_memory_action = QAction('&Export Memory...', self)
-        export_memory_action.triggered.connect(self.export_memory)
-        comorag_menu.addAction(export_memory_action)
-        
         # Help menu
         help_menu = menubar.addMenu('&Help')
         
@@ -160,13 +144,6 @@ class MainWindow(QMainWindow):
         refresh_button.clicked.connect(self.refresh_models)
         toolbar.addWidget(refresh_button)
         
-        toolbar.addSeparator()
-        
-        # Clear memory button
-        clear_memory_button = QPushButton('Clear Memory')
-        clear_memory_button.clicked.connect(self.clear_comorag_memory)
-        toolbar.addWidget(clear_memory_button)
-    
     def create_main_content(self, parent_layout):
         """Create the main content area"""
         # Create horizontal splitter
@@ -195,10 +172,6 @@ class MainWindow(QMainWindow):
         self.api_status_widget = APIStatusWidget(self.settings)
         layout.addWidget(self.api_status_widget)
         
-        # ComoRAG Configuration Widget
-        self.comorag_config_widget = ComoRAGConfigWidget(self.settings)
-        layout.addWidget(self.comorag_config_widget)
-        
         # Add stretch to push widgets to top
         layout.addStretch()
         
@@ -212,14 +185,6 @@ class MainWindow(QMainWindow):
         # Model Management Tab
         self.model_management_widget = ModelManagementWidget()
         self.tab_widget.addTab(self.model_management_widget, "Models")
-        
-        # Reasoning Tab
-        self.reasoning_widget = ReasoningWidget()
-        self.tab_widget.addTab(self.reasoning_widget, "Reasoning")
-        
-        # Memory Viewer Tab
-        self.memory_viewer_widget = MemoryViewerWidget()
-        self.tab_widget.addTab(self.memory_viewer_widget, "Memory")
         
         # Log Viewer Tab
         self.log_viewer = self.create_log_viewer()
@@ -280,10 +245,6 @@ class MainWindow(QMainWindow):
         # Connect widgets to API client
         if hasattr(self, 'model_management_widget'):
             self.model_management_widget.set_api_client(self.api_client)
-        if hasattr(self, 'reasoning_widget'):
-            self.reasoning_widget.set_api_client(self.api_client)
-        if hasattr(self, 'memory_viewer_widget'):
-            self.memory_viewer_widget.set_api_client(self.api_client)
     
     @pyqtSlot()
     def check_api_status(self):
@@ -359,53 +320,6 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'model_management_widget'):
             self.model_management_widget.refresh_models()
         self.log_message('Refreshing model list...')
-    
-    @pyqtSlot()
-    def clear_comorag_memory(self):
-        """Clear ComoRAG memory"""
-        reply = QMessageBox.question(
-            self,
-            'Clear Memory',
-            'Are you sure you want to clear all ComoRAG memory?\n\nThis action cannot be undone.',
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            try:
-                if self.api_client:
-                    self.api_client.clear_memory()
-                    self.log_message('ComoRAG memory cleared')
-                    if hasattr(self, 'memory_viewer_widget'):
-                        self.memory_viewer_widget.refresh_memory()
-            except Exception as e:
-                self.show_error_message('Clear Memory Error', f'Failed to clear memory: {str(e)}')
-    
-    @pyqtSlot()
-    def export_memory(self):
-        """Export ComoRAG memory to file"""
-        from PyQt5.QtWidgets import QFileDialog
-        
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            'Export Memory',
-            'comorag_memory.json',
-            'JSON Files (*.json);;All Files (*)'
-        )
-        
-        if filename:
-            try:
-                if self.api_client:
-                    memory_data = self.api_client.get_memory_state()
-                    
-                    import json
-                    with open(filename, 'w', encoding='utf-8') as f:
-                        json.dump(memory_data, f, indent=2, ensure_ascii=False)
-                    
-                    self.log_message(f'Memory exported to {filename}')
-                    QMessageBox.information(self, 'Export Complete', f'Memory exported to:\n{filename}')
-            except Exception as e:
-                self.show_error_message('Export Error', f'Failed to export memory: {str(e)}')
     
     @pyqtSlot()
     def show_settings_dialog(self):

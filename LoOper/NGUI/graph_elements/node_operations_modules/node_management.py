@@ -1,5 +1,5 @@
 from PyQt5.QtWidgets import QMessageBox
-from ...nodes import SequenceNode, ActionNode, ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode
+from ...nodes import SequenceNode, WebSequenceNode, ActionNode, ConditionalNode, LLMNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode, InputNode, HandleNode, MCPNode, OutputNode
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -12,10 +12,15 @@ class NodeManagementMixin:
             if isinstance(node, SequenceNode):
                 logger.debug("Deleting sequence node")
                 self.delete_sequence_node(node)
+            elif isinstance(node, WebSequenceNode):
+                # Web sessions are valuable recordings - delete the node from
+                # the graph but never the session file.
+                logger.debug("Deleting web sequence node")
+                self.parent_widget.graph_manager.delete_node(node)
             elif isinstance(node, ActionNode):
                 logger.debug("Deleting action node")
                 self.delete_action_node(node)
-            elif isinstance(node, (ConditionalNode, LLMNode, TTSNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode)):
+            elif isinstance(node, (ConditionalNode, LLMNode, ChainImportNode, FormFillerNode, CodeNode, ContainerNode, ContextNode, InputNode, HandleNode, MCPNode, OutputNode)):
                 logger.debug(f"Deleting {type(node).__name__} node")
                 self.parent_widget.graph_manager.delete_node(node)
             else:
@@ -40,15 +45,15 @@ class NodeManagementMixin:
             elif name == "Add LLM":
                 logger.debug("Adding LLM node from context menu")
                 self.add_llm_node(pos)
-            elif name == "Add TTS":
-                logger.debug("Adding TTS node from context menu")
-                self.add_tts_node(pos)
             elif name == "Add Code":
                 logger.debug("Adding Code node from context menu")
                 self.add_code_node(pos)
             elif name == "Add Container":
                 logger.debug("Adding Container node from context menu")
                 self.add_container_node(pos)
+            elif name == "Add Input":
+                logger.debug("Adding Input node from context menu")
+                self.add_input_node(pos)
             else:
                 logger.warning(f"Unknown context menu action: {name}")
         except Exception as e:

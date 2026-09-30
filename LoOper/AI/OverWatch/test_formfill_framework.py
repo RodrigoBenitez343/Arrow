@@ -31,7 +31,6 @@ class OverWatchTestFramework:
         self.api_base_url = f"http://{self.api_host}:{self.api_port}"
         self.ollama_base_url = f"http://{self.ollama_host}:{self.ollama_port}"
         self.vision_dir = os.path.join(self.base_dir, "vision_output")
-        self.comp_vision_dir = os.path.join(self.base_dir, "player", "Computer_vision")
         self.chain_path = chain_path or os.path.join(self.base_dir, "chains", "formfillertest.json")
         self._server = None
         self._server_thread = None
@@ -104,7 +103,6 @@ class OverWatchTestFramework:
         try:
             os.environ["OVERWATCH_API_URL"] = self.api_base_url
             os.environ["API_PORT"] = str(self.api_port)
-            os.environ["TAILSCALE_SERVER_IP"] = self.api_host
         except Exception:
             pass
 
@@ -124,15 +122,6 @@ class OverWatchTestFramework:
         if isinstance(data, dict):
             return data.get("embeddings") or []
         return []
-
-    def run_model_vision_describe(self, monitor: int = 1) -> None:
-        model_path = os.path.join(self.comp_vision_dir, "model_vision.py")
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(model_path)
-        env = os.environ.copy()
-        env["API_PORT"] = str(self.api_port)
-        cmd = [sys.executable, model_path, "--describe", "--monitor", str(monitor)]
-        subprocess.run(cmd, cwd=self.comp_vision_dir, env=env, check=True)
 
     def load_vision_outputs(self) -> Dict[str, Any]:
         pruned_path = os.path.join(self.vision_dir, "latest_pruned.json")
@@ -300,19 +289,6 @@ class OverWatchTestFramework:
             crop_paths[node["id"]] = out_path
         return crop_paths
 
-    def index_graph_in_comorag(self, graph: Dict[str, Any], memory_size: int = 1000) -> None:
-        init_payload = {"memory_size": memory_size}
-        self._request("post", "/comorag/init", init_payload)
-        for node in graph["nodes"].values():
-            content = json.dumps(node, ensure_ascii=False)
-            payload = {"content": content, "source": "vision_graph", "metadata": {"kind": node.get("kind"), "label": node.get("label")}}
-            image_path = node.get("data", {}).get("screenshot_path")
-            if image_path and os.path.exists(image_path):
-                payload["image_data"] = self._b64_from_path(image_path)
-            self._request("post", "/comorag/memory", payload)
-        graph_blob = json.dumps(graph, ensure_ascii=False)
-        self._request("post", "/comorag/memory", {"content": graph_blob, "source": "vision_graph", "metadata": {"kind": "graph"}})
-
     def build_context_text(self, pruned: Dict[str, Any]) -> str:
         ctx_items = pruned.get("context_items") or []
         ocr_texts = pruned.get("ocr_texts") or []
@@ -418,9 +394,9 @@ class OverWatchTestFramework:
                 "context": context_text + ("\n\nDOCUMENT_CONTEXT:\n" + rag_context if rag_context else ""),
                 "images": images,
             }
-            resp = self._request("post", "/comorag/reason", payload)
+            resp = self._request("post", "/generate", payload)
             if resp.status_code >= 400:
-                raise RuntimeError(f"ComoRAG reason failed: {resp.status_code} {resp.text}")
+                raise RuntimeError(f"Generate failed: {resp.status_code} {resp.text}")
             data = resp.json()
             last_response = (data or {}).get("response") or ""
             actions = self._parse_actions(last_response)
@@ -463,19 +439,15 @@ class OverWatchTestFramework:
     def run_chain(self, chain_path: str) -> bool:
         if self.base_dir not in sys.path:
             sys.path.append(self.base_dir)
-        from player.agentic_ops.chain_runner import ChainRunner
-        from player.multi_sequence.llm_executor import LLMExecutor
-        executor = LLMExecutor()
-        runner = ChainRunner(lambda cls: executor)
-        return runner.run_chain_file(chain_path)
+        from player.agentic_ops.chain_executor import ChainExecutor
+        runner = ChainExecutor()
+        return runner.run_chain(chain_path)
 
     def run_full_test(self) -> Dict[str, Any]:
         self.ensure_api()
-        self.run_model_vision_describe()
         outputs = self.load_vision_outputs()
         graph = self.build_knowledge_graph(outputs)
         self.create_action_crops(graph)
-        self.index_graph_in_comorag(graph)
         rag_context, rag_meta = self._build_rag_context_from_chain(self.chain_path)
         context_text = self.build_context_text(outputs["pruned"])
         images = []

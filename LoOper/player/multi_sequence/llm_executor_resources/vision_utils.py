@@ -2,8 +2,9 @@ import os
 import time
 from typing import Optional, Tuple, List
 
-from ...config import logger
 from ...screenshot_cleanup import register_temporal_screenshot, cleanup_screenshot
+import logging
+logger = logging.getLogger(__name__)
 
 
 def capture_screenshot(stop_flag) -> Optional[str]:
@@ -48,9 +49,32 @@ def capture_screenshot(stop_flag) -> Optional[str]:
         return None
 
 
-def prepare_vision_images(should_use_vision: bool, screenshot_enabled: bool, stop_flag) -> Tuple[Optional[List[str]], Optional[str]]:
+def capture_web_screenshot(stop_flag) -> Optional[str]:
+    """Screenshot the chain's shared BROWSER (headless) and return its path.
+
+    Web-mode twin of ``capture_screenshot``: images come from the driver
+    instead of the desktop screen.
+    """
+    try:
+        if stop_flag and stop_flag():
+            logger.info("Stopped before web vision screenshot capture")
+            return None
+        from .inputs import _web_driver, _save_web_screenshot
+
+        driver = _web_driver()
+        if driver is None:
+            logger.error("Web vision: no shared browser available")
+            return None
+        return _save_web_screenshot(driver, None, "llm_vision_web")
+    except Exception as e:
+        logger.error(f"Web vision screenshot failed: {e}")
+        return None
+
+
+def prepare_vision_images(should_use_vision: bool, screenshot_enabled: bool, stop_flag, web_mode: bool = False) -> Tuple[Optional[List[str]], Optional[str]]:
     """Capture screenshot if needed and return image list for vision models.
 
+    ``web_mode`` captures from the chain's browser instead of the desktop.
     Returns (images, ocr_text_placeholder).
     """
     if not should_use_vision:
@@ -59,7 +83,7 @@ def prepare_vision_images(should_use_vision: bool, screenshot_enabled: bool, sto
         logger.info("Vision requested but screenshots disabled")
         return None, None
 
-    path = capture_screenshot(stop_flag)
+    path = capture_web_screenshot(stop_flag) if web_mode else capture_screenshot(stop_flag)
     if not path:
         return None, None
     # Keep cleanup to the caller when done, to allow API usage.

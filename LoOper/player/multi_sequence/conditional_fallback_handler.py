@@ -1,9 +1,10 @@
+import logging
+logger = logging.getLogger(__name__)
 # conditional_fallback_handler.py
 """
 Conditional fallback handler for multi-sequence automation.
 Entry point that orchestrates modular components for conditional fallback handling.
 """
-from ..config import logger
 from ..computer_vision import TemplateMatching
 from ..sequence_player import SequencePlayer
 from .conditional_fallback_resources import (

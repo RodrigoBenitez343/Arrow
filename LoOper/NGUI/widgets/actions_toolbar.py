@@ -527,6 +527,8 @@ class ActionsToolbar(QWidget):
         layout.addWidget(self._make_custom_icon_button(self._icon_delete(), self._delete_selected, tooltip=_("Delete Selected"), label_text=_("Delete")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_copy(), self._copy_selected, tooltip=_("Copy Selected"), label_text=_("Copy")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip=_("Paste"), label_text=_("Paste")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_undo(), self._undo_selected, tooltip=_("Undo Ctrl+Z"), label_text=_("Undo")), alignment=Qt.AlignVCenter)
+        layout.addWidget(self._make_custom_icon_button(self._icon_redo(), self._redo_selected, tooltip=_("Redo Ctrl+Y"), label_text=_("Redo")), alignment=Qt.AlignVCenter)
         outer.addWidget(self._content_frame)
 
         # Floating toggle button (solid triangle) centered under the actions frame
@@ -714,6 +716,20 @@ class ActionsToolbar(QWidget):
         except Exception as e:
             logger.error(f"Copy selected error: {e}")
 
+    def _undo_selected(self):
+        try:
+            if hasattr(self.graph_view, 'undo'):
+                self.graph_view.undo()
+        except Exception as e:
+            logger.error(f"Undo error: {e}")
+
+    def _redo_selected(self):
+        try:
+            if hasattr(self.graph_view, 'redo'):
+                self.graph_view.redo()
+        except Exception as e:
+            logger.error(f"Redo error: {e}")
+
     def _paste_selected(self):
         try:
             if hasattr(self.graph_view, 'paste_copied_nodes'):
@@ -878,5 +894,49 @@ class ActionsToolbar(QWidget):
         p.drawLine(8, 12, 16, 12)
         p.drawLine(8, 15, 16, 15)
         p.drawLine(8, 18, 14, 18)
+        p.end()
+        return QIcon(pix)
+
+    def _icon_undo(self) -> QIcon:
+        if TablerIcons and OutlineIcon:
+            try:
+                img = TablerIcons.load(OutlineIcon.ARROW_BACK_UP, size=24, color=TEXT_COLOR, stroke_width=2.0)
+                return QIcon(img.toqpixmap())
+            except Exception:
+                pass
+        pix = QPixmap(24, 24)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        pen.setWidthF(2.0)
+        p.setPen(pen)
+        # curved arrow pointing left
+        p.drawArc(4, 12, 10, 8, 0 * 16, 180 * 16)
+        p.drawLine(4, 16, 8, 12)
+        p.drawLine(4, 16, 8, 20)
+        p.end()
+        return QIcon(pix)
+
+    def _icon_redo(self) -> QIcon:
+        if TablerIcons and OutlineIcon:
+            try:
+                img = TablerIcons.load(OutlineIcon.ARROW_FORWARD_UP, size=24, color=TEXT_COLOR, stroke_width=2.0)
+                return QIcon(img.toqpixmap())
+            except Exception:
+                pass
+        pix = QPixmap(24, 24)
+        pix.fill(Qt.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.Antialiasing)
+        pen = p.pen()
+        pen.setColor(QColor(TEXT_COLOR))
+        pen.setWidthF(2.0)
+        p.setPen(pen)
+        # curved arrow pointing right
+        p.drawArc(10, 12, 10, 8, 0 * 16, -180 * 16)
+        p.drawLine(20, 16, 16, 12)
+        p.drawLine(20, 16, 16, 20)
         p.end()
         return QIcon(pix)

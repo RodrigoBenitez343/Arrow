@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # computer_vision.py
 """
 Computer vision and template matching functionality for the LocalOperator automation system.
@@ -8,11 +10,17 @@ import time
 import pyautogui
 import hashlib
 from functools import lru_cache
-from .config import logger, CV2_AVAILABLE, OCR_AVAILABLE
+from .config import CV2_AVAILABLE, OCR_AVAILABLE
 from .ocr_engine import extract_text_elements
 
 _SANDBOX_AGENT_URL = None
 _LAST_SANDBOX_HASH = None
+
+# Template matching epsilon: TM_CCOEFF_NORMED returns ~0.99999 for a perfect
+# match (never exactly 1.0 due to float precision), so a user threshold of 1.0
+# must still accept it.  Comparisons use `confidence - _CONF_EPS` so a match
+# within float error of the threshold passes.
+_CONF_EPS = 1e-4
 
 def set_sandbox_agent_url(agent_url):
     global _SANDBOX_AGENT_URL
@@ -77,7 +85,17 @@ class TemplateMatching:
         if isinstance(template_src, np.ndarray):
             return template_src.copy()
         
-        # Case 2: Base64-encoded image string
+        # Case 2: PIL Image - convert to numpy BGR array
+        try:
+            from PIL import Image as PIL_Image
+            if isinstance(template_src, PIL_Image.Image):
+                rgb = np.array(template_src.convert("RGB"))
+                import cv2 as _cv2
+                return _cv2.cvtColor(rgb, _cv2.COLOR_RGB2BGR)
+        except Exception:
+            pass
+        
+        # Case 3: Base64-encoded image string
         if isinstance(template_src, str):
             if template_src.startswith('data:image/') or (len(template_src) > 100 and 'base64' not in template_src[:20]):
                 try:
@@ -153,6 +171,17 @@ class TemplateMatching:
                         if _np is None:
                             return img
                         screen_np = _np.array(img)
+                        # DPI-normalize to the agent's logical size (mirrors the
+                        # host MSS path) so template-match coordinates land in
+                        # the same space the agent's clicks use.
+                        try:
+                            sw_l = int(payload.get("screen_width") or 0)
+                            sh_l = int(payload.get("screen_height") or 0)
+                            if sw_l > 0 and sh_l > 0 and (screen_np.shape[1] != sw_l or screen_np.shape[0] != sh_l):
+                                import cv2 as _cv2
+                                screen_np = _cv2.resize(screen_np, (sw_l, sh_l), interpolation=_cv2.INTER_AREA)
+                        except Exception:
+                            pass
                         h = hashlib.md5(screen_np.tobytes()).hexdigest()
                         if _LAST_SANDBOX_HASH is not None and h == _LAST_SANDBOX_HASH and tries == 0:
                             _time.sleep(0.08)
@@ -164,9 +193,19 @@ class TemplateMatching:
             except Exception as e:
                 logger.error(f"Sandbox capture_screen failed: {e}")
                 pass
+        # Keep the cosmetic execution overlay out of the frame: template matching
+        # and OCR read these pixels.
+        try:
+            from .execution_overlay_bus import bus as _exec_bus
+            _exec_bus.hide_overlay_for_capture()
+        except Exception:
+            pass
         if MSS_AVAILABLE:
             with mss.mss() as sct:
-                monitor = sct.monitors[0]
+                # Use primary monitor (index 1) to match pyautogui coordinate space.
+                # monitors[0] is the combined virtual screen which may have negative
+                # offsets on multi-monitor setups, causing coordinate mismatches.
+                monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
                 screenshot = sct.grab(monitor)
                 try:
                     import numpy as _np
@@ -174,6 +213,30 @@ class TemplateMatching:
                     _np = None
                 if _np is not None:
                     screen_np = _np.array(screenshot)
+                    # ── Safety: Normalize to pyautogui.size() coordinate space ──
+                    # mss always captures at physical resolution, while
+                    # pyautogui.size() may return logical pixels if the process
+                    # is not DPI-aware (e.g., PyInstaller builds without the
+                    # dpi_aware_hook).  Rescaling ensures template-matching
+                    # coordinates are in the same space as pyautogui.click().
+                    norm_w, norm_h = pyautogui.size()
+                    if (
+                        norm_w > 0 and norm_h > 0
+                        and (screen_np.shape[1] != norm_w or screen_np.shape[0] != norm_h)
+                    ):
+                        try:
+                            import cv2 as _cv2
+                            screen_np = _cv2.resize(
+                                screen_np, (norm_w, norm_h),
+                                interpolation=_cv2.INTER_AREA,
+                            )
+                            logger.debug(
+                                "[DPI] mss capture rescaled %dx%d → %dx%d",
+                                screenshot.size[0], screenshot.size[1],
+                                norm_w, norm_h,
+                            )
+                        except Exception:
+                            pass
                     return screen_np[:, :, :3]
                 try:
                     from PIL import Image
@@ -251,8 +314,17 @@ class TemplateMatching:
         # Optional: uncomment to debug the actual images being evaluated
         # TemplateMatching._debug_save_screenshot(screen_cv, "eval_screen")
         
-        # Adaptive multi-scale strategy
-        abs_path = os.path.abspath(template_path)
+        # Adaptive multi-scale strategy.
+        # Cache key is path-based for file templates, but embedded screenshots
+        # arrive as in-memory PIL Images / numpy arrays, for which
+        # os.path.abspath raises TypeError ("expected str, bytes or
+        # os.PathLike object, not Image") — previously aborting EVERY
+        # multi-scale strategy and forcing a low-confidence match back at the
+        # recorded (stale) coordinates.  Use a stable in-memory token instead.
+        if isinstance(template_path, (str, bytes, os.PathLike)):
+            abs_path = os.path.abspath(template_path)
+        else:
+            abs_path = f"mem:{type(template_path).__name__}:{id(template_path)}"
         attempt_count = TemplateMatching._template_attempt_counts.get(abs_path, 0)
         
         # Default scales with adaptive adjustment
@@ -326,7 +398,7 @@ class TemplateMatching:
                 # Check if this is our best match so far
                 if max_val > best_confidence:
                     best_confidence = max_val
-                    if max_val >= confidence:
+                    if max_val >= confidence - _CONF_EPS:
                         # Calculate center coordinates
                         h, w = template_work.shape[:2]
                         center_x = max_loc[0] + w // 2
@@ -339,7 +411,7 @@ class TemplateMatching:
                 logger.debug(f"Scale {scale} failed: {e}")
                 continue
         
-        if best_match and best_confidence >= confidence:
+        if best_match and best_confidence >= confidence - _CONF_EPS:
             logger.debug(f"Multi-scale match found: confidence {best_confidence:.3f}, coords {best_match}")
             return best_match
         else:
@@ -434,7 +506,7 @@ class TemplateMatching:
                 
                 logger.debug(f"Region CV matching: confidence {max_val:.3f} at local ({max_loc[0]}, {max_loc[1]})")
                 
-                if max_val >= confidence:
+                if max_val >= confidence - _CONF_EPS:
                     # Convert local coordinates to global coordinates
                     global_x = left + max_loc[0] + template_w // 2
                     global_y = top + max_loc[1] + template_h // 2

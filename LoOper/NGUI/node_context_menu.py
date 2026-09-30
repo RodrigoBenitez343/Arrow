@@ -17,14 +17,14 @@ class NodeContextMenuManager:
         
         if hasattr(node, '__identifier__') and node.__identifier__ == 'sequence':
             self.add_sequence_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'web_sequence':
+            self.add_web_sequence_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'action':
             self.add_action_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'conditional':
             self.add_conditional_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'llm':
             self.add_llm_node_actions(menu, node)
-        elif hasattr(node, '__identifier__') and node.__identifier__ == 'tts':
-            self.add_tts_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'chain_import':
             self.add_chain_import_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'code':
@@ -35,6 +35,14 @@ class NodeContextMenuManager:
             self.add_container_node_actions(menu, node)
         elif hasattr(node, '__identifier__') and node.__identifier__ == 'context':
             self.add_context_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'input':
+            self.add_input_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'handle':
+            self.add_handle_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'mcp':
+            self.add_mcp_node_actions(menu, node)
+        elif hasattr(node, '__identifier__') and node.__identifier__ == 'output':
+            self.add_output_node_actions(menu, node)
         else:
             # Show graph actions for background clicks or any other case
             self.add_graph_actions(menu, pos)
@@ -56,6 +64,16 @@ class NodeContextMenuManager:
         
         # Removed: Remove Sequence and Add Conditional Branch
 
+    def add_web_sequence_node_actions(self, menu, node):
+        """Add actions for a web sequence node to the context menu"""
+        edit_sequence_action = QAction(_("Edit Web Sequence Properties"), menu)
+        edit_sequence_action.triggered.connect(lambda: self.graph_view.edit_web_sequence(node))
+        menu.addAction(edit_sequence_action)
+
+        record_action = QAction(_("Record Web Session"), menu)
+        record_action.triggered.connect(lambda: self.graph_view.record_web_session(node))
+        menu.addAction(record_action)
+
     def add_action_node_actions(self, menu, node):
         """Add actions for an action node to the context menu"""
         remove_action = QAction(_("Remove Action"), menu)
@@ -74,12 +92,6 @@ class NodeContextMenuManager:
         edit_llm_action.triggered.connect(lambda: self.graph_view.edit_llm(node))
         menu.addAction(edit_llm_action)
 
-    def add_tts_node_actions(self, menu, node):
-        """Add actions for a TTS node to the context menu"""
-        edit_action = QAction(_("Edit TTS Properties"), menu)
-        edit_action.triggered.connect(lambda: self.graph_view.edit_tts_node(node))
-        menu.addAction(edit_action)
-    
     def add_chain_import_node_actions(self, menu, node):
         """Add actions for a Chain Import node to the context menu"""
         edit_action = QAction(_("Edit Chain Import Configuration"), menu)
@@ -108,10 +120,35 @@ class NodeContextMenuManager:
         edit_action.triggered.connect(lambda: self.graph_view.edit_context_node(node))
         menu.addAction(edit_action)
 
+    def add_input_node_actions(self, menu, node):
+        """Add actions for an Input node to the context menu"""
+        edit_action = QAction(_("Edit Input Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_input_node(node))
+        menu.addAction(edit_action)
+
+    def add_handle_node_actions(self, menu, node):
+        """Add actions for a Handle node to the context menu"""
+        edit_action = QAction(_("Edit Handle Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_handle_node(node))
+        menu.addAction(edit_action)
+
+    def add_mcp_node_actions(self, menu, node):
+        """Add actions for an MCP node to the context menu"""
+        edit_action = QAction(_("Edit MCP Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_mcp_node(node))
+        menu.addAction(edit_action)
+
+    def add_output_node_actions(self, menu, node):
+        """Add actions for an Output node to the context menu"""
+        edit_action = QAction(_("Edit Output Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_output_node(node))
+        menu.addAction(edit_action)
+
     def add_form_filler_node_actions(self, menu, node):
-        deprecated_action = QAction(_("Form Filler is deprecated"), menu)
-        deprecated_action.setEnabled(False)
-        menu.addAction(deprecated_action)
+        """Add actions for a Form Filling node to the context menu"""
+        edit_action = QAction(_("Edit Form Filling Configuration"), menu)
+        edit_action.triggered.connect(lambda: self.graph_view.edit_form_filler_node(node))
+        menu.addAction(edit_action)
     
 
 
@@ -122,6 +159,14 @@ class NodeContextMenuManager:
         add_conditional_action = QAction(_("Add Conditional Node"), menu)
         add_conditional_action.triggered.connect(lambda: self.graph_view.add_conditional_node())
         menu.addAction(add_conditional_action)
+
+        add_web_sequence_action = QAction(_("Add Web Sequence Node"), menu)
+        add_web_sequence_action.triggered.connect(lambda: self.graph_view.add_web_sequence_node())
+        menu.addAction(add_web_sequence_action)
+
+        add_new_web_sequence_action = QAction(_("Add New Web Sequence (Record)"), menu)
+        add_new_web_sequence_action.triggered.connect(lambda: self.graph_view.add_new_web_sequence())
+        menu.addAction(add_new_web_sequence_action)
         
         add_llm_action = QAction(_("Add LLM Node"), menu)
         add_llm_action.triggered.connect(lambda: self.graph_view.add_llm_node())
@@ -139,10 +184,22 @@ class NodeContextMenuManager:
         add_context_action.triggered.connect(lambda: self.graph_view.add_context_node())
         menu.addAction(add_context_action)
 
-        add_tts_action = QAction(_("Add TTS Node"), menu)
-        add_tts_action.triggered.connect(lambda: self.graph_view.add_tts_node())
-        menu.addAction(add_tts_action)
-        
         add_chain_import_action = QAction(_("Add Chain Import Node"), menu)
         add_chain_import_action.triggered.connect(lambda: self.graph_view.add_chain_import_node())
         menu.addAction(add_chain_import_action)
+        
+        add_input_action = QAction(_("Add Input Node"), menu)
+        add_input_action.triggered.connect(lambda: self.graph_view.add_input_node())
+        menu.addAction(add_input_action)
+        
+        add_handle_action = QAction(_("Add Handle Node"), menu)
+        add_handle_action.triggered.connect(lambda: self.graph_view.add_handle_node())
+        menu.addAction(add_handle_action)
+
+        add_mcp_action = QAction(_("Add MCP Server Node"), menu)
+        add_mcp_action.triggered.connect(lambda: self.graph_view.add_mcp_node())
+        menu.addAction(add_mcp_action)
+
+        add_output_action = QAction(_("Add Output Node"), menu)
+        add_output_action.triggered.connect(lambda: self.graph_view.add_output_node())
+        menu.addAction(add_output_action)

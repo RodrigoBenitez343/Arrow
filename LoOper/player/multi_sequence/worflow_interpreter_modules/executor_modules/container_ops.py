@@ -1,8 +1,9 @@
 import os
 import subprocess
 import threading
-from ....config import logger
 from ..common import chain_logger
+import logging
+logger = logging.getLogger(__name__)
 
 class ContainerMixin:
     """Provides VM/Container execution capabilities for the workflow executor using QEMU"""

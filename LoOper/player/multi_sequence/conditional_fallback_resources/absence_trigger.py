@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # absence_trigger.py
 """
 Absence trigger module for conditional fallback handler.
@@ -5,7 +7,6 @@ Handles absence-based conditional triggers with timeout functionality.
 """
 import os
 import time
-from ...config import logger
 
 
 class AbsenceTrigger:

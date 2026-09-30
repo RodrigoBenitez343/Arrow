@@ -1,645 +1,1021 @@
-from ....config import logger
+import datetime
 import json
 import logging
-import datetime
 import os
+logger = logging.getLogger(__name__)
+try:
+    from logging_setup import log_block
+except Exception:
+    def log_block(logger, level, title, content, lang="text"):
+        text = content if isinstance(content, str) else repr(content)
+        logger.log(level, "=== %s ===\n%s", title, text)
 
 
 class ContextMixin:
-    def _execute_context_node(self, node, stop_flag, input_overrides=None):
-        """
-        Execute a Context node: collect inputs, apply merge, output accumulated context.
-        
-        Args:
-            node (dict): The Context node from the workflow graph
-            stop_flag (callable): Stop flag function
-            input_overrides (any): Optional input data to inject (bypasses graph inputs)
-            
-        Returns:
-            str: Next node ID to execute, or None if workflow should end
-        """
-        node_data = node.get('data', {})
-        node_id = (
-            node.get('id')
-            or node.get('node_id')
-            or node_data.get('node_id')
-            or node_data.get('id')
-        )
-        
-        # Get node properties
-        scope = node_data.get('scope', 'chain')
-        default_merge_policy = node_data.get('default_merge_policy', 'append')
-        keys_json = node_data.get('keys', '[]')
-        key_policies_json = node_data.get('key_policies', '{}')
-        max_entries = int(node_data.get('max_entries_per_key', '100') or '100')
-        raw_auto = node_data.get('auto_capture_responses', 'true')
-        if isinstance(raw_auto, str):
-            auto_capture = raw_auto.strip().lower() in ('true', '1', 'yes', 'on')
-        else:
-            auto_capture = bool(raw_auto)
-        output_format = node_data.get('output_format', 'structured')
-        
-        # Parse keys and key_policies
-        try:
-            keys = json.loads(keys_json) if keys_json else []
-        except (json.JSONDecodeError, TypeError):
-            keys = []
-        
-        try:
-            key_policies = json.loads(key_policies_json) if key_policies_json else {}
-        except (json.JSONDecodeError, TypeError):
-            key_policies = {}
-        
-        # Resolve scope_id - CRITICAL FIX: Use chain filename, not temp path
-        if scope == 'run':
-            scope_id = getattr(self, 'run_id', 'default_run')
-        elif scope == 'chain':
-            # NEW: Check if this context node is linked to a shared chain file
-            shared_chain_file = node_data.get('shared_context_chain_file', '')
-            shared_context_node_id = node_data.get('shared_context_node_id', '')  # NEW: Specific node ID
-            
-            if shared_chain_file and os.path.exists(shared_chain_file):
-                # Use both the chain file AND the specific node ID to create a unique scope
-                # This allows multiple context nodes from the same chain to have separate databases
-                chain_basename = os.path.basename(shared_chain_file)
-                if shared_context_node_id:
-                    # Use the specific context node's ID for isolation
-                    scope_id = f"{chain_basename}::{shared_context_node_id}"
-                    logger.info(f"Context node {node_id}: Using shared context from {chain_basename}, node {shared_context_node_id}")
-                else:
-                    # Fallback: use just the chain file (legacy behavior)
-                    scope_id = chain_basename
-                    logger.info(f"Context node {node_id}: Using shared context from chain file: {shared_chain_file}")
-            else:
-                # Use the original chain filename if available, otherwise fall back to chain_id
-                chain_id_raw = getattr(self, 'chain_id', None) or getattr(self, 'chain_file', 'default_chain')
-                
-                # If it's a temp file path, extract the original chain name from the workflow_graph
-                # The workflow_graph should have metadata about the original chain
-                if chain_id_raw and 'temp_chain' in str(chain_id_raw):
-                    # This is a temp file - try to find the original chain name
-                    # For now, use 'persistent_chain' as a universal scope for chain-scoped context
-                    # This ensures context persists across runs of the same chain
-                    scope_id = 'persistent_chain'
-                    logger.info(f"Context node {node_id}: Detected temp chain file, using persistent scope_id")
-                else:
-                    # Use the chain_id as-is (should be the original file path)
-                    scope_id = chain_id_raw
-        else:  # global
-            scope_id = None
-        
-        logger.info(f"Executing Context node: {node_id} (scope: {scope}, scope_id: {scope_id})")
-        
-        # Get or create ContextDatabase
-        context_db = getattr(self, '_context_db', None)
-        if context_db is None:
-            from LoOper.AI.context_database import ContextDatabase
-            self._context_db = ContextDatabase()
-            context_db = self._context_db
-        
-        # Collect inputs
-        inputs = node.get('inputs', [])
-        for inp in inputs:
-            from_node_id = inp.get('from_node')
-            input_port = str(inp.get('input_port', ''))
-            output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
-            
-            # Skip query port inputs (these are for querying, not storing)
-            if input_port == 'query':
-                continue
-            
-            # Retrieve value from previous node
-            # Try 'context' first, fall back to 'output'
-            if output_type == 'context':
-                val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
-            else:
-                val = self.llm_executor.get_variable(f"node_{from_node_id}_output")
-                if val is None:
-                    val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
-            
-            if val is None:
-                continue
-            
-            # Determine source type by looking up upstream node
-            source_type = 'unknown'
-            upstream_data = {}
-            if hasattr(self, 'workflow_graph') and self.workflow_graph:
-                upstream_node = self.workflow_graph.get(from_node_id, {})
-                source_type = upstream_node.get('type', 'unknown')
-                upstream_data = upstream_node.get('data', {})
-            
-            # Determine target key
-            target_key = None
-            
-            # NEW: Detect input source type for LLM nodes to create source-specific keys
-            input_source_type = None
-            if source_type == 'llm':
-                input_source_type = self.llm_executor.get_variable(f"node_{from_node_id}_input_source")
-                if input_source_type:
-                    input_source_type = str(input_source_type).strip().lower()
-                    logger.info(f"Context node {node_id}: Detected input source type for {from_node_id}: '{input_source_type}'")
-            
-            # Check if there's a specific key policy for this input
-            if from_node_id in key_policies:
-                policy_entry = key_policies[from_node_id]
-                if isinstance(policy_entry, dict):
-                    target_key = policy_entry.get('key')
-                elif isinstance(policy_entry, str):
-                    target_key = policy_entry
-            
-            # Auto-assign key based on source_type AND input_source if not specified
-            # Use upstream node's description as key if available
-            if target_key is None:
-                if source_type == 'llm':
-                    # Build semantic description from LLM config
-                    llm_config = upstream_data.get('llm_configuration', {}) or upstream_data
-                    semantic_desc = llm_config.get('semantic_description', '')
-                    
-                    if not semantic_desc:
-                        # Use output_variable if meaningful (not generic 'llm_output')
-                        out_var = llm_config.get('output_variable', '')
-                        if out_var and out_var != 'llm_output':
-                            semantic_desc = out_var
-                    
-                    # NEW: Create source-specific keys based on input source type
-                    if input_source_type and input_source_type in ('clipboard', 'ocr', 'screen_context'):
-                        # Source-specific key with run counter for history tracking
-                        # Format: llm_{node_id}_{source_type}_history
-                        target_key = f'llm_{from_node_id}_{input_source_type}_history'
-                        logger.info(f"Context node {node_id}: Using source-specific key '{target_key}' for input_source='{input_source_type}'")
-                    elif input_source_type and input_source_type in ('previous', 'previous_node'):
-                        # Previous node output - use generic key
-                        target_key = semantic_desc if semantic_desc else f'node_{from_node_id}_response'
-                    else:
-                        # Final fallback: use the upstream node ID (guaranteed unique per node)
-                        target_key = semantic_desc if semantic_desc else f'node_{from_node_id}_response'
-                elif source_type == 'code':
-                    # Use description as key if available, otherwise fall back to generic
-                    code_key = upstream_data.get('description', '')
-                    target_key = code_key if code_key else 'code_outputs'
-                elif source_type == 'conditional':
-                    target_key = 'conditions'
-                elif source_type == 'context':
-                    target_key = 'context_data'
-                elif source_type == 'sequence':
-                    target_key = 'sequence_results'
-                elif source_type == 'tts':
-                    target_key = 'tts_outputs'
-                elif source_type == 'chain_import':
-                    target_key = 'chain_results'
-                else:
-                    target_key = 'inputs'
-            
-            # Get merge policy for this key
-            key_merge = key_policies.get(target_key, {}).get('merge_policy', default_merge_policy) if isinstance(key_policies.get(target_key), dict) else default_merge_policy
-            
-            # Build timeline entry for structured storage with explicit input source tagging
-            # DEFINITIVE FIX: Read the RAW user input (clipboard, OCR, etc.) — NOT the assembled prompt.
-            # Priority: 1) raw_user_input (captured early in executor.py), 2) source_input (legacy), 3) fallback
-            actual_input = ""
-            source_input_type = self.llm_executor.get_variable(f"node_{from_node_id}_input_source")
-            
-            if source_type == 'llm':
-                # Primary: use the dedicated raw_user_input variable (captured BEFORE any processing)
-                actual_input = self.llm_executor.get_variable(f"node_{from_node_id}_raw_user_input") or ""
-                if not actual_input:
-                    # Fallback: try the old source_input variable (for backward compatibility)
-                    actual_input = self.llm_executor.get_variable(f"node_{from_node_id}_source_input") or ""
-                    if actual_input:
-                        logger.info(f"Context node {node_id}: Using legacy source_input for {from_node_id}")
-                else:
-                    logger.info(f"Context node {node_id}: Using raw_user_input for {from_node_id}")
-                
-                # DEBUG: Log what we retrieved to help diagnose issues
-                input_preview = str(actual_input)[:200] if actual_input else "(empty)"
-                logger.info(f"Context node {node_id}: Reading input from node {from_node_id}: type='{source_input_type}', content_preview='{input_preview}...'")
-                
-                if not actual_input and source_input_type and str(source_input_type).lower() in ('previous', 'previous_node'):
-                    # For 'previous' source, the input IS the upstream node output
-                    actual_input = val
-                    logger.info(f"Context node {node_id}: Reconstructed actual_input from 'previous' source using upstream output")
-            else:
-                # For non-LLM nodes, use the output value directly
-                actual_input = val if val else ""
-                logger.info(f"Context node {node_id}: Non-LLM node {from_node_id}, using output as input_received")
-            
-            # NEW: Include explicit input_source metadata in timeline entry
-            # This allows the LLM to clearly see what type of input was used in each run
-            resolved_input_source = 'unknown'
-            if source_type == 'llm' and source_input_type:
-                resolved_input_source = str(source_input_type).strip().lower()
-            elif source_type == 'llm' and input_source_type:
-                resolved_input_source = input_source_type
-            
-            timeline_entry = {
-                "timestamp": datetime.datetime.now().isoformat(),
-                "input_source": resolved_input_source,  # NEW: Explicit source tagging (clipboard, ocr, previous_node, etc.)
-                "input_received": str(actual_input)[:500] if actual_input else "",
-                "output_generated": str(val)[:1000] if val else "",
-                "run_id": getattr(self, 'run_id', 'unknown')
-            }
-            
-            # Apply merge via context_db.put
-            context_db.put(
-                scope=scope,
-                scope_id=scope_id,
-                node_id=node_id,
-                key=target_key,
-                value=json.dumps(timeline_entry),
-                source_node_id=from_node_id,
-                source_type=source_type,
-                merge_policy=key_merge,
-                max_entries=max_entries
-            )
-            
-            logger.debug(f"Context node {node_id}: stored input from {from_node_id} under key '{target_key}'")
-        
-        # Handle input_overrides if provided
-        if input_overrides is not None:
-            target_key = 'manual_inputs'
-            key_merge = key_policies.get(target_key, {}).get('merge_policy', default_merge_policy) if isinstance(key_policies.get(target_key), dict) else default_merge_policy
-            
-            timeline_entry = {
-                "timestamp": datetime.datetime.now().isoformat(),
-                "input_received": "",
-                "output_generated": str(input_overrides)[:1000] if input_overrides else "",
-                "run_id": getattr(self, 'run_id', 'unknown')
-            }
-            
-            context_db.put(
-                scope=scope,
-                scope_id=scope_id,
-                node_id=node_id,
-                key=target_key,
-                value=json.dumps(timeline_entry),
-                source_node_id='manual',
-                source_type='manual',
-                merge_policy=key_merge,
-                max_entries=max_entries
-            )
-        
-        # Build output - ALWAYS use intelligent retrieval, never dump entire DB
-        exported = context_db.export_context(scope=scope, scope_id=scope_id, node_id=node_id)
-        
-        # Retrieval mode - ENHANCED: Always use smart retrieval with source filtering
-        use_semantic = node_data.get('use_semantic_retrieval', False)
-        if isinstance(use_semantic, str):
-            use_semantic = use_semantic.strip().lower() in ('true', '1', 'yes', 'on')
-        retrieval_top_k = int(node_data.get('retrieval_top_k', 3) or 3)
-        
-        if exported and exported.get('keys'):
-            # CRITICAL FIX: Never dump entire context - always retrieve selectively
-            # Step 1: Detect current input source to filter by same source type
-            current_input_source = self._detect_current_input_source(node_id)
-            
-            # Step 2: Filter entries by input source type (source-aware retrieval)
-            source_filtered_entries = self._filter_entries_by_source(exported, current_input_source)
-            
-            logger.info(f"Context node {node_id}: Source-aware retrieval - {len(source_filtered_entries)} entries match input_source='{current_input_source}' (from {sum(len(v) if isinstance(v, list) else 1 for v in exported.get('keys', {}).values())} total)")
-            
-            if not source_filtered_entries:
-                # No matching source entries - fall back to all entries
-                logger.warning(f"Context node {node_id}: No entries found for input_source='{current_input_source}', using all entries")
-                source_filtered_entries = self._flatten_entries(exported)
-            
-            # Step 3: Apply semantic or chronological retrieval on filtered entries
-            if use_semantic and len(source_filtered_entries) > 0:
-                # Semantic retrieval: find most relevant entries by embedding similarity
-                llm_prompt = self._find_downstream_llm_prompt(node_id)
-                if llm_prompt:
-                    retrieved = self._semantic_retrieve(source_filtered_entries, llm_prompt, top_k=retrieval_top_k)
-                    output_value = self._format_timeline(retrieved, top_k=retrieval_top_k)
-                    logger.info(f"Context node {node_id}: semantic retrieval returned {len(retrieved)} entries from {len(source_filtered_entries)} source-filtered")
-                else:
-                    # No prompt available - use chronological on filtered entries
-                    output_value = self._format_timeline(source_filtered_entries, top_k=retrieval_top_k)
-                    logger.info(f"Context node {node_id}: chronological retrieval (no prompt) on {len(source_filtered_entries)} source-filtered entries")
-            else:
-                # Chronological retrieval on source-filtered entries (default)
-                output_value = self._format_timeline(source_filtered_entries, top_k=retrieval_top_k)
-                logger.info(f"Context node {node_id}: chronological retrieval on {len(source_filtered_entries)} source-filtered entries")
-        else:
-            # No data available - return empty string instead of raw JSON
-            output_value = ""
-        
-        # Set variables
-        self.llm_executor.set_variable(f"node_{node_id}_context", output_value)
-        self.llm_executor.set_variable(f"node_{node_id}_output", output_value)
-        
-        logger.info(f"Context node {node_id} executed successfully. Output format: {output_format}, semantic: {use_semantic}")
-        
-        # Return next node
-        return self._get_context_next_node(node, 'output')
-    
-    def _detect_current_input_source(self, context_node_id):
-        """Detect the input source type of the LLM node that will receive this context.
-        
-        This allows source-aware retrieval - only comparing against entries from the same source.
-        
-        Returns:
-            str: Input source type ('clipboard', 'ocr', 'previous', etc.) or 'unknown'
-        """
-        if not hasattr(self, 'workflow_graph') or not self.workflow_graph:
-            return 'unknown'
-        
-        # Find LLM nodes connected to this context node's output
-        node = self.workflow_graph.get(context_node_id, {})
-        connections = node.get('connections', {})
-        
-        for port_name, port_connections in connections.items():
-            for conn in port_connections:
-                target_id = conn.get('node_id')
-                if not target_id:
-                    continue
-                target_node = self.workflow_graph.get(target_id, {})
-                if target_node.get('type') == 'llm':
-                    # Found downstream LLM node - check its input source
-                    input_source = self.llm_executor.get_variable(f"node_{target_id}_input_source")
-                    if input_source:
-                        source_type = str(input_source).strip().lower()
-                        logger.info(f"Context node {context_node_id}: Detected downstream LLM {target_id} input_source='{source_type}'")
-                        return source_type
-        
-        return 'unknown'
-    
-    def _filter_entries_by_source(self, exported_data, target_source):
-        """Filter context entries to only include those matching the target input source.
-        
-        This implements source-aware retrieval - comparing clipboard vs clipboard, OCR vs OCR, etc.
-        
-        Args:
-            exported_data: Dict from context_db.export_context()
-            target_source: Input source type to filter by ('clipboard', 'ocr', etc.)
-            
-        Returns:
-            List of entries that match the target source (or all entries if target is 'unknown')
-        """
-        if target_source == 'unknown':
-            # No source detected - return all entries
-            return self._flatten_entries(exported_data)
-        
-        filtered = []
-        for key, values in exported_data.get('keys', {}).items():
-            # Source-specific keys contain the source type in the key name
-            # e.g., 'llm_{node_id}_clipboard_history'
-            if target_source in key.lower():
-                # This key matches the target source
-                if isinstance(values, list):
-                    for entry in values:
-                        # Verify entry also has matching input_source field
-                        if isinstance(entry, dict) and entry.get('input_source', '').lower() == target_source:
-                            filtered.append(entry)
-                        elif isinstance(entry, str):
-                            try:
-                                parsed = json.loads(entry)
-                                if isinstance(parsed, dict) and parsed.get('input_source', '').lower() == target_source:
-                                    filtered.append(parsed)
-                                else:
-                                    # Legacy entry without input_source - include it
-                                    filtered.append(parsed if isinstance(parsed, dict) else {'input_received': str(entry), 'input_source': 'unknown'})
-                            except (json.JSONDecodeError, TypeError):
-                                filtered.append({'input_received': str(entry), 'input_source': 'unknown'})
-                        else:
-                            filtered.append(entry)
-                else:
-                    # Single value (not a list)
-                    if isinstance(values, dict) and values.get('input_source', '').lower() == target_source:
-                        filtered.append(values)
-                    else:
-                        filtered.append(values)
-        
-        return filtered
-    
-    def _flatten_entries(self, exported_data):
-        """Flatten exported context data into a list of individual entries."""
-        flat = []
-        for key, values in exported_data.get('keys', {}).items():
-            if isinstance(values, list):
-                for v in values:
-                    if isinstance(v, dict):
-                        flat.append(v)
-                    elif isinstance(v, str):
-                        try:
-                            parsed = json.loads(v)
-                            flat.append(parsed if isinstance(parsed, dict) else {'input_received': str(v), 'input_source': 'unknown'})
-                        except (json.JSONDecodeError, TypeError):
-                            flat.append({'input_received': str(v), 'input_source': 'unknown'})
-                    else:
-                        flat.append(v)
-            else:
-                if isinstance(values, dict):
-                    flat.append(values)
-                elif isinstance(values, str):
-                    try:
-                        parsed = json.loads(values)
-                        flat.append(parsed if isinstance(parsed, dict) else {'input_received': str(values), 'input_source': 'unknown'})
-                    except (json.JSONDecodeError, TypeError):
-                        flat.append({'input_received': str(values), 'input_source': 'unknown'})
-                else:
-                    flat.append(values)
-        return flat
+    """Port-scoped context node execution — turn-based history + SQLite persistence.
 
-    def _semantic_retrieve(self, all_entries, query_text, top_k=3):
-        """Rank stored context entries by semantic similarity to query, return top-k."""
-        if not query_text or not all_entries:
-            return all_entries[:top_k] if all_entries else []
-        
-        try:
-            from sentence_transformers import SentenceTransformer, util
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            
-            entry_texts = [json.dumps(e) if not isinstance(e, str) else e for e in all_entries]
-            query_emb = model.encode(query_text, convert_to_tensor=True)
-            entry_embs = model.encode(entry_texts, convert_to_tensor=True)
-            scores = util.cos_sim(query_emb, entry_embs)[0]
-            
-            ranked = sorted(enumerate(all_entries), key=lambda x: float(scores[x[0]]), reverse=True)
-            return [entry for _, entry in ranked[:top_k]]
-        except Exception as e:
-            logging.warning(f"Semantic retrieval failed, returning recent entries: {e}")
-            return all_entries[-top_k:]  # Fallback: most recent entries
+    Two memory scopes (configured via node ``scope`` property):
+    - ``"global"`` — visible across ALL chains (system-chain knowledge)
+    - ``"local"``  — visible only within this chain (tool-chain state)
 
-    def _format_timeline(self, entries, top_k=3):
-        """Format stored entries as a chronological timeline.
-        
-        SIMPLIFIED for small models - just show previous inputs, nothing else.
-        
-        Args:
-            entries: List of stored entries (may be JSON strings, dicts, or plain text)
-            top_k: Number of most recent entries to include
-            
-        Returns:
-            Formatted timeline string
+    **clear_on_finish** nodes (used in the system chain loop) accumulate
+    a turn-based history via ``PortScopedStore``.  Each loop iteration
+    produces one turn record with the user query, tool executed, and
+    result.  Oldest turns are dropped by turn-count, not by character
+    truncation — giving predictable context size for small LLMs.
+
+    Non-**clear_on_finish** nodes persist data to SQLite via
+    ``ContextDatabase`` for cross-session memory.
+    """
+
+    # Maximum number of turns retained for clear_on_finish nodes.
+    # Keeps context predictable for small models (SmolLM3 ~4096 tokens).
+    _MAX_TURNS = 10
+
+    # Namespace for propagated context copies shared between chains
+    # (keyed by "<source_node_id>:<clone_node_id>" — chain-id independent
+    # so GUI temp-chain runs resolve identically).  No chain's pre-init
+    # touches it; a clone's copy is deleted only when ITS chain executes
+    # with clear_on_finish toggled.
+    _SHARED_COPY_NS = "__shared_copy__"
+
+    def _get_context_db(self):
+        """Lazy-init the shared ContextDatabase instance."""
+        db = getattr(self, '_context_db', None)
+        if db is None:
+            from AI.context_database import ContextDatabase
+            db = ContextDatabase()
+            self._context_db = db
+        return db
+
+    def _get_chain_description(self) -> str:
+        """Get the current chain's description for semantic key derivation."""
+        # Try the executor-level description first (set by core.py at init)
+        desc = getattr(self, '_chain_description', None)
+        if desc:
+            return str(desc)
+        # Fall back to the chain config description from variables
+        desc = self.llm_executor.get_variable("_chain_description") or ""
+        return str(desc) if desc else ""
+
+    def _resolve_turn_query(self, upstream_data) -> tuple:
+        """Best-effort user-prompt text for a context turn.
+
+        Resolution order:
+        1. A direct Input-type upstream's value (its data port).
+        2. One hop through llm-type upstreams — the Input nodes that fed the
+           router (system-chain pattern: the context node only sees the
+           router's output, never the user's prompt).
+        3. Legacy fallback: the first non-empty upstream value.
+
+        Returns ``(query_text, source_label)``; ``('', '')`` when nothing
+        resolves.
         """
-        parsed = []
-        for entry in entries:
+        graph = self.workflow_graph or {}
+        chain_id = getattr(self, 'chain_id', '') or ''
+
+        def _input_data_value(src_id):
+            val = None
             try:
-                if isinstance(entry, str):
-                    try:
-                        parsed_entry = json.loads(entry)
-                        if isinstance(parsed_entry, dict) and 'timestamp' in parsed_entry:
-                            parsed.append(parsed_entry)
-                        else:
-                            # Legacy entry without timeline format
-                            parsed.append({"timestamp": "", "input_received": str(entry)})
-                    except (json.JSONDecodeError, TypeError):
-                        # Not JSON, treat as plain text legacy entry
-                        parsed.append({"timestamp": "", "input_received": str(entry)})
-                elif isinstance(entry, dict) and 'timestamp' in entry:
-                    parsed.append(entry)
-                else:
-                    parsed.append({"timestamp": "", "input_received": str(entry)})
+                val = self.port_store.get_output(chain_id, src_id, 'data')
             except Exception:
-                parsed.append({"timestamp": "", "input_received": str(entry)})
-        
-        # Sort by timestamp (empty strings sort first = oldest), take most recent top_k
-        parsed.sort(key=lambda x: x.get('timestamp', ''))
-        recent = parsed[-top_k:] if len(parsed) > top_k else parsed
-        
-        # SIMPLIFIED: Just list the previous inputs, no fancy formatting
-        lines = []
-        for i, e in enumerate(recent, 1):
-            inp = e.get('input_received', '')
-            if inp:
-                lines.append(f"Previous run #{i}: {inp}")
-        
-        if lines:
-            return "\n".join(lines)
+                val = None
+            if val is None:
+                try:
+                    val = self.llm_executor.get_variable(f"node_{src_id}_data")
+                except Exception:
+                    val = None
+            if val is None or not str(val).strip():
+                return ""
+            return str(val).strip()
+
+        # 1) Direct Input-type upstreams.
+        for fid, _port, fval in upstream_data:
+            if (graph.get(fid, {}) or {}).get('type') != 'input':
+                continue
+            v = str(fval).strip() if fval is not None else ""
+            if v:
+                return v, f"input-upstream:{fid}"
+
+        # 2) One hop through llm-type upstreams -> their Input-type inputs.
+        for fid, _port, _fval in upstream_data:
+            unode = graph.get(fid, {}) or {}
+            if unode.get('type') != 'llm':
+                continue
+            for inp in unode.get('inputs', []) or []:
+                src = inp.get('from_node')
+                if not src:
+                    continue
+                if (graph.get(src, {}) or {}).get('type') != 'input':
+                    continue
+                v = _input_data_value(src)
+                if v:
+                    return v, f"via-router-input:{src}"
+
+        # 3) Legacy fallback: first non-empty upstream value.
+        for fid, _port, fval in upstream_data:
+            v = str(fval).strip() if fval is not None else ""
+            if v:
+                return v, f"first-upstream:{fid}"
+        return "", ""
+
+    def _pull_shared_feed(self, context_db, identity: str,
+                          exclude_node_id: str, limit: int) -> str:
+        """Read the shared identity feed for *identity*, minus own entries.
+
+        Feed rows are written by every participant (the original node and each
+        clone that references it) with ``source_node_id`` = the writing node's
+        own id, so a reader excludes its own rows (they are already part of its
+        local output) and merges everybody else's - the bidirectional link that
+        lets a subchain's context reach the node it was copied from.
+        """
+        try:
+            vals = context_db.pull_channel(
+                chain_id=self._SHARED_COPY_NS,
+                node_id=str(identity),
+                exclude_source_node_id=exclude_node_id,
+                limit=int(limit),
+            )
+        except Exception:
+            return ""
+        parts = [
+            f"[shared] {str(v).strip()}"
+            for v in vals if v and str(v).strip()
+        ]
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _resolve_clone_source(shared_chain_file: str, ref_node_id: str,
+                              label: str, scope: str) -> str:
+        """Resolve the SOURCE context node id a clone inherits from.
+
+        Priority: explicit reference id -> label match in the referenced
+        chain -> scope match -> the single context node of that chain.
+        Returns '' when no source can be resolved.
+        """
+        if ref_node_id:
+            return ref_node_id
+        try:
+            if not shared_chain_file or not os.path.exists(shared_chain_file):
+                return ''
+            with open(shared_chain_file, 'r', encoding='utf-8') as _f:
+                _cfg = json.load(_f)
+            _nodes = _cfg.get('context_nodes') or []
+            if not _nodes:
+                return ''
+            _match = None
+            if label:
+                for _sn in _nodes:
+                    if str(_sn.get('label') or '').strip() == label:
+                        _match = _sn
+                        break
+            if _match is None:
+                _sc = str(scope or 'local').lower()
+                for _sn in _nodes:
+                    if str(_sn.get('scope') or 'local').lower() == _sc:
+                        _match = _sn
+                        break
+            if _match is None and len(_nodes) == 1:
+                _match = _nodes[0]
+            if _match is None:
+                return ''
+            return str(_match.get('node_id') or _match.get('id') or '').strip()
+        except Exception:
+            return ''
+
+    def _get_chains_folder(self) -> str:
+        """Resolve the chains library folder (mirrors NGUI graph_view)."""
+        try:
+            import sys as _sys
+            if getattr(_sys, 'frozen', False):
+                return os.path.join(os.path.dirname(_sys.executable), 'chains')
+            # context_ops.py -> executor_modules -> worflow_interpreter_modules
+            # -> multi_sequence -> player -> LoOper
+            _root = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            )))
+            return os.path.join(_root, 'chains')
+        except Exception:
+            return ''
+
+    def _get_shared_clone_index(self) -> dict:
+        """Scan the chains library once per run for clone context nodes.
+
+        Returns ``{source_node_id: [(clone_node_id, clone_chain_name), ...]}``
+        so a source context node can push a copy of its output to every
+        clone that references it (subid + reference design).  Clones without
+        an explicit reference resolve their source by label/scope so legacy
+        shared_context_chain_file nodes keep working.
+        """
+        idx = getattr(self, '_shared_clone_index', None)
+        if idx is not None:
+            return idx
+        idx = {}
+        _folder_scanned = ""
+        try:
+            folder = self._get_chains_folder()
+            _folder_scanned = str(folder or "")
+            if folder and os.path.isdir(folder):
+                for _f in os.listdir(folder):
+                    if not _f.lower().endswith('.json'):
+                        continue
+                    try:
+                        with open(os.path.join(folder, _f), 'r', encoding='utf-8') as _fh:
+                            _cdata = json.load(_fh)
+                        for _ctx in (_cdata.get('context_nodes') or []):
+                            _sfile = str(_ctx.get('shared_context_chain_file') or '').strip()
+                            if not _sfile:
+                                continue
+                            _cnid = str(_ctx.get('node_id') or _ctx.get('id') or '').strip()
+                            if not _cnid:
+                                continue
+                            _src_id = ContextMixin._resolve_clone_source(
+                                _sfile,
+                                str(_ctx.get('shared_context_node_id') or '').strip(),
+                                str(_ctx.get('label') or '').strip(),
+                                str(_ctx.get('scope') or 'local'),
+                            )
+                            if _src_id:
+                                idx.setdefault(_src_id, []).append(
+                                    (_cnid, os.path.splitext(_f)[0])
+                                )
+                    except Exception:
+                        continue
+        except Exception as _e:
+            logger.warning("Shared clone index scan failed: %s", _e)
+        _clone_summary = {_src: [c[1] for c in _cl] for _src, _cl in idx.items()}
+        logger.info(
+            "[CTX] Shared-clone index scan: folder=%r sources=%d -> %s",
+            _folder_scanned, len(idx), _clone_summary,
+        )
+        self._shared_clone_index = idx
+        return idx
+
+    # ------------------------------------------------------------------
+    # Turn formatting
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_turn(turn: dict) -> str:
+        """Format a single turn record into human-readable text."""
+        parts = []
+        parts.append(f"[Turn {turn.get('turn', '?')}]")
+        query = turn.get('query', '')
+        if query:
+            parts.append(f"User query: {query}")
+        decision = turn.get('decision', '')
+        if decision:
+            parts.append(f"Decision: {str(decision)[:500]}")
+        tool = turn.get('tool', '')
+        if tool:
+            # FIRST PERSON, deliberately: the LLM reading these turns IS the
+            # actor.  A third-person label plus a result-less "name: what it
+            # does" line read as a tool CATALOGUE, and the summariser
+            # answered with a description of the tools instead of a report of
+            # what it had done.
+            parts.append(f"Tool I ran: {tool}")
+        result = turn.get('result', '')
+        if result:
+            parts.append(f"What it did: {str(result)[:500]}")
+        summary = turn.get('summary', '')
+        if summary:
+            parts.append(f"Summary: {str(summary)[:500]}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _already_reported(record, seen_seq) -> bool:
+        """True when a chain-tool record belongs to an EARLIER turn.
+
+        Records are keyed by TOOL and live for the whole run, and the turn text
+        is built from them — so without this every later turn re-reports every
+        tool that ever ran (observed: turn 2 listing turn 1's CLOSE tool, and
+        the summariser describing tools it had not used).  chain_ops stamps
+        each execution with a monotonic seq; anything at or below the last seq
+        this node reported is history.  An unstamped record (seq 0) is always
+        treated as current: never drop information on a missing mark.
+        """
+        if not isinstance(record, dict):
+            return False
+        try:
+            seq = int(record.get("seq") or 0)
+        except Exception:
+            return False
+        return bool(seq) and seq <= int(seen_seq or 0)
+
+    @staticmethod
+    def _tool_outcome(record) -> str:
+        """What a tool chain DID, from its recorded last-node summary.
+
+        The tool's RETURN VALUE — every Output node the sub-chain ran — wins
+        when present, because that is what the tool produced; the last-node
+        summary only describes the final step.  A recorded-action chain
+        (sequence, web, form filler, handle) has no result slot at all, so "it
+        completed" is then the only honest outcome — and saying so is what the
+        summariser was missing.
+        """
+        if not isinstance(record, dict):
+            return ""
+        _collected = str(record.get("tool_output") or "").strip()
+        if _collected:
+            return _collected
+        summary = record.get("last_node") or {}
+        if not isinstance(summary, dict):
+            return ""
+        _type = str(summary.get("type") or "")
+        _result = summary.get("result")
+        if _type in ("output", "code") and _result:
+            return str(_result)
+        if _type == "llm" and isinstance(_result, dict):
+            return str(_result.get("response") or "")
+        if _type == "conditional":
+            return "condition evaluated to %s" % bool(_result)
+        if _type:
+            return "ran successfully (%s)" % _type
         return ""
 
-    def _find_downstream_llm_prompt(self, context_node_id):
-        """Find the prompt of the LLM node connected to this context node's output."""
+    @staticmethod
+    def _format_turns_for_llm(turns: list[dict]) -> str:
+        """Format a list of turns into a single structured string."""
+        if not turns:
+            return ""
+        return "\n---\n".join(
+            ContextMixin._format_turn(t) for t in turns
+        )
+
+    def _execute_context_node(self, node, stop_flag):
+        """Execute a context node: collect inputs, store, and output recent entries.
+
+        Two execution paths:
+
+        * **clear_on_finish** (system chain loop): builds a turn record from
+          connected upstream ports and appends it to the in-memory turn history.
+          Output is the last N turns formatted as structured text.
+
+        * **persistent** (tool-chain memory): stores upstream data in SQLite
+          via ``ContextDatabase`` for cross-session recall.
+
+        Args:
+            node (dict): The Context node from the workflow graph.
+            stop_flag (callable): Stop flag function.
+
+        Returns:
+            str: Next node ID to execute, or None if workflow should end.
+        """
+        node_data = node.get('data', {})
+        node_id = (node.get('id') or node.get('node_id')
+                   or node_data.get('node_id') or node_data.get('id'))
+
+        # -- Config --
+        label = node_data.get('label', '') or ''
+        max_history = int(node_data.get('max_history', self._MAX_TURNS) or self._MAX_TURNS)
+        scope = str(node_data.get('scope', 'local')).lower()
+        if scope not in ("global", "local"):
+            scope = "local"
+
+        # -- Derive chain_id from the executor's single-source-of-truth --
+        chain_id = getattr(self, 'chain_id', None) or getattr(self, 'chain_file', 'default_chain')
+        # Already normalized by core.py, but safe-call in case caller didn't
+        try:
+            from AI.context_database import ContextDatabase
+            chain_id = ContextDatabase.normalize_chain_id(chain_id)
+        except Exception:
+            pass
+        chain_description = self._get_chain_description()
+
+        # Shared-clone config: which chain this node was copied from and the
+        # source node id inside it.  Local rows are always stored under THIS
+        # node's own chain (own-chain, own-node) - cross-chain sharing happens
+        # through the identity feed below, never by writing into the source
+        # chain's namespace (which leaked rows the source cleanup could not see).
+        shared_chain_file = str(node_data.get('shared_context_chain_file', '') or '')
+        effective_chain_id = chain_id
+        if shared_chain_file and os.path.exists(shared_chain_file):
+            try:
+                from AI.context_database import ContextDatabase
+                effective_chain_id = ContextDatabase.normalize_chain_id(shared_chain_file)
+            except Exception:
+                effective_chain_id = os.path.splitext(os.path.basename(str(shared_chain_file)))[0]
+
+        if shared_chain_file:
+            logger.info("[CTX] Context node %s (label='%s', scope=%s) shared=%s chain=%s desc=%s",
+                         node_id, label, scope, shared_chain_file, effective_chain_id,
+                         chain_description[:60] if chain_description else "-")
+        else:
+            logger.info("[CTX] Context node %s (label='%s', scope=%s) executing chain=%s desc=%s",
+                         node_id, label, scope, chain_id,
+                         chain_description[:60] if chain_description else "-")
+
+        # -- ContextDatabase backend --
+        context_db = self._get_context_db()
+
+        # -- Inherited context copy --
+        # A context node in a sub-chain receives a COPY of the source's
+        # context.  Two clone flavors are supported:
+        #   (a) SAME node id as the parent's context node — import handoff
+        #       shared_context_<node_id> (legacy same-id sharing);
+        #   (b) subid + reference (shared_context_node_id set on the clone)
+        #       — import handoff shared_context_<ref_node_id>, falling back
+        #       to the persisted shared copy written by the source chain's
+        #       run (namespace __shared_copy__, key "<ref>:<clone_id>").
+        # Each chain instance holds its own copy and cleans it when IT
+        # finishes — the source's copy is untouched until the source chain
+        # itself finishes (clear_on_finish per instance).
+        _ref_node_id = ContextMixin._resolve_clone_source(
+            shared_chain_file,
+            str(node_data.get('shared_context_node_id') or '').strip(),
+            str(node_data.get('label') or '').strip(),
+            scope,
+        )
+        _inherited_copy = ""
+        _inherited_src = "(none)"
+        try:
+            _inherited_copy = str(
+                self.llm_executor.get_variable(f"shared_context_{node_id}") or ""
+            ).strip()
+            if _inherited_copy:
+                _inherited_src = f"var:shared_context_{node_id}"
+        except Exception:
+            pass
+        if not _inherited_copy and _ref_node_id:
+            try:
+                _inherited_copy = str(
+                    self.llm_executor.get_variable(f"shared_context_{_ref_node_id}") or ""
+                ).strip()
+                if _inherited_copy:
+                    _inherited_src = f"var:shared_context_{_ref_node_id}"
+            except Exception:
+                pass
+        if not _inherited_copy and _ref_node_id:
+            try:
+                _pulled = context_db.pull(
+                    chain_id=self._SHARED_COPY_NS,
+                    node_id=f"{_ref_node_id}:{node_id}",
+                    limit=max_history,
+                )
+                _copy_parts = []
+                for _k, _vals in (_pulled or {}).items():
+                    for _v in _vals:
+                        if _v and str(_v).strip():
+                            _copy_parts.append(f"[{_k}] {str(_v).strip()}")
+                _inherited_copy = "\n\n".join(_copy_parts)
+                if _inherited_copy:
+                    _inherited_src = f"dbpull:{_ref_node_id}:{node_id}"
+            except Exception:
+                pass
+        if _ref_node_id or _inherited_copy:
+            logger.info(
+                "[CTX] node %s inherited copy: source=%r ref=%r len=%d chars",
+                node_id, _inherited_src, _ref_node_id, len(_inherited_copy),
+            )
+
+        # -- Collect data from connected upstream ports (NOT graph scan) --
+        upstream_data = self.port_store.resolve_connection_list(node, chain_id)
+        pushed_from_nodes = {uid for uid, _, _ in upstream_data}
+        if upstream_data:
+            logger.debug(
+                "[CTX] node %s upstream connections (%d): %s",
+                node_id, len(upstream_data),
+                [(uid, port, (str(val)[:60] if val is not None else None))
+                 for uid, port, val in upstream_data],
+            )
+        else:
+            logger.debug("[CTX] node %s has NO connected upstream data", node_id)
+
+        # -- Also store each upstream value into SQLite (for queryable history) --
+        for from_id, input_port, val in upstream_data:
+            if val is None or (isinstance(val, str) and not val.strip()):
+                continue
+            # Determine upstream type for auto-keying
+            source_type = 'unknown'
+            upstream_node = {}
+            if hasattr(self, 'workflow_graph') and self.workflow_graph:
+                upstream_node = self.workflow_graph.get(from_id, {}) or {}
+                source_type = upstream_node.get('type', 'unknown')
+            upstream_data_node = upstream_node.get('data', {}) or {}
+            semantic_desc = (upstream_data_node.get('label', '')
+                             or upstream_data_node.get('description', '') or '')
+            key = f"{source_type}/{semantic_desc}" if semantic_desc else source_type
+            value_str = str(val) if val else ""
+            context_db.push(
+                chain_id=chain_id,
+                node_id=node_id,
+                key=key,
+                value=value_str,
+                source_node_id=from_id,
+                source_type=source_type,
+            )
+            logger.debug("[CTX] Stored [%s] key='%s' from %s (%s)", scope, key, from_id, source_type)
+
+        # -- Output --
+        clear_on_finish = bool(node_data.get('clear_on_finish', False))
+        if clear_on_finish:
+            # ── Turn-based accumulation ──
+            # Build a turn record from connected upstream data and tool info.
+            # No graph scanning for Input nodes — data comes from port connections.
+
+            # Determine user query: try 'query' input port first, then first upstream
+            query_text = ""
+            _query_src = ""
+            query_val = self.port_store.resolve_connection(node, 'query', chain_id)
+            if query_val and isinstance(query_val, str) and query_val.strip():
+                query_text = query_val.strip()
+                _query_src = "query-port"
+            else:
+                # The user's prompt is not always a direct upstream: in the
+                # router pattern the context node only sees the router's
+                # output ('USE_TOOL:...'), so look for the Input nodes that
+                # fed the router (see _resolve_turn_query).
+                query_text, _query_src = self._resolve_turn_query(upstream_data)
+            logger.info(
+                "[CTX] node %s turn query from %s: %r",
+                node_id, _query_src or "(none)", query_text[:120],
+            )
+
+            # Router/LLM decision text: any connected upstream produced by an
+            # 'llm' node (the router's own message - tool pick, args, code).
+            # Without this the turn only records query/tool/result and the
+            # final LLM never sees WHY/what the router chose.
+            _decision_parts = []
+            if hasattr(self, 'workflow_graph') and self.workflow_graph:
+                for _fid, _fport, _fval in upstream_data:
+                    if _fval is None or not str(_fval).strip():
+                        continue
+                    _utype = ((self.workflow_graph.get(_fid, {}) or {}).get('type') or '')
+                    if _utype == 'llm':
+                        _decision_parts.append(str(_fval).strip())
+            decision_text = "\n".join(_decision_parts)[:1200]
+
+            # Executed tools: chain_import nodes whose NAMED data ports hold
+            # a published value (one port per exposed Output node — the
+            # tool's actual result), or that have a recorded chain-tool
+            # result.  'selected_by_llm' still counts when set (agent mode).
+            # The old bare 'output' port never matched: chain imports publish
+            # results on named data ports only.
+            _chain_tool_records = {}
+            try:
+                _chain_tool_records = (
+                    self.llm_executor.get_variable("chain_tool_results") or {}
+                ) or {}
+            except Exception:
+                _chain_tool_records = {}
+            # What THIS turn executed.  Records (and the named-port values
+            # they publish) outlive the turn, so scanning the graph alone made
+            # every later turn re-report every tool that ever ran — the
+            # summariser then described tools it had NOT used in that turn.
+            # chain_ops stamps each record with a monotonic seq; only records
+            # newer than the last seq this node reported belong here.
+            _seen_key = f"_ctx_turn_seq_{node_id}"
+            try:
+                _seen_seq = int(
+                    self.llm_executor.get_variable(_seen_key) or 0)
+            except Exception:
+                _seen_seq = 0
+            try:
+                _head_seq = int(
+                    self.llm_executor.get_variable("_tool_exec_seq") or 0)
+            except Exception:
+                _head_seq = 0
+            _executed_tool_nodes = []
+            if hasattr(self, 'workflow_graph') and self.workflow_graph:
+                for _wnid, _wnode in self.workflow_graph.items():
+                    if _wnode.get('type') != 'chain_import':
+                        continue
+                    if self._already_reported(
+                            _chain_tool_records.get(str(_wnid)), _seen_seq):
+                        continue        # already reported in an earlier turn
+                    _selected = bool(_wnode.get('selected_by_llm'))
+                    try:
+                        _ports = self.port_store.get_node_ports(chain_id, _wnid)
+                    except Exception:
+                        _ports = {}
+                    _values = [
+                        str(_pval).strip()
+                        for _pname, _pval in (_ports or {}).items()
+                        if _pname != 'output' and _pval is not None
+                        and str(_pval).strip()
+                    ]
+                    _wout = "\n".join(_values) if _values else None
+                    if _wout is None:
+                        # Legacy aggregate fallback (pre-named-port saves).
+                        try:
+                            _legacy = self.llm_executor.get_variable(
+                                f"node_{_wnid}_output"
+                            )
+                        except Exception:
+                            _legacy = None
+                        if _legacy is not None and str(_legacy).strip():
+                            _wout = str(_legacy).strip()
+                    _has_record = str(_wnid) in (_chain_tool_records or {})
+                    if _selected or _wout is not None or _has_record:
+                        _executed_tool_nodes.append((_wnid, _wnode, _wout))
+
+            # Tool descriptions as the router saw them: llm_ops enriches the
+            # executing LLM node's llm_configuration.tool_descriptions map at
+            # prompt time - reuse it instead of only re-reading chain files
+            # (a tool chain may have no description field, or the file may not
+            # resolve on the executing machine).
+            _tool_desc_map = {}
+            try:
+                for _n in (self.workflow_graph or {}).values():
+                    if _n.get('type') != 'llm':
+                        continue
+                    _lc = ((_n.get('data', {}) or {}).get('llm_configuration', {}) or {})
+                    _td = _lc.get('tool_descriptions') or {}
+                    if isinstance(_td, str):
+                        try:
+                            _td = json.loads(_td)
+                        except Exception:
+                            _td = {}
+                    if isinstance(_td, dict):
+                        _tool_desc_map.update(_td)
+            except Exception:
+                pass
+
+            def _tool_desc(wnode_id, wnode, chain_file, tool_name):
+                """Chain-file description first, then the router prompt map."""
+                desc = ""
+                if chain_file and os.path.exists(chain_file):
+                    try:
+                        with open(chain_file, 'r', encoding='utf-8') as _f:
+                            _cdata = json.loads(_f.read())
+                        desc = (_cdata.get('description') or '').strip()
+                    except Exception:
+                        pass
+                elif chain_file:
+                    logger.warning(
+                        "[CTX] tool chain file for %s NOT FOUND on disk: %s",
+                        tool_name, chain_file,
+                    )
+                if not desc:
+                    for _k in (wnode_id, tool_name, f"<{tool_name}>"):
+                        _v = str(_tool_desc_map.get(_k) or '').strip()
+                        if _v:
+                            desc = _v
+                            break
+                return desc
+
+            tool_lines = []
+            for _wnid, _wnode, _wout in _executed_tool_nodes:
+                _wdata = _wnode.get('data', {}) or {}
+                _chain_file = (
+                    _wdata.get('chain_file_path', '')
+                    or _wdata.get('chain_file', '')
+                )
+                _prefix = _wdata.get('prefix', '') or ''
+                _tool_name = (
+                    _prefix
+                    or os.path.splitext(os.path.basename(_chain_file or ''))[0]
+                    or _wnid
+                )
+                _desc = _tool_desc(_wnid, _wnode, _chain_file, _tool_name)
+                logger.info(
+                    "[CTX] executed tool candidate %s: name=%r desc=%d chars file=%s",
+                    _wnid, _tool_name, len(_desc), _chain_file or "-",
+                )
+                tool_lines.append(
+                    f"{_tool_name}: {_desc}" if _desc else f"{_tool_name}"
+                )
+            if not _executed_tool_nodes:
+                logger.info(
+                    "[CTX] node %s: no executed chain_import tools detected", node_id,
+                )
+
+            # A tool selection is already reported by the 'tool' line: the
+            # executor publishes the tool's DESCRIPTION as the LLM output
+            # (routing ids and aliases never surface), so don't repeat it as
+            # the turn's decision.  Match the description part of the tool
+            # line too, so a longer published text (appended fields/args)
+            # still dedups.
+            _dd = decision_text.strip()
+            _tool_desc_parts = [_tl.partition(': ')[2] for _tl in tool_lines]
+            if _dd and tool_lines and (
+                _dd == " | ".join(tool_lines)
+                or any(_dd == _tl for _tl in tool_lines)
+                or any(_d and _dd.startswith(_d) for _d in _tool_desc_parts)
+            ):
+                decision_text = ""
+
+            # Build turn record
+            turn_record = {
+                "context_node_id": node_id,
+                "query": query_text,
+                "decision": decision_text,
+                "tool": " | ".join(tool_lines) if tool_lines else "",
+                "result": "",
+                "summary": "",
+            }
+
+            # Collect tool execution output if available.  A recorded-action
+            # tool publishes nothing on named ports, and that empty result is
+            # what let the summariser recite tool DESCRIPTIONS as if they were
+            # outcomes — so fall back to the record's own last-node outcome.
+            if _executed_tool_nodes:
+                result_parts = []
+                for _wnid, _wnode, _wout in _executed_tool_nodes:
+                    _exec_out = _wout
+                    if not (_exec_out and str(_exec_out).strip()):
+                        _exec_out = self._tool_outcome(
+                            _chain_tool_records.get(str(_wnid)))
+                    if _exec_out and str(_exec_out).strip():
+                        result_parts.append(str(_exec_out).strip()[:500])
+                if result_parts:
+                    turn_record["result"] = "\n".join(result_parts)
+
+            # A node with no local data must not record an empty turn over
+            # the inherited context copy (would surface as a bare "[Turn N]").
+            # Note: only the per-node-id copy (shared_context_<node_id>) is
+            # inherited — never a concatenation of every context node in the
+            # importing chain (fine context management, not bulk merging).
+            _turn_has_content = bool(
+                str(turn_record.get("query") or "").strip()
+                or str(turn_record.get("decision") or "").strip()
+                or str(turn_record.get("tool") or "").strip()
+                or str(turn_record.get("result") or "").strip()
+                or str(turn_record.get("summary") or "").strip()
+            )
+            if not (_inherited_copy and not _turn_has_content):
+                # Store turn in port_store
+                self.port_store.add_turn(
+                    chain_id, node_id, turn_record, max_turns=max_history,
+                )
+                # Those tools are part of the history now: move the watermark
+                # so the NEXT turn reports only its own.
+                if _executed_tool_nodes:
+                    try:
+                        self.llm_executor.set_variable(_seen_key, _head_seq)
+                    except Exception:
+                        pass
+
+            # Output: last N turns as structured text
+            history = self.port_store.get_turns(chain_id, node_id=node_id, limit=max_history)
+            output_value = self._format_turns_for_llm(history)
+
+            # Prepend the inherited context copy when present
+            if _inherited_copy:
+                if output_value and str(output_value).strip():
+                    output_value = f"{_inherited_copy}\n\n{output_value}"
+                else:
+                    output_value = _inherited_copy
+                logger.info(
+                    "[CTX] node %s — merged inherited context copy "
+                    "(%d chars) with %d local turn(s)",
+                    node_id, len(_inherited_copy), len(history),
+                )
+
+            logger.info(
+                "[CTX] clear_on_finish node %s — turn recorded, "
+                "history=%d turns, output=%d chars",
+                node_id, len(history), len(output_value),
+            )
+        else:
+            # ── Persistent: query SQLite for past entries ──
+            # Own-chain, own-node rows only (fine context management).  The
+            # inherited copy (if any) is prepended below — clones never read
+            # the whole shared chain.
+            pulled = context_db.pull(
+                chain_id=chain_id,
+                node_id=node_id,
+                limit=max_history,
+            )
+            output_parts = []
+            if pulled:
+                for key, values in pulled.items():
+                    for v in values:
+                        if v and str(v).strip():
+                            # Full value — no per-entry truncation so shared
+                            # clones inherit the COMPLETE context.
+                            output_parts.append(f"[{key}] {str(v).strip()}")
+            output_value = "\n\n".join(output_parts) if output_parts else ""
+
+            if _inherited_copy:
+                if output_value and str(output_value).strip():
+                    output_value = f"{_inherited_copy}\n\n{output_value}"
+                else:
+                    output_value = _inherited_copy
+
+        # -- Merge the shared identity feed (bidirectional sharing) --
+        # Entries produced by OTHER participants of this shared identity (the
+        # original node's subchain clones, or the original node itself when
+        # this is a clone) are merged into the output; own entries are excluded
+        # because they already appear in the local output above.
+        try:
+            _identity = _ref_node_id if (shared_chain_file and _ref_node_id) else node_id
+            _feed_text = self._pull_shared_feed(
+                context_db, _identity, node_id, max_history,
+            )
+            if _feed_text:
+                if output_value and str(output_value).strip():
+                    output_value = f"{output_value}\n\n{_feed_text}"
+                else:
+                    output_value = _feed_text
+                logger.info(
+                    "[CTX] node %s merged shared feed %r (%d chars)",
+                    node_id, _identity, len(_feed_text),
+                )
+        except Exception as _feed_err:
+            logger.warning(
+                "Context feed merge failed for %s: %s", node_id, _feed_err,
+            )
+
+        # -- Store output (both port_store + legacy for migration) --
+        self.port_store.set_output(chain_id, node_id, 'context', output_value)
+        self.port_store.set_output(chain_id, node_id, 'output', output_value)
+        # Legacy fallback for code that still reads from llm_executor.variables
+        self.llm_executor.set_variable(f"node_{node_id}_context", output_value)
+        self.llm_executor.set_variable(f"node_{node_id}_output", output_value)
+
+        logger.info("[CTX] Context node %s done [%s] — output=%d chars",
+                     node_id, scope, len(output_value))
+        if output_value and str(output_value).strip():
+            log_block(
+                logger, logging.INFO,
+                f"Context Node Output ({scope})", str(output_value),
+            )
+
+        # ── Feed the shared identity (bidirectional) ──
+        # Every participant of a shared identity (the source node itself, or a
+        # clone referencing it) appends its locally-produced output to ONE feed
+        # keyed by the identity (the source node id).  Readers exclude their own
+        # rows, so context flows both ways: clones see the original node and the
+        # original node sees what its subchain clones produced.  The feed is
+        # cleared only when the OWNING chain starts/finishes a per-run
+        # (clear_on_finish) context - never by a subchain's finish.
+        _is_participant = bool(shared_chain_file and _ref_node_id)
+        if not _is_participant:
+            try:
+                _clone_index = self._get_shared_clone_index()
+                _is_participant = bool(_clone_index.get(node_id))
+                if not _is_participant:
+                    logger.info(
+                        "[CTX] source node %s: no clones reference it "
+                        "(index sources=%d) - feed not written",
+                        node_id, len(_clone_index),
+                    )
+            except Exception as _idx_err:
+                logger.warning("Shared clone index lookup failed: %s", _idx_err)
+        if _is_participant and output_value and str(output_value).strip():
+            try:
+                _identity = _ref_node_id if shared_chain_file else node_id
+                context_db.push(
+                    chain_id=self._SHARED_COPY_NS,
+                    node_id=str(_identity),
+                    key='shared',
+                    value=str(output_value),
+                    source_node_id=str(node_id),
+                )
+                logger.info(
+                    "[CTX] shared identity %s fed by node %s (%d chars)",
+                    _identity, node_id, len(str(output_value)),
+                )
+            except Exception as _feed_err:
+                logger.warning(
+                    "Shared feed push failed for %s: %s", node_id, _feed_err,
+                )
+
+        return self._get_context_next_node(node, 'output')
+
+    # ------------------------------------------------------------------
+    # Semantic query API — exposed to LLM, code, and conditional nodes
+    # ------------------------------------------------------------------
+
+    def _query_context_node(self, node_id: str = "", question: str = "",
+                            scope: str | None = None,
+                            chain_id: str = "") -> str:
+        """Query a context node's stored entries from SQLite.
+    
+        Called by LLM nodes (via injected ``context_query()`` function),
+        code nodes, and conditionals to retrieve relevant workflow memory.
+    
+        Args:
+            node_id: Optional context node ID to scope to.
+            question: Ignored in SQLite mode (no semantic search).
+            scope: ``"global"``, ``"local"``, or ``None`` for cross-chain.
+            chain_id: Required when scope is ``"local"``.
+    
+        Returns:
+            Natural-language summary string (<2000 chars).
+        """
+        # Resolve shared context chain from node data
+        if node_id and hasattr(self, 'workflow_graph') and self.workflow_graph:
+            node = self.workflow_graph.get(node_id, {}) or {}
+            node_data = node.get('data', {}) or {}
+            shared_chain_file = str(node_data.get('shared_context_chain_file', '') or '')
+            if shared_chain_file and os.path.exists(shared_chain_file):
+                chain_id = os.path.splitext(os.path.basename(str(shared_chain_file)))[0]
+    
+        context_db = self._get_context_db()
+    
+        # Build chain_id filter: if scope is global, query all chains
+        query_chain_id = chain_id
+        if scope == 'global':
+            query_chain_id = ''
+    
+        pulled = context_db.pull(
+            chain_id=query_chain_id or '',
+            node_id=node_id or '',
+            limit=5,
+        )
+        output_parts = []
+        if pulled:
+            for key, values in pulled.items():
+                for v in values:
+                    if v and str(v).strip():
+                        output_parts.append(f"[{key}] {str(v).strip()}")
+        result = "\n\n".join(output_parts) if output_parts else ""
+        return result[:2000]
+
+    # ------------------------------------------------------------------
+    # Pre-initialization — load stored context before any node runs
+    # ------------------------------------------------------------------
+
+    def _pre_initialize_context_nodes(self):
+        """Initialize context nodes at workflow start — all start fresh per run.
+
+        No historical GraphRAG data is loaded for any context node type.  Each
+        run is isolated so LLM nodes only see current-run context, not stale
+        cross-run data.  The execution phase (_execute_context_node) populates
+        output from upstream connections within this run.
+        """
         if not hasattr(self, 'workflow_graph') or not self.workflow_graph:
-            return ''
-        
-        node = self.workflow_graph.get(context_node_id, {})
-        connections = node.get('connections', {})
-        
-        # Context nodes use 'context' port for output connections
-        for port_name, port_connections in connections.items():
-            for conn in port_connections:
-                target_id = conn.get('node_id')
-                if not target_id:
-                    continue
-                target_node = self.workflow_graph.get(target_id, {})
-                if target_node.get('type') == 'llm':
-                    data = target_node.get('data', {})
-                    prompt = data.get('prompt') or data.get('llm_configuration', {}).get('prompt', '')
-                    if prompt:
-                        return prompt
-        return ''
+            return
+
+        chain_id_raw = getattr(self, 'chain_id', None) or getattr(self, 'chain_file', 'default_chain')
+        chain_id = os.path.splitext(os.path.basename(str(chain_id_raw)))[0]
+
+        context_db = self._get_context_db()
+
+        # clear_on_finish semantics: context is scoped to ONE chain run.
+        # Reset the in-memory turn history (and turn counters) at run start
+        # so every run — including self-callback re-runs — starts clean,
+        # while graph loops WITHIN the run keep accumulating turns.
+        _has_clear_on_finish = any(
+            (n.get('data', {}) or {}).get('clear_on_finish', False)
+            for n in self.workflow_graph.values()
+            if n.get('type') == 'context'
+        )
+        if _has_clear_on_finish:
+            self.port_store.clear_turns(chain_id)
+
+        for node_id, node in self.workflow_graph.items():
+            if node.get('type') != 'context':
+                continue
+
+            try:
+                node_data = node.get('data', {}) or {}
+
+                # Resolve shared context chain
+                shared_chain_file = str(node_data.get('shared_context_chain_file', '') or '')
+                effective_chain_id = chain_id
+                if shared_chain_file and os.path.exists(shared_chain_file):
+                    effective_chain_id = os.path.splitext(os.path.basename(str(shared_chain_file)))[0]
+
+                persistent = bool(node_data.get('persistent', True))
+                clear_on_finish = bool(node_data.get('clear_on_finish', False))
+
+                # clear_on_finish nodes are per-run scoped: SQLite is wiped at
+                # run start regardless of the persistent flag (persistent only
+                # matters for non-clear_on_finish nodes).  EXCEPT shared nodes
+                # (shared_context_chain_file): their content is owned by the
+                # chain they share with, which may still be running while this
+                # (sub) chain executes — wiping it at our run start would
+                # erase the very context we are meant to read.  The owning
+                # chain clears it when IT finishes (clear_on_finish belongs to
+                # the owner, not to a reader sub-chain).
+                if shared_chain_file:
+                    logger.debug(
+                        "[CTX] Skipped pre-init clear for shared node %s "
+                        "(shared chain=%s) — content owned by that chain",
+                        node_id, effective_chain_id,
+                    )
+                elif (not persistent) or clear_on_finish:
+                    context_db.clear(chain_id=effective_chain_id, node_id=node_id)
+                    if clear_on_finish:
+                        # Per-run owner: reset the identity feed too, so stale
+                        # entries from earlier sessions (written by subchain
+                        # clones) do not leak into this run.
+                        context_db.clear(ContextMixin._SHARED_COPY_NS, node_id)
+                    logger.info("[CTX] Cleared node %s (clear_on_finish=%s)", node_id, clear_on_finish)
+                # All context nodes start fresh per run
+                output_value = ""
+                # Clear port-scoped store for this node
+                if hasattr(self, 'port_store'):
+                    self.port_store.clear_node(chain_id, node_id)
+
+                self.llm_executor.set_variable(f"node_{node_id}_context", output_value)
+                self.llm_executor.set_variable(f"node_{node_id}_output", output_value)
+                logger.debug("[CTX] Pre-init node %s: persistent=%s, output=%d chars",
+                             node_id, persistent, len(output_value))
+            except Exception as e:
+                logger.warning("[CTX] Pre-init failed for node %s: %s", node_id, e)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
     def _get_context_next_node(self, node, port):
-        """Get the next node ID from context node connections."""
         connections = node.get('connections', {})
         if port in connections and connections[port]:
             return connections[port][0].get('node_id')
         if port == 'output':
             return "__done__"
         return None
-
-    def _pre_initialize_context_nodes(self):
-        """Pre-load stored context from DB for all context nodes at workflow start.
-        
-        This makes node_{id}_context variables available BEFORE any node executes,
-        enabling feedback loops where LLM nodes read context that was stored in previous runs.
-        """
-        if not hasattr(self, 'workflow_graph') or not self.workflow_graph:
-            return
-        
-        for node_id, node in self.workflow_graph.items():
-            if node.get('type') != 'context':
-                continue
-            
-            try:
-                node_data = node.get('data', {})
-                scope = node_data.get('scope', 'chain')
-                
-                # Resolve scope_id - CRITICAL FIX: Use chain filename, not temp path
-                if scope == 'run':
-                    scope_id = getattr(self, 'run_id', None) or 'default_run'
-                elif scope == 'chain':
-                    # NEW: Check if this context node is linked to a shared chain file
-                    shared_chain_file = node_data.get('shared_context_chain_file', '')
-                    shared_context_node_id = node_data.get('shared_context_node_id', '')  # NEW
-                    
-                    if shared_chain_file and os.path.exists(shared_chain_file):
-                        # Use both the chain file AND the specific node ID
-                        chain_basename = os.path.basename(shared_chain_file)
-                        if shared_context_node_id:
-                            scope_id = f"{chain_basename}::{shared_context_node_id}"
-                        else:
-                            scope_id = chain_basename
-                    else:
-                        # Use the original chain filename if available, otherwise fall back to chain_id
-                        chain_id_raw = getattr(self, 'chain_id', None) or getattr(self, 'chain_file', 'default_chain')
-                        
-                        # If it's a temp file path, use persistent scope
-                        if chain_id_raw and 'temp_chain' in str(chain_id_raw):
-                            scope_id = 'persistent_chain'
-                        else:
-                            scope_id = chain_id_raw
-                else:
-                    scope_id = None
-                
-                # Import and get context DB
-                from LoOper.AI.context_database import ContextDatabase
-                context_db = ContextDatabase()
-                
-                # Export whatever is already stored from previous runs
-                exported = context_db.export_context(
-                    scope=scope,
-                    scope_id=scope_id,
-                    node_id=node_id
-                )
-                
-                if exported and exported.get('keys'):
-                    import json
-                    output_format = node_data.get('output_format', 'structured')
-                    
-                    # Retrieval mode - ENHANCED: Always use source-aware retrieval
-                    use_semantic = node_data.get('use_semantic_retrieval', False)
-                    if isinstance(use_semantic, str):
-                        use_semantic = use_semantic.strip().lower() in ('true', '1', 'yes', 'on')
-                    retrieval_top_k = int(node_data.get('retrieval_top_k', 3) or 3)
-                    
-                    # Detect current input source for source-aware filtering
-                    current_input_source = self._detect_current_input_source(node_id)
-                    source_filtered_entries = self._filter_entries_by_source(exported, current_input_source)
-                    
-                    logger.info(f"Pre-init context node {node_id}: {len(source_filtered_entries)} entries match input_source='{current_input_source}'")
-                    
-                    if not source_filtered_entries:
-                        logger.warning(f"Pre-init context node {node_id}: No entries for source='{current_input_source}', using all")
-                        source_filtered_entries = self._flatten_entries(exported)
-                    
-                    # Apply semantic or chronological retrieval on filtered entries
-                    if use_semantic and len(source_filtered_entries) > 0:
-                        llm_prompt = self._find_downstream_llm_prompt(node_id)
-                        if llm_prompt:
-                            retrieved = self._semantic_retrieve(source_filtered_entries, llm_prompt, top_k=retrieval_top_k)
-                            output_value = self._format_timeline(retrieved, top_k=retrieval_top_k)
-                            logger.info(f"Pre-init context node {node_id}: semantic retrieval returned {len(retrieved)} from {len(source_filtered_entries)} source-filtered")
-                        else:
-                            output_value = self._format_timeline(source_filtered_entries, top_k=retrieval_top_k)
-                            logger.info(f"Pre-init context node {node_id}: chronological (no prompt) on {len(source_filtered_entries)} source-filtered")
-                    else:
-                        # Chronological retrieval on source-filtered entries (default)
-                        output_value = self._format_timeline(source_filtered_entries, top_k=retrieval_top_k)
-                        logger.info(f"Pre-init context node {node_id}: chronological retrieval on {len(source_filtered_entries)} source-filtered entries")
-                    
-                    self.llm_executor.set_variable(f"node_{node_id}_context", output_value)
-                    self.llm_executor.set_variable(f"node_{node_id}_output", output_value)
-                    preview = output_value[:300] if output_value else "(empty)"
-                    logger.info(
-                        f"Pre-initialized context node {node_id}: {len(exported.get('keys', {}))} keys loaded from DB (semantic: {use_semantic}), value_preview='{preview}...'"
-                    )
-                else:
-                    # Set empty context so LLM knows the connection exists but no data yet
-                    self.llm_executor.set_variable(f"node_{node_id}_context", "")
-                    self.llm_executor.set_variable(f"node_{node_id}_output", "")
-                    logger.info(
-                        f"Pre-initialized context node {node_id}: empty (first run or no stored data)"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to pre-initialize context node {node_id}: {e}")

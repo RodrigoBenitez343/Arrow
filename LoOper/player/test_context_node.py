@@ -61,278 +61,235 @@ class TestContextDatabase(unittest.TestCase):
             print(f"  Temp database file deleted: {self.db_path}")
         print("-"*80)
     
-    def test_context_database_put_get_append(self):
-        """Test put() with merge_policy='append' accumulates values."""
+    def test_context_database_push_pull(self):
+        """Test push() and pull() accumulate entries."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_put_get_append")
-        print("Verifying that append merge policy accumulates values in a list")
+        print("TEST: test_context_database_push_pull")
+        print("Verifying push/pull accumulates values chronologically")
         print("="*80)
         
-        print("\n[STEP 1] Putting first value with append merge policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value='value1', merge_policy='append'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 1] Pushing first value...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value='value1'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value='value1',
-            merge_policy='append'
         )
         print("  ✓ First value stored")
         
-        print("\n[STEP 2] Putting second value with append merge policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value='value2', merge_policy='append'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 2] Pushing second value...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value='value2'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value='value2',
-            merge_policy='append'
         )
         print("  ✓ Second value stored")
         
-        print("\n[STEP 3] Retrieving accumulated values...")
-        result = self.db.get('chain', 'chain_1', 'ctx_1', 'test_key')
+        print("\n[STEP 3] Pulling accumulated values (newest first)...")
+        result = self.db.pull(chain_id='chain_1', node_id='ctx_1', key='test_key')
         print(f"  Raw result from database: {result}")
         
-        print("\n[VERIFY] Checking stored values...")
-        print(f"  Expected: {{'test_key': ['value1', 'value2']}}")
+        print("\n[VERIFY] Checking stored values (newest first)...")
+        print(f"  Expected: {{'test_key': ['value2', 'value1']}}")
         print(f"  Got: {result}")
         self.assertIn('test_key', result)
         print("  ✓ 'test_key' exists in result")
-        self.assertEqual(result['test_key'], ['value1', 'value2'])
-        print("  ✓ Values match expected list: ['value1', 'value2']")
+        self.assertEqual(result['test_key'], ['value2', 'value1'])
+        print("  ✓ Values match expected list (newest first)")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_database_put_get_append PASSED\n")
+        print("\n✓ test_context_database_push_pull PASSED\n")
     
-    def test_context_database_put_get_replace(self):
-        """Test put() with merge_policy='replace' overwrites values."""
+    def test_context_database_pull_append_only(self):
+        """Test that push is always append-only (no replace semantics)."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_put_get_replace")
-        print("Verifying that replace merge policy overwrites previous values")
+        print("TEST: test_context_database_pull_append_only")
+        print("Verifying push always appends (no merge policy needed)")
         print("="*80)
         
-        print("\n[STEP 1] Putting first value with replace merge policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value='value1', merge_policy='replace'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 1] Pushing first value...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value='value1'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value='value1',
-            merge_policy='replace'
         )
         print("  ✓ First value stored")
         
-        print("\n[STEP 2] Putting second value with replace merge policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value='value2', merge_policy='replace'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 2] Pushing second value (always appends)...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value='value2'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value='value2',
-            merge_policy='replace'
         )
-        print("  ✓ Second value stored (should overwrite first)")
+        print("  ✓ Second value appended")
         
-        print("\n[STEP 3] Retrieving stored value...")
-        result = self.db.get('chain', 'chain_1', 'ctx_1', 'test_key')
-        print(f"  Raw result from database: {result}")
+        print("\n[STEP 3] Pulling all values (newest first)...")
+        result = self.db.pull(chain_id='chain_1', node_id='ctx_1', key='test_key')
+        print(f"  Result: {result}")
         
-        print("\n[VERIFY] Checking stored value...")
-        print(f"  Expected: {{'test_key': 'value2'}} (not a list, just the last value)")
-        print(f"  Got: {result}")
+        print("\n[VERIFY] Both values present (append-only, newest first)...")
         self.assertIn('test_key', result)
         print("  ✓ 'test_key' exists in result")
-        self.assertEqual(result['test_key'], 'value2')
-        print("  ✓ Value matches expected: 'value2'")
+        self.assertEqual(result['test_key'], ['value2', 'value1'])
+        print("  ✓ Both values present, newest first")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_database_put_get_replace PASSED\n")
+        print("\n✓ test_context_database_pull_append_only PASSED\n")
     
-    def test_context_database_put_get_merge_dict(self):
-        """Test put() with merge_policy='merge_dict' merges dictionaries."""
+    def test_context_database_dict_values(self):
+        """Test push/pull with dict values (always append, no merging)."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_put_get_merge_dict")
-        print("Verifying that merge_dict policy merges dictionary values")
+        print("TEST: test_context_database_dict_values")
+        print("Verifying push/pull handles dict values (no merge, just append)")
         print("="*80)
         
-        print("\n[STEP 1] Putting first dictionary with merge_dict policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value={{'a': 1, 'b': 2}}, merge_policy='merge_dict'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 1] Pushing first dict...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value={{'a': 1, 'b': 2}}")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value={'a': 1, 'b': 2},
-            merge_policy='merge_dict'
         )
-        print("  ✓ First dictionary stored")
+        print("  ✓ First dict stored")
         
-        print("\n[STEP 2] Putting second dictionary with merge_dict policy...")
-        print(f"  scope='chain', scope_id='chain_1', node_id='ctx_1'")
-        print(f"  key='test_key', value={{'b': 3, 'c': 4}}, merge_policy='merge_dict'")
-        print("  Note: Key 'b' should be updated from 2 to 3")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print("\n[STEP 2] Pushing second dict (appended, not merged)...")
+        print(f"  chain_id='chain_1', node_id='ctx_1', key='test_key', value={{'b': 3, 'c': 4}}")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='test_key',
             value={'b': 3, 'c': 4},
-            merge_policy='merge_dict'
         )
-        print("  ✓ Second dictionary stored and merged")
+        print("  ✓ Second dict appended")
         
-        print("\n[STEP 3] Retrieving merged dictionary...")
-        result = self.db.get('chain', 'chain_1', 'ctx_1', 'test_key')
-        print(f"  Raw result from database: {result}")
+        print("\n[STEP 3] Pulling all values (newest first)...")
+        result = self.db.pull(chain_id='chain_1', node_id='ctx_1', key='test_key')
+        print(f"  Result: {result}")
         
-        print("\n[VERIFY] Checking merged dictionary...")
-        expected = {'a': 1, 'b': 3, 'c': 4}
-        print(f"  Expected: {expected}")
-        print(f"    - 'a': 1 (from first dict)")
-        print(f"    - 'b': 3 (overwritten by second dict)")
-        print(f"    - 'c': 4 (from second dict)")
-        print(f"  Got: {result['test_key']}")
+        print("\n[VERIFY] Both dicts present as separate entries...")
         self.assertIn('test_key', result)
         print("  ✓ 'test_key' exists in result")
-        self.assertEqual(result['test_key'], expected)
-        print("  ✓ Merged dictionary matches expected structure")
+        self.assertEqual(len(result['test_key']), 2)
+        print("  ✓ Both entries preserved (no merge)")
+        self.assertEqual(result['test_key'][0], {'b': 3, 'c': 4})
+        print("  ✓ Newest entry first")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_database_put_get_merge_dict PASSED\n")
+        print("\n✓ test_context_database_dict_values PASSED\n")
     
-    def test_context_database_max_entries_trimming(self):
-        """Test that max_entries limits the number of items in append mode."""
+    def test_context_database_pull_limit(self):
+        """Test pull() limit parameter."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_max_entries_trimming")
-        print("Verifying that max_entries parameter limits list size and trims old entries")
+        print("TEST: test_context_database_pull_limit")
+        print("Verifying pull() limit returns only N most recent entries")
         print("="*80)
         
-        print("\n[STEP 1] Inserting 5 values with max_entries=3...")
-        print("  Values will be trimmed to keep only the 3 most recent")
+        print("\n[STEP 1] Inserting 5 values under same key...")
         for i in range(5):
-            print(f"  [INSERT {i+1}/5] value='value{i}', max_entries=3")
-            self.db.put(
-                scope='chain',
-                scope_id='chain_1',
+            print(f"  [PUSH {i+1}/5] value='value{i}'")
+            self.db.push(
+                chain_id='chain_1',
                 node_id='ctx_1',
                 key='test_key',
                 value=f'value{i}',
-                merge_policy='append',
-                max_entries=3
             )
-        print("  ✓ All 5 inserts completed")
+        print("  ✓ All 5 pushes completed")
         
-        print("\n[STEP 2] Retrieving stored values...")
-        result = self.db.get('chain', 'chain_1', 'ctx_1', 'test_key')
-        print(f"  Raw result from database: {result}")
+        print("\n[STEP 2] Pulling with limit=3...")
+        result = self.db.pull(chain_id='chain_1', node_id='ctx_1', key='test_key', limit=3)
+        print(f"  Result: {result}")
         
-        print("\n[VERIFY] Checking max_entries trimming behavior...")
-        print(f"  Expected: list with 3 items (value2, value3, value4)")
-        print(f"    - value0 and value1 should be trimmed (oldest)")
-        print(f"    - value2, value3, value4 should remain (most recent)")
-        print(f"  Got: {result['test_key']}")
+        print("\n[VERIFY] Only 3 most recent entries returned...")
+        print(f"  Expected: 3 items (value4, value3, value2) newest first")
         self.assertIn('test_key', result)
         print("  ✓ 'test_key' exists in result")
         self.assertEqual(len(result['test_key']), 3)
-        print(f"  ✓ List length is 3 (max_entries limit respected)")
-        self.assertEqual(result['test_key'], ['value2', 'value3', 'value4'])
-        print("  ✓ Oldest entries trimmed correctly, newest preserved")
+        print(f"  ✓ List length is 3 (limit respected)")
+        self.assertEqual(result['test_key'], ['value4', 'value3', 'value2'])
+        print("  ✓ 3 most recent entries returned (newest first)")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_database_max_entries_trimming PASSED\n")
+        print("\n✓ test_context_database_pull_limit PASSED\n")
     
-    def test_context_database_scope_isolation(self):
-        """Test that different scope_ids are isolated from each other."""
+    def test_context_database_chain_isolation(self):
+        """Test that different chain_ids are isolated from each other."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_scope_isolation")
-        print("Verifying that data in different scopes is completely isolated")
+        print("TEST: test_context_database_chain_isolation")
+        print("Verifying that data in different chains is completely isolated")
         print("="*80)
         
-        print("\n[STEP 1] Storing data in chain_A scope...")
-        print(f"  scope='chain', scope_id='chain_A', node_id='ctx_1'")
-        print(f"  key='test_key', value='data_A'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_A',
+        print("\n[STEP 1] Storing data in chain_A...")
+        print(f"  chain_id='chain_A', node_id='ctx_1', key='test_key', value='data_A'")
+        self.db.push(
+            chain_id='chain_A',
             node_id='ctx_1',
             key='test_key',
             value='data_A',
-            merge_policy='append'
         )
         print("  ✓ Data stored in chain_A")
         
-        print("\n[STEP 2] Storing data in chain_B scope...")
-        print(f"  scope='chain', scope_id='chain_B', node_id='ctx_1'")
-        print(f"  key='test_key', value='data_B'")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_B',
+        print("\n[STEP 2] Storing data in chain_B...")
+        print(f"  chain_id='chain_B', node_id='ctx_1', key='test_key', value='data_B'")
+        self.db.push(
+            chain_id='chain_B',
             node_id='ctx_1',
             key='test_key',
             value='data_B',
-            merge_policy='append'
         )
         print("  ✓ Data stored in chain_B")
         
-        print("\n[STEP 3] Retrieving data from both scopes...")
-        result_A = self.db.get('chain', 'chain_A', 'ctx_1', 'test_key')
-        result_B = self.db.get('chain', 'chain_B', 'ctx_1', 'test_key')
+        print("\n[STEP 3] Retrieving data from both chains...")
+        result_A = self.db.pull(chain_id='chain_A', node_id='ctx_1', key='test_key')
+        result_B = self.db.pull(chain_id='chain_B', node_id='ctx_1', key='test_key')
         print(f"  chain_A result: {result_A}")
         print(f"  chain_B result: {result_B}")
         
-        print("\n[VERIFY] Checking scope isolation...")
-        print(f"  Expected chain_A: {{'test_key': ['data_A']}}")
-        print(f"  Expected chain_B: {{'test_key': ['data_B']}}")
+        print("\n[VERIFY] Checking chain isolation...")
         self.assertEqual(result_A['test_key'], ['data_A'])
         print("  ✓ chain_A contains only its own data")
         self.assertEqual(result_B['test_key'], ['data_B'])
         print("  ✓ chain_B contains only its own data")
-        print("  ✓ PASSED - Scopes are properly isolated")
+        print("  ✓ PASSED - Chains are properly isolated")
         
-        print("\n✓ test_context_database_scope_isolation PASSED\n")
+        print("\n✓ test_context_database_chain_isolation PASSED\n")
     
-    def test_context_database_clear_scope(self):
-        """Test clear_scope removes data for a specific scope."""
+    def test_context_database_clear(self):
+        """Test clear() removes data for a specific chain."""
         print("\n" + "="*80)
-        print("TEST: test_context_database_clear_scope")
-        print("Verifying that clear_scope removes all data for a specific scope")
+        print("TEST: test_context_database_clear")
+        print("Verifying that clear() removes all data for a specific chain")
         print("="*80)
         
-        print("\n[STEP 1] Storing data in run scope...")
-        print(f"  scope='run', scope_id='run_123', node_id='ctx_1'")
-        print(f"  key='test_key', value='data'")
-        self.db.put(
-            scope='run',
-            scope_id='run_123',
+        print("\n[STEP 1] Storing data in chain...")
+        print(f"  chain_id='run_123', node_id='ctx_1', key='test_key', value='data'")
+        self.db.push(
+            chain_id='run_123',
             node_id='ctx_1',
             key='test_key',
             value='data',
-            merge_policy='append'
         )
         print("  ✓ Data stored")
         
         print("\n[STEP 2] Verifying data exists before clear...")
-        result_before = self.db.get('run', 'run_123', 'ctx_1', 'test_key')
+        result_before = self.db.pull(chain_id='run_123', node_id='ctx_1', key='test_key')
         print(f"  Data before clear: {result_before}")
         self.assertIn('test_key', result_before)
         print("  ✓ Data confirmed present")
         
-        print("\n[STEP 3] Clearing scope 'run:run_123'...")
-        self.db.clear_scope('run', 'run_123')
-        print("  ✓ clear_scope() called")
+        print("\n[STEP 3] Clearing chain 'run_123'...")
+        self.db.clear(chain_id='run_123')
+        print("  ✓ clear() called")
         
         print("\n[STEP 4] Verifying data is removed after clear...")
-        result_after = self.db.get('run', 'run_123', 'ctx_1', 'test_key')
+        result_after = self.db.pull(chain_id='run_123', node_id='ctx_1', key='test_key')
         print(f"  Data after clear: {result_after}")
         
         print("\n[VERIFY] Checking that data was removed...")
@@ -341,52 +298,44 @@ class TestContextDatabase(unittest.TestCase):
         print("  ✓ 'test_key' no longer present in result")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_database_clear_scope PASSED\n")
+        print("\n✓ test_context_database_clear PASSED\n")
     
     def test_context_database_export_context(self):
         """Test export_context returns structured dict with all keys."""
         print("\n" + "="*80)
         print("TEST: test_context_database_export_context")
-        print("Verifying that export_context returns structured metadata with all keys")
+        print("Verifying that export_context returns structured metadata with keys")
         print("="*80)
         
         print("\n[STEP 1] Storing multiple keys in context...")
-        print(f"  Storing key1='value1' with append policy")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print(f"  Storing key1='value1'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='key1',
             value='value1',
-            merge_policy='append'
         )
         print("  ✓ key1 stored")
         
-        print(f"  Storing key2='value2' with append policy")
-        self.db.put(
-            scope='chain',
-            scope_id='chain_1',
+        print(f"  Storing key2='value2'")
+        self.db.push(
+            chain_id='chain_1',
             node_id='ctx_1',
             key='key2',
             value='value2',
-            merge_policy='append'
         )
         print("  ✓ key2 stored")
         
         print("\n[STEP 2] Exporting context...")
-        exported = self.db.export_context('chain', 'chain_1', 'ctx_1')
+        exported = self.db.export_context('chain_1', 'ctx_1')
         print(f"  Exported context structure:")
         print(f"    {json.dumps(exported, indent=4, default=str)}")
         
         print("\n[VERIFY] Checking exported context structure...")
         self.assertIn('keys', exported)
         print("  ✓ 'keys' field present")
-        self.assertIn('scope', exported)
-        print("  ✓ 'scope' field present")
         self.assertIn('node_id', exported)
         print("  ✓ 'node_id' field present")
-        self.assertEqual(exported['scope'], 'chain')
-        print("  ✓ scope='chain' correct")
         self.assertEqual(exported['node_id'], 'ctx_1')
         print("  ✓ node_id='ctx_1' correct")
         self.assertIn('key1', exported['keys'])
@@ -439,23 +388,18 @@ class TestContextNodeExecution(unittest.TestCase):
         graph = {
             'code_1': {
                 'type': 'code',
-                'data': {'node_id': 'code_1'},
+                'data': {'node_id': 'code_1', 'label': 'Test Code'},
                 'connections': {}
             },
             'ctx_1': {
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Test Context',
+                    'max_history': 10,
                 },
                 'connections': {
-                    'context': [{'node_id': '__done__', 'input_port': 'input'}]
+                    'output': [{'node_id': '__done__', 'input_port': 'input'}]
                 },
                 'inputs': [
                     {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}
@@ -469,10 +413,8 @@ class TestContextNodeExecution(unittest.TestCase):
             print(f"  Node '{node_id}':")
             print(f"    type: {node_data['type']}")
             if node_data['type'] == 'context':
-                print(f"    scope: {node_data['data']['scope']}")
-                print(f"    default_merge_policy: {node_data['data']['default_merge_policy']}")
-                print(f"    auto_capture_responses: {node_data['data']['auto_capture_responses']}")
-                print(f"    output_format: {node_data['data']['output_format']}")
+                print(f"    label: {node_data['data']['label']}")
+                print(f"    max_history: {node_data['data']['max_history']}")
                 print(f"    inputs: {node_data.get('inputs', [])}")
         
         print("\n[STEP 3] Creating WorkflowExecutor with mock components...")
@@ -500,16 +442,17 @@ class TestContextNodeExecution(unittest.TestCase):
         self.assertIsNotNone(ctx_context)
         print("  ✓ node_ctx_1_context is not None")
         
-        print("\n[VERIFY] Checking timeline narrative output...")
+        print("\n[VERIFY] Checking JSON output format...")
         print(f"  Context output:\n{ctx_output}")
         
-        # New format: timeline narrative text instead of JSON
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present")
-        self.assertIn('Your response was:', ctx_output)
-        print("  ✓ 'Your response was:' field present")
+        # New format: clean JSON dict instead of timeline narrative
         self.assertIn('hello world', ctx_output)
-        print("  ✓ Output value 'hello world' present in timeline")
+        print("  ✓ Output value 'hello world' present in JSON")
+        
+        # Verify it's valid JSON
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON dict")
         print("  ✓ PASSED")
         
         print("\n✓ test_context_node_execution_basic PASSED\n")
@@ -534,28 +477,23 @@ class TestContextNodeExecution(unittest.TestCase):
         graph = {
             'code_1': {
                 'type': 'code',
-                'data': {'node_id': 'code_1'},
+                'data': {'node_id': 'code_1', 'label': 'First Code'},
                 'connections': {}
             },
             'code_2': {
                 'type': 'code',
-                'data': {'node_id': 'code_2'},
+                'data': {'node_id': 'code_2', 'label': 'Second Code'},
                 'connections': {}
             },
             'ctx_1': {
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Multi Context',
+                    'max_history': 10,
                 },
                 'connections': {
-                    'context': [{'node_id': '__done__', 'input_port': 'input'}]
+                    'output': [{'node_id': '__done__', 'input_port': 'input'}]
                 },
                 'inputs': [
                     {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'},
@@ -582,27 +520,28 @@ class TestContextNodeExecution(unittest.TestCase):
         
         print("\n[STEP 5] Retrieving and checking output...")
         ctx_output = self.llm_executor.get_variable('node_ctx_1_output')
-        print(f"  Timeline output:\n{ctx_output}")
+        print(f"  JSON output:\n{ctx_output}")
         
-        print("\n[VERIFY] Checking multiple input capture in timeline...")
-        # New format: timeline narrative text instead of JSON
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present")
-        
-        # Both outputs should be in the timeline
+        print("\n[VERIFY] Checking multiple input capture in JSON...")
+        # New format: clean JSON, not timeline narrative
         self.assertIn('output_from_code_1', ctx_output)
-        print("  ✓ 'output_from_code_1' present in timeline")
+        print("  ✓ 'output_from_code_1' present in output")
         self.assertIn('output_from_code_2', ctx_output)
-        print("  ✓ 'output_from_code_2' present in timeline")
+        print("  ✓ 'output_from_code_2' present in output")
+        
+        # Verify valid JSON
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON dict")
         print("  ✓ PASSED")
         
         print("\n✓ test_context_node_multiple_inputs PASSED\n")
     
-    def test_context_node_narrative_output(self):
-        """Test context node with output_format='narrative'."""
+    def test_context_node_json_output(self):
+        """Test context node always produces JSON output."""
         print("\n" + "="*80)
-        print("TEST: test_context_node_narrative_output")
-        print("Verifying context node produces narrative format output")
+        print("TEST: test_context_node_json_output")
+        print("Verifying context node produces clean JSON dict output")
         print("="*80)
         
         print("\n[STEP 1] Pre-setting upstream output...")
@@ -610,34 +549,29 @@ class TestContextNodeExecution(unittest.TestCase):
         self.llm_executor.set_variable('node_code_1_output', 'hello world')
         print("  ✓ Upstream output set")
         
-        print("\n[STEP 2] Building workflow graph with narrative output format...")
+        print("\n[STEP 2] Building workflow graph...")
         graph = {
             'code_1': {
                 'type': 'code',
-                'data': {'node_id': 'code_1'},
+                'data': {'node_id': 'code_1', 'label': 'Test Code'},
                 'connections': {}
             },
             'ctx_1': {
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'narrative'  # <-- Using narrative format
+                    'label': 'Output Test',
+                    'max_history': 10,
                 },
                 'connections': {
-                    'context': [{'node_id': '__done__', 'input_port': 'input'}]
+                    'output': [{'node_id': '__done__', 'input_port': 'input'}]
                 },
                 'inputs': [
                     {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}
                 ]
             }
         }
-        print(f"  Context node output_format: 'narrative'")
+        print(f"  Context node max_history: 10")
         
         print("\n[STEP 3] Creating and executing...")
         executor = WorkflowExecutor(graph, None, self.llm_executor, self.fallback_handler)
@@ -646,24 +580,23 @@ class TestContextNodeExecution(unittest.TestCase):
         executor._execute_context_node(graph['ctx_1'], lambda: False)
         print("  ✓ Context node executed")
         
-        print("\n[STEP 4] Retrieving narrative output...")
+        print("\n[STEP 4] Retrieving JSON output...")
         ctx_output = self.llm_executor.get_variable('node_ctx_1_output')
-        print(f"  Narrative output:")
+        print(f"  JSON output:")
         print("-"*40)
         print(ctx_output)
         print("-"*40)
         
-        print("\n[VERIFY] Checking narrative format markers...")
-        # New format uses timeline with Run # numbering
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present in output")
-        self.assertIn('Your response was:', ctx_output)
-        print("  ✓ 'Your response was:' field present")
+        print("\n[VERIFY] Checking JSON format...")
+        # Output is clean JSON, no timeline narrative
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON dict")
         self.assertIn('hello world', ctx_output)
         print("  ✓ Output value 'hello world' present")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_node_narrative_output PASSED\n")
+        print("\n✓ test_context_node_json_output PASSED\n")
     
     def test_context_node_chain_persistence(self):
         """Test that chain-scoped context persists across executions."""
@@ -679,25 +612,19 @@ class TestContextNodeExecution(unittest.TestCase):
         
         print("\n[STEP 2] Building workflow graph...")
         graph = {
-            'code_1': {'type': 'code', 'data': {'node_id': 'code_1'}, 'connections': {}},
+            'code_1': {'type': 'code', 'data': {'node_id': 'code_1', 'label': 'Test Code'}, 'connections': {}},
             'ctx_1': {
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',  # <-- Chain scope for persistence
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Persistent Context',
+                    'max_history': 10,
                 },
-                'connections': {'context': [{'node_id': '__done__', 'input_port': 'input'}]},
+                'connections': {'output': [{'node_id': '__done__', 'input_port': 'input'}]},
                 'inputs': [{'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}]
             }
         }
-        print(f"  Context scope: 'chain' (persistent across runs)")
-        print(f"  Merge policy: 'append' (accumulates values)")
+        print(f"  Context scope: chain (persistent across runs)")
         
         print("\n[STEP 3] Creating executor...")
         executor = WorkflowExecutor(graph, None, self.llm_executor, self.fallback_handler)
@@ -723,85 +650,176 @@ class TestContextNodeExecution(unittest.TestCase):
         
         print("\n[STEP 6] Checking accumulated context...")
         ctx_output = self.llm_executor.get_variable('node_ctx_1_output')
-        print(f"  Final timeline output:\n{ctx_output}")
+        print(f"  Final JSON output:\n{ctx_output}")
         
-        print("\n[VERIFY] Checking persistence and accumulation in timeline...")
-        # New format: timeline narrative text instead of JSON
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present")
-        
-        # Both executions should be in the timeline
+        print("\n[VERIFY] Checking persistence and accumulation...")
+        # New format: clean JSON with both entries
         self.assertIn('first_execution', ctx_output)
         print("  ✓ 'first_execution' from first run still present")
         self.assertIn('second_execution', ctx_output)
         print("  ✓ 'second_execution' from second run present")
+        
+        # Verify both are in JSON
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON")
         print("  ✓ PASSED - Chain scope persists across executions")
         
         print("\n✓ test_context_node_chain_persistence PASSED\n")
     
-    def test_context_node_run_scope_cleanup(self):
-        """Test that run-scoped context can be cleared."""
+    def test_context_node_chain_clear(self):
+        """Test that chain context can be cleared."""
         print("\n" + "="*80)
-        print("TEST: test_context_node_run_scope_cleanup")
-        print("Verifying run-scoped context can be cleared (for cleanup between runs)")
+        print("TEST: test_context_node_chain_clear")
+        print("Verifying chain context can be cleared (for cleanup between runs)")
         print("="*80)
         
         print("\n[STEP 1] Pre-setting output...")
-        print(f"  Setting: node_code_1_output = 'run_data'")
-        self.llm_executor.set_variable('node_code_1_output', 'run_data')
-        print("  ✓ Run data set")
+        print(f"  Setting: node_code_1_output = 'chain_data'")
+        self.llm_executor.set_variable('node_code_1_output', 'chain_data')
+        print("  ✓ Chain data set")
         
-        print("\n[STEP 2] Building workflow graph with run scope...")
+        print("\n[STEP 2] Building workflow graph...")
         graph = {
-            'code_1': {'type': 'code', 'data': {'node_id': 'code_1'}, 'connections': {}},
+            'code_1': {'type': 'code', 'data': {'node_id': 'code_1', 'label': 'Test Code'}, 'connections': {}},
             'ctx_1': {
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'run',  # <-- Run scope (temporary per-run)
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Cleanable Context',
+                    'max_history': 10,
                 },
-                'connections': {'context': [{'node_id': '__done__', 'input_port': 'input'}]},
+                'connections': {'output': [{'node_id': '__done__', 'input_port': 'input'}]},
                 'inputs': [{'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}]
             }
         }
-        print(f"  Context scope: 'run' (temporary, can be cleared per-run)")
+        print(f"  Context chain_id: 'test_chain' (can be cleared)")
         
-        print("\n[STEP 3] Creating executor with run_id...")
+        print("\n[STEP 3] Creating executor with chain_id...")
         executor = WorkflowExecutor(graph, None, self.llm_executor, self.fallback_handler)
         executor._context_db = self.db
-        executor.run_id = 'run_123'
-        print(f"  Executor run_id: 'run_123'")
+        executor.chain_id = 'test_chain'
         
         print("\n[STEP 4] Executing and storing data...")
         executor._execute_context_node(graph['ctx_1'], lambda: False)
         print("  ✓ Context node executed")
         
         print("\n[STEP 5] Verifying data exists before clear...")
-        result_before = self.db.get('run', 'run_123', 'ctx_1')
+        result_before = self.db.pull(chain_id='test_chain', node_id='ctx_1')
         print(f"  Data before clear: {result_before}")
         self.assertTrue(len(result_before) > 0)
         print("  ✓ Data confirmed present")
         
-        print("\n[STEP 6] Clearing run scope...")
-        self.db.clear_scope('run', 'run_123')
-        print("  ✓ clear_scope('run', 'run_123') called")
+        print("\n[STEP 6] Clearing chain...")
+        self.db.clear(chain_id='test_chain')
+        print("  ✓ clear(chain_id='test_chain') called")
         
         print("\n[STEP 7] Verifying data is cleared...")
-        result_after = self.db.get('run', 'run_123', 'ctx_1')
+        result_after = self.db.pull(chain_id='test_chain', node_id='ctx_1')
         print(f"  Data after clear: {result_after}")
         
         print("\n[VERIFY] Checking cleanup...")
         self.assertEqual(len(result_after), 0)
-        print("  ✓ All run-scoped data removed")
+        print("  ✓ All chain data removed")
         print("  ✓ PASSED")
         
-        print("\n✓ test_context_node_run_scope_cleanup PASSED\n")
+        print("\n✓ test_context_node_chain_clear PASSED\n")
+
+    def test_context_node_cross_executor_persistence(self):
+        """Test that context persists across separate WorkflowExecutor instances."""
+        print("\n" + "="*80)
+        print("TEST: test_context_node_cross_executor_persistence")
+        print("Verifying context survives across separate executor instances (real cross-run persistence)")
+        print("="*80)
+        
+        print("\n[STEP 1] Pre-setting upstream output for first executor...")
+        print(f"  Setting: node_code_1_output = 'data_from_run_1'")
+        self.llm_executor.set_variable('node_code_1_output', 'data_from_run_1')
+        print("  ✓ First run data set")
+        
+        print("\n[STEP 2] Building minimal workflow graph...")
+        graph = {
+            'code_1': {
+                'type': 'code',
+                'data': {'node_id': 'code_1', 'label': 'Test Code'},
+                'connections': {}
+            },
+            'ctx_1': {
+                'type': 'context',
+                'data': {
+                    'node_id': 'ctx_1',
+                    'label': 'Cross-Run Context',
+                    'max_history': 10,
+                    'persistent': True,
+                },
+                'connections': {
+                    'output': [{'node_id': '__done__', 'input_port': 'input'}]
+                },
+                'inputs': [
+                    {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}
+                ]
+            }
+        }
+        print(f"  Graph has {len(graph)} nodes with persistent=True")
+        
+        print("\n[STEP 3] Creating FIRST WorkflowExecutor and executing...")
+        executor_1 = WorkflowExecutor(graph, None, self.llm_executor, self.fallback_handler)
+        executor_1._context_db = self.db
+        executor_1.chain_id = 'test_cross_chain'
+        print(f"  Executor 1 created with chain_id='test_cross_chain'")
+        
+        executor_1._execute_context_node(graph['ctx_1'], lambda: False)
+        print("  ✓ First execution completed")
+        
+        first_output = self.llm_executor.get_variable('node_ctx_1_output')
+        print(f"  First execution output:\n{first_output}")
+        self.assertIn('data_from_run_1', first_output)
+        print("  ✓ 'data_from_run_1' present in first output")
+        
+        print("\n[STEP 4] Creating SECOND WorkflowExecutor (simulating new chain run)...")
+        # Clear variables to simulate fresh executor state
+        self.llm_executor.set_variable('node_ctx_1_output', None)
+        self.llm_executor.set_variable('node_ctx_1_context', None)
+        
+        executor_2 = WorkflowExecutor(graph, None, self.llm_executor, self.fallback_handler)
+        executor_2._context_db = self.db
+        executor_2.chain_id = 'test_cross_chain'
+        print(f"  Executor 2 created with same chain_id='test_cross_chain'")
+        
+        print("\n[STEP 5] Running pre-initialization (loads persisted data)...")
+        executor_2._pre_initialize_context_nodes()
+        print("  ✓ Pre-initialization completed")
+        
+        pre_init_output = self.llm_executor.get_variable('node_ctx_1_output')
+        print(f"  Pre-init output:\n{pre_init_output}")
+        
+        print("\n[VERIFY] Cross-executor persistence...")
+        self.assertIsNotNone(pre_init_output)
+        print("  ✓ Pre-init output is not None")
+        self.assertIn('data_from_run_1', pre_init_output)
+        print("  ✓ 'data_from_run_1' survived across executor instances (real persistence!)")
+        
+        # Verify valid JSON
+        parsed = json.loads(pre_init_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Pre-init output is valid JSON")
+        
+        print("\n[STEP 6] Running second execution with new data...")
+        self.llm_executor.set_variable('node_code_1_output', 'data_from_run_2')
+        executor_2._execute_context_node(graph['ctx_1'], lambda: False)
+        print("  ✓ Second execution completed")
+        
+        second_output = self.llm_executor.get_variable('node_ctx_1_output')
+        print(f"  Second execution output:\n{second_output}")
+        
+        print("\n[VERIFY] Both runs' data accumulated...")
+        self.assertIn('data_from_run_1', second_output)
+        print("  ✓ 'data_from_run_1' from first run still present")
+        self.assertIn('data_from_run_2', second_output)
+        print("  ✓ 'data_from_run_2' from second run present")
+        print("  ✓ PASSED - Context persists correctly across separate executor instances")
+        
+        print("\n✓ test_context_node_cross_executor_persistence PASSED\n")
 
 
 class TestWorkflowGraphBuilder(unittest.TestCase):
@@ -843,7 +861,7 @@ class TestWorkflowGraphBuilder(unittest.TestCase):
                 'auto_capture_responses': 'true',
                 'output_format': 'structured',
                 'connections': [
-                    {'target_node_id': 'code_1', 'output_port': 'context', 'input_port': 'input'}
+                    {'target_node_id': 'code_1', 'output_port': 'output', 'input_port': 'input'}
                 ],
                 'inputs': {
                     'input': {'node_id': 'code_1', 'output_name': 'output'}
@@ -940,7 +958,7 @@ class TestFullPipeline(unittest.TestCase):
         graph = {
             'code_1': {
                 'type': 'code',
-                'data': {'node_id': 'code_1', 'code': 'result = "code_result_123"'},
+                'data': {'node_id': 'code_1', 'code': 'result = "code_result_123"', 'label': 'First Code'},
                 'connections': {
                     'output': [{'node_id': 'ctx_1', 'input_port': 'input'}]
                 },
@@ -950,16 +968,11 @@ class TestFullPipeline(unittest.TestCase):
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Pipeline Context',
+                    'max_history': 10,
                 },
                 'connections': {
-                    'context': [{'node_id': 'code_2', 'input_port': 'input'}]
+                    'output': [{'node_id': 'code_2', 'input_port': 'input'}]
                 },
                 'inputs': [
                     {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}
@@ -974,7 +987,7 @@ class TestFullPipeline(unittest.TestCase):
                 },
                 'connections': {},
                 'inputs': [
-                    {'from_node': 'ctx_1', 'output_type': 'context', 'input_port': 'input'}
+                    {'from_node': 'ctx_1', 'output_type': 'output', 'input_port': 'input'}
                 ]
             }
         }
@@ -1018,31 +1031,24 @@ class TestFullPipeline(unittest.TestCase):
         self.assertIsNotNone(ctx_output)
         print("  ✓ Context node produced output")
         
-        print("\n[STEP 6] Checking timeline output...")
-        print(f"  Timeline output:\n{ctx_output}")
+        print("\n[STEP 6] Checking JSON output...")
+        print(f"  Context output:\n{ctx_output}")
         
-        print("\n[VERIFY] Checking context captured code_1 output in timeline...")
-        # New format: timeline narrative text instead of JSON
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present")
-        self.assertIn('Your response was:', ctx_output)
-        print("  ✓ 'Your response was:' field present")
+        print("\n[VERIFY] Checking context captured code_1 output...")
+        # New format: JSON dict instead of timeline narrative
         self.assertIn('code_result_123', ctx_output)
-        print("  ✓ 'code_result_123' captured in timeline")
+        print("  ✓ 'code_result_123' captured in JSON")
+        
+        # Verify valid JSON
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON")
         
         print("\n[STEP 7] Checking downstream code node received context...")
         code_2_context = self.llm_executor.get_variable('node_code_2_context')
         print(f"  node_code_2_context: {code_2_context is not None}")
         self.assertIsNotNone(code_2_context)
         print("  ✓ Downstream code_2 received context from ctx_1")
-        
-        print("\n[INFO] Final variable state:")
-        all_vars = self.llm_executor.get_all_variables()
-        for var_name, var_value in all_vars.items():
-            if isinstance(var_value, str) and len(var_value) > 100:
-                print(f"  {var_name}: {var_value[:100]}... (truncated)")
-            else:
-                print(f"  {var_name}: {var_value}")
         
         print("\n  ✓ PASSED - Full pipeline executed correctly")
         print("\n✓ test_full_pipeline_code_to_context_to_downstream PASSED\n")
@@ -1831,6 +1837,7 @@ class TestFullSkillsPipeline(unittest.TestCase):
                 'type': 'code',
                 'data': {
                     'node_id': 'code_1',
+                    'label': 'Generates Fibonacci',
                     'description': 'Generated Fibonacci function'
                 },
                 'connections': {}
@@ -1839,16 +1846,11 @@ class TestFullSkillsPipeline(unittest.TestCase):
                 'type': 'context',
                 'data': {
                     'node_id': 'ctx_1',
-                    'scope': 'chain',
-                    'default_merge_policy': 'append',
-                    'keys': '[]',
-                    'key_policies': '{}',
-                    'max_entries_per_key': '100',
-                    'auto_capture_responses': 'true',
-                    'output_format': 'structured'
+                    'label': 'Skills Context',
+                    'max_history': 10,
                 },
                 'connections': {
-                    'context': [{'node_id': 'llm_1', 'input_port': 'context'}]
+                    'output': [{'node_id': 'llm_1', 'input_port': 'input'}]
                 },
                 'inputs': [
                     {'from_node': 'code_1', 'output_type': 'output', 'input_port': 'input'}
@@ -1864,7 +1866,7 @@ class TestFullSkillsPipeline(unittest.TestCase):
                 },
                 'connections': {},
                 'inputs': [
-                    {'from_node': 'ctx_1', 'output_type': 'context', 'input_port': 'context'}
+                    {'from_node': 'ctx_1', 'output_type': 'output', 'input_port': 'input'}
                 ]
             }
         }
@@ -1884,44 +1886,16 @@ class TestFullSkillsPipeline(unittest.TestCase):
         self.assertIsNotNone(ctx_output)
         print("  ✓ Context output exists")
         
-        print(f"  Timeline output:\n{ctx_output}")
+        print(f"  JSON output:\n{ctx_output}")
         
-        # New format: timeline narrative text instead of JSON
-        self.assertIn('Run #', ctx_output)
-        print("  ✓ 'Run #' run numbering present in context")
-        
-        print("\n[STEP 5] Simulating LLM receiving context with skills...")
-        # Simulate what the LLM executor would do
-        llm_system_message = graph['llm_1']['data']['system_message']
-        llm_skills = graph['llm_1']['data']['skills']
-        
-        # Inject skills
-        skill_block = "\n\n## Active Skills\n"
-        for skill in llm_skills:
-            skill_block += f"\n### {skill.get('name', 'Unnamed')}\n{skill.get('instructions', '')}\n"
-        final_system_message = llm_system_message + skill_block
-        
-        print("  Final LLM system message:")
-        print("  " + "-"*40)
-        print("  " + final_system_message.replace("\n", "\n  "))
-        print("  " + "-"*40)
-        
-        print("\n[VERIFY] Checking full pipeline results...")
-        
-        # Check code output is stored (timeline format)
+        # New format: clean JSON dict
         self.assertIn('def fibonacci', ctx_output)
-        print("  ✓ Context has stored code data")
+        print("  ✓ 'def fibonacci' present in JSON output")
         
-        # Check skills are injected
-        self.assertIn('## Active Skills', final_system_message)
-        print("  ✓ Skills header present in LLM system message")
-        self.assertIn('### CodeReviewer', final_system_message)
-        print("  ✓ CodeReviewer skill injected")
-        
-        # Check context would be available to LLM
-        context_for_llm = self.llm_executor.get_variable('node_ctx_1_context')
-        self.assertIsNotNone(context_for_llm)
-        print("  ✓ Context available for LLM via node_ctx_1_context variable")
+        # Verify valid JSON
+        parsed = json.loads(ctx_output)
+        self.assertIsInstance(parsed, dict)
+        print("  ✓ Output is valid JSON")
         
         print("\n  ✓ PASSED - Full pipeline with skills works correctly")
         print("\n✓ test_code_to_context_to_llm_with_skills PASSED\n")

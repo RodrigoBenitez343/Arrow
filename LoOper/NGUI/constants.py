@@ -23,10 +23,16 @@ CONDITIONAL_COLOR = '#7B61FF'
 LLM_COLOR = '#BD6C4D'  # Muted Matte Orange
 TTS_COLOR = '#00CED1'
 CHAIN_IMPORT_COLOR = '#5C8D68'  # Muted Matte Green
+DETERMINISTIC_CHAIN_COLOR = '#3D9970'  # Brighter green: frozen / orchestrator-free chain (chains port)
 FORM_FILLER_COLOR = '#DDA0DD'
 CODE_NODE_COLOR = '#F1C40F'
 CONTAINER_NODE_COLOR = '#4A90E2'
 CONTEXT_NODE_COLOR = '#4A7DA5'  # Muted Matte Blue
+INPUT_NODE_COLOR = '#E67E22'      # Amber/Orange
+HANDLE_NODE_COLOR = '#9B59B6'      # Purple
+MCP_NODE_COLOR = '#E74C3C'           # Red (MCP protocol)
+OUTPUT_NODE_COLOR = '#FFA726'        # Warm Orange/Gold (Output sink)
+WEB_SEQUENCE_COLOR = '#2E86AB'      # Muted Teal (WebSequenceNode)
 
 # Port Color Mapping (visual emphasis; labels are background logic)
 INPUT_PORT_COLOR = '#4DB6FF'   # Bright blue for inputs

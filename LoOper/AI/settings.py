@@ -4,6 +4,7 @@ Settings and Configuration Management for OverWatch
 """
 
 import os
+import sys
 import json
 import logging
 from typing import Dict, Any, Optional, List
@@ -30,18 +31,6 @@ class OllamaSettings:
 
 
 @dataclass
-class ComoRAGSettings:
-    """ComoRAG engine settings"""
-    memory_size: int = 1000
-    max_reasoning_cycles: int = 10
-    confidence_threshold: float = 0.8
-    memory_consolidation_threshold: float = 0.7
-    embedding_model: str = "all-MiniLM-L6-v2"
-    enable_faiss: bool = True
-    probing_queries_count: int = 3
-
-
-@dataclass
 class APISettings:
     """API server settings"""
     host: str = "0.0.0.0"
@@ -50,16 +39,6 @@ class APISettings:
     cors_origins: List[str] = field(default_factory=lambda: ["*"])
     max_request_size: int = 10 * 1024 * 1024  # 10MB
     timeout: int = 300  # 5 minutes
-
-
-@dataclass
-class TailscaleSettings:
-    """Tailscale network settings"""
-    enabled: bool = False
-    server_ip: Optional[str] = None
-    api_port: int = 8000
-    auth_key: Optional[str] = None
-    hostname: Optional[str] = None
 
 
 @dataclass
@@ -76,20 +55,10 @@ class LoggingSettings:
 class Settings:
     """Main settings container"""
     ollama: OllamaSettings = field(default_factory=OllamaSettings)
-    comorag: ComoRAGSettings = field(default_factory=ComoRAGSettings)
     api: APISettings = field(default_factory=APISettings)
-    tailscale: TailscaleSettings = field(default_factory=TailscaleSettings)
     logging: LoggingSettings = field(default_factory=LoggingSettings)
-    
+
     # Additional properties for backward compatibility
-    @property
-    def comorag_memory_size(self) -> int:
-        return self.comorag.memory_size
-    
-    @property
-    def TAILSCALE_SERVER_IP(self) -> Optional[str]:
-        return self.tailscale.server_ip
-    
     @property
     def API_PORT(self) -> int:
         return self.api.port
@@ -101,9 +70,23 @@ def get_config_path() -> Path:
     config_path = os.getenv('OVERWATCH_CONFIG_PATH')
     if config_path:
         return Path(config_path)
-    
+
     # Default to config.json in the same directory as this file
-    return Path(__file__).parent / 'config.json'
+    candidates = [Path(__file__).parent / 'config.json']
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(sys.executable)
+        for prefix in ["", "_internal", "arrow", "_internal/arrow"]:
+            candidates.append(Path(exe_dir) / prefix / "AI" / "config.json")
+            candidates.append(Path(exe_dir) / prefix / "AI" / "OverWatch" / "config" / "config.json")
+        # One-file builds: files are inside sys._MEIPASS
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            for sub in ["", "LoOper"]:
+                candidates.append(Path(meipass) / sub / "AI" / "config.json")
+    for c in candidates:
+        if c.is_file():
+            return c
+    return candidates[0]
 
 
 def load_config_from_file(config_path: Path) -> Dict[str, Any]:
@@ -137,17 +120,6 @@ def load_config_from_env() -> Dict[str, Any]:
     if os.getenv('OVERWATCH_DEBUG'):
         config.setdefault('api', {})['debug'] = os.getenv('OVERWATCH_DEBUG').lower() == 'true'
     
-    # Tailscale settings
-    if os.getenv('TAILSCALE_SERVER_IP'):
-        config.setdefault('tailscale', {})['server_ip'] = os.getenv('TAILSCALE_SERVER_IP')
-        config.setdefault('tailscale', {})['enabled'] = True
-    if os.getenv('TAILSCALE_API_PORT'):
-        config.setdefault('tailscale', {})['api_port'] = int(os.getenv('TAILSCALE_API_PORT'))
-    if os.getenv('TAILSCALE_AUTH_KEY'):
-        config.setdefault('tailscale', {})['auth_key'] = os.getenv('TAILSCALE_AUTH_KEY')
-    if os.getenv('TAILSCALE_HOSTNAME'):
-        config.setdefault('tailscale', {})['hostname'] = os.getenv('TAILSCALE_HOSTNAME')
-    
     # vLLM settings
     if os.getenv('VLLM_GPU_MEMORY_UTILIZATION'):
         config.setdefault('vllm', {})['gpu_memory_utilization'] = float(os.getenv('VLLM_GPU_MEMORY_UTILIZATION'))
@@ -155,14 +127,6 @@ def load_config_from_env() -> Dict[str, Any]:
         config.setdefault('vllm', {})['max_model_len'] = int(os.getenv('VLLM_MAX_MODEL_LEN'))
     if os.getenv('VLLM_TENSOR_PARALLEL_SIZE'):
         config.setdefault('vllm', {})['tensor_parallel_size'] = int(os.getenv('VLLM_TENSOR_PARALLEL_SIZE'))
-    
-    # ComoRAG settings
-    if os.getenv('COMORAG_MEMORY_SIZE'):
-        config.setdefault('comorag', {})['memory_size'] = int(os.getenv('COMORAG_MEMORY_SIZE'))
-    if os.getenv('COMORAG_MAX_CYCLES'):
-        config.setdefault('comorag', {})['max_reasoning_cycles'] = int(os.getenv('COMORAG_MAX_CYCLES'))
-    if os.getenv('COMORAG_CONFIDENCE_THRESHOLD'):
-        config.setdefault('comorag', {})['confidence_threshold'] = float(os.getenv('COMORAG_CONFIDENCE_THRESHOLD'))
     
     # Logging settings
     if os.getenv('LOG_LEVEL'):
@@ -207,26 +171,12 @@ def create_settings_from_dict(config_dict: Dict[str, Any]) -> Settings:
         if 'default_models' in vllm_config:
             settings.ollama.default_models = vllm_config['default_models']
     
-    # Update ComoRAG settings
-    if 'comorag' in config_dict:
-        comorag_config = config_dict['comorag']
-        for key, value in comorag_config.items():
-            if hasattr(settings.comorag, key):
-                setattr(settings.comorag, key, value)
-    
     # Update API settings
     if 'api' in config_dict:
         api_config = config_dict['api']
         for key, value in api_config.items():
             if hasattr(settings.api, key):
                 setattr(settings.api, key, value)
-    
-    # Update Tailscale settings
-    if 'tailscale' in config_dict:
-        tailscale_config = config_dict['tailscale']
-        for key, value in tailscale_config.items():
-            if hasattr(settings.tailscale, key):
-                setattr(settings.tailscale, key, value)
     
     # Update logging settings
     if 'logging' in config_dict:
@@ -325,22 +275,6 @@ def setup_logging(settings: Settings):
             logger.error(f"Failed to setup file logging: {e}")
 
 
-def get_api_url(settings: Settings) -> str:
-    """Get the API URL based on settings"""
-    if settings.tailscale.enabled and settings.tailscale.server_ip:
-        host = settings.tailscale.server_ip
-        port = settings.tailscale.api_port
-    else:
-        host = settings.api.host
-        port = settings.api.port
-    
-    # Handle special case for 0.0.0.0
-    if host == "0.0.0.0":
-        host = "localhost"
-    
-    return f"http://{host}:{port}"
-
-
 def validate_settings_simple(settings: Settings) -> bool:
     """Validate settings configuration"""
     try:
@@ -354,15 +288,6 @@ def validate_settings_simple(settings: Settings) -> bool:
             logger.error(f"Invalid GPU memory utilization: {settings.vllm.gpu_memory_utilization}")
             return False
         
-        # Validate ComoRAG settings
-        if settings.comorag.memory_size <= 0:
-            logger.error(f"Invalid memory size: {settings.comorag.memory_size}")
-            return False
-        
-        if settings.comorag.max_reasoning_cycles <= 0:
-            logger.error(f"Invalid max reasoning cycles: {settings.comorag.max_reasoning_cycles}")
-            return False
-        
         logger.info("Settings validation passed")
         return True
         
@@ -372,11 +297,11 @@ def validate_settings_simple(settings: Settings) -> bool:
 
 
 def get_api_url(settings: Settings) -> str:
-    """Get API URL from settings"""
-    if settings.tailscale.enabled and settings.tailscale.server_ip:
-        return f"http://{settings.tailscale.server_ip}:{settings.tailscale.api_port}"
-    else:
-        return f"http://{settings.api.host}:{settings.api.port}"
+    """Get API URL from settings (local gateway; 0.0.0.0 -> localhost)"""
+    host = settings.api.host or "0.0.0.0"
+    if host == "0.0.0.0":
+        host = "localhost"
+    return f"http://{host}:{settings.api.port}"
 
 
 def validate_settings(settings: Settings) -> List[str]:
@@ -396,27 +321,13 @@ def validate_settings(settings: Settings) -> List[str]:
     if settings.ollama.timeout < 30:
         issues.append("Ollama timeout should be at least 30 seconds")
     
-    # Validate ComoRAG settings
-    if settings.comorag.memory_size < 10:
-        issues.append("ComoRAG memory size should be at least 10")
-    
-    if not 0.0 <= settings.comorag.confidence_threshold <= 1.0:
-        issues.append("ComoRAG confidence threshold must be between 0.0 and 1.0")
-    
-    if settings.comorag.max_reasoning_cycles < 1:
-        issues.append("ComoRAG max reasoning cycles must be at least 1")
-    
     # Validate API settings
     if not 1024 <= settings.api.port <= 65535:
         issues.append("API port must be between 1024 and 65535")
     
     if settings.api.timeout < 10:
         issues.append("API timeout should be at least 10 seconds")
-    
-    # Validate Tailscale settings
-    if settings.tailscale.enabled and not settings.tailscale.server_ip:
-        issues.append("Tailscale server IP is required when Tailscale is enabled")
-    
+
     return issues
 
 

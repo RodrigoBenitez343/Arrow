@@ -1,11 +1,61 @@
-from ....config import logger
+import json
+import logging
 import os
 import sys
 import venv
 import time
 import subprocess as _sp
+logger = logging.getLogger(__name__)
+
+# Input ports that drive execution wiring rather than data delivery: a
+# connection on one of these never becomes a code variable.  Any OTHER port
+# connected to a code node is injected as a raw variable named after the port.
+RESERVED_CODE_INPUT_PORTS = {'input', 'args', 'code', 'input_data', 'os', 'print', 'None', ''}
+
+try:
+    from logging_setup import log_block
+except Exception:
+    def log_block(logger, level, title, content, lang="text"):
+        text = content if isinstance(content, str) else repr(content)
+        logger.log(level, "=== %s ===\n%s", title, text)
 
 class CodeMixin:
+    def _resolve_code_input_value(self, from_node_id, output_type, input_port=''):
+        """Resolve the raw value an upstream node published for a port.
+
+        Producers publish asymmetrically today: some write only legacy flat
+        variables (node_{id}_output / node_{id}_output_{port}), others (web
+        sequences, mirrored in core.py) write only the port-scoped store.
+        Legacy lookups stay first so dual-store producers keep their current
+        value; the port store is the fallback that lets data-only producers
+        (web ctx_out, etc.) reach the code node.  Returns the raw payload,
+        never unwrapped.
+        """
+        output_type = str(output_type or 'output')
+        input_port = str(input_port or '')
+        # Base/branch ports drive execution ONLY — they carry no data.
+        if output_type in ('output', '', 'true', 'false', 'error', 'route'):
+            return None
+        # Try the named output port first
+        val = self.llm_executor.get_variable(f"node_{from_node_id}_output_{output_type}")
+        if val is None:
+            val = self._port_store_value(from_node_id, output_type)
+        return val
+
+    def _port_store_value(self, from_node_id, output_type):
+        """Port-scoped read with a sane chain_id default for standalone use."""
+        try:
+            chain_id = getattr(self, 'chain_id', None) or 'default_chain'
+            val = self.port_store.get_output(chain_id, str(from_node_id), str(output_type))
+            if val is not None:
+                logger.debug(
+                    "Code node input '%s' from %s resolved via port store",
+                    output_type, from_node_id,
+                )
+            return val
+        except Exception:
+            return None
+
     def _execute_code_node(self, node, stop_flag, input_overrides=None, arg_overrides=None):
         """
         Executes a Code node and returns the next node ID.
@@ -37,10 +87,30 @@ class CodeMixin:
         code = code_data.get('code', '')
         file_path = code_data.get('file_path', '')
         output_variable = code_data.get('output_variable', 'result')
+
+        # Parse custom IO port declarations
+        input_vars_raw = code_data.get('input_vars', '[]')
+        if isinstance(input_vars_raw, str):
+            try:
+                input_vars = json.loads(input_vars_raw)
+            except Exception:
+                input_vars = []
+        else:
+            input_vars = input_vars_raw or []
+
+        output_vars_raw = code_data.get('output_vars', '[]')
+        if isinstance(output_vars_raw, str):
+            try:
+                output_vars = json.loads(output_vars_raw)
+            except Exception:
+                output_vars = []
+        else:
+            output_vars = output_vars_raw or []
         
         # Resolve inputs
         input_data = []
         args = {}
+        custom_inputs = {}
         
         # Inject overrides if provided (for Agentic Tool use)
         if input_overrides is not None:
@@ -63,10 +133,7 @@ class CodeMixin:
             output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
             
             # Get value from previous node respecting source output port
-            if output_type == 'context':
-                val = self.llm_executor.get_variable(f"node_{from_node_id}_context")
-            else:
-                val = self.llm_executor.get_variable(f"node_{from_node_id}_output")
+            val = self._resolve_code_input_value(from_node_id, output_type, input_port)
             
             if input_port == 'input':
                 input_data.append(val)
@@ -144,6 +211,9 @@ class CodeMixin:
                         except Exception as e:
                             logger.error(f"Failed to save code to {file_path}: {e}")
                             # Continue with runtime execution even if save fails
+            else:
+                # Custom named input port (not 'input', 'args', or 'code')
+                custom_inputs[input_port] = val
         
         # Simplify input_data if single item
         if len(input_data) == 1:
@@ -198,87 +268,32 @@ class CodeMixin:
              logger.warning("No code to execute in Code node")
              return self._get_code_next_node(node, 'output')
 
+        # Sandbox routing: when the chain runs inside the RDP sandbox, code
+        # must execute in the sandbox session (the agent's process), never on
+        # the host desktop where it could move the user's mouse or open
+        # windows the sandboxed nodes cannot see.
+        sandbox_url = self._get_sandbox_agent_url()
+        if sandbox_url:
+            logger.info(f"Code node {node_id} executing inside RDP sandbox ({sandbox_url})")
+            return self._execute_code_node_in_sandbox(
+                node, node_id, code_to_run, input_data, args, output_variable,
+                code_data.get('timeout', 30), stop_flag,
+            )
+
         if not node_id:
             node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
         try:
             base_dir = self._chain_runtime_dir or os.path.join(os.getcwd(), 'runtime')
             tmp_dir = os.path.join(base_dir, 'code_nodes', str(node_id))
             os.makedirs(tmp_dir, exist_ok=True)
+            # Workspace siblings (agent/user-created helpers in the node folder)
+            # must be importable by the main script, in-process exec included.
+            if tmp_dir not in sys.path:
+                sys.path.insert(0, tmp_dir)
             script_path = os.path.join(tmp_dir, 'script.py')
             with open(script_path, 'w', encoding='utf-8') as _f:
                 _f.write(code_to_run)
             self.llm_executor.set_variable(f"node_{node_id}_code_path", script_path)
-            alias_candidate = None
-            desc_candidate = None
-            try:
-                if code_src_llm_id:
-                    alias_candidate = self.llm_executor.get_variable(f"node_{code_src_llm_id}_artifact_alias")
-                    desc_candidate = self.llm_executor.get_variable(f"node_{code_src_llm_id}_artifact_desc")
-            except Exception:
-                alias_candidate = None
-                desc_candidate = None
-            try:
-                safe_alias = self._sanitize_alias(alias_candidate or f"module_{node_id}")
-                if not safe_alias.lower().startswith("module_"):
-                    safe_alias = f"module_{safe_alias}"
-                self.llm_executor.set_variable(f"node_{node_id}_module_alias", safe_alias)
-            except Exception:
-                self.llm_executor.set_variable(f"node_{node_id}_module_alias", f"module_{node_id}")
-            # Update a global index of available code modules
-            try:
-                idx = self.llm_executor.get_variable('code_modules') or []
-                alias = self.llm_executor.get_variable(f"node_{node_id}_module_alias") or f"module_{node_id}"
-                desc = desc_candidate or ""
-                entry = {'id': str(node_id), 'alias': str(alias), 'path': str(script_path), 'desc': str(desc)}
-                # de-duplicate by id
-                if not any(e.get('id') == str(node_id) for e in (idx if isinstance(idx, list) else [])):
-                    (idx if isinstance(idx, list) else []).append(entry)
-                else:
-                    # update existing
-                    for e in (idx if isinstance(idx, list) else []):
-                        if e.get('id') == str(node_id):
-                            e.update(entry)
-                self.llm_executor.set_variable('code_modules', idx)
-                try:
-                    # Update preferred framework for the chain based on this code
-                    fw = self._detect_framework(code_to_run)
-                    if fw:
-                        prev = self.llm_executor.get_variable('chain_framework') or ''
-                        if not prev:
-                            self.llm_executor.set_variable('chain_framework', fw)
-                        used = self.llm_executor.get_variable('chain_frameworks_used') or []
-                        if isinstance(used, list):
-                            if fw not in used:
-                                used.append(fw)
-                                self.llm_executor.set_variable('chain_frameworks_used', used)
-                        else:
-                            self.llm_executor.set_variable('chain_frameworks_used', [fw])
-                except Exception:
-                    pass
-                try:
-                    lines = []
-                    for e in (idx if isinstance(idx, list) else []):
-                        a = str(e.get('alias') or '')
-                        d = str(e.get('desc') or '')
-                        p = str(e.get('path') or '')
-                        lines.append(f"- {a}: {d} [{p}]")
-                    hdr = ""
-                    try:
-                        cf = self.llm_executor.get_variable('chain_framework') or ''
-                        cu = self.llm_executor.get_variable('chain_frameworks_used') or []
-                        if cf:
-                            hdr += f"Preferred Framework: {cf}\n"
-                        if cu:
-                            if isinstance(cu, list) and cu:
-                                hdr += "Frameworks seen: " + ", ".join([str(x) for x in cu]) + "\n"
-                    except Exception:
-                        pass
-                    ctx = (hdr + "AVAILABLE MODULES:\n" + "\n".join(lines)).strip()
-                    self.llm_executor.set_variable('chain_modules_context', ctx)
-                except Exception:
-                    pass
-            except Exception:
-                pass
         except Exception:
             pass
 
@@ -351,6 +366,18 @@ class CodeMixin:
                     node['last_output_port'] = 'output'
                 except Exception:
                     pass
+                # ── Unified input_context (Task 2) ──
+                try:
+                    _label = code_data.get("label") or code_data.get("name") or ""
+                    _inp_for_ctx = input_data if isinstance(input_data, str) else str(input_data) if input_data is not None else ""
+                    self.llm_executor.set_variable(f"node_{node_id}_input_context", {
+                        "type": "code",
+                        "input": _inp_for_ctx,
+                        "output": result,
+                        "label": _label,
+                    })
+                except Exception:
+                    pass
                 try:
                     code_text = ""
                     if os.path.exists(script_path):
@@ -360,11 +387,29 @@ class CodeMixin:
                     self.llm_executor.set_variable(f"node_{node_id}_context", ctx_success)
                 except Exception:
                     pass
+                # ── Mirror into the port-scoped store ──
+                # Code-node results must also be visible to port-store-first
+                # consumers (context/output nodes, other code nodes' ports).
+                try:
+                    _cid = getattr(self, 'chain_id', None) or 'default_chain'
+                    _nid = str(node_id or '')
+                    if _nid:
+                        self.port_store.set_output(_cid, _nid, 'output', result)
+                        self.port_store.set_output(
+                            _cid, _nid, 'context',
+                            self.llm_executor.get_variable(f"node_{_nid}_context") or result,
+                        )
+                except Exception:
+                    pass
                 return self._get_code_next_node(node, 'output')
             try:
                 if not node_id:
                     node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
                 msg = terminal_output or stderr_str or "Persistent script failed to start"
+                logger.error(
+                    "Persistent script for node %s exited immediately: %s",
+                    node_id, (str(msg) or '')[:1500],
+                )
                 self._set_code_node_error(node, msg)
                 self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
                 self.llm_executor.set_variable(f"node_{node_id}_stderr", (dep_error_msg + "\n" + stderr_str) if dep_error_msg else stderr_str)
@@ -391,11 +436,64 @@ class CodeMixin:
                 exec_scope['__name__'] = '__main__'
             except Exception:
                 pass
+
+            # Inject custom input variables into exec scope (from named input ports)
+            injected_custom = []
+            for iv in input_vars:
+                name = iv.get('name', '')
+                if name:
+                    injected_custom.append(name)
+                    exec_scope[name] = custom_inputs.get(name)
+
+            # Auto-inject EVERY connected non-execution input port as a variable
+            # named after that port (raw upstream payload, never unwrapped).
+            # Data-only producers (web sequences via ctx_out, input/context/LLM/
+            # code nodes) publish to the port store; declared-but-unconnected
+            # ports above stay None, connected-but-undeclared ports become
+            # available here without touching input_vars first.
+            _injected = set(injected_custom)
+            for _inp in (inputs or []):
+                _pname = _inp.get('input_port')
+                _pname = str(_pname) if _pname is not None else ''
+                if not _pname or _pname in RESERVED_CODE_INPUT_PORTS:
+                    continue
+                if not _pname.isidentifier():
+                    logger.debug("Code node: skipping non-identifier input port %r", _pname)
+                    continue
+                if _pname in _injected:
+                    continue  # declared input var already bound above
+                _injected.add(_pname)
+                exec_scope[_pname] = custom_inputs.get(_pname)
+        
+            # Declare custom output variables in exec scope (user code may assign them)
+            for ov in output_vars:
+                name = ov.get('name', '')
+                if name and name not in exec_scope:
+                    exec_scope[name] = None
+
+            # Inject GraphRAG context query into code execution namespace
+            # Code nodes can call:
+            #   context_query(node_id, question)          — query specific node
+            #   context_query(question="...")             — cross-chain query
+            #   context_query(scope="global")              — global memory only
+            #   graphrag.query_relevant(query)             — raw GraphRAG query
             try:
-                self._preload_chain_modules(exec_scope)
+                _ctx_chain_id = os.path.splitext(
+                    os.path.basename(
+                        getattr(self, 'chain_id', None)
+                        or getattr(self, 'chain_file', 'default_chain')
+                    )
+                )[0]
+                exec_scope['context_query'] = lambda node_id="", question="", scope=None, chain_id=_ctx_chain_id: self._query_context_node(node_id, question, scope, chain_id)
+                exec_scope['graphrag'] = self._get_graph_rag()
+                # Linear activity memory (player/agentic_ops/run_memory.py):
+                #   run_memory.timeline(day="yesterday")
+                #   run_memory.query(category="form", day="today")
+                from player.agentic_ops import run_memory as _run_memory_mod
+                exec_scope['run_memory'] = _run_memory_mod
             except Exception:
                 pass
-            
+        
             # Execute code with capture
             # Use llm_executor.variables as globals to allow scripts to share state (aggregation)
             with contextlib.redirect_stdout(stdout_capture), contextlib.redirect_stderr(stderr_capture):
@@ -409,9 +507,9 @@ class CodeMixin:
             terminal_output = stdout_str + stderr_str
             
             if stdout_str:
-                logger.info(f"Code node stdout:\n{stdout_str}")
+                log_block(logger, logging.INFO, "Code Node stdout", stdout_str)
             if stderr_str:
-                logger.warning(f"Code node stderr:\n{stderr_str}")
+                log_block(logger, logging.WARNING, "Code Node stderr", stderr_str)
 
             # Extract result
             result = exec_scope.get(output_variable)
@@ -430,9 +528,32 @@ class CodeMixin:
             self.llm_executor.set_variable(f"node_{node_id}_stderr", stderr_str)
             self.llm_executor.set_variable(f"node_{node_id}_terminal_output", terminal_output)
             
+            # Store custom output variables (from named output ports)
+            # Always set (including None) to clear stale values from previous executions
+            for ov in output_vars:
+                name = ov.get('name', '')
+                if name:
+                    try:
+                        val = exec_scope.get(name)
+                        self.llm_executor.set_variable(f"node_{node_id}_output_{name}", val)
+                    except Exception:
+                        pass
+            
             logger.info(f"Code node executed successfully.")
             try:
                 node['last_output_port'] = 'output'
+            except Exception:
+                pass
+            # ── Unified input_context (Task 2) ──
+            try:
+                _label = code_data.get("label") or code_data.get("name") or ""
+                _inp_for_ctx = input_data if isinstance(input_data, str) else str(input_data) if input_data is not None else ""
+                self.llm_executor.set_variable(f"node_{node_id}_input_context", {
+                    "type": "code",
+                    "input": _inp_for_ctx,
+                    "output": result,
+                    "label": _label,
+                })
             except Exception:
                 pass
             # Provide success context payload for downstream LLMs connected via 'context'
@@ -446,6 +567,25 @@ class CodeMixin:
                 self.llm_executor.set_variable(f"node_{node_id}_context", ctx_success)
             except Exception:
                 pass
+            # ── Mirror into the port-scoped store ──
+            # Port-store-first consumers (context/output nodes, other code
+            # nodes' named ports) read producer data via port_store; the
+            # legacy node_{id}_* variables above are invisible to them.
+            try:
+                _cid = getattr(self, 'chain_id', None) or 'default_chain'
+                _nid = str(node_id or '')
+                if _nid:
+                    self.port_store.set_output(_cid, _nid, 'output', result)
+                    self.port_store.set_output(
+                        _cid, _nid, 'context',
+                        self.llm_executor.get_variable(f"node_{_nid}_context") or result,
+                    )
+                    for _ov in output_vars:
+                        _nm = _ov.get('name', '')
+                        if _nm:
+                            self.port_store.set_output(_cid, _nid, str(_nm), exec_scope.get(_nm))
+            except Exception:
+                pass
             
             return self._get_code_next_node(node, 'output')
             
@@ -457,9 +597,9 @@ class CodeMixin:
                 stderr_str = dep_error_msg + "\n" + stderr_str
             
             if stdout_str:
-                logger.info(f"Code node stdout (before error):\n{stdout_str}")
+                log_block(logger, logging.INFO, "Code Node stdout (before error)", stdout_str)
             if stderr_str:
-                logger.warning(f"Code node stderr (before error):\n{stderr_str}")
+                log_block(logger, logging.WARNING, "Code Node stderr (before error)", stderr_str)
 
             logger.error(f"Code execution failed: {e}")
             import traceback
@@ -525,51 +665,137 @@ class CodeMixin:
             node_id = code_data.get('node_id') or code_data.get('id')
         self.llm_executor.set_variable(f"node_{node_id}_error", error_msg)
 
-    def _sanitize_alias(self, alias):
+    def _get_sandbox_agent_url(self):
+        """Return the active sandbox agent URL, or None when not sandboxed."""
         try:
-            import re
-            s = str(alias or '').strip()
-            s = re.sub(r"\W+", "_", s)
-            if not s:
-                return "mod"
-            if not re.match(r"^[A-Za-z_]", s):
-                s = "mod_" + s
-            return s
-        except Exception:
-            return "mod"
-
-    def _preload_chain_modules(self, scope):
-        try:
-            idx = self.llm_executor.get_variable('code_modules') or []
-            import importlib.util as _ilu
-            import sys as _sys
-            for entry in (idx if isinstance(idx, list) else []):
-                try:
-                    p = entry.get('path')
-                    a = entry.get('alias') or entry.get('id')
-                    sid = entry.get('id')
-                    safe = self._sanitize_alias(a or sid)
-                    varname = safe if str(safe).startswith("module_") else f"module_{safe}"
-                    if not p or not os.path.exists(p):
-                        continue
-                    spec = _ilu.spec_from_file_location(varname, p)
-                    if not spec or not spec.loader:
-                        continue
-                    mod = _ilu.module_from_spec(spec)
-                    spec.loader.exec_module(mod)
-                    scope[varname] = mod
-                    try:
-                        _sys.modules[varname] = mod
-                    except Exception:
-                        pass
-                    try:
-                        self.llm_executor.set_variable(f"module_{safe}_path", p)
-                    except Exception:
-                        pass
-                except Exception:
-                    continue
+            g = getattr(self, 'global_app_context_override', None)
+            if isinstance(g, dict):
+                u = g.get('sandbox_agent_url') or g.get('rdp_agent_url')
+                if u:
+                    return str(u)
         except Exception:
             pass
+        try:
+            u = getattr(self, 'sandbox_agent_url', None)
+            if u:
+                return str(u)
+        except Exception:
+            pass
+        return None
+
+    def _agent_host_screen_size(self):
+        """Return the host's (logical) screen size for diagnostics."""
+        try:
+            import pyautogui as _pg
+            w, h = _pg.size()
+            return (int(w), int(h))
+        except Exception:
+            return (0, 0)
+
+    def _jsonable(self, value):
+        """Best-effort JSON round-trip; fall back to repr for opaque objects."""
+        if value is None:
+            return None
+        try:
+            json.dumps(value)
+            return value
+        except Exception:
+            return repr(value)
+
+    def _execute_code_node_in_sandbox(self, node, node_id, code_to_run, input_data, args, output_variable, timeout, stop_flag):
+        """Execute a Code node inside the RDP sandbox session.
+
+        The code runs in the sandbox agent's process (the RDP desktop), so any
+        screen / input / GUI side effects land inside the sandbox instead of on
+        the host. Results that cannot be JSON-serialized come back as repr().
+        """
+        import urllib.request
+        import json as _json
+        sandbox_url = self._get_sandbox_agent_url()
+        try:
+            timeout_s = max(1, min(int(timeout or 30), 300))
+        except Exception:
+            timeout_s = 30
+        # ponytail: auto-discovered custom input-port values are NOT transported
+        # to the sandbox yet — requires a matching /action exec_code change on
+        # the sandbox side.  Only input_data/args cross today.
+        payload = {
+            "action": "exec_code",
+            "code": code_to_run,
+            "timeout": timeout_s,
+            "input_data": self._jsonable(input_data),
+            "args": self._jsonable(args) if isinstance(args, dict) else {},
+            "output_variable": output_variable or 'result',
+        }
+        req = urllib.request.Request(
+            f"{str(sandbox_url).rstrip('/')}/action",
+            data=_json.dumps(payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+        )
+        with urllib.request.urlopen(req, timeout=max(30, timeout_s + 15)) as resp:
+            data = _json.loads(resp.read().decode('utf-8'))
+        if not isinstance(data, dict):
+            raise RuntimeError("Invalid sandbox exec_code response")
+        if data.get('status') == 'error':
+            raise RuntimeError(data.get('message') or 'Sandbox code execution failed')
+        logger.info(
+            "Sandbox exec_code ran in Windows session %s (agent screen=%sx%s, host screen=%sx%s, timed_out=%s, ok=%s)",
+            data.get('session_id'), data.get('screen_width'), data.get('screen_height'),
+            self._agent_host_screen_size()[0], self._agent_host_screen_size()[1],
+            bool(data.get('timed_out')), bool(data.get('ok')),
+        )
+
+        if not node_id:
+            node_id = node.get('id') or node.get('node_id')
+        if not data.get('ok'):
+            err = data.get('error') or data.get('stderr') or 'Sandbox code execution failed'
+            self.llm_executor.set_variable(f"node_{node_id}_stdout", data.get('stdout', ''))
+            self.llm_executor.set_variable(f"node_{node_id}_stderr", data.get('stderr', ''))
+            self.llm_executor.set_variable(f"node_{node_id}_terminal_output", data.get('error', '') or data.get('stderr', ''))
+            self._set_code_node_error(node, err)
+            try:
+                node['last_output_port'] = 'error'
+            except Exception:
+                pass
+            return self._get_code_next_node(node, 'error')
+
+        stdout_str = data.get('stdout', '') or ''
+        stderr_str = data.get('stderr', '') or ''
+        result = data.get('result')
+        terminal_output = stdout_str + stderr_str
+        if stdout_str:
+            logger.info(f"Code node {node_id} sandbox stdout tail:\n{stdout_str[-800:]}")
+        if stderr_str:
+            logger.warning(f"Code node {node_id} sandbox stderr tail:\n{stderr_str[-800:]}")
+        if data.get('timed_out'):
+            logger.info(f"Code node {node_id} left running in sandbox session (timeout {timeout_s}s)")
+
+        if result is None:
+            result = terminal_output
+        self.llm_executor.set_variable(f"node_{node_id}_output", result)
+        self.llm_executor.set_variable(f"node_{node_id}_result", result)
+        self.llm_executor.set_variable(f"node_{node_id}_stdout", stdout_str)
+        self.llm_executor.set_variable(f"node_{node_id}_stderr", stderr_str)
+        self.llm_executor.set_variable(f"node_{node_id}_terminal_output", terminal_output)
+        # ── Mirror into the port-scoped store ──
+        try:
+            _cid = getattr(self, 'chain_id', None) or 'default_chain'
+            _nid = str(node_id or '')
+            if _nid:
+                self.port_store.set_output(_cid, _nid, 'output', result)
+                self.port_store.set_output(
+                    _cid, _nid, 'context',
+                    self.llm_executor.get_variable(f"node_{_nid}_context") or result,
+                )
+        except Exception:
+            pass
+        try:
+            node['last_output_port'] = 'output'
+        except Exception:
+            pass
+        return self._get_code_next_node(node, 'output')
+
+
 
     def _is_persistent_loop(self, code_str):
         try:
@@ -744,6 +970,12 @@ class CodeMixin:
             pass
 
     def _ensure_chain_venv(self):
+        # In frozen/PyInstaller mode, venv creation is impossible.
+        # sys.executable (the .exe) IS the Python interpreter.
+        if getattr(sys, 'frozen', False):
+            self._venv_python = sys.executable
+            self._frozen_mode = True
+            return
         try:
             if not self._venv_dir:
                 self._initialize_chain_runtime()
@@ -756,11 +988,10 @@ class CodeMixin:
             self._venv_site_packages = os.path.join(self._venv_dir, 'Lib', 'site-packages')
         except Exception as e:
             logger.error(f"Failed to ensure chain venv: {e}")
-            # Fallback to system python if venv creation fails (e.g. in frozen app)
-            # This allows execution but dependency installation might fail or affect global state
-            # which is better than crashing
+            # Fallback to sys.executable if venv creation fails (e.g. in frozen app)
             if getattr(sys, 'frozen', False):
                  self._venv_python = sys.executable
+                 self._frozen_mode = True
             else:
                  self._venv_python = sys.executable
 
@@ -807,23 +1038,6 @@ class CodeMixin:
         except Exception:
             return False
 
-    def _detect_framework(self, code_str):
-        try:
-            s = (code_str or '').lower()
-            if 'tkinter' in s:
-                return 'tkinter'
-            if ('pyqt5' in s) or ('from pyqt5' in s) or ('qtwidgets' in s):
-                return 'pyqt5'
-            if 'kivy' in s:
-                return 'kivy'
-            if ('wxpython' in s) or ('import wx' in s):
-                return 'wxpython'
-            if 'pywebview' in s:
-                return 'pywebview'
-            return ''
-        except Exception:
-            return ''
-
     def _install_code_dependencies(self, code_str):
         """
         Analyzes the code for imports and installs missing packages in the chain's venv.
@@ -861,43 +1075,49 @@ class CodeMixin:
                     if m2:
                         pkgs.add(m2.group(1).split('.')[0])
 
+            # Static set of known Python stdlib modules (fast-path filter)
             stdlib = {
                 'os','sys','json','re','typing','time','subprocess','pathlib','math','random','datetime','itertools','collections','functools','threading','asyncio','tkinter',
-                'io', 'contextlib', 'shutil', 'glob', 'platform', 'warnings', 'logging', 'uuid', 'socket', 'urllib', 'http', 'email', 'base64', 'hashlib', 'hmac', 'struct', 'pickle', 'copy', 'weakref', 'enum', 'types', 'inspect', 'traceback', 'gc', 'abc', 'numbers', 'decimal', 'fractions', 'statistics', 'operator', 'unittest', 'doctest', 'pdb', 'profile', 'cProfile', 'timeit', 'venv', 'ensurepip', 'zipfile', 'tarfile', 'csv', 'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'xml', 'html', 'mimetypes', 'argparse', 'optparse', 'getopt', 'getpass', 'curses', 'ctypes', 'multiprocessing', 'concurrent', 'queue', 'select', 'mmap', 'signal', 'termios', 'tty', 'pty', 'fcntl', 'pipes', 'resource', 'nis', 'syslog', 'site', 'builtins', 'locale'
+                'io', 'contextlib', 'shutil', 'glob', 'platform', 'warnings', 'logging', 'uuid', 'socket', 'urllib', 'http', 'email', 'base64', 'hashlib', 'hmac', 'struct', 'pickle', 'copy', 'weakref', 'enum', 'types', 'inspect', 'traceback', 'gc', 'abc', 'numbers', 'decimal', 'fractions', 'statistics', 'operator', 'unittest', 'doctest', 'pdb', 'profile', 'cProfile', 'timeit', 'venv', 'ensurepip', 'zipfile', 'tarfile', 'csv', 'sqlite3', 'zlib', 'gzip', 'bz2', 'lzma', 'xml', 'html', 'mimetypes', 'argparse', 'optparse', 'getopt', 'getpass', 'curses', 'ctypes', 'multiprocessing', 'concurrent', 'queue', 'select', 'mmap', 'signal', 'termios', 'tty', 'pty', 'fcntl', 'pipes', 'resource', 'nis', 'syslog', 'site', 'builtins', 'locale',
+                'zoneinfo',  # Python 3.9+
+                'dataclasses',  # Python 3.7+
+                'importlib',
+                'ast',
+                '__future__',
+                'string',
+                'textwrap',
+                'codecs',
+                'secrets',
+                'ipaddress',
+                'fileinput',
+                'linecache',
+                'dis',
+                'tokenize',
+                'keyword',
+                'tabnanny',
+                'py_compile',
+                'compileall',
+                'pyclbr',
+                'pkgutil',
+                'modulefinder',
+                'runpy',
+                'configparser',
+                'webbrowser',
+                'msvcrt',
+                'winreg',
+                'winsound',
+                '_thread',
+                'errno',
             }
-            
+
+            # ponytail: removed find_spec check against main process — it incorrectly
+            # skips project-installed packages like pygame that the chain venv lacks.
+            # The static stdlib set is sufficient; everything else gets pip-installed.
             wanted = [p for p in pkgs if p and p not in stdlib]
             
             if not wanted:
                 return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
-                
-            # Check what's installed
-            installed_output = ""
-            try:
-                # Use list_installed_packages via subprocess to be safe
-                if hasattr(self, '_venv_python') and self._venv_python:
-                    cmd = [self._venv_python, "-m", "pip", "list", "--format=json"]
-                    if os.name == 'nt':
-                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW)
-                    else:
-                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
-                    out, err = p.communicate()
-                    installed_output = out
-            except Exception:
-                pass
-                
-            installed_names = set()
-            try:
-                import json
-                data = json.loads(installed_output)
-                for item in data:
-                    installed_names.add(item['name'].lower())
-            except Exception:
-                pass
-                
-            to_install = []
-            skipped = []
-            
+
             # Mapping for common import names vs package names
             pkg_map = {
                 'cv2': 'opencv-python',
@@ -952,6 +1172,7 @@ class CodeMixin:
                 'gtts': 'gTTS',
                 'playsound': 'playsound',
                 'pyttsx3': 'pyttsx3',
+                'piper': 'piper-tts',
                 'openai': 'openai',
                 'anthropic': 'anthropic',
                 'google.generativeai': 'google-generativeai',
@@ -962,6 +1183,59 @@ class CodeMixin:
                 'frontend': 'frontend', # Generic, but sometimes used
                 'backend': 'backend'
             }
+
+            # In frozen/PyInstaller mode, dependencies are bundled in the executable.
+            # Skip pip subprocess calls (which would spawn new GUI instances via sys.executable)
+            # and use direct import checks instead.
+            if getattr(self, '_frozen_mode', False):
+                import importlib
+                installed = []
+                failed = []
+                skipped = []
+                for w in wanted:
+                    real_pkg = pkg_map.get(w, w)
+                    try:
+                        importlib.import_module(w)
+                        installed.append(real_pkg)
+                    except ImportError:
+                        logger.warning(f"Package '{real_pkg}' not available in frozen build (import '{w}' failed)")
+                        failed.append(real_pkg)
+                    except Exception:
+                        installed.append(real_pkg)
+                return {
+                    "installed": installed,
+                    "failed": failed,
+                    "skipped": skipped,
+                    "pip_stdout": "",
+                    "pip_stderr": "Using bundled environment - pip skipped"
+                }
+
+            # Check what's installed
+            installed_output = ""
+            try:
+                # Use list_installed_packages via subprocess to be safe
+                if hasattr(self, '_venv_python') and self._venv_python:
+                    cmd = [self._venv_python, "-m", "pip", "list", "--format=json"]
+                    if os.name == 'nt':
+                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True, creationflags=_sp.CREATE_NO_WINDOW)
+                    else:
+                        p = _sp.Popen(cmd, stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
+                    out, err = p.communicate()
+                    installed_output = out
+            except Exception:
+                pass
+                
+            installed_names = set()
+            try:
+                import json
+                data = json.loads(installed_output)
+                for item in data:
+                    installed_names.add(item['name'].lower())
+            except Exception:
+                pass
+                
+            to_install = []
+            skipped = []
             
             # Check for explicit requirements in comments
             # Format: # requirements: package1, package2==1.0.0, package3
@@ -1002,6 +1276,15 @@ class CodeMixin:
             if 'matplotlib' in pkgs and ('image' in code_lower or 'imshow' in code_lower):
                 if 'Pillow' not in wanted:
                     wanted.append('Pillow')
+
+            # SpeechRecognition's Microphone() pulls in PyAudio lazily at
+            # runtime — importing sr succeeds without it, then the GUI app
+            # crashes a moment later. Install both up front.
+            if ('speech_recognition' in pkgs
+                    and ('microphone(' in code_lower or 'sr.microphone' in code_lower
+                         or 'recognizer.listen' in code_lower)):
+                if 'pyaudio' not in wanted:
+                    wanted.append('pyaudio')
 
             for w in wanted:
                 real_pkg = pkg_map.get(w, w)

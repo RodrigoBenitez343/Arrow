@@ -21,7 +21,9 @@ class LLMNode(BaseNode):
     def __init__(self):
         super(LLMNode, self).__init__()
         self.llm_config = {
-            "model": "llama3.2:latest",
+            # Empty = engine-driven: llama.cpp nodes run their GGUF, Ollama
+            # nodes need an explicit model — never default to an Ollama name.
+            "model": "",
             "prompt": "",
             "system_message": "",
             "temperature": 0.7,
@@ -31,23 +33,36 @@ class LLMNode(BaseNode):
             "write_text": True,
             "use_vision": False,
             "vision_model": "",  # Empty — images go directly to the main model
-            "use_advanced_vision": False,
             "screenshot_enabled": True,
-            "use_comorag": True,
-            "max_cycles": 5,
-            "memory_size": 1000,
             "typing_batch_size": 20,  # Characters per batch for optimized typing
             "typing_batch_delay": 0.05,  # Delay between batches in seconds
             "input_source": "none",
+            # Orchestrator switch (OFF = vanilla LLM node).  ON morphs the
+            # node into the goal loop over the chains wired to its 'tools'
+            # port; the worker picker is Laya (fixed).
+            "orchestrator_mode": False,
+            "orch_max_steps": 15,
+            # Fixed goal for the orchestrator loop; a goal wired to the node's
+            # 'prompt' port overrides it (prompt port wins).
+            "orch_goal": "",
+            "orch_synthesize": True,
+            "orch_synthesis_system": "",
+            "orch_use_goal_ledger": False,
+            # Web mode: route input/vision/write on the chain's shared browser
+            # instead of the desktop screen (mirrors ConditionalNode.web_mode).
+            "web_mode": False,
+            "ocr_region": "",  # desktop OCR clip: JSON [x,y,w,h]; '' = full screen
+            "web_ocr_locator": "",  # web OCR element locator JSON; '' = whole viewport
             "ocr_confidence": 0.5,
             "ocr_preprocessing": True,
             "use_async": True,  # Enable asynchronous processing by default
             # Llama.cpp specific config
+            # gpu_layers 0 = CPU-first, threads -1 = auto, context 0 = model native
             "use_llamacpp": False,
             "llamacpp_model_path": "",
-            "llamacpp_gpu_layers": 35,
-            "llamacpp_threads": 8,
-            "llamacpp_context_size": 4096,
+            "llamacpp_gpu_layers": 0,
+            "llamacpp_threads": -1,
+            "llamacpp_context_size": 0,
         }
 
         # Use a darkened version of the special color for better text readability
@@ -80,20 +95,24 @@ class LLMNode(BaseNode):
         )
 
         in_port = _add_multi_input(
-            self, "input", in_rgb, False, data_type=UNIVERSAL_PORT_TYPE
+            self, "input", in_rgb, True, data_type=UNIVERSAL_PORT_TYPE
         )
-        tools_port = _add_multi_input(
-            self, "tools", in_rgb, False, data_type=UNIVERSAL_PORT_TYPE
+        # 'prompt' port: text wired here REPLACES this node's prompt template
+        # (the system message is untouched).  The 'context' port is data/
+        # history only.  The 'tools' port is NOT built here — it belongs to
+        # orchestrator mode (see rebuild_orchestrator_ports).
+        prompt_in_port = _add_multi_input(
+            self, "prompt", in_rgb, True, data_type=UNIVERSAL_PORT_TYPE
         )
         context_in_port = _add_multi_input(
-            self, "context", in_rgb, False, data_type=UNIVERSAL_PORT_TYPE
+            self, "context", in_rgb, True, data_type=UNIVERSAL_PORT_TYPE
         )
         out_port = self.add_output(
-            "output", color=out_rgb, display_name=False, multi_output=True
+            "output", color=out_rgb, display_name=True, multi_output=True
         )
         # out_port.model.type_ = UNIVERSAL_PORT_TYPE
         context_out_port = self.add_output(
-            "context", color=out_rgb, display_name=False, multi_output=True
+            "context", color=out_rgb, display_name=True, multi_output=True
         )
         # context_out_port.model.type_ = UNIVERSAL_PORT_TYPE
         try:
@@ -104,10 +123,10 @@ class LLMNode(BaseNode):
             except Exception:
                 pass
         try:
-            tools_port.set_multi_connection(True)
+            prompt_in_port.set_multi_connection(True)
         except Exception:
             try:
-                setattr(tools_port, "_multi_connection", True)
+                setattr(prompt_in_port, "_multi_connection", True)
             except Exception:
                 pass
         try:
@@ -134,7 +153,9 @@ class LLMNode(BaseNode):
 
         # Add text inputs for LLM configuration
         # Register properties without rendering inline input widgets
-        self.create_property("model", "llama3.2:latest")
+        # Empty = engine-driven: llama.cpp nodes use their GGUF; Ollama nodes
+        # must pick a model explicitly (no Ollama default baked in).
+        self.create_property("model", "")
         self.create_property("prompt", "")
         self.create_property("system_message", "")
         self.create_property("temperature", "0.7")
@@ -144,19 +165,27 @@ class LLMNode(BaseNode):
         self.create_property("write_text", "true")
         self.create_property("use_vision", "false")
         self.create_property("vision_model", "")
-        self.create_property("use_advanced_vision", "false")
         self.create_property("screenshot_enabled", "true")
-        self.create_property("use_comorag", "true")
-        self.create_property("max_cycles", "5")
-        self.create_property("memory_size", "1000")
         self.create_property("input_source", "none")
+        self.create_property("orchestrator_mode", False)  # OFF = vanilla LLM node
+        self.create_property("orch_max_steps", "15")
+        self.create_property("orch_goal", "")
+        self.create_property("orch_synthesize", True)
+        self.create_property("orch_synthesis_system", "")
+        self.create_property("orch_use_goal_ledger", False)
+        # Web mode (see llm_config comment above).
+        self.create_property("web_mode", "false")
+        self.create_property("ocr_region", "")
+        self.create_property("web_ocr_locator", "")
         self.create_property("ocr_confidence", "0.5")
         self.create_property("ocr_preprocessing", "true")
         self.create_property("typing_batch_size", "20")
         self.create_property("typing_batch_delay", "0.05")
         self.create_property("use_async", "true")
         self.create_property("use_direct_rag", "true")
-        self.create_property("rag_embedding_model", "nomic-embed-text")
+        # Empty = auto: llama.cpp nodes embed with the local embedding server
+        # (embeddinggemma GGUF), Ollama nodes with nomic-embed-text.
+        self.create_property("rag_embedding_model", "")
         self.create_property("rag_chunk_size", "500")
         self.create_property("rag_overlap", "100")
         self.create_property("rag_top_k", "3")
@@ -167,23 +196,44 @@ class LLMNode(BaseNode):
         self.create_property("skills", "[]")
         self.create_property("use_skill_routing", "true")
         self.create_property("semantic_description", "")
+        # Context consolidation (ComoRAG-inspired)
+        self.create_property("use_context_consolidation", "false")
+        self.create_property("consolidation_chunk_size", "1000")
+        self.create_property("consolidation_overlap", "200")
+        self.create_property("consolidation_top_k", "5")
+        self.create_property("consolidation_max_tokens", "64")
         # Llama.cpp properties
         self.create_property("use_llamacpp", "false")
         self.create_property("llamacpp_model_path", "")
-        self.create_property("llamacpp_gpu_layers", "35")
-        self.create_property("llamacpp_threads", "8")
-        self.create_property("llamacpp_context_size", "4096")
+        self.create_property("llamacpp_gpu_layers", "0")
+        self.create_property("llamacpp_threads", "-1")
+        self.create_property("llamacpp_context_size", "0")
+        # The orchestrator switch adds/removes ports at runtime, which needs
+        # NodeGraphQt's port deletion enabled on this node.
+        try:
+            self.set_port_deletion_allowed(True)
+        except Exception:
+            pass
+        # Ports follow the switch (OFF by default = vanilla LLM node).
+        self.rebuild_orchestrator_ports()
 
     def set_llm_config(self, config):
         """Set the LLM configuration for this node"""
         self.llm_config.update(config)
 
-        # Update the node name to reflect the model
-        model_name = config.get("model", "Unknown Model")
+        # Update the node name to reflect the model (GGUF name for llama.cpp
+        # nodes when no Ollama model is set).
+        model_name = config.get("model") or ""
+        if not model_name and str(config.get("use_llamacpp", False)).lower() in (
+            "true", "1", "yes", "on",
+        ):
+            model_name = (
+                os.path.basename(config.get("llamacpp_model_path") or "") or "llama.cpp"
+            )
         self.set_name(f"LLM: {model_name}")
 
         # Update the text inputs to reflect the new configuration
-        self.set_property("model", config.get("model", "llama3.2:latest"))
+        self.set_property("model", config.get("model", ""))
         self.set_property("prompt", config.get("prompt", ""))
         self.set_property("system_message", config.get("system_message", ""))
         self.set_property("temperature", str(config.get("temperature", 0.7)))
@@ -196,19 +246,25 @@ class LLMNode(BaseNode):
         self.set_property("use_vision", str(config.get("use_vision", False)).lower())
         self.set_property("vision_model", config.get("vision_model", ""))
         self.set_property(
-            "use_advanced_vision", str(config.get("use_advanced_vision", False)).lower()
-        )
-        self.set_property(
             "screenshot_enabled", str(config.get("screenshot_enabled", True)).lower()
         )
-        self.set_property("use_comorag", str(config.get("use_comorag", True)).lower())
-        self.set_property("max_cycles", str(config.get("max_cycles", 5)))
-        self.set_property("memory_size", str(config.get("memory_size", 1000)))
         self.set_property("typing_batch_size", str(config.get("typing_batch_size", 20)))
         self.set_property(
             "typing_batch_delay", str(config.get("typing_batch_delay", 0.05))
         )
         self.set_property("input_source", config.get("input_source", "none"))
+        self.set_property("orchestrator_mode", bool(config.get("orchestrator_mode", False)))
+        self.set_property("orch_max_steps", str(config.get("orch_max_steps", 15) or 15))
+        self.set_property("orch_goal", config.get("orch_goal") or "")
+        self.set_property("orch_synthesize", bool(config.get("orch_synthesize", True)))
+        self.set_property("orch_synthesis_system", config.get("orch_synthesis_system") or "")
+        self.set_property("orch_use_goal_ledger", bool(config.get("orch_use_goal_ledger", False)))
+        self.rebuild_orchestrator_ports()
+        self.set_property("web_mode", str(config.get("web_mode", False)).lower())
+        self.set_property("ocr_region", config.get("ocr_region", "") or "")
+        self.set_property(
+            "web_ocr_locator", config.get("web_ocr_locator", "") or ""
+        )
         self.set_property("ocr_confidence", str(config.get("ocr_confidence", 0.5)))
         self.set_property(
             "ocr_preprocessing", str(config.get("ocr_preprocessing", True)).lower()
@@ -221,7 +277,7 @@ class LLMNode(BaseNode):
             "use_direct_rag", str(config.get("use_direct_rag", False)).lower()
         )
         self.set_property(
-            "rag_embedding_model", config.get("rag_embedding_model", "nomic-embed-text")
+            "rag_embedding_model", config.get("rag_embedding_model", "")
         )
         self.set_property("rag_chunk_size", str(config.get("rag_chunk_size", 500)))
         self.set_property("rag_overlap", str(config.get("rag_overlap", 100)))
@@ -250,6 +306,28 @@ class LLMNode(BaseNode):
             )
         if "semantic_description" in config:
             self.set_property("semantic_description", config["semantic_description"])
+        # Context consolidation properties
+        if "use_context_consolidation" in config:
+            self.set_property(
+                "use_context_consolidation",
+                str(config["use_context_consolidation"]).lower(),
+            )
+        if "consolidation_chunk_size" in config:
+            self.set_property(
+                "consolidation_chunk_size", str(config["consolidation_chunk_size"])
+            )
+        if "consolidation_overlap" in config:
+            self.set_property(
+                "consolidation_overlap", str(config["consolidation_overlap"])
+            )
+        if "consolidation_top_k" in config:
+            self.set_property(
+                "consolidation_top_k", str(config["consolidation_top_k"])
+            )
+        if "consolidation_max_tokens" in config:
+            self.set_property(
+                "consolidation_max_tokens", str(config["consolidation_max_tokens"])
+            )
         # Llama.cpp config
         if "use_llamacpp" in config:
             self.set_property("use_llamacpp", str(config["use_llamacpp"]).lower())
@@ -264,6 +342,131 @@ class LLMNode(BaseNode):
                 "llamacpp_context_size", str(config["llamacpp_context_size"])
             )
 
+    # ---------------------------------------------------- orchestrator switch
+
+    def set_orchestrator_mode(self, enabled):
+        """Switch between the vanilla LLM node and the orchestrator brain."""
+        self.set_property("orchestrator_mode", bool(enabled))
+        self.rebuild_orchestrator_ports()
+        self.refresh_visual_state()
+
+    def rebuild_orchestrator_ports(self):
+        """ON = orchestrator: expose the fused 'tools' INPUT port (chains +
+        brains) plus the 'trace' + 'route' outputs.  OFF = vanilla LLM node:
+        no 'tools' port — a plain LLM node has no tools, the orchestrator
+        owns tool routing."""
+        try:
+            on = bool(self.get_property("orchestrator_mode"))
+        except Exception:
+            on = False
+
+        # 'tools' INPUT port follows the switch (brains + chains fused into
+        # one port).  Added/removed here so a vanilla LLM node never shows it.
+        _tools_port = getattr(self, "_orch_tools_port", None)
+        if on and not _tools_port:
+            try:
+                in_rgb = tuple(
+                    int(INPUT_PORT_COLOR.strip("#")[i:i + 2], 16)
+                    for i in (0, 2, 4)
+                )
+                self._orch_tools_port = _add_multi_input(
+                    self, "tools", in_rgb, True,
+                    data_type=UNIVERSAL_PORT_TYPE,
+                )
+            except Exception:
+                self._orch_tools_port = None
+        elif not on and _tools_port:
+            try:
+                self.set_port_deletion_allowed(True)
+            except Exception:
+                pass
+            # Drop any pipes first: delete_input removes the port item from
+            # the scene but leaves its connections dangling.
+            try:
+                _tools_port.clear_connections(push_undo=False)
+            except Exception:
+                pass
+            try:
+                self.delete_input(_tools_port)
+            except Exception:
+                pass
+            self._orch_tools_port = None
+
+        added = getattr(self, "_orch_ports", None) or []
+        if on and not added:
+            try:
+                out_rgb = tuple(
+                    int(OUTPUT_PORT_COLOR.strip("#")[i:i + 2], 16)
+                    for i in (0, 2, 4)
+                )
+                for name in ("trace", "route"):
+                    try:
+                        p = self.add_output(
+                            name, color=out_rgb, display_name=True,
+                            multi_output=True,
+                        )
+                        try:
+                            if hasattr(p, "set_multi_connection"):
+                                p.set_multi_connection(True)
+                            else:
+                                setattr(p, "_multi_connection", True)
+                        except Exception:
+                            pass
+                        added.append(p)
+                    except Exception:
+                        pass
+                self._orch_ports = added
+            except Exception:
+                pass
+        elif not on and added:
+            # delete_output takes a port NAME/INDEX but raises unless port
+            # deletion is enabled on the node — and it silently did nothing
+            # inside the old try, which made the switch one-way.
+            try:
+                self.set_port_deletion_allowed(True)
+            except Exception:
+                pass
+            for p in list(added):
+                try:
+                    p.clear_connections(push_undo=False)
+                except Exception:
+                    pass
+                try:
+                    self.delete_output(p)
+                except Exception:
+                    pass
+            self._orch_ports = []
+
+    def refresh_visual_state(self):
+        """Teal + 'Orchestrator' while ON; the LLM colour/name again when OFF."""
+        try:
+            on = bool(self.get_property("orchestrator_mode"))
+        except Exception:
+            on = False
+        try:
+            if on:
+                # Remember the pre-switch name so OFF is not a one-way rename.
+                if getattr(self, "_orch_prev_name", None) is None:
+                    try:
+                        self._orch_prev_name = self.name()
+                    except Exception:
+                        self._orch_prev_name = ""
+                self.set_color(10, 90, 75)
+                self.set_name("Orchestrator")
+            else:
+                prev = getattr(self, "_orch_prev_name", None)
+                self._orch_prev_name = None
+                if prev:
+                    try:
+                        self.set_name(prev)
+                    except Exception:
+                        pass
+                base = LLM_COLOR
+                r, g, b = (int(base.strip("#")[i:i + 2], 16) for i in (0, 2, 4))
+                self.set_color(int(r * 0.25), int(g * 0.25), int(b * 0.25))
+        except Exception:
+            pass
+
     def get_llm_config(self):
         """Get the current LLM configuration from the node"""
         write_text_str = self.get_property("write_text") or "true"
@@ -277,8 +480,6 @@ class LLMNode(BaseNode):
             "yes",
             "on",
         )
-        use_comorag_str = self.get_property("use_comorag") or "true"
-        use_comorag = use_comorag_str.lower() in ("true", "1", "yes", "on")
         ocr_preprocessing_str = self.get_property("ocr_preprocessing") or "true"
         ocr_preprocessing = ocr_preprocessing_str.lower() in ("true", "1", "yes", "on")
         use_async_str = self.get_property("use_async") or "true"
@@ -327,25 +528,27 @@ class LLMNode(BaseNode):
             "write_text": write_text,
             "use_vision": use_vision,
             "vision_model": self.get_property("vision_model"),
-            "use_advanced_vision": str(
-                self.get_property("use_advanced_vision") or "false"
-            ).lower()
-            in ("true", "1", "yes", "on"),
             "screenshot_enabled": screenshot_enabled,
-            "use_comorag": use_comorag,
-            "max_cycles": int(self.get_property("max_cycles") or 5),
-            "memory_size": int(self.get_property("memory_size") or 1000),
             "typing_batch_size": int(self.get_property("typing_batch_size") or 20),
             "typing_batch_delay": float(
                 self.get_property("typing_batch_delay") or 0.05
             ),
             "input_source": self.get_property("input_source") or "none",
+            "orchestrator_mode": bool(self.get_property("orchestrator_mode")),
+            "orch_max_steps": int(self.get_property("orch_max_steps") or 15),
+            "orch_goal": self.get_property("orch_goal") or "",
+            "orch_synthesize": bool(self.get_property("orch_synthesize")),
+            "orch_synthesis_system": self.get_property("orch_synthesis_system") or "",
+            "orch_use_goal_ledger": bool(self.get_property("orch_use_goal_ledger")),
+            "web_mode": str(self.get_property("web_mode") or "false").lower()
+            in ("true", "1", "yes", "on"),
+            "ocr_region": self.get_property("ocr_region") or "",
+            "web_ocr_locator": self.get_property("web_ocr_locator") or "",
             "ocr_confidence": float(self.get_property("ocr_confidence") or 0.5),
             "ocr_preprocessing": ocr_preprocessing,
             "use_async": use_async,
             "use_direct_rag": use_direct_rag,
-            "rag_embedding_model": self.get_property("rag_embedding_model")
-            or "nomic-embed-text",
+            "rag_embedding_model": self.get_property("rag_embedding_model") or "",
             "rag_chunk_size": int(self.get_property("rag_chunk_size") or 500),
             "rag_overlap": int(self.get_property("rag_overlap") or 100),
             "rag_top_k": int(self.get_property("rag_top_k") or 3),
@@ -359,14 +562,31 @@ class LLMNode(BaseNode):
             ).lower()
             in ("true", "1"),
             "semantic_description": self.get_property("semantic_description") or "",
+            # Context consolidation (opt-in — disabled by default)
+            "use_context_consolidation": str(
+                self.get_property("use_context_consolidation") or "false"
+            ).lower()
+            in ("true", "1"),
+            "consolidation_chunk_size": int(
+                self.get_property("consolidation_chunk_size") or 1000
+            ),
+            "consolidation_overlap": int(
+                self.get_property("consolidation_overlap") or 200
+            ),
+            "consolidation_top_k": int(
+                self.get_property("consolidation_top_k") or 5
+            ),
+            "consolidation_max_tokens": int(
+                self.get_property("consolidation_max_tokens") or 64
+            ),
             # Llama.cpp config
             "use_llamacpp": str(self.get_property("use_llamacpp") or "false").lower()
             in ("true", "1"),
             "llamacpp_model_path": self.get_property("llamacpp_model_path") or "",
-            "llamacpp_gpu_layers": int(self.get_property("llamacpp_gpu_layers") or 35),
-            "llamacpp_threads": int(self.get_property("llamacpp_threads") or 8),
+            "llamacpp_gpu_layers": int(self.get_property("llamacpp_gpu_layers") or 0),
+            "llamacpp_threads": int(self.get_property("llamacpp_threads") or -1),
             "llamacpp_context_size": int(
-                self.get_property("llamacpp_context_size") or 4096
+                self.get_property("llamacpp_context_size") or 0
             ),
         }
 
@@ -517,10 +737,42 @@ class LLMNode(BaseNode):
                 images=images,
             )
 
+            # Clean up the screenshot now that the node is done using it
+            def _cleanup_vision_images():
+                if not images:
+                    return
+                try:
+                    import sys
+
+                    player_dir = os.path.join(
+                        os.path.dirname(
+                            os.path.dirname(
+                                os.path.dirname(os.path.abspath(__file__))
+                            )
+                        ),
+                        "player",
+                    )
+                    if player_dir not in sys.path:
+                        sys.path.append(player_dir)
+                    from ...player.screenshot_cleanup import cleanup_screenshot
+
+                    for image_path in images:
+                        cleanup_screenshot(image_path)
+                except ImportError:
+                    # Fallback cleanup if utility is not available
+                    for image_path in images:
+                        try:
+                            if os.path.exists(image_path):
+                                os.remove(image_path)
+                        except Exception:
+                            pass
+
             if "error" in response:
+                _cleanup_vision_images()
                 return {"error": response["error"]}
             else:
                 generated_text = response.get("response", "")
+                _cleanup_vision_images()
                 return {
                     "success": True,
                     "text": generated_text,
@@ -528,34 +780,6 @@ class LLMNode(BaseNode):
                     "used_vision": images is not None,
                     "screenshot_path": images[0] if images else None,
                 }
-
-                # Clean up screenshot after use
-                if images:
-                    try:
-                        import sys
-
-                        player_dir = os.path.join(
-                            os.path.dirname(
-                                os.path.dirname(
-                                    os.path.dirname(os.path.abspath(__file__))
-                                )
-                            ),
-                            "player",
-                        )
-                        if player_dir not in sys.path:
-                            sys.path.append(player_dir)
-                        from ...player.screenshot_cleanup import cleanup_screenshot
-
-                        for image_path in images:
-                            cleanup_screenshot(image_path)
-                    except ImportError:
-                        # Fallback cleanup if utility is not available
-                        for image_path in images:
-                            try:
-                                if os.path.exists(image_path):
-                                    os.remove(image_path)
-                            except Exception:
-                                pass
 
         except Exception as e:
             return {"error": str(e)}
@@ -577,22 +801,28 @@ class LLMNode(BaseNode):
                     prompt = prompt.replace(f"{{{var_name}}}", str(var_value))
 
             # Build request payload
+            # max_tokens=-1: no output cap — the model generates until it
+            # finishes or the llama.cpp context window fills.  gpu_layers 0 =
+            # CPU-first, threads -1 = auto, context 0 = model native.
             payload = {
                 "model": config.get("llamacpp_model_path", ""),
                 "prompt": prompt,
                 "system": config.get("system_message", ""),
                 "temperature": config.get("temperature", 0.7),
-                "max_tokens": config.get("max_tokens", 4096),
+                "max_tokens": -1,
                 "stream": False,
                 "use_llamacpp": True,
-                "gpu_layers": config.get("llamacpp_gpu_layers", 35),
-                "threads": config.get("llamacpp_threads", 8),
-                "context_size": config.get("llamacpp_context_size", 4096),
+                "gpu_layers": config.get("llamacpp_gpu_layers", 0),
+                "threads": config.get("llamacpp_threads", -1),
+                "context_size": config.get("llamacpp_context_size", 0),
             }
 
             # Make API call to llama.cpp endpoint
+            # No timeout — thinking models can take minutes to answer and the
+            # engine continues truncated generations internally until they
+            # finish naturally.
             response = requests.post(
-                f"{api_url}/llamacpp/generate", json=payload, timeout=120
+                f"{api_url}/llamacpp/generate", json=payload, timeout=None
             )
 
             if response.status_code == 200:

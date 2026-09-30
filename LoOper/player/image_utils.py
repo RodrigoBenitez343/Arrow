@@ -6,8 +6,11 @@ Provides functions to convert between PIL Images, OpenCV arrays, and base64 stri
 
 import base64
 import io
+import logging
 import os
-from .config import logger, CV2_AVAILABLE
+from .config import CV2_AVAILABLE
+
+logger = logging.getLogger(__name__)
 
 if CV2_AVAILABLE:
     import cv2

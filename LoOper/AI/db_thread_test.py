@@ -15,12 +15,11 @@ def worker(db: ContextDatabase, thread_idx: int, iterations: int, errors: List[s
     for i in range(iterations):
         try:
             content = f"thread-{thread_idx} item-{i}"
-            db.add_context_item(
-                content=content,
-                content_type="test",
-                source="thread_test",
-                metadata={"thread": thread_idx, "i": i},
-                timestamp=time.time(),
+            db.push(
+                chain_id='thread_test',
+                node_id=f'worker-{thread_idx}',
+                key=f'item-{i}',
+                value={'worker': thread_idx, 'index': i, 'content': content},
             )
             # Random short sleep to increase interleaving
             time.sleep(random.uniform(0.001, 0.01))

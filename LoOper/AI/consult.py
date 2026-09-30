@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Ollama API Client
-A client script to interact with the Ollama API Gateway over Tailscale network
+A client script to interact with the local Ollama API Gateway
 """
 
 import requests
@@ -28,24 +28,20 @@ except ImportError:
     ImageGrab = None
 
 class OllamaClient:
-    """Client for interacting with Ollama API Gateway with queue system for ComoRAG requests"""
+    """Client for interacting with Ollama API Gateway"""
     
-    def __init__(self, base_url: str = None, debug: bool = False, use_comorag: bool = True, max_queue_size: int = 10, timeout: Optional[int] = 0):
+    def __init__(self, base_url: str = None, debug: bool = False, max_queue_size: int = 10, timeout: Optional[int] = 0):
         """Initialize the client with the API base URL"""
         if base_url is None:
             env_overwatch = os.getenv("OVERWATCH_API_URL")
             if env_overwatch and str(env_overwatch).strip():
                 base_url = env_overwatch.strip()
             else:
-                tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "127.0.0.1")
                 port = os.getenv("API_PORT", "8000")
-                if use_comorag and str(port).strip() == "11434":
-                    port = "8000"
-                base_url = f"http://{tailscale_ip}:{port}"
+                base_url = f"http://localhost:{port}"
         
         self.base_url = base_url.rstrip('/')
         self.debug = debug
-        self.use_comorag = use_comorag
         # If timeout is None or <= 0, we treat it as infinite (None for requests)
         self.timeout = None
         self.session = requests.Session()
@@ -61,28 +57,7 @@ class OllamaClient:
         except Exception:
             pass
         self.context_data = []
-        self.comorag_config = {
-            'max_cycles': 5,
-            'memory_size': 1000
-        }
-        self._honcho = None
-        self._honcho_session = None
-        self._honcho_user_peer = None
-        self._honcho_assistant_peer = None
-        self._honcho_session_id = os.getenv("LOOPER_HONCHO_SESSION_ID", "looper-agent-session")
-        self._honcho_user_peer_id = os.getenv("LOOPER_HONCHO_USER_PEER_ID", "user")
-        self._honcho_assistant_peer_id = os.getenv("LOOPER_HONCHO_ASSISTANT_PEER_ID", "looper_agent")
-        self._honcho_workspace_id = os.getenv("HONCHO_WORKSPACE_ID", "looper")
-        self._honcho_base_url = os.getenv("LOOPER_HONCHO_URL") or os.getenv("HONCHO_URL") or "http://localhost:8000"
-        self._honcho_api_key = os.getenv("HONCHO_API_KEY")
-        self._initialize_honcho()
         
-        self.request_queue = queue.Queue(maxsize=max_queue_size)
-        self.queue_processing = False
-        self.queue_lock = threading.Lock()
-        self.queue_thread = None
-        self.active_requests = {}
-        self._shutdown_event = threading.Event()
         self._fail_counts = 0
         self._breaker_until = None
     
@@ -130,35 +105,6 @@ class OllamaClient:
                     
         return models
     
-    def comorag_reason(self, query: str, context: Optional[str] = None, model: Optional[str] = None, max_cycles: int = 5, images: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Perform a synchronous ComoRAG reason request"""
-        payload = {
-            "query": query,
-            "max_cycles": max_cycles
-        }
-        if context:
-            payload["context"] = context
-        if model:
-            payload["model"] = model
-        if images:
-            # Check if images need to be converted to base64
-            b64_images = []
-            for img in images:
-                if os.path.exists(img):
-                    try:
-                        with open(img, "rb") as f:
-                            b64_images.append(base64.b64encode(f.read()).decode('utf-8'))
-                    except Exception as e:
-                        if self.debug:
-                            print(f"Error encoding image {img}: {e}")
-                else:
-                    b64_images.append(img)
-            if b64_images:
-                payload["images"] = b64_images
-
-        result = self._post_json('/comorag/reason', payload)
-        return result
-
     def chat(self, model: str, prompt: str, 
              temperature: Optional[float] = None,
              max_tokens: Optional[int] = None,
@@ -262,7 +208,7 @@ class OllamaClient:
                 context: Optional[List[Dict]] = None,
                 async_request: bool = False,
                 callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-        """Generate text using the specified model with Honcho-backed memory integration
+        """Generate text using the specified model
         
         Args:
             model: Model name to use
@@ -271,24 +217,13 @@ class OllamaClient:
             max_tokens: Maximum tokens to generate
             system: System message
             images: List of image paths or base64 encoded images
-            context: Additional context items for ComoRAG
-            async_request: Whether to process the request asynchronously using the queue
+            context: Additional context items
+            async_request: Whether to process the request asynchronously
             callback: Function to call when async request completes (receives request_id and result)
             
         Returns:
-            If async_request is False: The generation result
-            If async_request is True: A dict with request_id and status
+            The generation result
         """
-        # Use Honcho-backed memory when enabled
-        if self.use_comorag:
-            if async_request:
-                return self._queue_comorag_request(model, prompt, temperature, max_tokens, 
-                                                 system, images, context, callback)
-            else:
-                return self._honcho_reason(model, prompt, temperature, max_tokens, 
-                                           system, images, context)
-        
-        # For non-ComoRAG requests, we don't use the queue system
         return self.chat(model, prompt, temperature, max_tokens, system, images, stream=False)
 
     def embeddings(self, model: str, inputs: List[str],
@@ -313,6 +248,24 @@ class OllamaClient:
             if inputs:
                 print(f"Input 0 preview: {inputs[0][:100]}...", file=sys.stderr)
 
+        inputs_list = inputs if isinstance(inputs, list) else [inputs]
+
+        # ── Priority 1: Local llama.cpp embedding server (offline) ──
+        if self.debug:
+            print(f"Embeddings: trying local embedding server for {len(inputs_list)} texts...", file=sys.stderr)
+        try:
+            local_embs = _local_embed(inputs_list)
+            if local_embs and len(local_embs) == len(inputs_list):
+                if self.debug:
+                    print(f"Local embedding succeeded for {len(local_embs)} texts", file=sys.stderr)
+                return local_embs
+            if self.debug:
+                print(f"Local embedding returned {len(local_embs) if local_embs else 0}/{len(inputs_list)} vectors, falling back to remote API", file=sys.stderr)
+        except Exception as exc:
+            if self.debug:
+                print(f"Local embedding failed: {exc}, falling back to remote API", file=sys.stderr)
+
+        # ── Priority 2: Remote API (OverWatch / Ollama) ──
         attempt_count = 0
         last_error: Optional[Exception] = None
         while attempt_count < 2:
@@ -320,7 +273,7 @@ class OllamaClient:
                 # IMPORTANT: If OverWatch is enabled and we are hitting its /embeddings wrapper,
                 # we must send a payload that matches its API schema (inputs, not input)
                 payload["model"] = model
-                payload["inputs"] = inputs if isinstance(inputs, list) else [inputs]
+                payload["inputs"] = inputs_list
                 
                 # Try standard OverWatch endpoint first
                 data = self._post_json('/embeddings', payload)
@@ -333,7 +286,7 @@ class OllamaClient:
                             print(f"OverWatch /embeddings failed ({err_msg}), trying local Ollama fallback", file=sys.stderr)
                         
                         # Prepare Ollama native payload
-                        ollama_payload = {"model": model, "input": inputs}
+                        ollama_payload = {"model": model, "input": inputs_list}
                         if normalize is not None:
                             ollama_payload["normalize"] = normalize
                         
@@ -357,7 +310,9 @@ class OllamaClient:
                                 if self.debug:
                                     print(f"Ollama /api/embed failed ({err_msg2}), trying legacy /api/embeddings", file=sys.stderr)
                                 try:
-                                    legacy_payload = {"model": model, "prompt": inputs}
+                                    # Legacy /api/embeddings expects 'prompt' as a single string, not an array
+                                    legacy_prompt = "\n\n".join(inputs_list)
+                                    legacy_payload = {"model": model, "prompt": legacy_prompt}
                                     ollama_resp = self.session.post(f"{ollama_base}/api/embeddings", json=legacy_payload, timeout=10)
                                     if ollama_resp.status_code == 200:
                                         data = ollama_resp.json()
@@ -391,7 +346,7 @@ class OllamaClient:
                     raise ValueError("Invalid embeddings response")
 
                 def _valid(vecs: List[List[float]]) -> bool:
-                    if len(vecs) != len(inputs):
+                    if len(vecs) != len(inputs_list):
                         return False
                     for v in vecs:
                         if not isinstance(v, list) or len(v) == 0:
@@ -400,10 +355,10 @@ class OllamaClient:
 
                 if not _valid(vectors):
                     if self.debug:
-                        print(f"Batch embeddings failed validation. Falling back to per-input processing for {len(inputs)} inputs.")
+                        print(f"Batch embeddings failed validation. Falling back to per-input processing for {len(inputs_list)} inputs.")
                     
                     per_vectors: List[List[float]] = []
-                    for idx, t in enumerate(inputs):
+                    for idx, t in enumerate(inputs_list):
                         try:
                             # Send directly to local Ollama API for fallback per-input instead of routing back through OverWatch wrapper
                             try:
@@ -442,13 +397,11 @@ class OllamaClient:
                     
                     valid_count = sum(1 for v in per_vectors if isinstance(v, list) and len(v) > 0)
                     if self.debug:
-                        print(f"Embeddings fallback failed. Inputs: {len(inputs)}, Valid vectors: {valid_count}")
+                        print(f"Embeddings fallback failed. Inputs: {len(inputs_list)}, Valid vectors: {valid_count}")
                         
-                    raise ValueError(f"Empty embedding vectors (valid: {valid_count}/{len(inputs)})")
+                    raise ValueError(f"Empty embedding vectors (valid: {valid_count}/{len(inputs_list)})")
 
                 try:
-                    # Unload embedding model after use via cleanup endpoint
-                    # self._post_json('/cleanup', {"model": model, "retries": 3, "wait": 0.5})
                     pass
                 except Exception:
                     pass
@@ -473,185 +426,14 @@ class OllamaClient:
                     pass
 
         if self.debug:
-            print("Embeddings API did not return a usable result; no local fallback will be used.")
-        # Attempt to unload embedding model to keep memory clean
-        try:
-            # self._post_json('/cleanup', {"model": model, "retries": 3, "wait": 0.5})
-            pass
-        except Exception:
-            pass
+            print("Embeddings: remote API failed, no fallback available.")
         return []
 
     
-    def _queue_comorag_request(self, model: str, prompt: str,
-                              temperature: Optional[float] = None,
-                              max_tokens: Optional[int] = None,
-                              system: Optional[str] = None,
-                              images: Optional[List[str]] = None,
-                              context: Optional[List[Dict]] = None,
-                              callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Dict[str, Any]:
-        """Queue a ComoRAG request for asynchronous processing
-        
-        Args:
-            model: Model name to use
-            prompt: Text prompt
-            temperature: Temperature for generation
-            max_tokens: Maximum tokens to generate
-            system: System message
-            images: List of image paths or base64 encoded images
-            context: Additional context items for ComoRAG
-            callback: Function to call when request completes
-            
-        Returns:
-            Dict with request_id and status
-        """
-        # Generate a unique request ID
-        request_id = f"req_{int(time.time())}_{threading.get_ident()}_{len(self.active_requests)}"
-        
-        # Create request object
-        request = {
-            "id": request_id,
-            "model": model,
-            "prompt": prompt,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "system": system,
-            "images": images.copy() if images else None,
-            "context": context.copy() if context else None,
-            "callback": callback,
-            "timestamp": time.time()
-        }
-        
-        # Add to queue
-        try:
-            self.request_queue.put(request, block=False)
-            self.active_requests[request_id] = {"status": "queued", "timestamp": time.time()}
-            
-            if self.debug:
-                print(f"Queued ComoRAG request {request_id} (queue size: {self.request_queue.qsize()})")
-            
-            # Start queue processing if not already running
-            self._ensure_queue_processing()
-            
-            return {"request_id": request_id, "status": "queued"}
-        except queue.Full:
-            if self.debug:
-                print(f"ComoRAG request queue full, processing synchronously")
-            # If queue is full, process synchronously
-            result = self._honcho_reason(model, prompt, temperature, max_tokens, system, images, context)
-            return result
-    
-    def _ensure_queue_processing(self):
-        """Ensure the queue processing thread is running"""
-        with self.queue_lock:
-            if not self.queue_processing and not self._shutdown_event.is_set():
-                self.queue_processing = True
-                self.queue_thread = threading.Thread(target=self._process_queue, daemon=True)
-                self.queue_thread.start()
-                if self.debug:
-                    print("Started ComoRAG queue processing thread")
-    
-    def _process_queue(self):
-        while True:
-            try:
-                # Get next request from queue with timeout
-                try:
-                    request = self.request_queue.get(timeout=1.0)
-                except queue.Empty:
-                    # Check if we should continue processing
-                    with self.queue_lock:
-                        if self._shutdown_event.is_set() or self.request_queue.empty():
-                            self.queue_processing = False
-                            if self.debug:
-                                print("ComoRAG queue empty, stopping processing thread")
-                            break
-                        continue
-                
-                # Update request status
-                request_id = request["id"]
-                self.active_requests[request_id] = {"status": "processing", "timestamp": time.time()}
-                
-                if self.debug:
-                    print(f"Processing ComoRAG request {request_id}")
-                
-                # Process the request
-                try:
-                    result = self._honcho_reason(
-                        request["model"], 
-                        request["prompt"],
-                        request["temperature"],
-                        request["max_tokens"],
-                        request["system"],
-                        request["images"],
-                        request["context"]
-                    )
-                    
-                    # Update request status
-                    self.active_requests[request_id] = {"status": "completed", "timestamp": time.time()}
-                    
-                    # Call callback if provided
-                    if request["callback"]:
-                        try:
-                            request["callback"](request_id, result)
-                        except Exception as e:
-                            if self.debug:
-                                print(f"Error in callback for request {request_id}: {e}")
-                    
-                    if self.debug:
-                        print(f"Completed ComoRAG request {request_id}")
-                        
-                except Exception as e:
-                    # Update request status on error
-                    self.active_requests[request_id] = {"status": "error", "error": str(e), "timestamp": time.time()}
-                    
-                    if self.debug:
-                        print(f"Error processing ComoRAG request {request_id}: {e}")
-                    
-                    # Call callback with error if provided
-                    if request["callback"]:
-                        try:
-                            request["callback"](request_id, {"error": str(e)})
-                        except Exception as cb_error:
-                            if self.debug:
-                                print(f"Error in callback for request {request_id}: {cb_error}")
-                
-                # Mark task as done
-                self.request_queue.task_done()
-                
-            except Exception as e:
-                if self.debug:
-                    print(f"Error in ComoRAG queue processing: {e}")
-                time.sleep(1)  # Prevent tight loop on persistent errors
-
     def shutdown(self, wait: float = 2.0):
         try:
-            self._shutdown_event.set()
-            with self.queue_lock:
-                thread = self.queue_thread
-                self.queue_processing = False
-            try:
-                while True:
-                    req = self.request_queue.get_nowait()
-                    rid = req.get("id")
-                    if rid:
-                        self.active_requests[rid] = {"status": "cancelled", "timestamp": time.time()}
-                    self.request_queue.task_done()
-            except queue.Empty:
-                pass
-            if thread and thread.is_alive():
-                try:
-                    thread.join(timeout=max(0.0, wait))
-                except Exception:
-                    pass
-            try:
-                if hasattr(self, "session") and self.session:
-                    self.session.close()
-            except Exception:
-                pass
-            try:
-                self.active_requests.clear()
-            except Exception:
-                pass
+            if hasattr(self, "session") and self.session:
+                self.session.close()
         except Exception:
             pass
 
@@ -663,348 +445,12 @@ class OllamaClient:
             self.shutdown(wait=0.5)
         except Exception:
             pass
-    
-    def get_request_status(self, request_id: str) -> Dict[str, Any]:
-        """Get the status of a queued or processing request
-        
-        Args:
-            request_id: The request ID returned from _queue_comorag_request
-            
-        Returns:
-            Dict with status information
-        """
-        if request_id in self.active_requests:
-            return self.active_requests[request_id]
-        return {"status": "not_found"}
-    
-    def get_queue_status(self) -> Dict[str, Any]:
-        """Get the status of the request queue
-        
-        Returns:
-            Dict with queue status information
-        """
-        return {
-            "queue_size": self.request_queue.qsize(),
-            "active_requests": len(self.active_requests),
-            "is_processing": self.queue_processing
-        }
-    
-    def clear_queue(self) -> Dict[str, Any]:
-        """Clear all pending requests from the queue
-        
-        Returns:
-            Dict with operation status
-        """
-        # Create a new queue to replace the old one
-        with self.queue_lock:
-            old_size = self.request_queue.qsize()
-            self.request_queue = queue.Queue(maxsize=self.request_queue.maxsize)
-            
-            # Update status for queued requests
-            for req_id, status in self.active_requests.items():
-                if status["status"] == "queued":
-                    self.active_requests[req_id] = {"status": "cancelled", "timestamp": time.time()}
-        
-        return {"status": "success", "cleared_requests": old_size}
-
-    def _initialize_honcho(self) -> None:
-        try:
-            repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            sdk_path = os.path.join(repo_root, "utils", "honcho", "sdks", "python", "src")
-            if os.path.isdir(sdk_path):
-                if sdk_path not in sys.path:
-                    sys.path.append(sdk_path)
-            from honcho import Honcho
-
-            self._honcho = Honcho(
-                api_key=self._honcho_api_key,
-                base_url=self._honcho_base_url,
-                workspace_id=self._honcho_workspace_id,
-            )
-            self._honcho_session = self._honcho.session(self._honcho_session_id)
-            self._honcho_user_peer = self._honcho.peer(self._honcho_user_peer_id)
-            self._honcho_assistant_peer = self._honcho.peer(self._honcho_assistant_peer_id)
-        except Exception:
-            self._honcho = None
-            self._honcho_session = None
-            self._honcho_user_peer = None
-            self._honcho_assistant_peer = None
-
-    def _format_honcho_context(self, session_context) -> str:
-        try:
-            parts = []
-            summary = getattr(session_context, "summary", None)
-            if summary and getattr(summary, "content", None):
-                parts.append(f"[Summary]\n{summary.content}".strip())
-            messages = getattr(session_context, "messages", None) or []
-            if messages:
-                lines = []
-                for m in messages:
-                    peer_id = getattr(m, "peer_id", "") or ""
-                    content = getattr(m, "content", "") or ""
-                    if not content:
-                        continue
-                    lines.append(f"{peer_id}: {content}")
-                if lines:
-                    parts.append("[Messages]\n" + "\n".join(lines))
-            return "\n\n".join([p for p in parts if p]).strip()
-        except Exception:
-            return ""
-
-    def _honcho_reason(self, model: str, prompt: str,
-                       temperature: Optional[float] = None,
-                       max_tokens: Optional[int] = None,
-                       system: Optional[str] = None,
-                       images: Optional[List[str]] = None,
-                       context: Optional[List[Dict]] = None) -> Dict[str, Any]:
-        context_str = ""
-        if context or self.context_data:
-            context_items = context or self.context_data
-            context_parts = []
-            for item in context_items:
-                if isinstance(item, dict):
-                    if 'content' in item:
-                        content = item['content']
-                        source = item.get('source', 'unknown')
-                        item_type = item.get('type', 'context')
-                        context_parts.append(f"[{source} - {item_type}]: {content}")
-                    elif 'ocr_text' in item:
-                        ocr_text = item['ocr_text']
-                        if ocr_text and ocr_text.strip():
-                            context_parts.append(f"[Screen Text - OCR]: {ocr_text}")
-                    elif 'text' in item:
-                        context_parts.append(f"[Context]: {item['text']}")
-                    elif 'workflow_state' in item:
-                        workflow_info = item['workflow_state']
-                        context_parts.append(f"[Workflow State]: Current node: {workflow_info.get('current_node', 'unknown')}, Variables: {workflow_info.get('variables', {})}")
-                    elif 'screenshot_path' in item:
-                        screenshot_info = item.get('description', 'Screenshot captured')
-                        context_parts.append(f"[Screenshot Context]: {screenshot_info}")
-                elif isinstance(item, str):
-                    context_parts.append(f"[Context]: {item}")
-            if context_parts:
-                context_str = "\n\n".join(context_parts)
-
-        honcho_context_text = ""
-        honcho_meta: Dict[str, Any] = {"backend": "honcho"}
-        if self._honcho_session:
-            try:
-                tokens = int(self.comorag_config.get("memory_size", 1000) or 1000)
-                session_context = self._honcho_session.context(
-                    summary=True,
-                    tokens=tokens,
-                    search_query=prompt or "",
-                )
-                honcho_context_text = self._format_honcho_context(session_context)
-                honcho_meta["memory_messages"] = len(getattr(session_context, "messages", []) or [])
-                honcho_meta["has_summary"] = bool(getattr(session_context, "summary", None))
-            except Exception:
-                honcho_context_text = ""
-
-        system_parts = []
-        if system:
-            system_parts.append(system)
-        if context_str:
-            system_parts.append(f"[Runtime Context]\n{context_str}")
-        if honcho_context_text:
-            system_parts.append(f"[Honcho Memory]\n{honcho_context_text}")
-        final_system = "\n\n".join([p for p in system_parts if p]).strip() or None
-
-        res = self.chat(model, prompt, temperature, max_tokens, final_system, images, stream=False)
-
-        response_text = ""
-        try:
-            if isinstance(res, dict):
-                response_text = (
-                    res.get("response")
-                    or res.get("text")
-                    or (res.get("message") or {}).get("content")
-                    or ""
-                )
-        except Exception:
-            response_text = ""
-
-        if self._honcho_session and self._honcho_user_peer and self._honcho_assistant_peer:
-            try:
-                msgs = []
-                if prompt is not None:
-                    msgs.append(
-                        self._honcho_user_peer.message(
-                            str(prompt),
-                            metadata={"looper_type": "turn", "model": str(model)},
-                        )
-                    )
-                if response_text:
-                    msgs.append(
-                        self._honcho_assistant_peer.message(
-                            str(response_text),
-                            metadata={"looper_type": "turn", "model": str(model)},
-                        )
-                    )
-                if msgs:
-                    self._honcho_session.add_messages(msgs)
-            except Exception:
-                pass
-
-        if isinstance(res, dict):
-            res["comorag_metadata"] = {
-                "confidence": 0.0,
-                "reasoning_cycles": 1,
-                "memory_items_used": honcho_meta.get("memory_messages", 0),
-                "reasoning_history": [],
-                "vision_analysis": None,
-                "memory_backend": "honcho",
-            }
-        return res if isinstance(res, dict) else {"response": str(res)}
-    
-    def _comorag_reason(self, model: str, prompt: str, 
-                       temperature: Optional[float] = None,
-                       max_tokens: Optional[int] = None,
-                       system: Optional[str] = None,
-                       images: Optional[List[str]] = None,
-                       context: Optional[List[Dict]] = None) -> Dict[str, Any]:
-        """Use ComoRAG reasoning endpoint for enhanced context-aware generation"""
-        
-        # Prepare context string from context items
-        context_str = ""
-        if context or self.context_data:
-            context_items = context or self.context_data
-            context_parts = []
-            
-            for item in context_items:
-                if isinstance(item, dict):
-                    # Handle different context item formats
-                    if 'content' in item:
-                        content = item['content']
-                        source = item.get('source', 'unknown')
-                        item_type = item.get('type', 'context')
-                        context_parts.append(f"[{source} - {item_type}]: {content}")
-                    elif 'ocr_text' in item:
-                        ocr_text = item['ocr_text']
-                        if ocr_text and ocr_text.strip():
-                            context_parts.append(f"[Screen Text - OCR]: {ocr_text}")
-                    elif 'text' in item:
-                        context_parts.append(f"[Context]: {item['text']}")
-                    elif 'workflow_state' in item:
-                        # Handle workflow state context
-                        workflow_info = item['workflow_state']
-                        context_parts.append(f"[Workflow State]: Current node: {workflow_info.get('current_node', 'unknown')}, Variables: {workflow_info.get('variables', {})}")
-                    elif 'screenshot_path' in item:
-                        # Handle screenshot context
-                        screenshot_info = item.get('description', 'Screenshot captured')
-                        context_parts.append(f"[Screenshot Context]: {screenshot_info}")
-                elif isinstance(item, str):
-                    context_parts.append(f"[Context]: {item}")
-            
-            if context_parts:
-                context_str = "\n\n".join(context_parts)
-        
-        # Add system message to context if provided
-        if system:
-            full_context = f"System: {system}\n\n{context_str}" if context_str else f"System: {system}"
-        else:
-            full_context = context_str
-        
-        # ComoRAG API expects 'query' not 'prompt'
-        payload = {
-            "query": prompt,
-            "model": model,
-            "max_cycles": self.comorag_config.get('max_cycles', 5),
-            "memory_size": self.comorag_config.get('memory_size', 1000)
-        }
-
-        if temperature is not None:
-            payload["temperature"] = temperature
-        
-        # Add context if available
-        if full_context:
-            payload["context"] = full_context
-        
-        # Process and add images for vision analysis
-        if images:
-            processed_images = self._process_images(images)
-            if processed_images:
-                payload["images"] = processed_images
-                if self.debug:
-                    print(f"Added {len(processed_images)} images to ComoRAG request")
-        
-        if self.debug:
-            print(f"ComoRAG request payload: {json.dumps(payload, indent=2)}")
-        
-        try:
-            # First ensure engine is initialized
-            try:
-                st = self.session.get(f"{self.base_url.rstrip('/')}/comorag/status?init_if_needed=true", timeout=8)
-                if st.status_code == 200:
-                    js = st.json()
-                    if not js.get("ready", False):
-                        if self.debug:
-                            print("ComoRAG status NOT ready. Attempting explicit initialization...")
-                        init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
-                        _ = self._post_json('/comorag/init', init_payload)
-                else:
-                    if self.debug:
-                        print(f"ComoRAG status check failed with code {st.status_code}. Attempting explicit initialization...")
-                    init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
-                    _ = self._post_json('/comorag/init', init_payload)
-            except Exception as e:
-                if self.debug:
-                    print(f"Error during reasoning status check/init: {e}")
-                pass
-            
-            result = self._post_json('/comorag/reason', payload)
-            
-            if self.debug:
-                print(f"ComoRAG response: {json.dumps(result, indent=2)}")
-            
-            # Transform ComoRAG response to match expected format
-            if 'response' in result:
-                return {
-                    'response': result['response'],
-                    'comorag_metadata': {
-                        'confidence': result.get('confidence', 0.0),
-                        'reasoning_cycles': result.get('reasoning_cycles', 0),
-                        'memory_items_used': result.get('memory_items_used', 0),
-                        'reasoning_history': result.get('reasoning_history', []),
-                        'vision_analysis': result.get('vision_analysis', None)
-                    }
-                }
-            elif 'choices' in result and len(result['choices']) > 0:
-                # Handle OpenAI-compatible response format
-                choice = result['choices'][0]
-                response_text = choice.get('message', {}).get('content', '') or choice.get('text', '')
-                return {
-                    'response': response_text,
-                    'comorag_metadata': result.get('comorag_metadata', {})
-                }
-            else:
-                # If no expected response format, fall back to regular chat
-                if self.debug:
-                    print(f"ComoRAG endpoint returned unexpected format: {result}")
-                    print("Falling back to regular chat endpoint")
-                res = self.chat(model, prompt, temperature, max_tokens, system, images)
-                if isinstance(res, dict):
-                    res['comorag_fallback'] = True
-                    res['comorag_error'] = f"Unexpected format: {result}"
-                return res
-                
-        except requests.exceptions.RequestException as e:
-            if self.debug:
-                print(f"ComoRAG request failed: {e}")
-                print("Falling back to regular chat endpoint")
-            # Fall back to regular chat if ComoRAG fails
-            res = self.chat(model, prompt, temperature, max_tokens, system, images)
-            if isinstance(res, dict):
-                res['comorag_fallback'] = True
-                res['comorag_error'] = str(e)
-            return res
 
     def _post_json(self, path: str, payload: Dict[str, Any]) -> Any:
-        if self._shutdown_event.is_set():
-            return {"error": "client_shutdown"}
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         attempts = 0
         last_error: Optional[Exception] = None
+        _retry_503 = 0
         while attempts < 4:
             if self._breaker_until and time.time() < float(self._breaker_until):
                 try:
@@ -1017,11 +463,25 @@ class OllamaClient:
                 response = self.session.post(url, json=payload)
                 # Fail fast on 404 (Not Found) - usually means wrong endpoint, retrying won't help
                 if response.status_code == 404:
-                    return {"error": f"404 Client Error: Not Found for url: {url}"}
+                    detail = self._read_error_detail(response)
+                    return {"error": f"404 Client Error: Not Found for url: {url}" + (f" - {detail}" if detail else "")}
                 if response.status_code == 503:
-                    return {"error": f"503 Service Unavailable: ComoRAG not ready for url: {url}"}
+                    # Extract API error detail from FastAPI JSON response
+                    detail = self._read_error_detail(response)
+                    if _retry_503 < 2:
+                        _retry_503 += 1
+                        if self.debug:
+                            print(f"503 from {url} (retry {_retry_503}/2): {detail or 'no detail'}")
+                        try:
+                            time.sleep(1.0 * _retry_503)
+                        except Exception:
+                            pass
+                        attempts += 1
+                        continue
+                    return {"error": f"503 Service Unavailable for url: {url}" + (f" - {detail}" if detail else "")}
                 if response.status_code == 500:
-                    return {"error": f"500 Internal Server Error for url: {url}"}
+                    detail = self._read_error_detail(response)
+                    return {"error": f"500 Internal Server Error for url: {url}" + (f" - {detail}" if detail else "")}
                 
                 response.raise_for_status()
                 self._fail_counts = 0
@@ -1059,9 +519,24 @@ class OllamaClient:
                     pass
         return {"error": str(last_error) if last_error else "request_failed"}
 
+    @staticmethod
+    def _read_error_detail(response) -> str:
+        """Extract error detail from a FastAPI error response body."""
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                return str(body.get("detail") or body.get("message") or "")
+        except Exception:
+            pass
+        try:
+            text = (response.text or "").strip()
+            if text and len(text) < 500:
+                return text
+        except Exception:
+            pass
+        return ""
+
     def _delete(self, path: str) -> Any:
-        if self._shutdown_event.is_set():
-            return {"error": "client_shutdown"}
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         try:
             response = self.session.delete(url)
@@ -1076,8 +551,6 @@ class OllamaClient:
             return {"error": str(e)}
 
     def _post_stream_text(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if self._shutdown_event.is_set():
-            return {"error": "client_shutdown"}
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         try:
             with self.session.post(url, json=payload, stream=True) as response:
@@ -1189,7 +662,7 @@ class OllamaClient:
         return {"response": accumulated}
     
     def add_context(self, context_item: Dict[str, Any]) -> None:
-        """Add a context item to the ComoRAG context data"""
+        """Add a context item to the context data"""
         self.context_data.append(context_item)
     
     def clear_context(self) -> None:
@@ -1199,109 +672,6 @@ class OllamaClient:
     def get_context(self) -> List[Dict[str, Any]]:
         """Get current context data"""
         return self.context_data.copy()
-    
-    def set_comorag_config(self, max_cycles: int = None, memory_size: int = None) -> None:
-        """Set ComoRAG configuration parameters"""
-        if max_cycles is not None:
-            self.comorag_config['max_cycles'] = max_cycles
-        if memory_size is not None:
-            self.comorag_config['memory_size'] = memory_size
-
-    def add_memory(self, content: str, source: str = "external", metadata: Dict[str, Any] = None, image_data: str = None) -> bool:
-        """Add memory to ComoRAG engine
-        
-        Args:
-            content: Text content to add to memory
-            source: Source of the memory (e.g., "vision", "user", etc.)
-            metadata: Additional metadata
-            image_data: Base64 encoded image data
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.use_comorag:
-            if self.debug:
-                print("ComoRAG is disabled. Cannot add memory.")
-            return False
-            
-        payload = {
-            "content": content,
-            "source": source,
-            "metadata": metadata,
-            "image_data": image_data
-        }
-        
-        if self.debug:
-            print(f"Adding memory to ComoRAG: source={source}, content_len={len(content)}")
-        
-        try:
-            # First ensure engine is initialized
-            try:
-                st = self.session.get(f"{self.base_url.rstrip('/')}/comorag/status?init_if_needed=true", timeout=8)
-                if st.status_code == 200:
-                    js = st.json()
-                    if not js.get("ready", False):
-                        if self.debug:
-                            print("ComoRAG status NOT ready. Attempting explicit initialization...")
-                        init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
-                        _ = self._post_json('/comorag/init', init_payload)
-                else:
-                    if self.debug:
-                        print(f"ComoRAG status check failed with code {st.status_code}. Attempting explicit initialization...")
-                    init_payload = {"memory_size": int(self.comorag_config.get("memory_size", 1000))}
-                    _ = self._post_json('/comorag/init', init_payload)
-            except Exception as e:
-                if self.debug:
-                    print(f"Error during status check/init: {e}")
-                pass
-            
-            # Now add memory
-            result = self._post_json('/comorag/memory', payload)
-            
-            if isinstance(result, dict) and "error" not in result:
-                if self.debug:
-                    print("Successfully added memory to ComoRAG")
-                return True
-            else:
-                if self.debug:
-                    err = result.get("error") if isinstance(result, dict) else "Unknown error"
-                    print(f"Failed to add memory: {err}")
-                return False
-                
-        except Exception as e:
-            if self.debug:
-                print(f"Error adding memory to ComoRAG: {e}")
-            return False
-
-    def clear_memory(self) -> bool:
-        """Clear all ComoRAG memory.
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.use_comorag:
-            return True
-            
-        try:
-            if self.debug:
-                print("Clearing ComoRAG memory...")
-                
-            result = self._delete('/comorag/memory')
-            
-            if isinstance(result, dict) and "error" not in result:
-                if self.debug:
-                    print("Successfully cleared ComoRAG memory")
-                return True
-            else:
-                if self.debug:
-                    err = result.get("error") if isinstance(result, dict) else "Unknown error"
-                    print(f"Failed to clear memory: {err}")
-                return False
-        except Exception as e:
-            if self.debug:
-                print(f"Error clearing ComoRAG memory: {e}")
-            return False
-
     
     def _process_images(self, images: List[str]) -> List[str]:
         """Process images for API request
@@ -1542,12 +912,11 @@ def interactive_mode(client: OllamaClient) -> None:
 def main():
     """Main function to handle command line arguments"""
     parser = argparse.ArgumentParser(
-        description="Ollama API Client - Interact with Ollama models via Tailscale API"
+        description="Ollama API Client - Interact with Ollama models via the local API"
     )
     # Get default URL from environment variables
-    default_tailscale_ip = os.getenv("TAILSCALE_SERVER_IP", "localhost")
     default_port = os.getenv("API_PORT", "8000")
-    default_url = f"http://{default_tailscale_ip}:{default_port}"
+    default_url = f"http://localhost:{default_port}"
     
     parser.add_argument(
         "--url", 
@@ -1681,6 +1050,23 @@ def main():
         sys.exit(1)
     else:
         print(response.get('response', 'No response received'))
+
+def _local_embed(texts: List[str]) -> Optional[List[List[float]]]:
+    """Embed texts via the lazy llama.cpp embedding server (embeddinggemma).
+
+    Used as a fallback when Ollama's embedding API is unavailable — the
+    sentence-transformers/all-MiniLM PyTorch fallback has been removed.
+    """
+    try:
+        from AI import embedding_server
+
+        vectors = embedding_server.embed_texts(list(texts))
+        if vectors is not None and len(vectors) == len(list(texts)):
+            return vectors
+    except Exception:
+        pass
+    return None
+
 
 if __name__ == "__main__":
     main()

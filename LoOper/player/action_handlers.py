@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # action_handlers.py
 """
 Action execution handlers for different types of automation actions.
@@ -14,13 +16,139 @@ from numpy import random
 
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
-from .config import logger, CV2_AVAILABLE
+from .config import CV2_AVAILABLE
 from .computer_vision import TemplateMatching
+from .key_defs import MODIFIER_NAMES, key_to_name, pynput_key_for
 from .screenshot_cleanup import register_temporal_screenshot
+from .uia_locator import resolve_element, resolve_repeat
 
 if CV2_AVAILABLE:
     import cv2
     import numpy as np
+
+
+# Human-like click deviation: the physical click is nudged 5-10px off the match
+# center in a random direction, clamped to the matched template (which is
+# centered on the original click), so it can never leave the element.
+CLICK_JITTER_MIN = 5.0
+CLICK_JITTER_MAX = 10.0
+_JITTER_EDGE_MARGIN = 3
+
+
+def _template_pixel_size(template):
+    """(width, height) of a replay template (PIL image or file path), or None."""
+    try:
+        if template is None:
+            return None
+        if isinstance(template, str):
+            from PIL import Image
+            with Image.open(template) as image:
+                return image.size
+        size = getattr(template, "size", None)
+        if size and len(size) == 2:
+            return int(size[0]), int(size[1])
+    except Exception:
+        return None
+    return None
+
+
+def jittered_click_target(cx, cy, template_size,
+                          drift_min=CLICK_JITTER_MIN, drift_max=CLICK_JITTER_MAX):
+    """Nudge a matched click center by a random ``drift_min``-``drift_max`` px.
+
+    ``template_size`` is the matched crop's ``(width, height)``.  The nudge is
+    capped at the template's inner radius so a small target never gets a click
+    outside the element.  Both bounds come from the sequence's "Click Drift"
+    properties (0-0 clicks the exact centre).
+    """
+    lo, hi = max(0.0, float(drift_min)), max(0.0, float(drift_max))
+    if hi < lo:
+        lo, hi = hi, lo
+    radius = float(random.uniform(lo, hi))
+    angle = float(random.uniform(0.0, 2.0 * math.pi))
+    tw, th = (template_size or (35, 35))
+    limit = min(max(0, int(tw) // 2 - _JITTER_EDGE_MARGIN),
+                max(0, int(th) // 2 - _JITTER_EDGE_MARGIN))
+    if limit < radius:
+        radius = float(max(0, limit))
+    return (int(round(cx + radius * math.cos(angle))),
+            int(round(cy + radius * math.sin(angle))))
+
+
+def _repeat_key(repeat):
+    """Stable key for a repeating set's processed-cursor in selection_memory.
+
+    The cursor must SURVIVE loop boundaries so each pass advances to the next
+    row (like the web entity cursor); it is reset only when a fresh chain run
+    starts (MultiSequencePlayer.play_chain clears selection memory).
+    """
+    try:
+        container = repeat.get('container') or {}
+        kind = repeat.get('kind') or {}
+        return "repeat:%s|%s|%s|%s|%s" % (
+            container.get('automation_id') or '',
+            container.get('class_name') or '',
+            kind.get('control_type') or '',
+            kind.get('class_name') or '',
+            # The marked row's name: two sets in ONE container that differ only
+            # by file type (PDFs vs folders on the desktop) must not share a
+            # cursor, or clicking one set would exhaust the other.
+            kind.get('row_name') or '',
+        )
+    except Exception:
+        return "repeat:unknown"
+
+
+def _resolve_point(desc):
+    """Entity-first live point for an element descriptor, or None.
+
+    Used for a drag's endpoints so a moved window / reflowed layout still drags
+    the right thing to the right place.  Never raises; None means "fall back to
+    the recorded absolute coordinates".
+    """
+    if not isinstance(desc, dict):
+        return None
+    try:
+        point = resolve_element(desc)
+    except Exception:
+        return None
+    if not point:
+        return None
+    return {"x": int(point[0]), "y": int(point[1])}
+
+
+def _with_row_parity(repeat, action):
+    """Repeat block carrying the ROW's box + name, backfilled for old records.
+
+    Extent parity (see ``uia_locator.enumerate_repeat``) needs the marked row's
+    box to keep a too-high container's toolbar children out of the set, and
+    file-type parity needs its display name to resolve the row's extension on a
+    shell file list.  New recordings store both in the ``repeat`` block; older
+    ones only have the clicked ``element``, which IS the row - so they are taken
+    from there rather than forcing a re-record.
+    """
+    element = action.get("element") or {}
+    kind = dict(repeat.get("kind") or {})
+    out = repeat
+    if not repeat.get("row_rect") and element.get("rect"):
+        out = dict(out)
+        out["row_rect"] = [int(v) for v in element["rect"]]
+    if not kind.get("row_name") and element.get("name"):
+        kind["row_name"] = str(element["name"])
+        if out is repeat:
+            out = dict(out)
+        out["kind"] = kind
+    return out
+
+
+def _use_element_first(action):
+    """Element-first replay applies unless the click was recorded as visual.
+
+    ``match == "visual"`` (right-Ctrl gesture at record time) must replay
+    through the legacy template match: the stored element can resolve to a
+    container region whose subtree re-find lands the click in the wrong spot.
+    """
+    return bool(action.get('element')) and action.get('match') != 'visual'
 
 
 class ActionHandlers:
@@ -40,6 +168,9 @@ class ActionHandlers:
         self.typing_lock = threading.Lock()
         self.keyboard_controller = keyboard.Controller()
         self.vnc_bridge = None
+        # Canonical names of keys currently held down by key_event playback
+        # (used for modifier reconciliation and stuck-key cleanup).
+        self._held_keys = set()
         
     def _send_agent_action(self, payload):
         agent_url = getattr(self.bot, 'sandbox_agent_url', None)
@@ -60,9 +191,14 @@ class ActionHandlers:
             )
             timeout_s = float(getattr(self.bot, "sandbox_agent_timeout_s", 10.0) or 10.0)
             with urllib.request.urlopen(req, timeout=timeout_s) as response:
-                ok = response.status == 200
-            if not ok:
-                raise RuntimeError(f"Agent HTTP status {getattr(response, 'status', None)}")
+                if response.status != 200:
+                    raise RuntimeError(f"Agent HTTP status {response.status}")
+                # The agent always answers HTTP 200 and signals failures in the
+                # body — surface them instead of letting the workflow continue
+                # believing a silently-failed action happened.
+                body = json.loads(response.read().decode('utf-8'))
+            if isinstance(body, dict) and body.get("status") == "error":
+                raise RuntimeError(body.get("message") or "Agent action failed")
             return True
         except Exception as e:
             logger.error(f"Agent request failed: {e}")
@@ -88,16 +224,94 @@ class ActionHandlers:
                         raise RuntimeError(resp.get("message") or "Agent screenshot failed")
                     if "image" in resp:
                         img_data = base64.b64decode(resp["image"])
-                        return Image.open(io.BytesIO(img_data)).convert("RGB")
+                        img = Image.open(io.BytesIO(img_data)).convert("RGB")
+                        try:
+                            # Remember the agent's logical screen size so bounds
+                            # checks on RDP coordinates use the RDP resolution.
+                            sw = int(resp.get("screen_width") or img.width)
+                            sh = int(resp.get("screen_height") or img.height)
+                            self._last_agent_screen_size = (sw, sh)
+                        except Exception:
+                            pass
+                        # DPI-normalize to the agent's logical size (mirrors the
+                        # host capture path) so template-match coordinates are in
+                        # the same space the agent's clicks use.
+                        try:
+                            lw = int(resp.get("screen_width") or 0)
+                            lh = int(resp.get("screen_height") or 0)
+                            if lw > 0 and lh > 0 and (img.width != lw or img.height != lh):
+                                img = img.resize((lw, lh), Image.LANCZOS)
+                        except Exception:
+                            pass
+                        return img
             except Exception as e:
                 logger.error(f"Agent screenshot failed: {e}")
                 raise
+        # Keep the cosmetic execution overlay out of the frame: the replay
+        # matches its recorded templates against THIS image.
+        try:
+            from .execution_overlay_bus import bus as _exec_bus
+            _exec_bus.hide_overlay_for_capture()
+        except Exception:
+            pass
         return pyautogui.screenshot()
+
+    def _get_agent_position(self):
+        """Return the RDP agent's current cursor position, or None on failure."""
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        if not agent_url:
+            return None
+        try:
+            import urllib.request
+            import json as _json
+            base_url = str(agent_url).rstrip('/')
+            req = urllib.request.Request(
+                f"{base_url}/action",
+                data=_json.dumps({"action": "get_position"}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'}
+            )
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                data = _json.loads(resp.read().decode('utf-8'))
+            if isinstance(data, dict) and data.get("status") != "error" and "x" in data:
+                try:
+                    # Cache the agent's logical screen size — absolute workflow
+                    # coordinates are scaled by this ratio before being sent.
+                    sw = int(data.get("screen_width") or 0)
+                    sh = int(data.get("screen_height") or 0)
+                    if sw > 0 and sh > 0:
+                        self._last_agent_screen_size = (sw, sh)
+                except Exception:
+                    pass
+                return (int(data["x"]), int(data["y"]))
+        except Exception as e:
+            logger.warning(f"Agent get_position failed: {e}")
+        return None
+
+    def _agent_coord_scale(self):
+        """Return (scale_x, scale_y) mapping host logical coords -> agent logical
+        coords. The RDP session resolution/DPI can differ from the host's, so
+        absolute workflow coordinates must be scaled before being sent."""
+        try:
+            aw, ah = getattr(self, '_last_agent_screen_size', None) or (0, 0)
+            hw, hh = pyautogui.size()
+            if aw > 0 and ah > 0 and hw > 0 and hh > 0:
+                return (aw / hw, ah / hh)
+        except Exception:
+            pass
+        return (1.0, 1.0)
+
+    def _scale_abs(self, x, y):
+        """Scale host-space absolute coordinates into the agent's space."""
+        try:
+            sx, sy = self._agent_coord_scale()
+            return (int(x * sx), int(y * sy))
+        except Exception:
+            return (int(x), int(y))
 
     def _tap_key(self, key):
         """Helper to press and release a key with minimal delay."""
         agent_url = getattr(self.bot, 'sandbox_agent_url', None)
-        key_str = key.name if hasattr(key, 'name') else str(key)
+        key_str = key_to_name(key)
         
         if agent_url:
             self._send_agent_action({"action": "hotkey", "keys": [key_str]})
@@ -111,6 +325,9 @@ class ActionHandlers:
         self.keyboard_controller.press(key)
         time.sleep(0.005) # Micro delay for reliability
         self.keyboard_controller.release(key)
+        # Keep the local held-state in sync: the tap released this key, so it
+        # is no longer held from the player's perspective.
+        self._held_keys.discard(key_to_name(key))
 
     def _press_key_combo(self, modifiers, key):
         agent_url = getattr(self.bot, 'sandbox_agent_url', None)
@@ -129,6 +346,13 @@ class ActionHandlers:
         finally:
             for mod in reversed(pressed_mods):
                 self.keyboard_controller.release(mod)
+        # Keep the local held-state in sync: the combo released everything it
+        # pressed, so none of these keys is held anymore. Without this, a
+        # legacy clipboard action (e.g. Ctrl+C) would leave 'ctrl' marked as
+        # held and corrupt the modifier state of subsequent key_event chords.
+        for mod in modifiers:
+            self._held_keys.discard(key_to_name(mod))
+        self._held_keys.discard(key_to_name(key))
 
     def handle_click_action(self, idx, action, fallback_callback=None, stop_flag=None):
         """
@@ -144,6 +368,15 @@ class ActionHandlers:
             bool: True if successful, False if fallback was triggered
         """
         self.bot.random_delay(0.001, 0.01)  # Reduced from 0.01-0.1 - Add a small random delay before clicking.
+
+        # Log current screen dimensions to help diagnose DPI/coordinate issues
+        try:
+            _sw, _sh = pyautogui.size()
+            logger.debug(
+                "[DPI] pyautogui.size() = %dx%d", _sw, _sh,
+            )
+        except Exception:
+            pass
 
         if not action.get('screenshot') and not action.get('screenshot_data'):
             logger.error(f"Action {idx} is a click without a screenshot. Aborting playback.")
@@ -206,37 +439,83 @@ class ActionHandlers:
             logger.error(f"Could not resolve screenshot for action {idx}")
             raise Exception(f"Could not resolve screenshot for action {idx}")
 
-        stop_on_all = bool(action.get('stop_when_all_clicked', True))
-        state = self.bot.selection_memory.get(element_key, {})
-        if stop_on_all and state.get('all_clicked'):
-            action['all_clicked'] = True
-            return True
-
         target_coords = None
         screenshot_found = False
-        
+
+        # ── Repeating sibling set (Insert-marked at record time) ──
+        # Explicit repetition, the desktop twin of the web entity cursor: walk
+        # the recorded sibling set and act on the next UNCLICKED row each pass.
+        # This is the ONLY repetition path - the old implicit image-cluster
+        # auto-repeat is gone.  `processed` lives in selection_memory and
+        # SURVIVES loop boundaries, so each pass advances to the NEXT row (like
+        # the web entity cursor); it resets once per chain run.
+        repeat = action.get('repeat')
+        if repeat:
+            repeat = _with_row_parity(repeat, action)
+            repeat_key = _repeat_key(repeat)
+            repeat_state = self.bot.selection_memory.setdefault(repeat_key, {})
+            processed = repeat_state.setdefault('processed', set())
+            info = resolve_repeat(repeat, processed)
+            if info is None:
+                logger.info(f"Repeating set exhausted for action {idx}; nothing to click")
+                return True
+            if not info.get('missing'):
+                processed.add(info['key'])
+                target_coords = (int(info['point'][0]), int(info['point'][1]))
+                screenshot_found = True
+                logger.info(f"Repeating set: action {idx} -> row '{info['key']}' "
+                            f"({len(processed)}/{info.get('total')}) "
+                            f"kind={repeat.get('kind')}")
+            else:
+                # A repeating action must NEVER fall back to the recorded
+                # element: that is the single row the marks were made on, so
+                # every pass would click it again and the set would never
+                # advance.  Skip it loudly and leave the set open instead.
+                logger.error(f"Repeating set no longer matches for action {idx}; "
+                             f"skipping instead of re-clicking the recorded element")
+                return True
+
+        # Element-first: re-find the recorded UIA element and click its live box,
+        # so the click survives a moved window / changed scale / scrolled list -
+        # cases that break template matching.  Falls through to the image
+        # cascade below when the element is absent, unresolvable or unverified,
+        # and is skipped entirely for clicks recorded as visual (right Ctrl
+        # held) - those replay the legacy template match only.
+        if target_coords is None and _use_element_first(action):
+            try:
+                resolved = resolve_element(action['element'])
+            except Exception as element_err:
+                resolved = None
+                logger.debug(f"Element resolve error for action {idx}: {element_err}")
+            if resolved:
+                target_coords = (int(resolved[0]), int(resolved[1]))
+                screenshot_found = True
+                logger.info(f"Element-first match at {target_coords} for action {idx}")
+
         # Get retry configuration from action
         retry_attempts = action.get('fallback_retry_attempts', 3)
         retry_delay = action.get('fallback_retry_delay', 0.05)  # Reduced from 0.3
 
-        # Capture single screenshot for all search attempts to improve efficiency
+        # Capture single screenshot for all search attempts to improve efficiency -
+        # skipped when the element path already resolved the target.
         current_screen_cv = None
         current_screen_pil = None
-        try:
-            current_screen_pil = self._get_screen_pil()
-            if CV2_AVAILABLE:
-                # Capture once and convert for OpenCV operations - keep in memory only
-                screen_np = np.array(current_screen_pil)
-                if len(screen_np.shape) == 3 and screen_np.shape[2] == 4:
-                    screen_np = cv2.cvtColor(screen_np, cv2.COLOR_RGBA2RGB)
-                current_screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
-                logger.debug(f"Single screenshot captured (in-memory) for all search methods")
-            else:
-                logger.debug(f"In-memory screenshot captured for pyautogui methods")
-        except Exception as e:
-            logger.debug(f"Failed to capture screenshot: {e}")
+        if target_coords is None:
+            try:
+                current_screen_pil = self._get_screen_pil()
+                if CV2_AVAILABLE:
+                    # Capture once and convert for OpenCV operations - keep in memory only
+                    screen_np = np.array(current_screen_pil)
+                    if len(screen_np.shape) == 3 and screen_np.shape[2] == 4:
+                        screen_np = cv2.cvtColor(screen_np, cv2.COLOR_RGBA2RGB)
+                    current_screen_cv = cv2.cvtColor(screen_np, cv2.COLOR_RGB2BGR)
+                    logger.debug(f"Single screenshot captured (in-memory) for all search methods")
+                else:
+                    logger.debug(f"In-memory screenshot captured for pyautogui methods")
+            except Exception as e:
+                logger.debug(f"Failed to capture screenshot: {e}")
 
-        for attempt in range(retry_attempts):
+        for attempt in range(0 if target_coords is not None else retry_attempts):
             # Check stop flag before each retry attempt
             if stop_flag and stop_flag():
                 logger.info(f"Click action {idx} stopped by user request during retry attempt {attempt + 1}")
@@ -315,140 +594,20 @@ class ActionHandlers:
                                 centers.append((cx, cy))
 
                             if centers:
-                                element_state = self.bot.selection_memory.get(element_key, {})
-                                last_instance_count = element_state.get('instance_count', 0)
-                                last_clicked_index = element_state.get('last_index', -1)
-                                last_coords = element_state.get('last_coords')
-                                clicked_coords = element_state.get('clicked_coords', [])
-                                clicked_indices = element_state.get('clicked_indices', [])
-                                prev_radius = element_state.get('cluster_radius')
-                                current_instance_count = len(centers)
-
-                                # Compute relative spacing to derive a dynamic cluster radius
-                                def dist(a, b):
-                                    return math.hypot(a[0] - b[0], a[1] - b[1])
-
-                                nn_dists = []
-                                try:
-                                    for i, c in enumerate(centers):
-                                        dlist = [dist(c, centers[j]) for j in range(len(centers)) if j != i]
-                                        if dlist:
-                                            nn_dists.append(min(dlist))
-                                except Exception:
-                                    nn_dists = []
-
-                                spacing = sorted(nn_dists)[len(nn_dists)//2] if nn_dists else 12.0
-                                cluster_radius = max(5.0, spacing * 0.35)
-
-                                # If instance count changed significantly, prune clicked history to avoid mismatch
-                                if last_instance_count != current_instance_count:
-                                    if prev_radius:
-                                        filtered = []
-                                        for pc in clicked_coords:
-                                            for c in centers:
-                                                if dist(pc, c) <= prev_radius:
-                                                    filtered.append(pc)
-                                                    break
-                                        clicked_coords = filtered
-                                        # rebuild clicked_indices by matching filtered coords to nearest centers
-                                        new_clicked_indices = []
-                                        for pc in clicked_coords:
-                                            dists = [dist(pc, c) for c in centers]
-                                            if dists:
-                                                new_clicked_indices.append(int(dists.index(min(dists))))
-                                        clicked_indices = new_clicked_indices
-                                    else:
-                                        clicked_coords = []
-                                        clicked_indices = []
-
-                                hint_x = action.get('x')
-                                hint_y = action.get('y')
-
-                                # Build list of unclicked centers based on dynamic radius
-                                def is_clicked(c):
-                                    for pc in clicked_coords:
-                                        if dist(c, pc) <= cluster_radius:
-                                            return True
-                                    return False
-
-                                unclicked = [(i, centers[i]) for i in range(len(centers)) if not is_clicked(centers[i])]
-                                if stop_on_all and not unclicked and clicked_coords:
-                                    total_instances = current_instance_count
-                                    visited_count = len(clicked_coords)
-                                    self.bot.selection_memory[element_key] = {
-                                        'instance_count': current_instance_count,
-                                        'last_index': last_clicked_index,
-                                        'last_coords': last_coords,
-                                        'clicked_coords': clicked_coords,
-                                        'clicked_indices': clicked_indices,
-                                        'cluster_radius': cluster_radius,
-                                        'total_instances': total_instances,
-                                        'visited_count': visited_count,
-                                        'all_clicked': visited_count >= total_instances
-                                    }
-                                    action['all_clicked'] = True
-                                    return True
-
-                                # Choose next by nearest neighbor relative to last click or hint
-                                chosen_index = 0
-                                if last_coords and isinstance(last_coords, (list, tuple)) and len(last_coords) == 2:
-                                    if unclicked:
-                                        chosen_index = min(
-                                            [ (i, dist(c, (last_coords[0], last_coords[1]))) for (i, c) in unclicked ],
-                                            key=lambda x: x[1]
-                                        )[0]
-                                    else:
-                                        # All seen; pick overall nearest to last_coords
-                                        dists = [dist(centers[i], (last_coords[0], last_coords[1])) for i in range(len(centers))]
-                                        chosen_index = int(dists.index(min(dists)))
-                                elif isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
-                                    try:
-                                        hx = int(hint_x)
-                                        hy = int(hint_y)
-                                        base = (hx, hy)
-                                        if unclicked:
-                                            chosen_index = min(
-                                                [ (i, dist(c, base)) for (i, c) in unclicked ],
-                                                key=lambda x: x[1]
-                                            )[0]
-                                        else:
-                                            dists = [dist(centers[i], base) for i in range(len(centers))]
-                                            chosen_index = int(dists.index(min(dists)))
-                                    except Exception:
-                                        chosen_index = 0
+                                # Single best match: the instance nearest the
+                                # recorded coordinates.  Repetition is the
+                                # explicit, Insert-marked `repeat` cursor above -
+                                # the old implicit multi-instance selection is gone.
+                                coords = action.get('coordinates', {})
+                                hint_x = coords.get('x') if isinstance(coords, dict) else action.get('x')
+                                hint_y = coords.get('y') if isinstance(coords, dict) else action.get('y')
+                                if isinstance(hint_x, (int, float)) and isinstance(hint_y, (int, float)):
+                                    location = min(
+                                        centers,
+                                        key=lambda c: math.hypot(c[0] - hint_x, c[1] - hint_y),
+                                    )
                                 else:
-                                    # Fallback to previous index bounds if available
-                                    chosen_index = max(0, min(last_clicked_index, current_instance_count - 1))
-
-                                # Update memory with dynamic radius and visited path
-                                chosen_coords = (centers[chosen_index][0], centers[chosen_index][1])
-                                # Deduplicate if within radius of existing clicked points
-                                new_clicked = clicked_coords[:]
-                                already = False
-                                for pc in new_clicked:
-                                    if dist(chosen_coords, pc) <= cluster_radius:
-                                        already = True
-                                        break
-                                if not already:
-                                    new_clicked.append(chosen_coords)
-
-                                visited_count = len(new_clicked)
-                                total_instances = current_instance_count
-                                new_clicked_indices = list(set(clicked_indices + [chosen_index]))
-                                self.bot.selection_memory[element_key] = {
-                                    'instance_count': current_instance_count,
-                                    'last_index': chosen_index,
-                                    'last_coords': chosen_coords,
-                                    'clicked_coords': new_clicked,
-                                    'clicked_indices': new_clicked_indices,
-                                    'cluster_radius': cluster_radius,
-                                    'total_instances': total_instances,
-                                    'visited_count': visited_count,
-                                    'all_clicked': visited_count >= total_instances
-                                }
-                                action['all_clicked'] = visited_count >= total_instances
-
-                                location = chosen_coords
+                                    location = centers[0]
                             else:
                                 location = None
                         else:
@@ -483,10 +642,13 @@ class ActionHandlers:
                     
                     elif strategy['method'] == 'region':
                         # Region-based search with original coordinates as hint and shared screenshot
+                        coords = action.get('coordinates', {})
+                        hint_x = coords.get('x', 0) if isinstance(coords, dict) else action.get('x', 0)
+                        hint_y = coords.get('y', 0) if isinstance(coords, dict) else action.get('y', 0)
                         location = self.template_matcher.region_based_search(
                             screenshot_template,
-                            action['x'],
-                            action['y'],
+                            hint_x,
+                            hint_y,
                             strategy['confidence'],
                             strategy['expand_factor'],
                             strategy['grayscale'],
@@ -495,6 +657,13 @@ class ActionHandlers:
                     
                     if location:
                         screen_width, screen_height = pyautogui.size()
+                        try:
+                            # In sandbox mode the location is in RDP pixel space;
+                            # validate against the RDP screen, not the host's.
+                            if getattr(self.bot, 'sandbox_agent_url', None) and getattr(self, '_last_agent_screen_size', None):
+                                screen_width, screen_height = self._last_agent_screen_size
+                        except Exception:
+                            pass
                         target_x, target_y = int(location[0]), int(location[1])
 
                         if 0 <= target_x <= screen_width and 0 <= target_y <= screen_height:
@@ -523,6 +692,17 @@ class ActionHandlers:
                     elapsed += sleep_time
         
         if target_coords:
+            # Human-like deviation for plain clicks only - drags and moves stay
+            # exact.  target_coords stays the exact match centre; only the
+            # physical click point is nudged.
+            click_coords = target_coords
+            if action.get('type') in ('click', 'double_click'):
+                click_coords = jittered_click_target(
+                    target_coords[0], target_coords[1],
+                    _template_pixel_size(screenshot_template),
+                    getattr(self.bot, 'click_drift_min', CLICK_JITTER_MIN),
+                    getattr(self.bot, 'click_drift_max', CLICK_JITTER_MAX),
+                )
             button = action.get('button', 'left')
             agent_url = getattr(self.bot, 'sandbox_agent_url', None)
             modifier_key = None
@@ -533,14 +713,31 @@ class ActionHandlers:
             
             with self.typing_lock:
                 if agent_url:
-                    self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
+                    click_payload = {
+                        "action": "click",
+                        "x": click_coords[0], "y": click_coords[1],
+                        "button": button,
+                        "duration": 0.1,
+                    }
+                    if modifier_key is not None:
+                        click_payload["modifiers"] = [key_to_name(modifier_key)]
+                    try:
+                        # Send the human-like curved waypoints so in-session
+                        # cursor travel matches the graceful host movement.
+                        pos = self._get_agent_position()
+                        if pos is not None and hasattr(self.bot, '_build_human_path'):
+                            click_payload["points"] = self.bot._build_human_path(
+                                click_coords[0], click_coords[1], start=pos)
+                    except Exception:
+                        pass
+                    self._send_agent_action(click_payload)
                     if action.get('type') == 'double_click':
                         time.sleep(0.1)
-                        self._send_agent_action({"action": "click", "x": target_coords[0], "y": target_coords[1], "button": button})
-                    logger.info(f"Agent Clicked ({button}) at {target_coords}")
+                        self._send_agent_action(click_payload)
+                    logger.info(f"Agent Clicked ({button}) at {click_coords}")
                 elif self.vnc_bridge:
-                    self.vnc_bridge.click(target_coords[0], target_coords[1], button=1 if button == 'left' else 3)
-                    logger.info(f"VNC Clicked ({button}) at {target_coords}")
+                    self.vnc_bridge.click(click_coords[0], click_coords[1], button=1 if button == 'left' else 3)
+                    logger.info(f"VNC Clicked ({button}) at {click_coords}")
                 else:
                     pressed_modifier = False
                     try:
@@ -548,14 +745,14 @@ class ActionHandlers:
                             self.keyboard_controller.press(modifier_key)
                             pressed_modifier = True
 
-                        self.bot.human_mouse_move(target_coords[0], target_coords[1])
+                        self.bot.human_mouse_move(click_coords[0], click_coords[1])
                         time.sleep(0.01)
                         if action.get('type') == 'double_click':
                             self.bot.human_click(button=button, double=True)
-                            logger.info(f"Double-clicked ({button}) at {target_coords}")
+                            logger.info(f"Double-clicked ({button}) at {click_coords}")
                         else:
                             self.bot.human_click(button=button, double=False)
-                            logger.info(f"Clicked ({button}) at {target_coords}")
+                            logger.info(f"Clicked ({button}) at {click_coords}")
                     finally:
                         if pressed_modifier:
                             try:
@@ -564,41 +761,6 @@ class ActionHandlers:
                                 pass
             
             self.bot.last_click_time = time.time()
-            try:
-                state = self.bot.selection_memory.get(element_key, {})
-                clicked = state.get('clicked_coords', [])
-                radius = state.get('cluster_radius', 12.0)
-                total_instances = state.get('total_instances', None)
-
-                def dist(a, b):
-                    return math.hypot(a[0] - b[0], a[1] - b[1])
-
-                new_clicked = clicked[:]
-                already = False
-                for pc in new_clicked:
-                    if dist((target_coords[0], target_coords[1]), pc) <= radius:
-                        already = True
-                        break
-                if not already:
-                    new_clicked.append((target_coords[0], target_coords[1]))
-
-                visited_count = len(new_clicked)
-                all_clicked = False
-                if isinstance(total_instances, int) and total_instances > 0:
-                    all_clicked = visited_count >= total_instances
-
-                self.bot.selection_memory[element_key] = {
-                    'instance_count': state.get('instance_count', 0),
-                    'last_index': state.get('last_index', -1),
-                    'last_coords': (target_coords[0], target_coords[1]),
-                    'clicked_coords': new_clicked,
-                    'cluster_radius': radius,
-                    'total_instances': total_instances,
-                    'visited_count': visited_count,
-                    'all_clicked': all_clicked
-                }
-            except Exception:
-                pass
             return True
         else:
             logger.warning(f"Visual match failed for action {idx} after all attempts.")
@@ -636,6 +798,19 @@ class ActionHandlers:
 
         agent_url = getattr(self.bot, 'sandbox_agent_url', None)
         if agent_url:
+            # Send move action to RDP agent with human-like curved waypoints,
+            # scaling absolute coordinates into the session's coordinate space
+            # (session resolution/DPI may differ from the host's).
+            sx, sy = self._scale_abs(int(x), int(y))
+            payload = {"action": "move", "x": sx, "y": sy, "duration": 0.25}
+            try:
+                pos = self._get_agent_position()
+                if pos is not None and hasattr(self.bot, '_build_human_path'):
+                    payload["points"] = self.bot._build_human_path(sx, sy, start=pos)
+            except Exception:
+                pass
+            self._send_agent_action(payload)
+            logger.info(f"Agent Moved to ({sx}, {sy})")
             return True
         if self.vnc_bridge:
             return True
@@ -666,9 +841,13 @@ class ActionHandlers:
         with self.typing_lock:
             agent_url = getattr(self.bot, 'sandbox_agent_url', None)
             if agent_url:
-                self._send_agent_action({"action": "click", "x": int(x), "y": int(y), "button": button})
+                # Refresh the agent's screen size, then scale the recorded
+                # absolute coordinates into the session's coordinate space.
+                self._get_agent_position()
+                cx, cy = self._scale_abs(int(x), int(y))
+                self._send_agent_action({"action": "click", "x": cx, "y": cy, "button": button, "duration": 0.15})
                 self.bot.last_click_time = time.time()
-                logger.info(f"Agent Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+                logger.info(f"Agent Absolute Clicked ({button}) at ({cx}, {cy})")
                 return True
 
             if self.vnc_bridge:
@@ -682,6 +861,48 @@ class ActionHandlers:
             self.bot.human_click(button=button, double=False)
             self.bot.last_click_time = time.time()
             logger.info(f"Absolute Clicked ({button}) at ({int(x)}, {int(y)})")
+            return True
+
+    def handle_relative_click_action(self, idx, action, stop_flag=None):
+        if stop_flag and stop_flag():
+            logger.info("Stop flag detected before relative_click - aborting")
+            return True
+
+        dx = action.get('dx', 0)
+        dy = action.get('dy', 0)
+        button = action.get('button', 'left')
+
+        agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+        cur_x, cur_y = pyautogui.position()
+        if agent_url:
+            # The RDP session has its own cursor; derive the offset from the
+            # agent's position, not the host's, and scale the recorded offsets
+            # into the session's coordinate space.
+            agent_pos = self._get_agent_position()
+            if agent_pos is not None:
+                cur_x, cur_y = agent_pos
+            dx, dy = self._scale_abs(dx, dy)
+        target_x = int(cur_x + dx)
+        target_y = int(cur_y + dy)
+
+        with self.typing_lock:
+            if agent_url:
+                self._send_agent_action({"action": "click", "x": target_x, "y": target_y, "button": button, "duration": 0.15})
+                self.bot.last_click_time = time.time()
+                logger.info(f"Agent Relative Clicked ({button}) at offset ({dx}, {dy}) -> ({target_x}, {target_y})")
+                return True
+
+            if self.vnc_bridge:
+                self.vnc_bridge.click(target_x, target_y, button=1 if button == 'left' else 3)
+                self.bot.last_click_time = time.time()
+                logger.info(f"VNC Relative Clicked ({button}) at offset ({dx}, {dy}) -> ({target_x}, {target_y})")
+                return True
+
+            self.bot.human_mouse_move(target_x, target_y)
+            time.sleep(0.01)
+            self.bot.human_click(button=button, double=False)
+            self.bot.last_click_time = time.time()
+            logger.info(f"Relative Clicked ({button}) at offset ({dx}, {dy}) -> ({target_x}, {target_y})")
             return True
 
     def handle_type_string_action(self, idx, action, stop_flag=None):
@@ -726,7 +947,15 @@ class ActionHandlers:
 
                 agent_url = getattr(self.bot, 'sandbox_agent_url', None)
                 if agent_url:
-                    self._send_agent_action({"action": "type", "text": text})
+                    # Match the direct-path typing contract: same default cadence,
+                    # and Unicode-safe clipboard paste for non-ASCII / long text.
+                    contains_non_ascii = any(ord(c) > 126 for c in text)
+                    force_clipboard = bool(action.get('use_clipboard', False))
+                    if force_clipboard or contains_non_ascii or len(text) > 1000:
+                        self._send_agent_action({"action": "clipboard_paste", "text": text})
+                    else:
+                        interval = action.get('keystroke_delay', 0.001)
+                        self._send_agent_action({"action": "type", "text": text, "interval": interval})
                     if action.get('press_enter', False):
                         self._send_agent_action({"action": "hotkey", "keys": ['enter']})
                     if post_type_delay > 0:
@@ -882,6 +1111,13 @@ class ActionHandlers:
                 'ctrl': keyboard.Key.ctrl,
                 'alt': keyboard.Key.alt
             }
+            # Extend with the shared canonical key table so legacy recordings
+            # of F-keys, media keys, etc. also resolve. Unknown names stay
+            # unresolved and are skipped (backward-compatible no-op).
+            if key not in key_mapping:
+                mapped = pynput_key_for(key)
+                if mapped is not None:
+                    key_mapping[key] = mapped
             if key in key_mapping:
                 keystroke_delay = action.get('keystroke_delay', 0.01)
 
@@ -904,6 +1140,112 @@ class ActionHandlers:
                         sleep_time = min(0.05, keystroke_delay - elapsed)
                         time.sleep(sleep_time)
                         elapsed += sleep_time
+
+    def _press_key_name(self, name):
+        """Press and locally track a canonical key name (idempotent)."""
+        if name in self._held_keys:
+            return
+        key = pynput_key_for(name)
+        if key is None:
+            return
+        self.keyboard_controller.press(key)
+        self._held_keys.add(name)
+
+    def _release_key_name(self, name):
+        """Release a canonical key name if locally held (idempotent)."""
+        if name not in self._held_keys:
+            return
+        key = pynput_key_for(name)
+        if key is not None:
+            try:
+                self.keyboard_controller.release(key)
+            except Exception:
+                pass
+        self._held_keys.discard(name)
+
+    def release_all_keys(self):
+        """Release every key still held by key_event playback (stuck-key safety)."""
+        with self.typing_lock:
+            if getattr(self.bot, 'sandbox_agent_url', None):
+                # RDP session keys are held by the agent process.
+                self._send_agent_action({"action": "release_all_keys"})
+                return
+            for name in list(self._held_keys):
+                self._release_key_name(name)
+
+    def handle_key_event_action(self, idx, action, stop_flag=None):
+        """
+        Replays a single raw keyboard event recorded by the recorder.
+
+        Each key_event carries the canonical key name, the press/release
+        state, a snapshot of the modifiers held at that moment, and the delta
+        since the previous key event. Playback reconciles the local
+        held-modifier state against the snapshot so arbitrary chords
+        (Ctrl+Alt+Shift+Esc, Win+R, ...) are reproduced faithfully and
+        stuck-modifier edge cases self-heal.
+        """
+        key_name = action.get('key')
+        state = action.get('state', 'down')
+        mods = list(action.get('modifiers') or [])
+
+        # Pace the event by the recorded inter-event timing (capped so a
+        # pause mid-recording cannot stall playback indefinitely).
+        delta = 0.0
+        try:
+            delta = float(action.get('delta', 0) or 0)
+        except (TypeError, ValueError):
+            delta = 0.0
+        delta = max(0.0, min(delta, 5.0))
+        if delta > 0:
+            elapsed = 0.0
+            while elapsed < delta:
+                if stop_flag and stop_flag():
+                    return True
+                sleep_time = min(0.05, delta - elapsed)
+                time.sleep(sleep_time)
+                elapsed += sleep_time
+
+        with self.typing_lock:
+            agent_url = getattr(self.bot, 'sandbox_agent_url', None)
+            if agent_url:
+                # Agent backend now has real press/release semantics: forward
+                # each event so holds and stuck-key cleanup behave like the
+                # direct path.
+                if state == 'down':
+                    for m in mods:
+                        if m != key_name:
+                            self._send_agent_action({"action": "key_down", "key": m})
+                    self._send_agent_action({"action": "key_down", "key": key_name})
+                else:
+                    self._send_agent_action({"action": "key_up", "key": key_name})
+                return True
+
+            if self.vnc_bridge:
+                if state == 'down':
+                    for m in mods:
+                        if m != key_name:
+                            self.vnc_bridge.key_press(m)
+                    self.vnc_bridge.key_press(key_name)
+                return True
+
+            if state == 'down':
+                if key_name in MODIFIER_NAMES:
+                    self._press_key_name(key_name)
+                else:
+                    # Reconcile modifiers: press what the snapshot says should
+                    # be held, release anything locally held that is no longer
+                    # part of the chord (heals stuck modifiers from truncated
+                    # recordings), then hold the main key until its 'up' event.
+                    for name in mods:
+                        self._press_key_name(name)
+                    for name in list(self._held_keys):
+                        if name in MODIFIER_NAMES and name not in mods:
+                            self._release_key_name(name)
+                    self._press_key_name(key_name)
+            else:
+                # Release the event's own key; idempotent if already released.
+                self._release_key_name(key_name)
+        return True
 
     def handle_scroll_action(self, idx, action, stop_flag=None):
         """
@@ -1035,7 +1377,9 @@ class ActionHandlers:
             abs_y = action['coordinates']['y']
             with self.typing_lock:
                 if agent_url:
-                    self._send_agent_action({"action": "drag_start", "x": abs_x, "y": abs_y})
+                    self._get_agent_position()
+                    sx2, sy2 = self._scale_abs(abs_x, abs_y)
+                    self._send_agent_action({"action": "drag_start", "x": sx2, "y": sy2, "duration": 0.1})
                 else:
                     self.bot.human_mouse_move(abs_x, abs_y)
                     pyautogui.mouseDown()
@@ -1046,21 +1390,62 @@ class ActionHandlers:
             abs_y = action['coordinates']['y']
             with self.typing_lock:
                 if agent_url:
-                    self._send_agent_action({"action": "drag_end", "x": abs_x, "y": abs_y})
+                    self._get_agent_position()
+                    sx2, sy2 = self._scale_abs(abs_x, abs_y)
+                    self._send_agent_action({"action": "drag_end", "x": sx2, "y": sy2, "duration": 0.1})
                 else:
                     self.bot.human_mouse_move(abs_x, abs_y)
                     pyautogui.mouseUp()
             logger.info(f"Ended drag at ({abs_x}, {abs_y})")
 
         elif action['type'] == 'drag_drop':
-            start_x, start_y = action['from']['x'], action['from']['y']
-            end_x, end_y = action['to']['x'], action['to']['y']
+            start = action.get('from') or {}
+            end = action.get('to') or {}
+            repeat = action.get('repeat')
+            if repeat and repeat.get('mode') == 'drag':
+                # Repeating drag: walk the recorded sibling set, dragging each
+                # row to the recorded (entity-based) target.
+                repeat_key = _repeat_key(repeat)
+                state = self.bot.selection_memory.setdefault(repeat_key, {})
+                processed = state.setdefault('processed', set())
+                info = resolve_repeat(repeat, processed)
+                if info is None:
+                    logger.info(f"Repeating drag set exhausted for action {idx}")
+                    return
+                if info.get('missing'):
+                    # Never drag the recorded row again - see the click path.
+                    logger.error(f"Repeating drag set no longer matches for action "
+                                 f"{idx}; skipping instead of re-dragging the "
+                                 f"recorded element")
+                    return
+                processed.add(info['key'])
+                start = {'x': int(info['point'][0]), 'y': int(info['point'][1])}
+                logger.info(f"Repeating drag: action {idx} -> row '{info['key']}'")
+                # The drop target is itself an element: resolve it every pass so
+                # a moved target still receives the drop (absolute `to` is backup).
+                end = (_resolve_point(repeat.get('to_element'))
+                       or repeat.get('to') or end)
+            elif not action.get('absolute'):
+                # Entity-based drag: re-find BOTH endpoints, so a moved window or
+                # reflowed layout still drags the right thing to the right place.
+                # `absolute` (shift(R)) and a plain miss keep the recorded coords.
+                start = _resolve_point(action.get('from_element')) or start
+                end = _resolve_point(action.get('to_element')) or end
+            start_x, start_y = start.get('x'), start.get('y')
+            end_x, end_y = end.get('x'), end.get('y')
+            if start_x is None or start_y is None or end_x is None or end_y is None:
+                logger.warning(f"drag_drop action {idx} missing coordinates, skipping")
+                return
             with self.typing_lock:
                 if agent_url:
+                    self._get_agent_position()
+                    s1x, s1y = self._scale_abs(start_x, start_y)
+                    e1x, e1y = self._scale_abs(end_x, end_y)
                     self._send_agent_action({
                         "action": "drag_drop", 
-                        "start_x": start_x, "start_y": start_y, 
-                        "end_x": end_x, "end_y": end_y
+                        "start_x": s1x, "start_y": s1y, 
+                        "end_x": e1x, "end_y": e1y,
+                        "duration": 0.2
                     })
                 else:
                     self.bot.human_mouse_move(start_x, start_y)
@@ -1068,3 +1453,36 @@ class ActionHandlers:
                     self.bot.human_mouse_move(end_x, end_y)
                     pyautogui.mouseUp()
             logger.info(f"Performed drag_drop from ({start_x}, {start_y}) to ({end_x}, {end_y})")
+
+        elif action['type'] == 'relative_drag_drop':
+            from_dx = action.get('from_dx', 0)
+            from_dy = action.get('from_dy', 0)
+            to_dx = action.get('to_dx', 0)
+            to_dy = action.get('to_dy', 0)
+            cur_x, cur_y = pyautogui.position()
+            if agent_url:
+                # Derive offsets from the RDP cursor, not the host's, and scale
+                # the recorded offsets into the session's coordinate space.
+                agent_pos = self._get_agent_position()
+                if agent_pos is not None:
+                    cur_x, cur_y = agent_pos
+                from_dx, from_dy = self._scale_abs(from_dx, from_dy)
+                to_dx, to_dy = self._scale_abs(to_dx, to_dy)
+            abs_from_x = int(cur_x + from_dx)
+            abs_from_y = int(cur_y + from_dy)
+            abs_to_x = int(cur_x + to_dx)
+            abs_to_y = int(cur_y + to_dy)
+            with self.typing_lock:
+                if agent_url:
+                    self._send_agent_action({
+                        "action": "drag_drop", 
+                        "start_x": abs_from_x, "start_y": abs_from_y,
+                        "end_x": abs_to_x, "end_y": abs_to_y,
+                        "duration": 0.2
+                    })
+                else:
+                    self.bot.human_mouse_move(abs_from_x, abs_from_y)
+                    pyautogui.mouseDown()
+                    self.bot.human_mouse_move(abs_to_x, abs_to_y)
+                    pyautogui.mouseUp()
+            logger.info(f"Performed relative drag from offset ({from_dx},{from_dy}) -> ({abs_from_x},{abs_from_y}) to offset ({to_dx},{to_dy}) -> ({abs_to_x},{abs_to_y})")

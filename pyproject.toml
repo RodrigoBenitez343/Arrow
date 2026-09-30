@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arrow"
-version = "1.0.0"
+version = "1.1.0"
 description = "arrow desktop automation and AI workflow application"
 requires-python = ">=3.10"
 dependencies = [

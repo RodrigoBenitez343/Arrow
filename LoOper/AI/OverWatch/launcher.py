@@ -238,7 +238,6 @@ def show_status():
         settings = load_settings()
         print(f"⚙️  API: {settings.api.host}:{settings.api.port}")
         print(f"🧠 vLLM: GPU Memory {settings.vllm.gpu_memory_utilization*100:.0f}%")
-        print(f"🔍 ComoRAG: {settings.comorag.memory_size} memory items")
     except Exception as e:
         print(f"⚙️  Configuration: Error loading ({e})")
     
@@ -309,7 +308,7 @@ Examples:
     
     # Print banner
     print("")
-    print("🔍 OverWatch - vLLM API with ComoRAG")
+    print("🔍 OverWatch - vLLM API")
     print("=" * 40)
     
     # Execute based on mode

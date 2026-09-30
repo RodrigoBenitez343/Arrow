@@ -1,32 +1,32 @@
 from NodeGraphQt import BaseNode
-from .base_node import _add_multi_input
 from ..constants import (
     CONTEXT_NODE_COLOR,
-    DARK_GREY,
     INPUT_PORT_COLOR,
     OUTPUT_PORT_COLOR,
-    UNIVERSAL_PORT_TYPE
 )
 
 
 class ContextNode(BaseNode):
-    """Node representing a Context accumulator that stores and manages data across workflow execution."""
-    
+    """Node representing a Context pool (NOT an executable node).
+
+    A Context node is a shared pool of context: other nodes CONSULT it by
+    wiring its 'ctx_out' to their 'ctx_in'/'context' port, and WRITE into it
+    by connecting their data-output ports to its 'ctx_in' port.  It drives no
+    execution, so it has no base 'input'/'output' ports.
+    """
+
     __identifier__ = 'context'
     NODE_NAME = 'Context'
-    
+
     def __init__(self):
         super(ContextNode, self).__init__()
-        
-        # Use a darkened version of the special color for better text readability
-        # Keep the color identity but make it dark enough for white text
+
+        # Darken the color for text readability
         base_color = CONTEXT_NODE_COLOR
         r, g, b = int(base_color.strip('#')[0:2], 16), int(base_color.strip('#')[2:4], 16), int(base_color.strip('#')[4:6], 16)
-        # Darken to 25% brightness for good contrast with white text
         dark_r, dark_g, dark_b = int(r * 0.25), int(g * 0.25), int(b * 0.25)
         self.set_color(dark_r, dark_g, dark_b)
-        
-        # Title styling - white text for dark background
+
         try:
             self.set_text_color(255, 255, 255)
         except Exception:
@@ -35,23 +35,20 @@ class ContextNode(BaseNode):
             self.set_font_size(14)
         except Exception:
             pass
-        
-        # Port color mapping
+
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i+2], 16) for i in (0, 2, 4))
-        
-        # Inputs
-        # Main input port - receives data from LLM/Code/Conditional outputs
-        input_port = _add_multi_input(self, 'input', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
-        # Query port - receives structured query requests
-        query_port = _add_multi_input(self, 'query', in_rgb, False, data_type=UNIVERSAL_PORT_TYPE)
-        
-        # Outputs
-        # Context output - outputs accumulated context
-        context_port = self.add_output('context', color=out_rgb, display_name=False, multi_output=True)
-        
-        # Configure multi-connection
-        for p in [input_port, query_port, context_port]:
+
+        # Ports — DATA ONLY (the Context node is a non-executable pool):
+        # - ctx_in  : data IN  — other nodes WRITE into the pool by connecting
+        #             their data-output ports here.
+        # - ctx_out : data OUT — other nodes CONSULT the pool by wiring it to
+        #             their own 'ctx_in' / 'context' port.
+        # No base 'input'/'output' ports: a Context node drives no execution.
+        ctx_in_port = self.add_input('ctx_in', color=in_rgb, display_name=True, multi_input=True)
+        ctx_out_port = self.add_output('ctx_out', color=out_rgb, display_name=True, multi_output=True)
+
+        for p in [ctx_in_port, ctx_out_port]:
             try:
                 if hasattr(p, 'set_multi_connection'):
                     p.set_multi_connection(True)
@@ -59,37 +56,28 @@ class ContextNode(BaseNode):
                     setattr(p, '_multi_connection', True)
             except Exception:
                 pass
-        
-        # Register properties
-        self.create_property('scope', 'chain')
-        self.create_property('default_merge_policy', 'append')
-        self.create_property('keys', '[]')
-        self.create_property('key_policies', '{}')
-        self.create_property('max_entries_per_key', '100')
-        self.create_property('auto_capture_responses', 'true')
-        self.create_property('output_format', 'structured')
-        self.create_property('context_node_label', '')
-        self.create_property('retrieval_top_k', 3)
-        self.create_property('use_semantic_retrieval', False)
-        self.create_property('shared_context_chain_file', '')  # NEW: Path to chain file containing shared context
-        self.create_property('shared_context_node_id', '')  # NEW: Specific node ID within the shared chain
-    
+
+        # Properties — minimal config
+        self.create_property('label', '')         # Human-readable description
+        self.create_property('max_history', 10)   # Recent entries to keep/serve
+        self.create_property('persistent', True)  # Keep context across runs
+        self.create_property('clear_on_finish', False)  # Task 13: Clear all stored data after chain finishes
+        # Internal property to preserve the original config node_id across graph save/load.
+        # Must be registered here (not set dynamically at load time) because PyInstaller
+        # compiled builds cannot create NodeGraphQt properties on-the-fly.
+        self.create_property('scope', 'local')  # 'local' or 'global'
+        self.create_property('shared_context_chain_file', '')  # source chain path for cross-chain sharing
+        self.create_property('shared_context_node_id', '')  # source context node id (clone reference)
+        self.create_property('_config_node_id', '')
+
     def get_context_config(self):
-        """Get the configuration for this node"""
-        auto_capture_str = self.get_property('auto_capture_responses') or 'true'
-        auto_capture_responses = auto_capture_str.lower() in ('true', '1', 'yes', 'on')
-        
+        """Return the minimal configuration for this node."""
         return {
-            'scope': self.get_property('scope') or 'chain',
-            'default_merge_policy': self.get_property('default_merge_policy') or 'append',
-            'keys': self.get_property('keys') or '[]',
-            'key_policies': self.get_property('key_policies') or '{}',
-            'max_entries_per_key': int(self.get_property('max_entries_per_key') or 100),
-            'auto_capture_responses': auto_capture_responses,
-            'output_format': self.get_property('output_format') or 'structured',
-            'context_node_label': self.get_property('context_node_label') or '',
-            'retrieval_top_k': int(self.get_property('retrieval_top_k') or 3),
-            'use_semantic_retrieval': str(self.get_property('use_semantic_retrieval') or '').lower() in ('true', '1'),
-            'shared_context_chain_file': self.get_property('shared_context_chain_file') or '',  # NEW
-            'shared_context_node_id': self.get_property('shared_context_node_id') or '',  # NEW
+            'label': self.get_property('label') or '',
+            'max_history': int(self.get_property('max_history') or 10),
+            'persistent': bool(self.get_property('persistent')),
+            'clear_on_finish': bool(self.get_property('clear_on_finish')),
+            'scope': str(self.get_property('scope') or 'local'),
+            'shared_context_chain_file': str(self.get_property('shared_context_chain_file') or ''),
+            'shared_context_node_id': str(self.get_property('shared_context_node_id') or ''),
         }

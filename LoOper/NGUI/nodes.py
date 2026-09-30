@@ -3,12 +3,16 @@ from .nodes_resources import (
     _add_multi_input,
     ConditionalNode,
     SequenceNode,
+    WebSequenceNode,
     ActionNode,
     LLMNode,
-    TTSNode,
     ChainImportNode,
     FormFillerNode,
     CodeNode,
     ContainerNode,
-    ContextNode
+    ContextNode,
+    InputNode,
+    HandleNode,
+    MCPNode,
+    OutputNode,
 )

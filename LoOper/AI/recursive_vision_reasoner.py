@@ -9,7 +9,7 @@ Key features:
 - Minimal cycles (1-3 by default) to avoid long wait times
 - JSON-structured screen context analysis
 - Task decomposition into actionable sub-steps
-- Integration with existing memory systems (ComoRAG-compatible)
+- Integration with existing memory systems
 """
 
 import os

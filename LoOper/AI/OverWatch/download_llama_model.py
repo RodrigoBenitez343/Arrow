@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Script to download a Llama model from Hugging Face Hub for testing ComoRAG API.
-This script downloads the Llama-3.1-8B-Instruct model which is optimized for instruction following and ComoRAG tasks.
+Script to download a Llama model from Hugging Face Hub for testing the OverWatch API.
+This script downloads the Llama-3.1-8B-Instruct model which is optimized for instruction following.
 """
 
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 def download_llama_model():
     """
     Download Llama-3.1-8B-Instruct model from Hugging Face Hub.
-    This model is optimized for instruction following and provides excellent performance for ComoRAG tasks.
+    This model is optimized for instruction following and provides excellent performance.
     """
     
     # Create models directory if it doesn't exist
@@ -19,7 +19,7 @@ def download_llama_model():
     models_dir.mkdir(exist_ok=True)
     
     print("Starting download of Llama-3.1-8B-Instruct model...")
-    print("This model is optimized for instruction following and ComoRAG tasks.")
+    print("This model is optimized for instruction following.")
     print("Model info: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct")
     print("Note: This model requires accepting the license terms on Hugging Face.")
     
@@ -34,7 +34,7 @@ def download_llama_model():
         
         print(f"\nModel downloaded successfully!")
         print(f"Model path: {model_path}")
-        print(f"\nYou can now test the model with ComoRAG API.")
+        print(f"\nYou can now test the model with the OverWatch API.")
         
         # Show directory structure
         print("\nDownloaded files:")

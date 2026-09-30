@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """
-OverWatch - vLLM API with ComoRAG Integration
+OverWatch - vLLM API
 
-A FastAPI server that provides vLLM inference capabilities with ComoRAG
-(Cognitive-Inspired Memory-Organized RAG) for enhanced reasoning.
+A FastAPI server that provides vLLM inference capabilities.
 """
 
 import asyncio
@@ -22,7 +21,6 @@ from pydantic import BaseModel, Field
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from api.ollama_engine import OllamaEngine
-from api.comorag_engine import ComoRAGEngine
 from config.settings import load_settings, setup_logging, validate_settings
 
 # Load settings
@@ -41,32 +39,22 @@ if issues:
 
 # Global instances
 ollama_engine: Optional[OllamaEngine] = None
-comorag_engine: Optional[ComoRAGEngine] = None
 _init_task: Optional[asyncio.Task] = None
 _init_error: Optional[str] = None
 _init_started_at: Optional[float] = None
 
 
 async def _initialize_engines(app: FastAPI) -> None:
-    global ollama_engine, comorag_engine, _init_error
+    global ollama_engine, _init_error
     try:
         oe = OllamaEngine(settings.ollama)
         await oe.initialize()
-        ce = ComoRAGEngine(settings=settings, ollama_engine=oe)
-        await ce.initialize()
         ollama_engine = oe
-        comorag_engine = ce
         app.state.ollama_engine = oe
-        app.state.comorag_engine = ce
         app.state.settings = settings
         _init_error = None
     except Exception as e:
         _init_error = str(e)
-        try:
-            if comorag_engine:
-                await comorag_engine.cleanup()
-        except Exception:
-            pass
         try:
             if ollama_engine:
                 await ollama_engine.cleanup()
@@ -77,7 +65,7 @@ async def _initialize_engines(app: FastAPI) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan events"""
-    global ollama_engine, comorag_engine, _init_task, _init_started_at
+    global ollama_engine, _init_task, _init_started_at
     logger.info("Starting OverWatch API server...")
     _init_started_at = _init_started_at or asyncio.get_event_loop().time()
     if _init_task is None or _init_task.done():
@@ -93,9 +81,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     
-    if comorag_engine:
-        await comorag_engine.cleanup()
-    
     if ollama_engine:
         await ollama_engine.cleanup()
     
@@ -104,8 +89,8 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="OverWatch - Ollama API with ComoRAG",
-    description="LLM inference API with cognitive-inspired memory-organized RAG",
+    title="OverWatch - Ollama API",
+    description="LLM inference API with Ollama integration",
     version="1.0.0",
     lifespan=lifespan,
     debug=settings.api.debug
@@ -128,7 +113,6 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = Field(0.7, ge=0.0, le=2.0)
     max_tokens: Optional[int] = Field(512, ge=1, le=4096)
     stream: Optional[bool] = Field(False, description="Enable streaming response")
-    use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
     ephemeral: Optional[bool] = Field(False, description="Unload model after request")
     cleanup_after: Optional[bool] = Field(True, description="Run cleanup after response")
 
@@ -139,25 +123,8 @@ class GenerateRequest(BaseModel):
     temperature: Optional[float] = Field(0.7, ge=0.0, le=2.0)
     max_tokens: Optional[int] = Field(512, ge=1, le=4096)
     stream: Optional[bool] = Field(False, description="Enable streaming response")
-    use_comorag: Optional[bool] = Field(False, description="Enable ComoRAG reasoning")
     ephemeral: Optional[bool] = Field(False, description="Unload model after request")
     cleanup_after: Optional[bool] = Field(True, description="Run cleanup after response")
-
-
-class ComoRAGRequest(BaseModel):
-    query: str = Field(..., description="Query for ComoRAG reasoning")
-    context: Optional[str] = Field(None, description="Additional context")
-    model: Optional[str] = Field(None, description="Model to use for reasoning")
-    max_cycles: Optional[int] = Field(5, ge=1, le=20, description="Maximum reasoning cycles")
-    memory_size: Optional[int] = Field(1000, ge=100, le=10000, description="Memory pool size")
-    images: Optional[List[str]] = Field(None, description="Base64 encoded images for vision analysis")
-
-
-class ComoRAGAddMemoryRequest(BaseModel):
-    content: str = Field(..., description="Memory content")
-    source: str = Field("external", description="Source of memory")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
-    image_data: Optional[str] = Field(None, description="Base64 encoded image data")
 
 
 class EmbeddingsRequest(BaseModel):
@@ -342,7 +309,6 @@ class EmbeddingsResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     ollama_status: str
-    comorag_status: str
     models_loaded: int
     memory_usage: Dict[str, Any]
     init_error: Optional[str] = None
@@ -356,22 +322,19 @@ async def health_check():
     try:
         init_in_progress = bool(_init_task is not None and not _init_task.done())
         ollama_status = "healthy" if ollama_engine and ollama_engine.is_ready() else "not_ready"
-        comorag_status = "healthy" if comorag_engine and comorag_engine.is_ready() else "not_ready"
         
         models_loaded = len(ollama_engine.get_loaded_models()) if ollama_engine else 0
         
         # Get memory usage info
         memory_usage = {
-            "ollama_memory": ollama_engine.get_memory_usage() if ollama_engine else {},
-            "comorag_memory": comorag_engine.get_memory_usage() if comorag_engine else {}
+            "ollama_memory": ollama_engine.get_memory_usage() if ollama_engine else {}
         }
         
-        overall_status = "healthy" if ollama_status == "healthy" and comorag_status == "healthy" else "degraded"
+        overall_status = "healthy" if ollama_status == "healthy" else "degraded"
         
         return HealthResponse(
             status=overall_status,
             ollama_status=ollama_status,
-            comorag_status=comorag_status,
             models_loaded=models_loaded,
             memory_usage=memory_usage,
             init_error=_init_error,
@@ -446,24 +409,15 @@ async def chat_completion(request: ChatRequest, background_tasks: BackgroundTask
         if not ollama_engine:
             raise HTTPException(status_code=503, detail="Ollama engine not initialized")
         
-        if request.use_comorag and comorag_engine:
-            # Use ComoRAG for enhanced reasoning
-            response = await comorag_engine.chat_with_reasoning(
-                messages=request.messages,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-        else:
-            # Direct Ollama inference
-            response = await ollama_engine.chat_completions(
-                messages=request.messages,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stream=request.stream,
-                ephemeral=bool(request.ephemeral)
-            )
+        # Direct Ollama inference
+        response = await ollama_engine.chat_completions(
+            messages=request.messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=request.stream,
+            ephemeral=bool(request.ephemeral)
+        )
         if request.ephemeral:
             try:
                 await ollama_engine.unload_model(request.model)
@@ -510,25 +464,15 @@ async def generate_text(request: GenerateRequest, background_tasks: BackgroundTa
         if not ollama_engine:
             raise HTTPException(status_code=503, detail="Ollama engine not initialized")
         
-        if request.use_comorag and comorag_engine:
-            # Convert prompt to messages format for ComoRAG
-            messages = [{"role": "user", "content": request.prompt}]
-            response = await comorag_engine.chat_with_reasoning(
-                messages=messages,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens
-            )
-        else:
-            # Direct Ollama inference
-            response = await ollama_engine.generate(
-                prompt=request.prompt,
-                model=request.model,
-                temperature=request.temperature,
-                max_tokens=request.max_tokens,
-                stream=request.stream,
-                ephemeral=bool(request.ephemeral)
-            )
+        # Direct Ollama inference
+        response = await ollama_engine.generate(
+            prompt=request.prompt,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            stream=request.stream,
+            ephemeral=bool(request.ephemeral)
+        )
         if request.ephemeral:
             try:
                 await ollama_engine.unload_model(request.model)
@@ -599,164 +543,12 @@ async def cleanup_endpoint(body: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ComoRAG Specific Endpoints
-@app.post("/comorag/reason")
-async def comorag_reason(request: ComoRAGRequest):
-    """Perform ComoRAG reasoning"""
-    try:
-        global comorag_engine, ollama_engine, settings
-        if not comorag_engine:
-            try:
-                if not ollama_engine:
-                    ollama_engine = OllamaEngine(settings.ollama)
-                    await ollama_engine.initialize()
-                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-                await comorag_engine.initialize()
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
-        
-        result = await comorag_engine.reason(
-            query=request.query,
-            context=request.context,
-            model=request.model,
-            max_cycles=request.max_cycles,
-            memory_size=request.memory_size,
-            images=request.images
-        )
-        return result
-    except Exception as e:
-        logger.error(f"ComoRAG reasoning failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/comorag/reason/stream")
-async def comorag_reason_stream(request: ComoRAGRequest):
-    """Perform ComoRAG reasoning with streaming output"""
-    try:
-        if not comorag_engine:
-            raise HTTPException(status_code=503, detail="ComoRAG engine not initialized")
-        
-        async def event_generator():
-            try:
-                async for step in comorag_engine.reason_stream(
-                    query=request.query,
-                    context=request.context,
-                    model=request.model,
-                    max_cycles=request.max_cycles,
-                    memory_size=request.memory_size,
-                    images=request.images
-                ):
-                    yield _json.dumps(step) + "\n"
-            except Exception as e:
-                logger.error(f"Stream error: {e}")
-                yield _json.dumps({"type": "error", "message": str(e)}) + "\n"
-
-        return StreamingResponse(event_generator(), media_type="application/x-ndjson")
-    except Exception as e:
-        logger.error(f"ComoRAG streaming failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/comorag/memory")
-async def comorag_add_memory(request: ComoRAGAddMemoryRequest):
-    """Add memory to ComoRAG"""
-    try:
-        global comorag_engine, ollama_engine, settings
-        if not comorag_engine:
-            try:
-                if not ollama_engine:
-                    ollama_engine = OllamaEngine(settings.ollama)
-                    await ollama_engine.initialize()
-                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-                await comorag_engine.initialize()
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
-        
-        await comorag_engine.add_memory(
-            content=request.content,
-            source=request.source,
-            metadata=request.metadata,
-            image_data=request.image_data
-        )
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Failed to add memory to ComoRAG: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/comorag/memory/state")
-async def comorag_memory_state():
-    """Get ComoRAG memory state"""
-    try:
-        global comorag_engine, ollama_engine, settings
-        if not comorag_engine:
-            try:
-                if not ollama_engine:
-                    ollama_engine = OllamaEngine(settings.ollama)
-                    await ollama_engine.initialize()
-                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-                await comorag_engine.initialize()
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
-        
-        return await comorag_engine.get_memory_state()
-    except Exception as e:
-        logger.error(f"Failed to get memory state: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.delete("/comorag/memory")
-async def comorag_clear_memory():
-    """Clear ComoRAG memory"""
-    try:
-        global comorag_engine, ollama_engine, settings
-        if not comorag_engine:
-            try:
-                if not ollama_engine:
-                    ollama_engine = OllamaEngine(settings.ollama)
-                    await ollama_engine.initialize()
-                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-                await comorag_engine.initialize()
-            except Exception as e:
-                raise HTTPException(status_code=503, detail=f"ComoRAG engine not initialized: {e}")
-        
-        await comorag_engine.clear_memory()
-        return {"status": "success", "message": "Memory cleared"}
-    except Exception as e:
-        logger.error(f"Failed to clear memory: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/comorag/status")
-async def comorag_status(init_if_needed: bool = True):
-    """Check ComoRAG readiness"""
-    global comorag_engine, ollama_engine, settings
-    if init_if_needed:
-        try:
-            if not comorag_engine:
-                if not ollama_engine:
-                    ollama_engine = OllamaEngine(settings.ollama)
-                    await ollama_engine.initialize()
-                comorag_engine = ComoRAGEngine(settings=settings, ollama_engine=ollama_engine)
-            if comorag_engine and (not comorag_engine.is_ready()):
-                await comorag_engine.initialize()
-        except Exception:
-            pass
-    ready = bool(comorag_engine) and comorag_engine.is_ready()
-    return {"ready": ready}
-
-
 if __name__ == "__main__":
-    # Run the server
-    # Use Tailscale IP if enabled, otherwise use API host
-    if settings.tailscale.enabled and settings.tailscale.server_ip:
-        host = settings.tailscale.server_ip
-        port = settings.tailscale.api_port
-        logger.info(f"Starting server with Tailscale configuration: {host}:{port}")
-    else:
-        host = settings.api.host
-        port = settings.api.port
-        logger.info(f"Starting server with standard configuration: {host}:{port}")
-    
+    # Run the server on the configured API host/port (local machine)
+    host = settings.api.host
+    port = settings.api.port
+    logger.info(f"Starting server on {host}:{port}")
+
     uvicorn.run(
         "main:app",
         host=host,

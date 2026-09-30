@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "mode": "web",
+  "metadata": {
+    "created_at": "2026-09-10 14:17:21",
+    "total_actions": 2,
+    "duration_sec": 8.56,
+    "mode": "web",
+    "start_url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4463486463&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&originToLandingJobPostings=4463486463%2C4456276705%2C4437327647%2C4461079879&geoId=90009870",
+    "name": "showall"
+  },
+  "actions": [
+    {
+      "type": "scroll",
+      "ts": 1789071397778.0,
+      "locator": {
+        "tag": "div",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": "DevOps Principal Engineer - Tech Lead - EY Global Delivery Services (Verified job)DevOps Principal Engineer - Tech Lead ",
+        "href": null,
+        "placeholder": null,
+        "aria_label": null,
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "_970c3eec",
+          "_704ac4e0",
+          "_9214eeec"
+        ],
+        "link_text": null,
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": null,
+        "text_xpath": null,
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "main#workspace > div._6376d83e.d1b6db25.bd04e45f > div.aa99edaa._2664f753.c39f4aba > section._584fdf8e._553efb07.d3022b74 > div._970c3eec.a9b72b69._23bc1528 > div.b0d70e28._93e2ccf0 > div._970c3eec._9045876d._3e48ce65 > div._970c3eec._9214eeec.a9b72b69 > div.b0d70e28._93e2ccf0 > a._382c7b22._6b42a0cd._5a6b3e95 > div._970c3eec._704ac4e0._9214eeec",
+        "ancestor_css": "div[data-testid='JobsHomeFeedModuleListCollection'] > div:nth-of-type(6) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > a:nth-of-type(1) > div:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[6]/div[1]/div[1]/div[3]/a[1]/div[1]",
+        "xpath": "/div[1]/div[1]/main[@id=\"workspace\"]/div[1]/div[1]/section[1]/div[1]/div[6]/div[1]/div[1]/div[3]/a[1]/div[1]",
+        "viewport": null
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "value": null,
+      "coordinates": null,
+      "button": null,
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": {
+        "end": {
+          "x": 825,
+          "y": 521
+        },
+        "start": {
+          "x": 825,
+          "y": 521
+        },
+        "steps": 5,
+        "total_delta": -500
+      },
+      "url": "https://www.linkedin.com/jobs/search-results/?currentJobId=4463486463&showHowYouFit=HOW_YOU_FIT&keywords=DevOps%20Engineer&origin=QUALIFICATION_LANDING&originToLandingJobPostings=4463486463%2C4456276705%2C4437327647%2C4461079879&geoId=90009870",
+      "title": "DevOps Sr | ÜMA Salud IA | LinkedIn",
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": null,
+      "context": {}
+    },
+    {
+      "type": "click",
+      "ts": 1789071446000.0,
+      "locator": {
+        "tag": "a",
+        "id": null,
+        "name": null,
+        "role": null,
+        "text": "Show all",
+        "href": "https://www.linkedin.com/jobs/search-results/?keywords=DevOps+Engineer&origin=JobSearchOrigin_QUALIFICATION_LANDING&originToLandingJobPostings=4463486463%2C4456276705%2C4437327647%2C4461079879&geoId=90009870",
+        "placeholder": null,
+        "aria_label": "Show all jobs that match your profile",
+        "input_type": null,
+        "data_attrs": {},
+        "classes": [
+          "ad6ec31a",
+          "ec2ae639",
+          "_6ec7d740"
+        ],
+        "link_text": "Show all",
+        "alt_text": null,
+        "title": null,
+        "value": null,
+        "label_text": null,
+        "index": 0,
+        "text_index": 0,
+        "text_xpath": "//a[normalize-space(.)=\"Show all\"]",
+        "role_text_xpath": null,
+        "label_xpath": null,
+        "css": "div#JobsHomeATFModule_c0b18511-382b-478a-9f7f-742823ed1937 > div.b0d70e28._93e2ccf0 > div._970c3eec.a3ae5bd9._78b9637d > div.a9b72b69._347e609e.aa06aed8 > a.ad6ec31a.ec2ae639._6ec7d740",
+        "ancestor_css": "div#JobsHomeATFModule_c0b18511-382b-478a-9f7f-742823ed1937 > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > a:nth-of-type(1)",
+        "structural_xpath": "/html/body/div[1]/div[2]/div[1]/div[1]/div[3]/a[1]",
+        "xpath": "/html[1]/body[1]/div[@id=\"root\"]/div[1]/div[2]/div[2]/div[1]/main[@id=\"workspace\"]/div[1]/div[1]/section[1]/div[1]/div[@id=\"JobsHomeATFModule_c0b18511-382b-478a-9f7f-742823ed1937\"]/div[1]/div[1]/div[3]/a[1]",
+        "viewport": {
+          "h": 48,
+          "vh": 773,
+          "vw": 1440,
+          "w": 790,
+          "x": 486,
+          "y": 670
+        }
+      },
+      "frame_path": [],
+      "cross_origin_frame": false,
+      "value": null,
+      "coordinates": {
+        "x": 868,
+        "y": 697
+      },
+      "button": "0",
+      "key": null,
+      "modifiers": [],
+      "state": null,
+      "repeat": null,
+      "action": null,
+      "scroll": null,
+      "url": null,
+      "title": null,
+      "sensitive": false,
+      "dom_snapshot": null,
+      "gap_ms": 48222,
+      "context": {}
+    }
+  ]
+}

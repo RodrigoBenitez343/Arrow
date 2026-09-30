@@ -31,9 +31,9 @@ class SchedulerManagerDialog(ModernDialog):
         # Set column widths for better visibility
         self.table.setColumnWidth(0, 90)
         self.table.setColumnWidth(1, 120)  # Name
-        self.table.setColumnWidth(2, 80)   # Type
-        self.table.setColumnWidth(3, 140)  # When
-        self.table.setColumnWidth(4, 130)  # Next Run
+        self.table.setColumnWidth(2, 100)  # Type
+        self.table.setColumnWidth(3, 200)  # When (larger for condition descriptions)
+        self.table.setColumnWidth(4, 140)  # Next Run
         self.table.setColumnWidth(5, 180)  # Chain
         self.table.setColumnWidth(6, 80)   # Sandbox
         self.table.setColumnWidth(7, 260)  # Actions
@@ -328,8 +328,8 @@ class SchedulerManagerDialog(ModernDialog):
 class EditScheduleDialog(ModernDialog):
     def __init__(self, parent, schedule=None):
         super().__init__(parent, title=_("Schedule Configuration"), help_topic="schedules")
-        self.resize(580, 580)
-        self.setMinimumSize(500, 520)
+        self.resize(580, 680)
+        self.setMinimumSize(500, 620)
         self._schedule = schedule or {}
         
         layout = self.content_layout
@@ -524,7 +524,6 @@ class EditScheduleDialog(ModernDialog):
         # Initialize with schedule data
         self._apply_schedule()
         self._update_fields(self.type_cb.currentText())
-
 
 
     def _apply_schedule(self):

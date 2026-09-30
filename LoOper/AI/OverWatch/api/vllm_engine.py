@@ -129,15 +129,9 @@ class VLLMEngine:
         else:
             logger.warning("No GPU detected. vLLM will run on CPU (not recommended)")
         
-        # Load default models if specified
-        default_models = getattr(self.settings, 'default_models', [])
-        if default_models:
-            for model_name in default_models:
-                try:
-                    await self.load_model(model_name)
-                except Exception as e:
-                    logger.error(f"Failed to load default model {model_name}: {e}")
-        
+        # Models are deliberately NOT preloaded - see the Ollama engine's
+        # initialize(): loading is per node, on demand.
+
         self._initialized = True
         logger.info("vLLM engine initialized successfully")
     

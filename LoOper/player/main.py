@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # main.py
 """
 Main entry point for the automation player.
@@ -10,9 +12,8 @@ import os
 import sys
 import threading
 from pynput import keyboard
-from .config import logger
 from .sequence_player import SequencePlayer
-from .multi_sequence_player import MultiSequencePlayer
+from .multi_sequence_player import MultiSequencePlayer, play_chain_with_tailcalls
 
 
 def main():
@@ -57,7 +58,7 @@ def main():
     keyboard_listener = keyboard.Listener(on_press=on_press)
     keyboard_listener.start()
     
-    print("\n[START] Playback started. Press ESC to cancel.")
+    logger.info("\n[START] Playback started. Press ESC to cancel.")
     logger.info("Keyboard listener started for ESC cancellation")
 
     # Build sandbox context from CLI arguments
@@ -90,25 +91,31 @@ def main():
         elif isinstance(data, list) and all("sequence_file" in item for item in data):
             # It's a legacy chain config file (list format)
             logger.info(f"Playing legacy chain configuration: {args.file}")
-            player = MultiSequencePlayer(data, args.file)
-            if sandbox_context:
-                player.global_app_context_override = sandbox_context
-            player.play_chain(stop_flag=stop_flag)
+            _result, player = play_chain_with_tailcalls(
+                args.file, stop_flag=stop_flag,
+                player_setup_callback=(
+                    (lambda p: setattr(p, 'global_app_context_override', sandbox_context))
+                    if sandbox_context else None
+                ),
+            )
         elif isinstance(data, dict) and "sequences" in data:
             # It's a new chain config file (dict format with sequences and conditional_nodes)
             logger.info(f"Playing workflow chain configuration: {args.file}")
-            player = MultiSequencePlayer(data, args.file)
-            if sandbox_context:
-                player.global_app_context_override = sandbox_context
-            player.play_chain(stop_flag=stop_flag)
+            _result, player = play_chain_with_tailcalls(
+                args.file, stop_flag=stop_flag,
+                player_setup_callback=(
+                    (lambda p: setattr(p, 'global_app_context_override', sandbox_context))
+                    if sandbox_context else None
+                ),
+            )
         else:
             logger.error("Invalid file format. Expected sequence file with 'actions', legacy chain config (list), or workflow chain config (dict with 'sequences').")
             sys.exit(1)
             
         if stop_requested.is_set():
-            print("\n[STOP] Playback cancelled by user")
+            logger.info("\n[STOP] Playback cancelled by user")
         else:
-            print("\n[SUCCESS] Playback completed successfully")
+            logger.info("\n[SUCCESS] Playback completed successfully")
 
     except FileNotFoundError:
         logger.error(f"File not found: {args.file}")

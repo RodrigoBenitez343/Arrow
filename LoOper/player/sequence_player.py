@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 # sequence_player.py
 """
 Single sequence player for executing recorded automation sequences.
@@ -7,7 +9,6 @@ import json
 import time
 import os
 from threading import Lock
-from .config import logger
 from .base_bot import SeleniumBot
 
 
@@ -235,32 +236,40 @@ class SequencePlayer(SeleniumBot):
         
         self.last_action_time = time.time()
         
-        # Loop through each action in the sequence.
-        for idx, action in enumerate(self.sequence_data['actions']):
-            # Check stop flag before each action
-            if stop_flag and stop_flag():
-                logger.info("Playback stopped by user request")
-                return
+        try:
+            # Loop through each action in the sequence.
+            for idx, action in enumerate(self.sequence_data['actions']):
+                # Check stop flag before each action
+                if stop_flag and stop_flag():
+                    logger.info("Playback stopped by user request")
+                    return
+                    
+                logger.debug(f"Executing action {idx + 1}/{len(self.sequence_data['actions'])}: {action.get('type', 'unknown')}")
                 
-            logger.debug(f"Executing action {idx + 1}/{len(self.sequence_data['actions'])}: {action.get('type', 'unknown')}")
-            
-            try:
                 try:
-                    if isinstance(action, dict) and action.get("app_context"):
-                        self.last_app_context = action.get("app_context")
-                except Exception:
-                    pass
-                # Use the execute_with_timing method from the base class.
-                success = self.execute_with_timing(idx, action, fallback_callback, stop_flag)
-                logger.debug(f"Action {idx} execution result: {success}")
-                
-                if not success:
-                    logger.info(f"Fallback triggered for action {idx}. Stopping current sequence.")
-                    return  # Exit current sequence to allow fallback to run
-            except Exception as e:
-                logger.error(f"Action {idx} failed: {str(e)}")
-                import traceback
-                logger.error(f"Full traceback: {traceback.format_exc()}")
-                break # Stop playback on failure.
+                    try:
+                        if isinstance(action, dict) and action.get("app_context"):
+                            self.last_app_context = action.get("app_context")
+                    except Exception:
+                        pass
+                    # Use the execute_with_timing method from the base class.
+                    success = self.execute_with_timing(idx, action, fallback_callback, stop_flag)
+                    logger.debug(f"Action {idx} execution result: {success}")
+                    
+                    if not success:
+                        logger.info(f"Fallback triggered for action {idx}. Stopping current sequence.")
+                        return  # Exit current sequence to allow fallback to run
+                except Exception as e:
+                    logger.error(f"Action {idx} failed: {str(e)}")
+                    import traceback
+                    logger.error(f"Full traceback: {traceback.format_exc()}")
+                    break # Stop playback on failure.
+        finally:
+            # Release any keys still held by key_event replay (stuck-key safety)
+            # so a stopped/aborted playback never leaves modifiers stuck down.
+            try:
+                self.action_handlers.release_all_keys()
+            except Exception:
+                pass
                 
         logger.info("Playback completed")

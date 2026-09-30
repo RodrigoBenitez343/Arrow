@@ -241,6 +241,9 @@ class SequenceOperationsMixin:
                 node.set_property('loop_count', str(props.get('loop_count', 1)))
                 node.set_property('extra_delay', str(props.get('extra_delay', 1.0)))
                 node.set_property('use_app_opened', 'true' if props.get('use_app_opened', True) else 'false')
+                node.set_property('click_drift_min', str(props.get('click_drift_min', 5.0)))
+                node.set_property('click_drift_max', str(props.get('click_drift_max', 10.0)))
+                node.set_property('description', str(props.get('description', '') or ''))
                 logger.info(f"Successfully edited Sequence node: {node.id}")
             else:
                 logger.debug("Sequence dialog cancelled")

@@ -318,7 +318,7 @@ class TestRDPSessionClicks(unittest.TestCase):
             s.bind(("127.0.0.1", 0))
             port = int(s.getsockname()[1])
 
-        cls.agent_url = f"http://127.0.0.2:{port}"
+        cls.agent_url = f"http://127.0.0.1:{port}"
         _create_task(python_exe, agent_script, port)
 
         cr = _run_capture(

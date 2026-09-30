@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Test Proxy Fix
-Verifies that LoOper API (port 8000) correctly proxies ComoRAG requests to OverWatch (port 8001).
+Verifies that LoOper API (port 8000) correctly proxies requests to OverWatch (port 8001).
 """
 
 import requests
@@ -21,17 +21,18 @@ def test_proxy():
         print(f"❌ LoOper API is not reachable at {base_url}. Please start LoOper.")
         return
 
-    # 2. Test Non-Streaming Proxy
-    print("\n🧪 Testing Non-Streaming Reasoning (Proxy)...")
+    # 2. Test Non-Streaming Chat (Proxy)
+    print("\n🧪 Testing Non-Streaming Chat (Proxy)...")
     payload = {
-        "query": "What is the capital of France?",
-        "max_cycles": 1,
-        "memory_size": 1000
+        "model": "llama3.2:3b",
+        "prompt": "What is the capital of France?",
+        "temperature": 0.7,
+        "max_tokens": 100
     }
     
     try:
         start = time.time()
-        r = requests.post(f"{base_url}/comorag/reason", json=payload, timeout=30)
+        r = requests.post(f"{base_url}/generate", json=payload, timeout=30)
         if r.status_code == 200:
             data = r.json()
             response = data.get("response", "No response field")
@@ -42,11 +43,11 @@ def test_proxy():
     except Exception as e:
         print(f"❌ Exception: {e}")
 
-    # 3. Test Streaming Proxy
-    print("\n🧪 Testing Streaming Reasoning (Proxy)...")
+    # 3. Test Streaming Chat (Proxy)
+    print("\n🧪 Testing Streaming Chat (Proxy)...")
     try:
         start = time.time()
-        with requests.post(f"{base_url}/comorag/reason/stream", json=payload, stream=True, timeout=30) as r:
+        with requests.post(f"{base_url}/generate", json={**payload, "stream": True}, stream=True, timeout=30) as r:
             if r.status_code == 200:
                 print("✅ Connected to stream. Receiving events:")
                 count = 0
