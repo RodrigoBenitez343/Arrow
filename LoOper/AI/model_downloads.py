@@ -73,7 +73,7 @@ BASE_MODELS: List[dict] = [
         "save_path": "SmolLM3-Q4_K_M.gguf",
         "url": (
             "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF"
-            "/resolve/main/SmolLM3-Q4_K_M.gguf"
+            "/resolve/4965cb60b150737b68a0408c36aeefb65078f894/SmolLM3-Q4_K_M.gguf"
         ),
         "size_hint_mb": 1900,
     },
@@ -83,7 +83,7 @@ BASE_MODELS: List[dict] = [
         "save_path": os.path.join("LFM2.5-VL-450M-GGUF", "LFM2.5-VL-450M-Q8_0.gguf"),
         "url": (
             "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF"
-            "/resolve/main/LFM2.5-VL-450M-Q8_0.gguf"
+            "/resolve/1abed04b6fe71314d8c446a1371c03d7c332266d/LFM2.5-VL-450M-Q8_0.gguf"
         ),
         "size_hint_mb": 480,
     },
@@ -95,7 +95,7 @@ BASE_MODELS: List[dict] = [
         ),
         "url": (
             "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF"
-            "/resolve/main/mmproj-LFM2.5-VL-450m-Q8_0.gguf"
+            "/resolve/1abed04b6fe71314d8c446a1371c03d7c332266d/mmproj-LFM2.5-VL-450m-Q8_0.gguf"
         ),
         "size_hint_mb": 1,
     },
@@ -105,7 +105,7 @@ BASE_MODELS: List[dict] = [
         "save_path": "LocateAnything-3B-Q8_0.gguf",
         "url": (
             "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF"
-            "/resolve/main/locateanything-3b-q8_0.gguf"
+            "/resolve/aac6aefe07703a6c994fab05828cfa5524609380/locateanything-3b-q8_0.gguf"
         ),
         "size_hint_mb": 3700,
     },
@@ -115,7 +115,7 @@ BASE_MODELS: List[dict] = [
         "save_path": "mmproj-LocateAnything-3B-BF16.gguf",
         "url": (
             "https://huggingface.co/sabafallah/LocateAnything-3B-GGUF"
-            "/resolve/main/mmproj-locateanything-3b-bf16.gguf"
+            "/resolve/aac6aefe07703a6c994fab05828cfa5524609380/mmproj-locateanything-3b-bf16.gguf"
         ),
         "size_hint_mb": 870,
     },
