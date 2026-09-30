@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 name = "arrow"
 version = "1.1.0"
 description = "arrow desktop automation and AI workflow application"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
   "aiofiles==25.1.0",
