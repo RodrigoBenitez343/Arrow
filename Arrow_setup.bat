@@ -5,6 +5,7 @@ setlocal
 ::  arrow / LoOper - one-shot bootstrap + launcher
 :: ----------------------------------------------------------------------------
 ::  Clone the repo and run this file.  It will:
+::    0. PULL the latest source from the remote repo
 ::    1. create the Python virtual environment and install dependencies
 ::    2. BUILD llama.cpp from utils/llama.cpp for this machine's architecture
 ::       (no prebuilt binaries are committed - they are produced here)
@@ -35,6 +36,29 @@ set "VOSK_DIR=%DATA_DIR%\vosk_models"
 set "PIPER_DIR=%DATA_DIR%\piper_voices"
 
 :: ============================================================================
+::  0. Pull the latest source from the remote repo
+:: ============================================================================
+pushd "%ROOT%"
+where git >nul 2>&1
+if errorlevel 1 (
+  echo [git] git not found on PATH - skipping update.
+) else (
+  git rev-parse --is-inside-work-tree >nul 2>&1
+  if errorlevel 1 (
+    echo [git] "%ROOT%" is not a git repository - skipping update.
+  ) else (
+    echo [git] Pulling latest from remote...
+    git pull
+    if errorlevel 1 (
+      echo [git] git pull FAILED - see the error above; continuing with existing source.
+    ) else (
+      echo [git] git pull OK - source is up to date.
+    )
+  )
+)
+popd
+
+:: ============================================================================
 ::  1. Virtual environment + Python dependencies
 :: ============================================================================
 if not exist "%VENV_DIR%\Scripts\python.exe" (
@@ -59,6 +83,11 @@ if not "%PIP_RC%"=="0" (
   pause
   exit /b 1
 )
+
+:: ============================================================================
+::  1b. Apply vendored library patches (pip install drops the stock wheels)
+:: ============================================================================
+call :apply_patches
 
 :: ============================================================================
 ::  2. Build llama.cpp for this machine
@@ -229,6 +258,20 @@ if not exist "%AI_BIN%" mkdir "%AI_BIN%" >nul 2>&1
 echo [llama] Staging EXE/DLL from %~1 -^> %AI_BIN%
 for %%F in ("%~1\*.exe") do copy /Y "%%~F" "%AI_BIN%" >nul 2>&1
 for %%F in ("%~1\*.dll") do copy /Y "%%~F" "%AI_BIN%" >nul 2>&1
+exit /b 0
+
+
+:: ============================================================================
+::  :apply_patches - copy the vendored library patches over site-packages.
+::  pip install always drops the STOCK wheels; the fixes live in
+::  LoOper\patches (mirroring site-packages) and must be re-applied after
+::  every install.  Idempotent - safe to run on every setup.
+:: ============================================================================
+:apply_patches
+echo.
+echo [patch] Applying vendored library patches...
+"%VENV_DIR%\Scripts\python.exe" "%ROOT%LoOper\patches\apply_patches.py"
+if errorlevel 1 echo [warn] patch step reported stale files - see LoOper\patches.
 exit /b 0
 
 
