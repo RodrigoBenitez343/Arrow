@@ -111,6 +111,17 @@ class OutputMixin:
                 )
                 continue
 
+            # An LLM node's 'context' port carries a JSON {user_input, response}
+            # payload; extract the plain response so the Output node speaks and
+            # displays the answer, not the raw context blob.
+            if isinstance(val, str) and val.lstrip().startswith('{'):
+                try:
+                    _j = json.loads(val)
+                    if isinstance(_j, dict) and _j.get('response'):
+                        val = _j['response']
+                except Exception:
+                    pass
+
             # Determine upstream type for labelling
             source_type = 'unknown'
             upstream_node = {}
