@@ -70,13 +70,9 @@ class OutputMixin:
 
         for inp in inputs:
             from_node_id = inp.get('from_node')
-            if not from_node_id or from_node_id in seen_from_nodes:
-                if not from_node_id:
-                    logger.debug("[OUTPUT] Input connection missing 'from_node': %s", inp)
-                else:
-                    logger.debug("[OUTPUT] Skipping duplicate source %s (already seen)", from_node_id)
+            if not from_node_id:
+                logger.debug("[OUTPUT] Input connection missing 'from_node': %s", inp)
                 continue
-            seen_from_nodes.add(from_node_id)
 
             input_port = str(inp.get('input_port', ''))
             output_type = str(inp.get('output_type') or inp.get('output_port') or 'output')
@@ -88,6 +84,13 @@ class OutputMixin:
                     output_type, from_node_id,
                 )
                 continue
+
+            if from_node_id in seen_from_nodes:
+                logger.debug(
+                    "[OUTPUT] Skipping duplicate source %s (already seen)", from_node_id,
+                )
+                continue
+            seen_from_nodes.add(from_node_id)
 
             # Retrieve the NAMED upstream data — port store first, then legacy.
             val = self.port_store.get_output(self.chain_id, from_node_id, output_type)
@@ -209,6 +212,14 @@ class OutputMixin:
                         )
                     except Exception as _e:
                         logger.warning("[OUTPUT] TTS submission failed: %s", _e)
+            else:
+                # TTS requested but nothing collected and no tts_text default:
+                # report it and let the chain continue.
+                logger.warning(
+                    "[OUTPUT] TTS enabled for node %s but nothing to speak "
+                    "(no upstream data/context collected and no tts_text default)",
+                    node_id,
+                )
 
         # ── Store for downstream consumption (port_store + legacy) ──
         self.port_store.set_output(self.chain_id, node_id, 'output', output_value)
