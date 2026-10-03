@@ -51,8 +51,6 @@ _MODEL_DEFAULT = "laya_english_ud_q4_k_m.gguf"
 _MODEL_FALLBACKS = ("laya_english_q8_0.gguf", "laya_english_f16.gguf")
 _GGUF_DIR = "laya-GGUF"
 
-_READY_GRACE_S = 4.0  # first-launch grace; later calls re-probe
-
 # Burst policy knobs (see the module docstring).  The grace lets the calls of
 # ONE decision burst (done-probe -> worker choice -> ask-probe, ~2 s apart)
 # share a single loaded model; anything longer reloads it.
@@ -252,17 +250,16 @@ def ensure_running() -> bool:
     except Exception as e:
         _disable_for_session(f"launch failed: {e}")
         return False
-    # Short grace window: report ready only if the model finished loading,
-    # otherwise the caller falls back and the next call re-probes.
-    deadline = time.time() + _READY_GRACE_S
-    while time.time() < deadline:
-        if _READY:
-            break
+    # NO timeout: wait until the model is loaded (a long cold start on CPU is
+    # normal) or the daemon dies (a real failure).  A fixed grace made a slow
+    # start look like an unavailable engine, so the pipeline gave up mid-load
+    # (measured 2026-10-03).  We want the run to proceed, not to be fast.
+    while not _READY:
         if _PROC.poll() is not None:
             _disable_for_session("daemon exited during startup — check AI/bin/laya.exe")
             return False
         time.sleep(0.2)
-    return _READY
+    return True
 
 
 def _stop_daemon(reason: str) -> bool:

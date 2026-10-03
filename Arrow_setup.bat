@@ -4,25 +4,30 @@ setlocal
 :: ============================================================================
 ::  arrow / LoOper - one-shot bootstrap + launcher
 :: ----------------------------------------------------------------------------
-::  Clone the repo and run this file.  It will:
-::    0. PULL the latest source from the remote repo
+::  Clone the repo and run this file on a freshly-imaged Windows PC.  It will:
+::    0. PULL the latest source from the remote repo (skipped when git missing)
+::    0b. INSTALL prerequisites up-front: Python 3.11 (winget, else python.org)
+::        and - when llama.cpp still has to be built - the C++ toolchain
+::        (CMake + VS Build Tools).  No manual steps for the user.
 ::    1. create the Python virtual environment and install dependencies
-::    2. BUILD llama.cpp from utils/llama.cpp for this machine's architecture
-::       (no prebuilt binaries are committed - they are produced here)
+::    2. provide the llama.cpp engine: reuse an existing build, else build
+::       utils\llama.cpp (installing CMake + VS Build Tools when absent), else
+::       download a prebuilt llama.cpp release - so no compiler is ever required
 ::    3. DOWNLOAD the base models + browser the app needs:
 ::         Laya decision engine, EmbeddingGemma, SmolLM3, LFM2.5-VL,
 ::         LocateAnything, PaddleOCR (det/rec/cls), Vosk STT, Piper TTS,
 ::         Chrome for Testing + matching chromedriver (web automation)
-::    4. set up the RDP sandbox session
+::    4. set up the RDP sandbox session (OPTIONAL - needs Administrator)
 ::    5. ask Debug vs Normal, then launch LoOper\main.py
+::  Elevation is NOT required for steps 0-3 and 5.
 :: ============================================================================
 
-:: ---- Elevate to Administrator (the RDP sandbox needs it) -------------------
+:: ---- Elevation is OPTIONAL -------------------------------------------------
+:: Everything except the RDP sandbox runs per-user with no admin rights, so we
+:: do NOT force a UAC relaunch (that also broke launches from paths with
+:: spaces).  The RDP step below self-skips when not elevated.
 net session >nul 2>&1
-if %errorlevel% neq 0 (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-  exit /b 0
-)
+if %errorlevel% equ 0 (set "IS_ADMIN=1") else (set "IS_ADMIN=")
 
 set "ROOT=%~dp0"
 set "VENV_DIR=%ROOT%.venv"
@@ -59,6 +64,13 @@ if errorlevel 1 (
 popd
 
 :: ============================================================================
+::  0b. Bootstrap EVERY prerequisite up-front - Python 3.11, and the C++
+::      toolchain (CMake + VS Build Tools) whenever llama.cpp must be built -
+::      so nothing is left for the user to install by hand.
+:: ============================================================================
+call :ensure_prereqs
+
+:: ============================================================================
 ::  1. Virtual environment + Python dependencies
 :: ============================================================================
 if not exist "%VENV_DIR%\Scripts\python.exe" (
@@ -90,7 +102,7 @@ if not "%PIP_RC%"=="0" (
 call :apply_patches
 
 :: ============================================================================
-::  2. Build llama.cpp for this machine
+::  2. Provide the llama.cpp engine (existing build, source build, or prebuilt)
 :: ============================================================================
 call :build_llamacpp
 
@@ -100,8 +112,13 @@ call :build_llamacpp
 call :download_models
 
 :: ============================================================================
-::  4. RDP sandbox session setup
+::  4. RDP sandbox session setup  (OPTIONAL - needs Administrator)
 :: ============================================================================
+if not defined IS_ADMIN (
+  echo [rdp] Not elevated - skipping the optional RDP sandbox setup.
+  echo       ^(Re-run this file "as Administrator" only if you need the RDP agent sandbox.^)
+  goto :after_rdp
+)
 set "RDPWRAP_BIN=%ROOT%utils\rdpwrap\bin"
 set "AGENT_USER=LoOperAgent"
 set "AGENT_PASS=LoOperPassword123!"
@@ -164,6 +181,8 @@ netsh advfirewall firewall set rule group="remote desktop" new enable=Yes >nul 2
 
 cmdkey /generic:TERMSRV/127.0.0.2 /user:%AGENT_USER% /pass:%AGENT_PASS% >nul 2>&1
 
+:after_rdp
+
 :: ============================================================================
 ::  5. Launch - pick Debug (terminal visible) or Normal (no console)
 :: ============================================================================
@@ -193,35 +212,47 @@ goto :eof
 
 
 :: ============================================================================
-::  :build_llamacpp - configure + build the vendored llama.cpp fork and stage
-::  the resulting DLLs/EXEs into LoOper\AI\bin (binaries are never committed).
+::  :build_llamacpp - provide the local inference engine.  Reuses an existing
+::  fork build; else builds utils\llama.cpp (its CMake + VS Build Tools
+::  toolchain was already ensured up-front by :ensure_prereqs); else downloads
+::  a prebuilt llama.cpp release.  Binaries are staged into LoOper\AI\bin AND
+::  left in utils\llama.cpp\build\bin (where the app looks in SOURCE mode).
 :: ============================================================================
 :build_llamacpp
 set "LLAMA_SRC=%ROOT%utils\llama.cpp"
 set "LLAMA_BUILD=%LLAMA_SRC%\build"
-
-if not exist "%LLAMA_SRC%\CMakeLists.txt" (
-  echo [llama] Source not found at "%LLAMA_SRC%" - skipping build.
-  exit /b 0
-)
+set "LLAMA_BIN=%LLAMA_BUILD%\bin"
+set "LLAMA_VK_BIN=%LLAMA_SRC%\build-vulkan\bin\Release"
 
 :: Already built? stage and done.
-if exist "%LLAMA_BUILD%\bin\Release\llama-server.exe" (
-  echo [llama] Existing build found - staging binaries.
-  call :stage_llama "%LLAMA_BUILD%\bin\Release"
+if exist "%LLAMA_VK_BIN%\llama-server.exe" (
+  echo [llama] Existing Vulkan build found - staging binaries.
+  call :stage_llama "%LLAMA_VK_BIN%"
   exit /b 0
 )
-if exist "%LLAMA_BUILD%\bin\llama-server.exe" (
+if exist "%LLAMA_BIN%\Release\llama-server.exe" (
   echo [llama] Existing build found - staging binaries.
-  call :stage_llama "%LLAMA_BUILD%\bin"
+  call :stage_llama "%LLAMA_BIN%\Release"
+  exit /b 0
+)
+if exist "%LLAMA_BIN%\llama-server.exe" (
+  echo [llama] Existing build found - staging binaries.
+  call :stage_llama "%LLAMA_BIN%"
   exit /b 0
 )
 
+if not exist "%LLAMA_SRC%\CMakeLists.txt" (
+  echo [llama] Source not found at "%LLAMA_SRC%" - using a prebuilt release.
+  call :get_prebuilt_llama
+  exit /b 0
+)
+
+:: Toolchain was already ensured up-front by :ensure_prereqs; re-check here.
+call :refresh_path
 where cmake >nul 2>&1
 if errorlevel 1 (
-  echo [llama] CMake not found - cannot build local inference.
-  echo         Install "CMake" and "Visual Studio Build Tools ^(Desktop C++^)",
-  echo         then re-run this script. The app can also fall back to Ollama.
+  echo [llama] CMake unavailable - using a prebuilt llama.cpp release instead.
+  call :get_prebuilt_llama
   exit /b 0
 )
 
@@ -241,7 +272,8 @@ if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "ARCH_FLAG=-A arm64"
 echo [llama] Configuring...
 cmake -S "%LLAMA_SRC%" -B "%LLAMA_BUILD%" -DCMAKE_BUILD_TYPE=Release %BACKEND_FLAGS% %ARCH_FLAG% -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
 if errorlevel 1 (
-  echo [llama] CMake configure failed - skipping build.
+  echo [llama] CMake configure failed - falling back to a prebuilt llama.cpp release.
+  call :get_prebuilt_llama
   exit /b 0
 )
 
@@ -249,8 +281,16 @@ echo [llama] Building (this can take several minutes)...
 cmake --build "%LLAMA_BUILD%" --config Release --parallel
 if errorlevel 1 echo [llama] Build reported errors - continuing.
 
-if exist "%LLAMA_BUILD%\bin\Release\llama-server.exe" call :stage_llama "%LLAMA_BUILD%\bin\Release"
-if exist "%LLAMA_BUILD%\bin\llama-server.exe"         call :stage_llama "%LLAMA_BUILD%\bin"
+if exist "%LLAMA_BIN%\Release\llama-server.exe" (
+  call :stage_llama "%LLAMA_BIN%\Release"
+  exit /b 0
+)
+if exist "%LLAMA_BIN%\llama-server.exe" (
+  call :stage_llama "%LLAMA_BIN%"
+  exit /b 0
+)
+echo [llama] Build produced no llama-server.exe - falling back to a prebuilt release.
+call :get_prebuilt_llama
 exit /b 0
 
 :stage_llama
@@ -413,7 +453,7 @@ if not exist "%PD_DET%" (
   if exist "%TEMP%\en_PP-OCRv3_det_infer.tar" (
     if not exist "%PADDLE_WHL%\det\en" mkdir "%PADDLE_WHL%\det\en" >nul 2>&1
     echo   [pkg ] extracting en_PP-OCRv3_det_infer
-    tar -xf "%TEMP%\en_PP-OCRv3_det_infer.tar" -C "%PADDLE_WHL%\det\en"
+    call :untar "%TEMP%\en_PP-OCRv3_det_infer.tar" "%PADDLE_WHL%\det\en"
   )
 )
 if not exist "%PD_REC%" (
@@ -421,7 +461,7 @@ if not exist "%PD_REC%" (
   if exist "%TEMP%\en_PP-OCRv4_rec_infer.tar" (
     if not exist "%PADDLE_WHL%\rec\en" mkdir "%PADDLE_WHL%\rec\en" >nul 2>&1
     echo   [pkg ] extracting en_PP-OCRv4_rec_infer
-    tar -xf "%TEMP%\en_PP-OCRv4_rec_infer.tar" -C "%PADDLE_WHL%\rec\en"
+    call :untar "%TEMP%\en_PP-OCRv4_rec_infer.tar" "%PADDLE_WHL%\rec\en"
   )
 )
 if not exist "%PD_CLS%" (
@@ -429,14 +469,16 @@ if not exist "%PD_CLS%" (
   if exist "%TEMP%\ch_ppocr_mobile_v2.0_cls_infer.tar" (
     if not exist "%PADDLE_WHL%\cls" mkdir "%PADDLE_WHL%\cls" >nul 2>&1
     echo   [pkg ] extracting ch_ppocr_mobile_v2.0_cls_infer
-    tar -xf "%TEMP%\ch_ppocr_mobile_v2.0_cls_infer.tar" -C "%PADDLE_WHL%\cls"
+    call :untar "%TEMP%\ch_ppocr_mobile_v2.0_cls_infer.tar" "%PADDLE_WHL%\cls"
   )
 )
 exit /b 0
 
 
 :: ============================================================================
-::  :getfile <url> <dest>  - resumable download, skipped when dest is present
+::  :getfile <url> <dest>  - resumable download via a .part file, skipped when
+::  dest already exists.  A failed transfer keeps the .part so a re-run RESUMES
+::  instead of restarting the (multi-GB) download.
 :: ============================================================================
 :getfile
 if exist "%~2" (
@@ -449,12 +491,189 @@ echo   [get ] %~2
 if not exist "%~dp2." mkdir "%~dp2" >nul 2>&1
 where curl >nul 2>&1
 if not errorlevel 1 (
-  curl.exe -L --fail --retry 3 --retry-delay 2 -C - -o "%~2" "%~1"
+  curl.exe -L --fail --retry 5 --retry-delay 2 --retry-connrefused --connect-timeout 30 -C - -o "%~2.part" "%~1"
 ) else (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%~1' -OutFile '%~2' -UseBasicParsing } catch { exit 1 }"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-WebRequest -Uri '%~1' -OutFile '%~2.part' -UseBasicParsing } catch { exit 1 }"
 )
 if errorlevel 1 (
-  echo   [warn] download failed: %~1
-  del /q "%~2" >nul 2>&1
+  echo   [warn] download interrupted: %~1
+  echo          partial kept at %~2.part - re-run this file to resume.
+  exit /b 0
+)
+move /Y "%~2.part" "%~2" >nul 2>&1
+exit /b 0
+
+
+:: ============================================================================
+::  :untar <archive.tar> <dest>  - extract with Python so we never depend on a
+::  system tar.exe (missing on some Windows images).
+:: ============================================================================
+:untar
+if not exist "%~2" mkdir "%~2" >nul 2>&1
+"%VENV_DIR%\Scripts\python.exe" -c "import sys,tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2])" "%~1" "%~2"
+exit /b 0
+
+
+:: ============================================================================
+::  :refresh_path - re-add well-known tool dirs to PATH after an install
+::  (a fresh install only updates the registry, not this process).
+:: ============================================================================
+:refresh_path
+set "PATH=%PATH%;%ROOT%.tools\cmake\bin\;%LocalAppData%\Programs\Python\Python311\;%LocalAppData%\Programs\Python\Python311\Scripts\;C:\Program Files\CMake\bin\;%LocalAppData%\Microsoft\WindowsApps"
+exit /b 0
+
+
+:: ============================================================================
+::  :ensure_prereqs / :find_python / :install_python - guarantee Python 3.11
+::  exists before the venv is created.  Per-user, no forced elevation.
+:: ============================================================================
+:ensure_prereqs
+call :refresh_path
+call :find_python
+if not defined PYTHON (
+  echo [prereq] Python not found - installing Python 3.11...
+  call :install_python
+  call :refresh_path
+  call :find_python
+)
+if not defined PYTHON if exist "%LocalAppData%\Programs\Python\Python311\python.exe" set "PYTHON=%LocalAppData%\Programs\Python\Python311\python.exe"
+if not defined PYTHON (
+  echo [error] Python could not be installed automatically.
+  echo         Install "Python 3.11 (x64)" from https://www.python.org/downloads/
+  echo         ^(tick "Add python.exe to PATH"^), then re-run this file.
+  pause
+  exit /b 1
+)
+echo [prereq] Using Python: %PYTHON%
+
+:: C++ toolchain: only required when llama.cpp still has to be built locally.
+call :find_llama_build
+if defined LLAMA_BUILT (
+  echo [prereq] llama.cpp already built - C++ toolchain not required.
+) else if defined LLAMA_NEEDS_BUILD (
+  call :ensure_toolchain
+) else (
+  echo [prereq] llama.cpp source absent - a prebuilt engine will be used.
+)
+exit /b 0
+
+:find_llama_build
+set "LLAMA_SRC=%ROOT%utils\llama.cpp"
+set "LLAMA_BUILT="
+set "LLAMA_NEEDS_BUILD="
+if exist "%LLAMA_SRC%\build-vulkan\bin\Release\llama-server.exe" set "LLAMA_BUILT=1"
+if exist "%LLAMA_SRC%\build\bin\Release\llama-server.exe" set "LLAMA_BUILT=1"
+if exist "%LLAMA_SRC%\build\bin\llama-server.exe" set "LLAMA_BUILT=1"
+if not defined LLAMA_BUILT if exist "%LLAMA_SRC%\CMakeLists.txt" set "LLAMA_NEEDS_BUILD=1"
+exit /b 0
+
+:ensure_toolchain
+set "TOOLS_MISSING="
+where cmake >nul 2>&1
+if errorlevel 1 set "TOOLS_MISSING=1"
+:: MSVC (Desktop C++) presence via vswhere, which ships with every VS install.
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set "VS_CPP="
+if exist "%VSWHERE%" for /f "usebackq tokens=*" %%P in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2^>nul`) do set "VS_CPP=1"
+if not defined VS_CPP set "TOOLS_MISSING=1"
+if not defined TOOLS_MISSING (
+  echo [prereq] C++ toolchain already installed ^(CMake + MSVC^).
+  exit /b 0
+)
+echo [prereq] Installing the C++ toolchain to build llama.cpp locally...
+call :install_build_tools
+call :refresh_path
+exit /b 0
+
+:find_python
+set "PYTHON="
+where python >nul 2>&1 && set "PYTHON=python"
+if not defined PYTHON if exist "%LocalAppData%\Programs\Python\Python311\python.exe" set "PYTHON=%LocalAppData%\Programs\Python\Python311\python.exe"
+exit /b 0
+
+:install_python
+where winget >nul 2>&1
+if not errorlevel 1 (
+  echo [prereq] Installing Python 3.11 via winget...
+  winget install --id Python.Python.3.11 -e --silent --accept-package-agreements --accept-source-agreements
+  exit /b 0
+)
+echo [prereq] winget not found - using the python.org per-user installer.
+call :getfile "https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe" "%TEMP%\python-3.11.9-amd64.exe"
+if exist "%TEMP%\python-3.11.9-amd64.exe" (
+  echo [prereq] Running the Python installer...
+  "%TEMP%\python-3.11.9-amd64.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1
+)
+exit /b 0
+
+
+:: ============================================================================
+::  :install_build_tools - CMake + VS Build Tools (Desktop C++ workload) so the
+::  vendored llama.cpp fork can be built locally.  Needs admin (winget prompts).
+:: ============================================================================
+:install_build_tools
+call :refresh_path
+where winget >nul 2>&1
+if errorlevel 1 goto :build_tools_direct
+echo [prereq] Installing CMake + VS Build Tools via winget...
+winget install --id Kitware.CMake -e --silent --accept-package-agreements --accept-source-agreements
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e --silent --accept-package-agreements --accept-source-agreements --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+exit /b 0
+
+:: No winget (stripped image): fetch CMake portable + the VS Build Tools
+:: bootstrapper directly.  CMake lands per-user under .tools\cmake.
+:build_tools_direct
+echo [prereq] winget unavailable - downloading CMake + VS Build Tools directly.
+if not exist "%ROOT%.tools\cmake\bin\cmake.exe" (
+  call :getfile "https://github.com/Kitware/CMake/releases/download/v3.30.5/cmake-3.30.5-windows-x86_64.zip" "%TEMP%\cmake-portable.zip"
+  if exist "%TEMP%\cmake-portable.zip" powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$d='%ROOT%.tools'; New-Item -ItemType Directory -Force -Path $d | Out-Null;" ^
+    "Expand-Archive -Path '%TEMP%\cmake-portable.zip' -DestinationPath $d -Force;" ^
+    "$sub=Get-ChildItem $d -Directory -Filter 'cmake-*' | Select-Object -First 1;" ^
+    "if ($sub) { $t=Join-Path $d 'cmake'; if (Test-Path $t) { Remove-Item $t -Recurse -Force }; Rename-Item $sub.FullName 'cmake' }"
+)
+call :getfile "https://aka.ms/vs/17/release/vs_BuildTools.exe" "%TEMP%\vs_BuildTools.exe"
+if exist "%TEMP%\vs_BuildTools.exe" (
+  echo [prereq] Running the VS Build Tools installer ^(may prompt for admin^)...
+  "%TEMP%\vs_BuildTools.exe" --quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended
+)
+exit /b 0
+
+
+:: ============================================================================
+::  :get_prebuilt_llama - download the latest ggml-org/llama.cpp Windows build
+::  (Vulkan, else CPU) and stage it where the app looks.  Requires no compiler.
+:: ============================================================================
+:get_prebuilt_llama
+echo [llama] Fetching a prebuilt llama.cpp release ^(no compiler needed^)...
+set "LLAMA_PRE_ZIP=%TEMP%\llama-prebuilt.zip"
+if exist "%LLAMA_PRE_ZIP%" del /q "%LLAMA_PRE_ZIP%" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "try {" ^
+  "  $rel=Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest' -Headers @{ 'User-Agent'='arrow-setup' };" ^
+  "  $tag=$rel.tag_name;" ^
+  "  $names=@('vulkan-x64','cpu-x64'); if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $names=@('cpu-arm64') };" ^
+  "  foreach ($n in $names) {" ^
+  "    $asset=$rel.assets | Where-Object { $_.name -eq ('llama-' + $tag + '-bin-win-' + $n + '.zip') } | Select-Object -First 1;" ^
+  "    if ($asset) { Write-Host ('[llama] ' + $asset.name); Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%LLAMA_PRE_ZIP%' -UseBasicParsing; break }" ^
+  "  }" ^
+  "} catch { Write-Host ('[llama] release lookup failed: ' + $_.Exception.Message); exit 1 }"
+if not exist "%LLAMA_PRE_ZIP%" (
+  echo [llama] Prebuilt download unavailable - the app can still fall back to Ollama.
+  exit /b 0
+)
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$d=Join-Path $env:TEMP 'llama-prebuilt'; if (Test-Path $d) { Remove-Item $d -Recurse -Force };" ^
+  "Expand-Archive -Path '%LLAMA_PRE_ZIP%' -DestinationPath $d -Force;" ^
+  "$src=$d; if (-not (Test-Path (Join-Path $d 'llama-server.exe'))) { $f=Get-ChildItem $d -Recurse -Filter 'llama-server.exe' | Select-Object -First 1; if ($f) { $src=$f.DirectoryName } };" ^
+  "New-Item -ItemType Directory -Force -Path '%LLAMA_BIN%' | Out-Null;" ^
+  "Copy-Item -Path (Join-Path $src '*') -Destination '%LLAMA_BIN%' -Recurse -Force;"
+del /q "%LLAMA_PRE_ZIP%" >nul 2>&1
+if exist "%LLAMA_BIN%\llama-server.exe" (
+  echo [llama] Prebuilt staged at %LLAMA_BIN%
+  call :stage_llama "%LLAMA_BIN%"
+) else (
+  echo [llama] Prebuilt extraction failed - llama.cpp unavailable ^(Ollama fallback still works^).
 )
 exit /b 0

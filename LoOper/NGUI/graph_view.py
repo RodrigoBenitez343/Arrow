@@ -1062,6 +1062,23 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error opening sequence expansion: {str(e)}", exc_info=True)
 
+    def expand_web_sequence(self, node):
+        """Expand a Web Sequence node into an overlay of its recorded actions.
+
+        The same editable overlay the desktop sequences use (the dialog infers
+        the web kind from the node), so a browser session's individual actions
+        can be inspected, reordered, removed and saved back to its file.
+        """
+        logger.debug(
+            f"Opening web sequence expansion for: {node.name() if node else 'None'}")
+        try:
+            from .dialogs.sequence_expansion_dialog import SequenceExpansionDialog
+            dialog = SequenceExpansionDialog(node, self, kind='web')
+            dialog.exec_()
+        except Exception as e:
+            logger.error(
+                f"Error opening web sequence expansion: {str(e)}", exc_info=True)
+
     def delete_node(self, node):
         """Delete a node from the graph"""
         logger.debug(f"Deleting node: {node.name() if node else 'None'}")

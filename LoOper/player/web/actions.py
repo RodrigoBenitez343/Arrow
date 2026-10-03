@@ -932,6 +932,18 @@ JS_DOM_POINTER = JS_DEEP_SEARCH + """return (function (selectors, button, mode, 
     var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
     return r.left < vw && r.top < vh && r.right > 0 && r.bottom > 0;
   }
+  // Has a real box anywhere on the page.  The last-resort branches scroll the
+  // target into view first, so viewport intersection is too strict there - but
+  // a ZERO-SIZE element is never a click target: dispatching on it is a silent
+  // no-op that still reports success (measured 2026-10-03: a stale 'Network'
+  // locator resolved to a zero-size node, native failed with "element not
+  // interactable: has no size and location", the JS fallback reported OK, and
+  // the page never moved while the run closed 'done').
+  function hasBox(el) {
+    var r = null;
+    try { r = el.getBoundingClientRect(); } catch (e) { return false; }
+    return !!(r && r.width > 0 && r.height > 0);
+  }
   // The recorded LABEL comes first for form fields: it is the field's portable
   // identity (its id/name may embed per-instance tokens that rotate between
   // forms), and __wvpDeepFindLabel only answers when exactly ONE control claims
@@ -994,11 +1006,11 @@ JS_DOM_POINTER = JS_DEEP_SEARCH + """return (function (selectors, button, mode, 
   // and then fails the action, rather than clicking a stranger.
   if (!el) {
     var anyEl = __wvpDeepFindAny(selectors, want);
-    if (anyEl && agrees(anyEl) && rendered(anyEl)) el = anyEl;
+    if (anyEl && agrees(anyEl) && rendered(anyEl) && hasBox(anyEl)) el = anyEl;
   }
   if (!el && needle) {
     var textEl = __wvpDeepFindText(text);
-    if (textEl && agrees(textEl) && rendered(textEl)) el = textEl;
+    if (textEl && agrees(textEl) && rendered(textEl) && hasBox(textEl)) el = textEl;
   }
   if (!el) return false;
   // Synthetic pointer events do NOT trigger the default focus behaviour, so

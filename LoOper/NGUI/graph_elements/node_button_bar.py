@@ -561,11 +561,11 @@ class NodeButtonBarManager(QObject):
 
         if 'sequence' in ntype or 'SequenceNode' in ntype:
             bar_item.set_button_visible('record', True)
-            # Desktop sequences can be expanded into their recorded steps (like
-            # a chain import). Web sessions are a separate node type and are not
-            # expanded here.
-            if not ('web_sequence' in ntype or 'WebSequence' in ntype):
-                bar_item.set_button_visible('expand', True)
+            # Both desktop sequences AND web sessions expand into their
+            # recorded steps (like a chain import) — the overlay edits either
+            # action list, so a web session's individual actions can be
+            # inspected, reordered, removed and saved.
+            bar_item.set_button_visible('expand', True)
             
         elif 'conditional' in ntype or 'ConditionalNode' in ntype:
             # User requested Play button to be visible for Conditional nodes
@@ -590,6 +590,8 @@ class NodeButtonBarManager(QObject):
         elif btn_id == 'expand':
             if 'chain_import' in ntype or 'ChainImport' in ntype:
                 self._on_expand_chain(node)
+            elif 'web_sequence' in ntype or 'WebSequence' in ntype:
+                self._on_expand_web_sequence(node)
             else:
                 self._on_expand_sequence(node)
         elif btn_id == 'play':
@@ -738,6 +740,12 @@ class NodeButtonBarManager(QObject):
             self.parent.expand_sequence(node)
         elif hasattr(self.parent, 'node_operations') and hasattr(self.parent.node_operations, 'expand_sequence'):
             self.parent.node_operations.expand_sequence(node)
+
+    def _on_expand_web_sequence(self, node):
+        if hasattr(self.parent, 'expand_web_sequence'):
+            self.parent.expand_web_sequence(node)
+        elif hasattr(self.parent, 'node_operations') and hasattr(self.parent.node_operations, 'expand_web_sequence'):
+            self.parent.node_operations.expand_web_sequence(node)
 
     def _on_options(self, node):
         if hasattr(self.parent, 'open_node_settings'):

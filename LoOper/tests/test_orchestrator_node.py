@@ -3402,6 +3402,88 @@ def test_step_gate_routes_a_reaching_step_whose_only_objects_are_glue(
     assert got is not None and got['chain_id'] == '0xn', got
 
 
+def test_gate_routes_a_correct_chain_despite_a_parenthetical_gloss(
+        tmp_path, monkeypatch):
+    """A parenthetical aside must not sink a correct match under the floor.
+
+    Measured 2026-10-03 on the shipped library: 'click on the home button for
+    linkedin (goes to base page)' scored 0.252 against 'go to the home page',
+    but 0.5611 without the aside — the gloss alone cost 0.31 and the gate
+    declined the right chain, so a chains-only level did nothing.  The signal
+    is now scored with the aside stripped, and that clears the floor.
+    """
+    import AI.laya_client as lc
+    home = _write_chain(
+        tmp_path / 'linkedin home.json',
+        {'description': 'click on the home button for linkedin '
+                        '(goes to base page)'})
+    h = _Harness()
+    c = _chain_node('0xh', 'linkedin home', home)
+    h.workflow_graph = {'0xh': c}
+    chains = h._orchestrator_collect_chains(
+        {'inputs': [{'from_node': '0xh', 'input_port': 'chains'}]})
+
+    # The aside is gone from the text the gate scores AND routes by.
+    assert '(goes to base page)' not in chains[0]['signal']
+    assert 'click on the home button for linkedin' in chains[0]['signal']
+
+    seen = {}
+
+    def _noul(state, instructions):
+        seen['hyp'] = instructions
+        return 0.5611          # the measured score for this pair, aside gone
+
+    monkeypatch.setattr(lc, 'available', lambda: True)
+    monkeypatch.setattr(lc, 'noul', _noul)
+
+    got = h._orchestrator_route_chain_direct(
+        'go to the home page', chains, [], set())
+    assert got is not None and got['chain_id'] == '0xh', got
+    assert '(goes to base page)' not in seen['hyp']
+
+
+def test_gate_waits_for_a_cold_laya_instead_of_silently_declining(
+        tmp_path, monkeypatch):
+    """A cold Laya must be WAITED for, not silently declined — no timeout.
+
+    Measured 2026-10-03 13:09: the gate launched the daemon, the model was
+    still loading, and the gate returned None with NO log line — so a
+    chains-only level with the right chain wired died 'no_worker' at step 0.
+    The gate NEEDS the engine to route, so while it is genuinely 'loading' it
+    keeps waiting, then routes.  Only an engine that is NOT coming up declines.
+    """
+    import AI.laya_client as lc
+    nav = _write_chain(tmp_path / 'Linkedin_nav.json',
+                       {'description': 'navigate to linkedin on the browser'})
+    h = _Harness()
+    node = _chain_node('0xn', 'Linkedin_nav', nav)
+    h.workflow_graph = {node['id']: node}
+    chains = h._orchestrator_collect_chains(
+        {'inputs': [{'from_node': '0xn', 'input_port': 'chains'}]})
+
+    state = {'polls': 0}
+
+    def _status():
+        state['polls'] += 1
+        return 'ready' if state['polls'] >= 2 else 'loading'
+
+    monkeypatch.setattr(lc, 'status', _status)
+    monkeypatch.setattr(lc, 'available', lambda: state['polls'] >= 2)
+    monkeypatch.setattr(lc, 'ensure_running', lambda: False)  # grace expired
+    monkeypatch.setattr(lc, 'noul', lambda state, instructions: 0.9)
+
+    got = h._orchestrator_route_chain_direct(
+        'Open LinkedIn.com', chains, [], set())
+    assert got is not None and got['chain_id'] == '0xn', got
+
+    # A genuinely absent engine (never 'loading') still declines — the wait
+    # only tolerates a daemon that is really coming up.
+    monkeypatch.setattr(lc, 'status', lambda: 'down')
+    monkeypatch.setattr(lc, 'available', lambda: False)
+    assert h._orchestrator_route_chain_direct(
+        'Open LinkedIn.com', chains, [], set()) is None
+
+
 def test_chain_signal_keeps_the_description_and_adds_learned_examples():
     """A library chain's routing text is description + accumulated examples: an
     example can only ADD signal, never erase the description."""
@@ -3486,6 +3568,22 @@ def test_verified_steps_become_route_examples_only_on_done(tmp_path, monkeypatch
         chains,
         [{'brain_id': '0xn', 'step': 'go to linkedin', 'ok': True}], 'done')
     assert 'routing' not in json.loads(open(nav, encoding='utf-8').read())
+
+
+def test_step_objects_strip_verbs_and_url_fragments():
+    """What a step NAMES once glue is gone: a verb or a URL fragment is not an
+    object, so a bare navigation names nothing and the scorer decides."""
+    from player.multi_sequence.worflow_interpreter_modules.executor_modules \
+        import orchestrator_ops as ops
+
+    lib = frozenset({'linkedin'})          # every chain names the site
+    assert ops._orchestrator_objects('go to linkedin.com', lib) == set()
+    assert ops._orchestrator_objects('Open LinkedIn.com', lib) == set()
+    # The object nouns survive; only the verb and glue fall away.
+    assert ops._orchestrator_objects('Click the jobs button', frozenset()) \
+        == {'job', 'button'}
+    assert ops._orchestrator_objects('press enter key', frozenset()) \
+        == {'enter', 'key'}
 
 
 def test_parse_directives_shape():

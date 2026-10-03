@@ -502,9 +502,10 @@ def test_dispatch_dom_pointer_passes_the_recorded_label():
     assert args[6] == "First name"
     assert "var labelEl = __wvpDeepFindLabel(label);" in script
     # The last resort is still identity-gated: a weak-candidate match is used
-    # only when it AGREES with the record and is rendered.
+    # only when it AGREES with the record, is rendered, AND has a real box (a
+    # zero-size element is a silent no-op that would still report success).
     assert "var anyEl = __wvpDeepFindAny(selectors, want);" in script
-    assert "if (anyEl && agrees(anyEl) && rendered(anyEl)) el = anyEl;" in script
+    assert "&& hasBox(anyEl)) el = anyEl;" in script
 
     # A label with no other identity still dispatches (the label IS the target).
     driver2 = _resolve_driver({}, scripts_return=[True])
