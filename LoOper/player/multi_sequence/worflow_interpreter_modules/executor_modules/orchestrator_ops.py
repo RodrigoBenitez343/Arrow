@@ -86,6 +86,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 import time
 
@@ -261,6 +262,38 @@ def _orchestrator_directive_key(text, generic=frozenset()):
             if w not in _ORCH_STOP_WORDS and w not in (generic or frozenset())}
 
 
+def _orchestrator_objects(text, generic=frozenset()):
+    """A step's OBJECT words: stems minus glue minus library generics.
+
+    Glue is removed too — the action verb (``_ORCH_STATE_DONE_VERBS`` and the
+    leading word) and URL fragments (``_ORCH_URL_GLUE``) name no thing a chain
+    can carry, so 'Open LinkedIn.com' names NOTHING once 'linkedin' is also
+    classified generic.  One extraction, shared by the direct-chain gate and
+    the plan projection, so the shadow log measures what routing measures.
+    """
+    key = (_orchestrator_directive_key(text, generic)
+           - _ORCH_STATE_DONE_VERBS - _ORCH_URL_GLUE)
+    head = str(text or '').split()
+    if head:
+        key = key - {_orchestrator_stem(head[0].strip('",.;:').lower())}
+    return key
+
+
+_ORCH_GLOSS_RE = re.compile(r'\([^)]*\)')
+
+
+def _orchestrator_strip_gloss(text):
+    """Drop parenthetical asides: a gloss confuses the entailment read.
+
+    Measured 2026-10-03 on the shipped linkedin chains: 'click on the home
+    button for linkedin (goes to base page)' scored 0.252 against 'go to the
+    home page', while the SAME text without the aside scored 0.5611 — the
+    parenthetical alone cost 0.31 and sank a correct match under the gate
+    floor (and it adds no object a step can be routed by either).
+    """
+    return ' '.join(_ORCH_GLOSS_RE.sub(' ', str(text or '')).split())
+
+
 def _orchestrator_chain_signal(description, examples, learned=False):
     """The text a chain is ROUTED by: its description PLUS learned examples.
 
@@ -273,7 +306,7 @@ def _orchestrator_chain_signal(description, examples, learned=False):
     a routing signal.
     """
     ex = [str(e).strip() for e in (examples or []) if str(e).strip()]
-    desc = str(description or '').strip()
+    desc = _orchestrator_strip_gloss(description)
     if learned:
         return ' | '.join(ex) or desc
     return ' | '.join([p for p in ([desc] + ex) if p])
@@ -646,7 +679,12 @@ _CHAIN_ROUTING_EXAMPLES = 5
 # read scored 0.506 for a home-button directive and ran because the floor was
 # 0.5).  A miss costs one brain round; a false positive runs the wrong chain —
 # bias strict.
-_CHAIN_GATE_MIN = 0.6
+# Lowered from 0.6 (2026-10-03): measured on a 7-chain library, CORRECT pairs
+# score 0.56-0.84 while the tiny model's noise band stays at or below ~0.52,
+# so 0.6 refused two of the seven right chains ('linkedin home' 0.561 and
+# 'linkedin_search' 0.588) and a chains-only level then did nothing.  0.55 sits
+# above the noise band and below the observed range of correct matches.
+_CHAIN_GATE_MIN = 0.55
 _CHAIN_GATE_MARGIN = 0.10
 
 # Learned-artifact lifecycle (measured 2026-09-25: the routing counters were
@@ -1985,12 +2023,20 @@ class OrchestratorMixin:
             return
         out = []
         unmatched = 0
+        no_object = 0
         for directive in directives:
-            obj = _orchestrator_directive_key(directive, generic) - ambient
-            _w = str(directive or '').split()
-            _verb = (_orchestrator_stem(_w[0].strip('\",.;:').lower())
-                     if _w else '')
-            obj = obj - {_verb}
+            obj = _orchestrator_objects(directive, generic) - ambient
+            if not obj:
+                # The step is pure glue (a bare navigation): there is NO object
+                # to intersect on, so it can never be 'UNMATCHED' — the scorer
+                # decides.  Counting it as a funnel loss misread every reaching
+                # step as a routing failure (measured 2026-10-03: 'go to
+                # linkedin.com -> UNMATCHED' while the gate would route it).
+                no_object += 1
+                out.append(
+                    f"- {str(directive)[:90]} -> "
+                    "(no object: the scorer decides)")
+                continue
             best = []
             for name, lines in workers:
                 for line in lines:
@@ -2008,8 +2054,9 @@ class OrchestratorMixin:
                 unmatched += 1
                 out.append(f"- {str(directive)[:90]} -> UNMATCHED")
         out.append(
-            f"(projection: {len(directives) - unmatched}/{len(directives)} "
-            f"directive(s) matched at least one action line)")
+            f"(projection: {len(directives) - unmatched - no_object}/"
+            f"{len(directives)} directive(s) matched at least one action line, "
+            f"{unmatched} UNMATCHED, {no_object} with no object (scorer decides))")
         log_block(logger, logging.INFO, "Plan projection (shadow)",
                   '\n'.join(out))
 
@@ -2753,7 +2800,19 @@ class OrchestratorMixin:
         try:
             from AI import laya_client as _lc
             if not _lc.available() and not _lc.ensure_running():
-                return None
+                # A still-LOADING daemon is not an unavailable engine: wait for
+                # it as long as it is loading — the pipeline runs, it is not a
+                # race (measured 2026-10-03: the model was still loading, the
+                # gate returned None with no log line, and a chains-only level
+                # died 'no_worker' at step 0 with the right chain wired).  Only
+                # a daemon that is NOT coming up declines, and now says so.
+                while _lc.status() == 'loading':
+                    time.sleep(0.3)
+                if not _lc.available():
+                    logger.info(
+                        "[ORCH] Direct-chain gate: Laya not ready (%s) — "
+                        "falling back to the brain loop", _lc.status())
+                    return None
         except Exception:
             return None
         steps_text = self._orchestrator_render_steps(trace)
@@ -2764,19 +2823,11 @@ class OrchestratorMixin:
         scored = []
         generic = _orchestrator_library_generic(
             [c.get('signal') for c in chains])
-        goal_key = _orchestrator_directive_key(goal, generic)
-        # Glue is not an object: the step's verb ('open', 'navigate', ...) and
-        # any URL/domain fragment name no thing a chain's description can carry,
-        # so they must not be required to be NAMED.  Leaving them in made
-        # 'Open LinkedIn.com' demand that some chain name 'open'/'com' — and
-        # with 'linkedin' classified generic by the library, the step's object
-        # set was EXACTLY those two, so the gate refused although the
-        # 'navigate to linkedin' chain was wired (measured 2026-10-02).
-        goal_key = goal_key - _ORCH_STATE_DONE_VERBS - _ORCH_URL_GLUE
-        _lead = str(goal or '').split()
-        if _lead:
-            goal_key = goal_key - {
-                _orchestrator_stem(_lead[0].strip('",.;:').lower())}
+        # The step's OBJECT words — glue removed (verbs, URL fragments), see
+        # _orchestrator_objects.  Leaving the glue in made 'Open LinkedIn.com'
+        # demand that some chain name 'open'/'com' and refuse the run although
+        # the 'navigate to linkedin' chain was wired (measured 2026-10-02).
+        goal_key = _orchestrator_objects(goal, generic)
         # Ambient words: what the observed state ALREADY shows describes the
         # environment, not the task — it must not confirm a chain (measured
         # 2026-09-25: 'Open Chrome browser' matched 'go to linkedin' on the
@@ -2804,12 +2855,18 @@ class OrchestratorMixin:
             # the run followed it while the floor was 0.5).
             p = _lc.noul(premise, f"The next step toward the goal is to {signal}.")
             if p is None:
+                logger.info(
+                    "[ORCH] Direct-chain gate: Laya read failed on %s — "
+                    "falling back to the brain loop", c['name'])
                 return None  # engine died mid-read — never a guess
             named = ((goal_key
                       & _orchestrator_directive_key(signal, generic))
                      - ambient)
             scored.append((len(named), p, c))
         if not scored:
+            logger.info(
+                "[ORCH] Direct-chain gate: no chain scored (no readable "
+                "signal on the port) — falling back to the brain loop")
             return None
         # The step's OWN objects decide who MAY serve it, the scorer decides
         # WHO does: of the candidates whose human description names at least

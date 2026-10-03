@@ -53,6 +53,7 @@ build/
 dist/
 .cmake-build/
 cmake-build-*/
+.tools/
 *.msi
 *.cab
 *.wixpdb
@@ -136,6 +137,7 @@ LoOper/player/multi_sequence/vision_output/
 LoOper/sequences/screenshots/
 LoOper/chains/
 LoOper/sequences/
+LoOper/web_sequences/
 LoOper/graphui_debug.log
 LoOper/run.log
 LoOper/automation.log*
