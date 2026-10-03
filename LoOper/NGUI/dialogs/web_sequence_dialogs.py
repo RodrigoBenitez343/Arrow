@@ -7,6 +7,10 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QDialogButtonBox,
     QCheckBox,
+    QGroupBox,
+    QVBoxLayout,
+    QTabWidget,
+    QWidget,
 )
 from ..i18n import _
 
@@ -25,8 +29,19 @@ class WebSequencePropertiesDialog(ModernDialog):
         super().__init__(parent, title=_("Web Sequence Properties"), help_topic="web-sequence-dialog")
 
         # Use content_layout from ModernDialog
-        self.layout = self.content_layout
+        _content_layout = self.content_layout
         self._record_requested = False
+
+        _tabs = QTabWidget()
+        _session_tab = QWidget()
+        _sl = QVBoxLayout(_session_tab)
+        _sl.setContentsMargins(0, 0, 0, 0)
+        _sl.setSpacing(8)
+        _extract_tab = QWidget()
+        _el = QVBoxLayout(_extract_tab)
+        _el.setContentsMargins(0, 0, 0, 0)
+        _el.setSpacing(8)
+        self.layout = _sl
 
         # Session file (read-only - assigned by recording or the file picker)
         session_file = web_sequence_config.get('session_file', '')
@@ -70,6 +85,7 @@ class WebSequencePropertiesDialog(ModernDialog):
 
         # Extract from page (ctx_out) toggles: only the checked items are
         # captured after replay and published on the data-only ctx_out port.
+        self.layout = _el
         self.extract_label = QLabel(_("Extract from page (ctx_out):"))
         self.layout.addWidget(self.extract_label)
         self.extract_checks = {}
@@ -87,6 +103,11 @@ class WebSequencePropertiesDialog(ModernDialog):
             cb.setChecked(key in (web_sequence_config.get('extract_items') or []))
             self.layout.addWidget(cb)
             self.extract_checks[key] = cb
+
+        _tabs.addTab(_session_tab, _("Session"))
+        _tabs.addTab(_extract_tab, _("Extraction"))
+        _content_layout.addWidget(_tabs, 1)
+        self.layout = _content_layout
 
         self.record_button = QPushButton(_("Record Web Session…"))
         self.record_button.setToolTip(

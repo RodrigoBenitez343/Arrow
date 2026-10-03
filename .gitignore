@@ -173,6 +173,7 @@ automation.log*
 # Everything below is an unrelated sandbox / upstream mirror / fetched asset
 # and is NOT referenced anywhere in LoOper source or the build pipeline.
 /utils/.cache/
+
 /utils/ComoRAG/
 /utils/NodeEditTestCPP/
 /utils/Stop-RAG/
@@ -186,6 +187,7 @@ automation.log*
 /utils/stop/
 /utils/laya_english_f16.gguf
 /utils/license.bin
+/utils/blockkey/
 
 # -----------------------------------------------------------------------------
 # .qoder — agent workspace (scratch files, caches, ~2 GB test blobs)

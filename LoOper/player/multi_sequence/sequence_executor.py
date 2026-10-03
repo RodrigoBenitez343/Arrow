@@ -1413,7 +1413,16 @@ enablecredsspsupport:i:1
                 pass
             self._web_session_driver = None
         chain_key = getattr(self, "web_chain_key", None)
-        if chain_key:
+        # A web orchestrator with the Headless toggle ON forces an invisible
+        # browser for its child chains: never attach to the inherently-visible
+        # app workbench, launch headless on the same profile scope instead.
+        force_headless = False
+        try:
+            from ..web.session import run_headless
+            force_headless = bool(run_headless())
+        except Exception:
+            force_headless = False
+        if chain_key and not force_headless:
             # Shared app browser (GUI playback): reuse/relaunch the app-wide
             # durable profile.  It is inherently visible (headless is
             # ignored) and stays open after the run for inspection.
@@ -1426,7 +1435,8 @@ enablecredsspsupport:i:1
             self._web_session_driver = ensure_workbench_session(chain_key=chain_key)
             self._web_session_released = True
             return self._web_session_driver
-        profile_key = getattr(self, "web_profile_key", None)
+        profile_key = getattr(self, "web_profile_key", None) or (
+            chain_key if force_headless else None)
         if profile_key:
             # Shared durable profile for non-GUI runs: cookies/history
             # (recording logins) persist across runs and app restarts.  The
@@ -1438,7 +1448,7 @@ enablecredsspsupport:i:1
                 create_session,
                 ensure_workbench_session,
             )
-            if not config.headless:
+            if not config.headless and not force_headless:
                 # Visible run: attach to the still-open shared browser when
                 # there is one (recording left it up - attaching keeps the
                 # live login instead of failing on the locked profile); a
@@ -1500,7 +1510,8 @@ enablecredsspsupport:i:1
             "Creating isolated web browser for chain (headless=%s); "
             "reused by all web sequence nodes", config.headless,
         )
-        self._web_session_driver = create_session(headless=config.headless)
+        self._web_session_driver = create_session(
+            headless=bool(config.headless) or force_headless)
         self._web_session_released = False
         return self._web_session_driver
 

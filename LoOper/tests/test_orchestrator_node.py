@@ -1537,8 +1537,10 @@ def test_state_digest_is_empty_when_nothing_is_observable(monkeypatch):
     assert h._orchestrator_observe_state() == ''
 
 
-def test_state_digest_is_bounded(monkeypatch):
-    """Both parts are capped, and a throwing probe degrades to the other."""
+def test_state_digest_is_bounded_and_exclusive(monkeypatch):
+    """The digest reads ONE surface: the cursor's desktop, or - when the
+    orchestrator is in web mode - the shared browser.  Each part is capped and
+    a throwing probe degrades to ''."""
     from player.multi_sequence.worflow_interpreter_modules.executor_modules \
         import orchestrator_ops as ops
     h = _Harness()
@@ -1547,8 +1549,15 @@ def test_state_digest_is_bounded(monkeypatch):
     monkeypatch.setattr(
         h, '_orchestrator_desktop_state',
         lambda: (_ for _ in ()).throw(RuntimeError('boom')))
-    digest = h._orchestrator_observe_state()
-    assert digest == 'W' * ops._STATE_DIGEST_CHARS
+
+    # Web orchestrator: the browser digest is read (and capped); the desktop
+    # probe is never consulted.
+    h._orchestrator_web_mode = True
+    assert h._orchestrator_observe_state() == 'W' * ops._STATE_DIGEST_CHARS
+
+    # Desktop orchestrator: the browser digest is ignored entirely.
+    h._orchestrator_web_mode = False
+    assert h._orchestrator_observe_state() == ''
 
 
 def test_state_digest_kill_switch(monkeypatch):
@@ -1556,6 +1565,52 @@ def test_state_digest_kill_switch(monkeypatch):
     h = _Harness()
     monkeypatch.setattr(h, '_orchestrator_web_state', lambda: 'Browser now: x')
     assert h._orchestrator_observe_state() == ''
+
+
+def test_desktop_digest_reads_the_cursor_monitor(monkeypatch):
+    """Multi-monitor: the focused window is reported only when it sits on the
+    monitor under the cursor; otherwise the topmost window ON that monitor is
+    used instead of the global foreground window (which may be elsewhere)."""
+    import sys
+    from player.multi_sequence.worflow_interpreter_modules.executor_modules \
+        import orchestrator_ops as ops
+
+    monkeypatch.setattr(ops, '_orchestrator_cursor_monitor_rect',
+                        lambda: (0, 0, 1920, 1080))
+
+    windows = {
+        1: ('Off-screen window', (-2500, 100, -2000, 600)),  # other monitor
+        2: ('On-cursor window', (100, 100, 700, 500)),        # cursor monitor
+    }
+
+    class _FakeWin32Gui:
+        @staticmethod
+        def GetForegroundWindow():
+            return 1
+
+        @staticmethod
+        def GetWindowText(hwnd):
+            return windows.get(int(hwnd), ('', (0, 0, 0, 0)))[0]
+
+        @staticmethod
+        def GetWindowRect(hwnd):
+            return windows.get(int(hwnd), ('', (0, 0, 0, 0)))[1]
+
+        @staticmethod
+        def IsWindowVisible(hwnd):
+            return True
+
+        @staticmethod
+        def EnumWindows(callback, extra):
+            for hwnd in windows:
+                if callback(hwnd, extra) is False:
+                    break
+
+    monkeypatch.setitem(sys.modules, 'win32gui', _FakeWin32Gui)
+
+    digest = _Harness()._orchestrator_desktop_state()
+    assert 'On-cursor window' in digest
+    assert 'Off-screen window' not in digest
 
 
 def test_state_reaches_the_verify_scoper_and_picker(monkeypatch):
@@ -3296,6 +3351,143 @@ def test_step_gate_floor_rejects_the_noise_band(tmp_path, monkeypatch):
         'click on the messages', chains, [], set()) is not None
 
 
+def test_step_gate_routes_a_reaching_step_whose_only_objects_are_glue(
+        tmp_path, monkeypatch):
+    """'Open LinkedIn.com' must reach the chain that navigates there.
+
+    The step's verb ('open') and the URL fragment ('com') are glue, not
+    objects, and the site word ('linkedin') is library-generic because every
+    chain names it — so the step names NO object and the scorer's top pick
+    decides on the floor alone.  Measured live 2026-10-02 on the shipped
+    linkedin chains: navigate 0.751 vs jobs 0.712 (margin 0.039), which the
+    object-margin rule alone refused, killing the run 'no_worker' despite the
+    'navigate to linkedin' chain being wired."""
+    import AI.laya_client as lc
+    nav = _write_chain(tmp_path / 'Linkedin_nav.json',
+                       {'description': 'navigate to linkedin on the browser'})
+    jobs = _write_chain(tmp_path / 'jobs.json',
+                        {'description': 'click on the jobs button on linkedin'})
+    search = _write_chain(
+        tmp_path / 'linkedin_search.json',
+        {'description': 'click the search bar in linkedin, ask the user for '
+                        'input, press enter'})
+    enter = _write_chain(tmp_path / 'press_enter.json',
+                         {'description': 'press enter key'})
+    h = _Harness()
+    nodes = [
+        _chain_node('0xn', 'Linkedin_nav', nav),
+        _chain_node('0xj', 'jobs', jobs),
+        _chain_node('0xs', 'linkedin_search', search),
+        _chain_node('0xe', 'press_enter', enter),
+    ]
+    h.workflow_graph = {n['id']: n for n in nodes}
+    chains = h._orchestrator_collect_chains(
+        {'inputs': [{'from_node': n['id'], 'input_port': 'chains'}
+                    for n in nodes]})
+    scores = {
+        'navigate to linkedin': 0.751,
+        'click on the jobs button': 0.712,
+        'click the search bar': 0.257,
+        'press enter key': 0.003,
+    }
+
+    monkeypatch.setattr(lc, 'available', lambda: True)
+    monkeypatch.setattr(
+        lc, 'noul',
+        lambda state, instructions: next(
+            s for key, s in scores.items() if key in instructions))
+
+    got = h._orchestrator_route_chain_direct(
+        'Open LinkedIn.com', chains, [], set())
+    assert got is not None and got['chain_id'] == '0xn', got
+
+
+def test_chain_signal_keeps_the_description_and_adds_learned_examples():
+    """A library chain's routing text is description + accumulated examples: an
+    example can only ADD signal, never erase the description."""
+    from player.multi_sequence.worflow_interpreter_modules.executor_modules \
+        import orchestrator_ops as ops
+
+    sig = ops._orchestrator_chain_signal(
+        'navigate to linkedin on the browser',
+        ['Open LinkedIn.com', 'go to linkedin'], learned=False)
+    assert 'navigate to linkedin on the browser' in sig
+    assert 'Open LinkedIn.com' in sig and 'go to linkedin' in sig
+    # No examples -> the description stands alone.
+    assert ops._orchestrator_chain_signal('click the jobs button', [], False) \
+        == 'click the jobs button'
+    # A learned artifact keeps examples-only (its description is narration).
+    assert ops._orchestrator_chain_signal(
+        'Learned from a verified run: 1) jobs; 2) search',
+        ['Find a monitor'], learned=True) == 'Find a monitor'
+
+
+def test_route_examples_append_is_bounded_deduped_and_valid(tmp_path):
+    """Verified steps accumulate on the chain file: newest kept, dupes dropped,
+    oldest evicted, and the file stays valid JSON."""
+    from player.multi_sequence.worflow_interpreter_modules.executor_modules \
+        import orchestrator_ops as ops
+
+    f = _write_chain(tmp_path / 'jobs.json',
+                     {'description': 'click on the jobs button on linkedin'})
+    assert ops._orchestrator_append_route_examples(f, ['Click the jobs button'])
+    # Whitespace/case-only duplicate -> no change, no write.
+    assert not ops._orchestrator_append_route_examples(
+        f, ['  click  the jobs button '])
+    for i in range(6):
+        ops._orchestrator_append_route_examples(f, ['step %d' % i])
+
+    cfg = json.loads(open(f, encoding='utf-8').read())
+    ex = cfg['routing']['examples']
+    assert len(ex) == ops._CHAIN_ROUTING_EXAMPLES      # bounded
+    assert ex[-1] == 'step 5'                          # newest kept
+    assert 'Click the jobs button' not in ex           # oldest evicted
+    assert len(ex) == len({e.lower() for e in ex})     # all unique
+
+
+def test_verified_steps_become_route_examples_only_on_done(tmp_path, monkeypatch):
+    """Reinforcement is PER STEP and only from a run that closed 'done': the
+    chain that served a verified directive gets that directive as a routing
+    example, and a step the verify REJECTED (or a non-'done' run) is never
+    credited — the run's single final rating is not the signal."""
+    jobs = _write_chain(tmp_path / 'jobs.json',
+                        {'description': 'click on the jobs button on linkedin'})
+    nav = _write_chain(tmp_path / 'Linkedin_nav.json',
+                       {'description': 'navigate to linkedin on the browser'})
+    h = _Harness()
+    nodes = [_chain_node('0xj', 'jobs', jobs),
+             _chain_node('0xn', 'Linkedin_nav', nav)]
+    h.workflow_graph = {n['id']: n for n in nodes}
+    chains = h._orchestrator_collect_chains(
+        {'inputs': [{'from_node': n['id'], 'input_port': 'chains'}
+                    for n in nodes]})
+    monkeypatch.setenv('LOOPER_ORCH_ROUTES', 'on')
+
+    trace = [
+        {'n': 1, 'brain': 'jobs', 'brain_id': '0xj',
+         'step': 'Click the jobs button', 'ok': True},
+        {'n': 2, 'brain': 'Linkedin_nav', 'brain_id': '0xn',
+         'step': 'Open LinkedIn.com', 'ok': False},   # verify REJECTED it
+    ]
+
+    # A run that did NOT close 'done' teaches nothing.
+    h._orchestrator_record_route_examples(chains, trace, 'no_worker')
+    assert 'routing' not in json.loads(open(jobs, encoding='utf-8').read())
+
+    # 'done' -> only the VERIFIED step lands, on its own chain.
+    h._orchestrator_record_route_examples(chains, trace, 'done')
+    assert json.loads(open(jobs, encoding='utf-8').read())[
+        'routing']['examples'] == ['Click the jobs button']
+    assert 'routing' not in json.loads(open(nav, encoding='utf-8').read())
+
+    # Kill switch: nothing is written with LOOPER_ORCH_ROUTES=off.
+    monkeypatch.setenv('LOOPER_ORCH_ROUTES', 'off')
+    h._orchestrator_record_route_examples(
+        chains,
+        [{'brain_id': '0xn', 'step': 'go to linkedin', 'ok': True}], 'done')
+    assert 'routing' not in json.loads(open(nav, encoding='utf-8').read())
+
+
 def test_parse_directives_shape():
     """The parser shapes the MODEL's list — one line, one directive — and it
     never cuts a line into pieces (a cut step is a fragment the gate cannot
@@ -3848,6 +4040,93 @@ def test_freeze_wiring_refuses_when_no_orchestrator_matches(tmp_path, monkeypatc
         str(learned), {'id': 'stale-id', 'type': 'orchestrator'}) is False
     assert json.loads(orch_file.read_text(encoding='utf-8'))['chain_import_nodes'] == []
     assert learned.exists(), 'the artifact itself is never thrown away'
+
+
+def test_freeze_wiring_targets_an_llm_orchestrator_tools_port(tmp_path, monkeypatch):
+    """The Orchestrator is now an LLM-node switch: its action port is 'tools',
+    not 'chains'.  Reading only orchestrator_nodes left the learned chain on
+    disk but UNWIRED, and a 'chains' edge on an LLM node is dropped at build
+    time (measured 2026-10-02: a chains-only run produced no wire at all)."""
+    monkeypatch.delenv('LOOPER_LEARN', raising=False)
+    learned = tmp_path / 'learned_llm.json'
+    learned.write_text(json.dumps({'description': 'x'}), encoding='utf-8')
+    orch_file = tmp_path / 'SYSTEM.json'
+    orch_file.write_text(json.dumps({
+        'llm_nodes': [{'node_id': '0xllm', 'orchestrator_mode': True,
+                       'connections': []}],
+        'chain_import_nodes': [],
+    }), encoding='utf-8')
+
+    h = _Harness()
+    h.chain_identity = str(orch_file)
+    assert h._orchestrator_attach_learned_chain(
+        str(learned), {'id': '0xllm', 'type': 'llm'}) is True
+
+    wired = json.loads(orch_file.read_text(encoding='utf-8'))
+    conn = wired['chain_import_nodes'][0]['connections'][0]
+    assert conn['target_node_id'] == '0xllm', conn
+    assert conn['input_port'] == 'tools', conn
+
+
+def test_chains_port_done_probe_sees_the_step_that_failed_verification(
+        tmp_path, monkeypatch):
+    """A direct chain that RAN but failed its per-step verdict must stay on the
+    directive's trace: the chains-only done-probe reads that trace.  A slice
+    taken BEFORE the append read EMPTY, so the probe never ran (no verdict was
+    even logged) and the level closed 'no_worker' though the chains port alone
+    had served the goal (measured 2026-10-02)."""
+    import AI.laya_client as lc
+    monkeypatch.delenv('LOOPER_LEARN', raising=False)
+
+    lib1 = _write_chain(tmp_path / 'go.json',
+                        {'description': 'navigates to linkedin'})
+    lib2 = _write_chain(tmp_path / 'jobs.json',
+                        {'description': 'clicks the jobs button'})
+    orch_file = tmp_path / 'ORCHESTRATOR.json'
+    orch_file.write_text(json.dumps({
+        'orchestrator_nodes': [{'node_id': 'orch1', 'connections': []}],
+        'chain_import_nodes': [],
+    }), encoding='utf-8')
+
+    c1 = _chain_node('0xc1', 'Go chain', lib1)
+    c2 = _chain_node('0xc2', 'Jobs chain', lib2)
+    orch = _orch_with_ports(chains=[c1, c2])
+    h = _make(orch, [c1, c2],
+              goal='navigate to linkedin then click the jobs button')
+    h.chain_identity = str(orch_file)
+    h.directive_plan = ['navigate to linkedin', 'click the jobs button']
+
+    monkeypatch.setattr(lc, 'available', lambda: True)
+    monkeypatch.setattr(lc, 'ensure_running', lambda: True)
+
+    def _noul(state, instructions):
+        if 'accomplished what it was asked' in instructions:
+            return 0.1 if 'jobs' in str(state) else 0.9   # step 2 fails
+        if 'fully achieved' in instructions:
+            return 0.9                                    # chains-port probe
+        return 0.1
+    monkeypatch.setattr(lc, 'noul', _noul)
+
+    # Deterministic routing: the gate's scoring is not under test here.
+    def _route(goal, chains, trace=None, used=None, state=None):
+        used = used or set()
+        want = '0xc2' if 'jobs' in str(goal) else '0xc1'
+        for c in chains:
+            if c['chain_id'] == want and c['chain_id'] not in used:
+                return c
+        return None
+    h._orchestrator_route_chain_direct = _route
+
+    def _chain(node, stop_flag=None, *a, **k):
+        h.set_variable('chain_tool_last_result_text', f"{node.get('id')} ok")
+        return '__done__'
+    h._execute_chain_import_node = _chain
+
+    h._execute_orchestrator_node(orch, None)
+
+    # The probe judged the step that failed verification, so the level closed
+    # structurally complete ('done') instead of 'no_worker'.
+    assert orch.get('_orchestrator_fulfilled') is True
 
 
 def test_attach_resolves_the_id_the_builder_actually_keeps(tmp_path, monkeypatch):

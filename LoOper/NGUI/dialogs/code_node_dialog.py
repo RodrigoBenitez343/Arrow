@@ -27,8 +27,10 @@ from PyQt5.QtWidgets import (
 
 from .base_dialog import ModernDialog
 from ..constants import (
-    ACCENT_COLOR, BLOCK_COLOR, BLOCK_HOVER, CODE_NODE_COLOR,
-    DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, SIDE_PANEL_BG, BAR_BG,
+    ACCENT_COLOR, ACCENT_HOVER, ACCENT_SOFT, BLOCK_COLOR, BLOCK_HOVER, CODE_NODE_COLOR,
+    DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, TEXT_MUTED, SIDE_PANEL_BG, BAR_BG,
+    CARD_BG, WELL_BG, CONTROL_BG, BTN_PRIMARY_TEXT, DANGER_COLOR,
+    DIALOG_LARGE_W, DIALOG_LARGE_H, DIALOG_MIN_W, DIALOG_MIN_H,
 )
 from ..i18n import _
 from .agentic_loop_controller import AgenticLoopController, LoopPhase, IterationRecord, _resolve_python
@@ -285,8 +287,9 @@ class CodeNodeDialog(ModernDialog):
     def __init__(self, parent=None, config=None):
         super().__init__(parent, title=_("Code Node"), help_topic="code-node-dialog",
                          show_help_button=True)
-        self.setMinimumSize(780, 680)
-        self.resize(880, 760)
+        self._auto_fit = False
+        self.setMinimumSize(DIALOG_MIN_W, DIALOG_MIN_H)
+        self.resize(DIALOG_LARGE_W, DIALOG_LARGE_H)
 
         self._refresh_complete_signal.connect(self._on_refresh_complete)
 
@@ -385,11 +388,11 @@ class CodeNodeDialog(ModernDialog):
         self.engine_combo.setFixedHeight(28)
         self.engine_combo.setFixedWidth(90)
         self.engine_combo.setStyleSheet(
-            f"QComboBox {{ background-color: {SIDE_PANEL_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"QComboBox {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 2px 8px; font-size: 12px; }}"
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
-            f"QComboBox QAbstractItemView {{ background-color: {SIDE_PANEL_BG}; "
+            f"QComboBox QAbstractItemView {{ background-color: {CONTROL_BG}; "
             f"color: {TEXT_COLOR}; selection-background-color: {ACCENT_COLOR}; "
             f"selection-color: #000; }}"
         )
@@ -406,11 +409,11 @@ class CodeNodeDialog(ModernDialog):
         self.model_combo.setFixedHeight(28)
         self.model_combo.setMinimumWidth(160)
         self.model_combo.setStyleSheet(
-            f"QComboBox {{ background-color: {SIDE_PANEL_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"QComboBox {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 2px 10px; font-size: 12px; }}"
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
-            f"QComboBox QAbstractItemView {{ background-color: {SIDE_PANEL_BG}; "
+            f"QComboBox QAbstractItemView {{ background-color: {CONTROL_BG}; "
             f"color: {TEXT_COLOR}; selection-background-color: {ACCENT_COLOR}; "
             f"selection-color: #000; }}"
         )
@@ -422,8 +425,8 @@ class CodeNodeDialog(ModernDialog):
         self.refresh_btn.setToolTip(_("Refresh Ollama models"))
         self.refresh_btn.setCursor(Qt.PointingHandCursor)
         self.refresh_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {LIGHT_GREY}; "
-            f"border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; "
+            f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
+            f"border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; "
             f"font-size: 11px; font-weight: 600; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
         )
@@ -441,11 +444,11 @@ class CodeNodeDialog(ModernDialog):
         self.llamacpp_combo.setFixedHeight(28)
         self.llamacpp_combo.setMinimumWidth(200)
         self.llamacpp_combo.setStyleSheet(
-            f"QComboBox {{ background-color: {SIDE_PANEL_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"QComboBox {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 2px 10px; font-size: 12px; }}"
             f"QComboBox::drop-down {{ border: none; width: 20px; }}"
-            f"QComboBox QAbstractItemView {{ background-color: {SIDE_PANEL_BG}; "
+            f"QComboBox QAbstractItemView {{ background-color: {CONTROL_BG}; "
             f"color: {TEXT_COLOR}; selection-background-color: {ACCENT_COLOR}; "
             f"selection-color: #000; }}"
         )
@@ -471,8 +474,8 @@ class CodeNodeDialog(ModernDialog):
         self.desc_edit.setFixedWidth(140)
         self.desc_edit.setFixedHeight(26)
         self.desc_edit.setStyleSheet(
-            f"QLineEdit {{ background-color: {SIDE_PANEL_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"QLineEdit {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 2px 8px; font-size: 11px; }}"
             f"QLineEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
         )
@@ -489,10 +492,10 @@ class CodeNodeDialog(ModernDialog):
         save_btn.setFixedHeight(28)
         save_btn.setCursor(Qt.PointingHandCursor)
         save_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
-            f"border: 0px; border-radius: 6px; padding: 0px 16px; "
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT}; "
+            f"border: 0px; border-radius: 8px; padding: 0px 16px; "
             f"font-size: 12px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}"
         )
         save_btn.clicked.connect(self.accept)
         layout.addWidget(save_btn)
@@ -504,7 +507,7 @@ class CodeNodeDialog(ModernDialog):
         chat_frame = QFrame()
         chat_frame.setObjectName("codeChatFrame")
         chat_frame.setStyleSheet(
-            f"QFrame#codeChatFrame {{ background-color: {DARK_GREY}; }}"
+            f"QFrame#codeChatFrame {{ background-color: {CARD_BG}; }}"
         )
         chat_layout = QVBoxLayout(chat_frame)
         chat_layout.setContentsMargins(16, 8, 16, 8)
@@ -541,7 +544,7 @@ class CodeNodeDialog(ModernDialog):
         container = QWidget()
         container.setObjectName("codePanelContainer")
         container.setStyleSheet(
-            f"QWidget#codePanelContainer {{ background-color: {SIDE_PANEL_BG}; "
+            f"QWidget#codePanelContainer {{ background-color: {CARD_BG}; "
             f"border-top: 1px solid rgba(255,255,255,0.06); }}"
         )
         layout = QVBoxLayout(container)
@@ -599,7 +602,7 @@ class CodeNodeDialog(ModernDialog):
         self._syntax_btn.clicked.connect(self._syntax_check)
         code_header.addWidget(self._syntax_btn)
 
-        self._kill_btn = self._make_small_button(_("Stop"), '#ef4444')
+        self._kill_btn = self._make_small_button(_("Stop"), DANGER_COLOR)
         self._kill_btn.setEnabled(False)
         self._kill_btn.clicked.connect(self._kill_process)
         code_header.addWidget(self._kill_btn)
@@ -609,8 +612,8 @@ class CodeNodeDialog(ModernDialog):
         self._code_edit = QPlainTextEdit()
         self._code_edit.setFont(QFont("Consolas", 10))
         self._code_edit.setStyleSheet(
-            f"QPlainTextEdit {{ background-color: #1E1E1E; color: #D4D4D4; "
-            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; }}"
+            f"QPlainTextEdit {{ background-color: {WELL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; }}"
         )
         self._code_edit.setPlainText(self.current_code)
         self._code_edit.textChanged.connect(self._on_code_changed)
@@ -646,7 +649,7 @@ class CodeNodeDialog(ModernDialog):
         self._term_output.setFont(QFont("Consolas", 10))
         self._term_output.setStyleSheet(
             f"QPlainTextEdit {{ background-color: #0C0C0C; color: #00FF00; "
-            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; }}"
+            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; }}"
         )
         term_panel_layout.addWidget(self._term_output, 1)
 
@@ -658,7 +661,7 @@ class CodeNodeDialog(ModernDialog):
         self._term_input.setPlaceholderText(_("Type a shell command or Python expression..."))
         self._term_input.setStyleSheet(
             f"QLineEdit {{ background-color: #0C0C0C; color: #00FF00; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 4px 8px; font-family: Consolas; font-size: 11px; }}"
             f"QLineEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
         )
@@ -670,7 +673,7 @@ class CodeNodeDialog(ModernDialog):
         send_cmd_btn.setToolTip(_("Send command"))
         send_cmd_btn.setStyleSheet(
             f"QPushButton {{ background-color: #0C0C0C; color: #00FF00; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"font-size: 12px; font-weight: 600; }}"
             f"QPushButton:hover {{ background-color: #1A1A1A; }}"
         )
@@ -693,7 +696,7 @@ class CodeNodeDialog(ModernDialog):
         self._test_args_edit.setMaximumHeight(60)
         self._test_args_edit.setStyleSheet(
             f"QPlainTextEdit {{ background-color: #0C0C0C; color: #00FF00; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 4px 8px; font-family: Consolas; font-size: 10px; }}"
         )
         test_args_layout.addWidget(self._test_args_edit, 1)
@@ -731,8 +734,8 @@ class CodeNodeDialog(ModernDialog):
 
         self._deps_list = QListWidget()
         self._deps_list.setStyleSheet(
-            f"QListWidget {{ background-color: #1E1E1E; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; "
+            f"QListWidget {{ background-color: {WELL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; "
             f"font-size: 12px; }}"
             f"QListWidget::item {{ padding: 4px 8px; }}"
             f"QListWidget::item:selected {{ background-color: {ACCENT_COLOR}; color: #000; }}"
@@ -744,8 +747,8 @@ class CodeNodeDialog(ModernDialog):
         self._dep_input = QLineEdit()
         self._dep_input.setPlaceholderText(_("package name"))
         self._dep_input.setStyleSheet(
-            f"QLineEdit {{ background-color: {MEDIUM_GREY}; color: {TEXT_COLOR}; "
-            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; "
+            f"QLineEdit {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
+            f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 4px 8px; font-size: 11px; }}"
         )
         deps_controls.addWidget(self._dep_input)
@@ -753,8 +756,8 @@ class CodeNodeDialog(ModernDialog):
         add_dep_btn = QPushButton(_("Add"))
         add_dep_btn.setFixedHeight(26)
         add_dep_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
-            f"border: 0px; border-radius: 6px; font-size: 11px; font-weight: 600; }}"
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT}; "
+            f"border: 0px; border-radius: 8px; font-size: 11px; font-weight: 600; }}"
         )
         add_dep_btn.clicked.connect(self._add_dependency)
         deps_controls.addWidget(add_dep_btn)
@@ -762,8 +765,8 @@ class CodeNodeDialog(ModernDialog):
         remove_dep_btn = QPushButton(_("Remove"))
         remove_dep_btn.setFixedHeight(26)
         remove_dep_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: #ef4444; "
-            f"border: 1px solid #ef4444; border-radius: 6px; font-size: 11px; font-weight: 600; }}"
+            f"QPushButton {{ background-color: transparent; color: {DANGER_COLOR}; "
+            f"border: 1px solid {DANGER_COLOR}; border-radius: 8px; font-size: 11px; font-weight: 600; }}"
         )
         remove_dep_btn.clicked.connect(self._remove_dependency)
         deps_controls.addWidget(remove_dep_btn)
@@ -792,7 +795,7 @@ class CodeNodeDialog(ModernDialog):
 
         self._io_input_container = QWidget()
         self._io_input_container.setStyleSheet(
-            f"background-color: #1E1E1E; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;"
+            f"background-color: {WELL_BG}; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;"
         )
         self._io_input_layout = QVBoxLayout(self._io_input_container)
         self._io_input_layout.setContentsMargins(8, 6, 8, 6)
@@ -807,7 +810,7 @@ class CodeNodeDialog(ModernDialog):
             f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR}; "
             f"border: 1px dashed {ACCENT_COLOR}; border-radius: 4px; "
             f"font-size: 10px; font-weight: 600; padding: 0px 10px; }}"
-            f"QPushButton:hover {{ background-color: rgba(0,224,184,0.08); }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_SOFT}; }}"
         )
         add_input_var_btn.clicked.connect(lambda: self._add_input_var_row())
         io_panel_layout.addWidget(add_input_var_btn)
@@ -824,7 +827,7 @@ class CodeNodeDialog(ModernDialog):
 
         self._io_output_container = QWidget()
         self._io_output_container.setStyleSheet(
-            f"background-color: #1E1E1E; border: 1px solid rgba(255,255,255,0.06); border-radius: 6px;"
+            f"background-color: {WELL_BG}; border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;"
         )
         self._io_output_layout = QVBoxLayout(self._io_output_container)
         self._io_output_layout.setContentsMargins(8, 6, 8, 6)
@@ -839,7 +842,7 @@ class CodeNodeDialog(ModernDialog):
             f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR}; "
             f"border: 1px dashed {ACCENT_COLOR}; border-radius: 4px; "
             f"font-size: 10px; font-weight: 600; padding: 0px 10px; }}"
-            f"QPushButton:hover {{ background-color: rgba(0,224,184,0.08); }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_SOFT}; }}"
         )
         add_output_var_btn.clicked.connect(lambda: self._add_output_var_row())
         io_panel_layout.addWidget(add_output_var_btn)
@@ -879,7 +882,7 @@ class CodeNodeDialog(ModernDialog):
         self._input_field.setMaximumHeight(100)
         self._input_field.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._input_field.setStyleSheet(
-            f"QTextEdit {{ background-color: {SIDE_PANEL_BG}; color: {TEXT_COLOR}; "
+            f"QTextEdit {{ background-color: {CONTROL_BG}; color: {TEXT_COLOR}; "
             f"border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; "
             f"padding: 8px 12px; font-size: 13px; }}"
             f"QTextEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
@@ -891,10 +894,10 @@ class CodeNodeDialog(ModernDialog):
         self._send_btn.setFixedHeight(36)
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT}; "
             f"border: 0px; border-radius: 8px; padding: 8px 18px; "
             f"font-size: 13px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}"
         )
         self._send_btn.clicked.connect(self._send_message)
         layout.addWidget(self._send_btn, 0)
@@ -913,10 +916,10 @@ class CodeNodeDialog(ModernDialog):
         btn.setCheckable(True)
         btn.setChecked(active)
         active_bg = f"background-color: {color}; color: #000;"
-        inactive_bg = f"background-color: transparent; color: {LIGHT_GREY}; border: 1px solid rgba(255,255,255,0.10);"
+        inactive_bg = f"background-color: transparent; color: {TEXT_MUTED}; border: 1px solid rgba(255,255,255,0.10);"
         btn.setStyleSheet(
             f"QPushButton {{ {active_bg if active else inactive_bg} "
-            f"border-radius: 6px; padding: 0px 12px; font-size: 11px; font-weight: 600; }}"
+            f"border-radius: 8px; padding: 0px 12px; font-size: 11px; font-weight: 600; }}"
             f"QPushButton:hover {{ background-color: rgba(255,255,255,0.10); }}"
         )
         return btn
@@ -951,12 +954,12 @@ class CodeNodeDialog(ModernDialog):
             if active:
                 btn.setStyleSheet(
                     f"QPushButton {{ background-color: {color}; color: #000; "
-                    f"border-radius: 6px; padding: 0px 12px; font-size: 11px; font-weight: 600; }}"
+                    f"border-radius: 8px; padding: 0px 12px; font-size: 11px; font-weight: 600; }}"
                 )
             else:
                 btn.setStyleSheet(
-                    f"QPushButton {{ background-color: transparent; color: {LIGHT_GREY}; "
-                    f"border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; "
+                    f"QPushButton {{ background-color: transparent; color: {TEXT_MUTED}; "
+                    f"border: 1px solid rgba(255,255,255,0.10); border-radius: 8px; "
                     f"padding: 0px 12px; font-size: 11px; font-weight: 600; }}"
                     f"QPushButton:hover {{ background-color: rgba(255,255,255,0.10); }}"
                 )
@@ -1637,11 +1640,11 @@ class CodeNodeDialog(ModernDialog):
         remove_btn.setCursor(Qt.PointingHandCursor)
         remove_btn.setToolTip(_("Remove this variable"))
         remove_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: #ef4444; "
+            f"QPushButton {{ background-color: transparent; color: {DANGER_COLOR}; "
             f"border: 1px solid transparent; border-radius: 4px; "
             f"font-size: 14px; font-weight: 600; }}"
             f"QPushButton:hover {{ background-color: rgba(239,68,68,0.15); "
-            f"border-color: #ef4444; }}"
+            f"border-color: {DANGER_COLOR}; }}"
         )
         remove_btn.clicked.connect(lambda: self._remove_var_row(row, is_input))
         rl.addWidget(remove_btn)

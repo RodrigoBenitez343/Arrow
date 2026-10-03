@@ -919,6 +919,61 @@ def test_create_session_uses_single_launcher_and_counts_spawns(tmp_path, monkeyp
     assert web_session._SPAWNED_SESSIONS == 2
 
 
+def test_existing_workbench_driver_never_spawns(monkeypatch):
+    """State observation may only READ a live browser: with nothing in the
+    registry the accessor returns None and never launches a session."""
+    from player.web import session as web_session
+
+    spawned = []
+    monkeypatch.setattr(web_session, 'create_session',
+                        lambda *a, **k: spawned.append(1) or object())
+    monkeypatch.setattr(web_session, '_WORKBENCH_DRIVERS', {})
+
+    assert web_session.existing_workbench_driver('default') is None
+    assert spawned == []
+
+
+def test_run_headless_flag_is_opt_in_and_restorable(monkeypatch):
+    from player.web import session as web_session
+    monkeypatch.setattr(web_session, '_RUN_HEADLESS', False)
+
+    assert web_session.run_headless() is False
+    web_session.set_run_headless(True)
+    assert web_session.run_headless() is True
+    web_session.set_run_headless(False)
+    assert web_session.run_headless() is False
+
+
+def test_forced_headless_run_overrides_a_visible_web_chain(tmp_path, monkeypatch):
+    """A headless web orchestrator makes its child web chains launch an
+    invisible browser even when the chain itself did not opt in - and never
+    attaches to the inherently-visible workbench."""
+    from player.multi_sequence.sequence_executor import SequenceExecutor
+    from player.web import session as web_session
+
+    ex = SequenceExecutor.__new__(SequenceExecutor)
+    ex._web_session_driver = None
+    ex.web_chain_key = None
+    ex.web_profile_key = 'default'
+
+    created = []
+    monkeypatch.setattr(web_session, 'create_session',
+                        lambda **kw: created.append(kw) or object())
+    monkeypatch.setattr(web_session, '_find_workbench_browser', lambda key: None)
+    monkeypatch.setattr(web_session, '_chain_scope_dir', lambda key: tmp_path)
+
+    class _Cfg:
+        headless = False
+
+    web_session.set_run_headless(True)
+    try:
+        ex._get_or_create_web_driver(_Cfg())
+    finally:
+        web_session.set_run_headless(False)
+
+    assert created and created[0].get('headless') is True
+
+
 def test_visible_session_opens_maximised_on_the_starting_monitor(tmp_path, monkeypatch):
     """A visible browser is positioned on the monitor the run was started from
     and maximised there; a headless one takes no window placement at all."""

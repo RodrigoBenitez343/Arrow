@@ -71,6 +71,10 @@ class ConfigManager:
             self._current_chain_description = ""
             self._current_chain_collection = ""
             self._current_chain_file = ""
+            # Accumulated routing examples (written by the player's orchestrator:
+            # the verified steps each chain served).  Held with the chain through
+            # editor load/save so the reinforcement is not silently erased.
+            self._current_chain_routing = {}
             # The default system-chain flag must survive editor load/save
             # cycles — losing it silently demotes ORCHESTRATOR.json to "some
             # System chain" and the router may boot a different root.
@@ -154,6 +158,12 @@ class ConfigManager:
                 "collection": getattr(self, "_current_chain_collection", ""),
                 "description": getattr(self, "_current_chain_description", ""),
             }
+            # The orchestrator writes routing.examples into the chain file;
+            # dropping them here would erase the accumulated reinforcement on the
+            # next GUI save, so they ride through the editor untouched.
+            _routing = getattr(self, "_current_chain_routing", None)
+            if _routing:
+                self.chain_config["routing"] = _routing
             # Preserve the default-root flag across save cycles (see load).
             if getattr(self, "_current_chain_is_default", False):
                 self.chain_config["is_default"] = True
@@ -307,6 +317,7 @@ class ConfigManager:
 
                 self._current_chain_description = loaded_config.get("description", "")
                 self._current_chain_collection = loaded_config.get("collection", "")
+                self._current_chain_routing = loaded_config.get("routing") or {}
                 self._current_chain_is_default = bool(loaded_config.get("is_default"))
                 self._current_chain_file = file_path
                 # Loaded chains keep the shared app-wide web browser scope:
@@ -333,6 +344,8 @@ class ConfigManager:
                     "output_nodes": loaded_config.get("output_nodes", []),
                     "web_sequences": loaded_config.get("web_sequences", []),
                 }
+                if self._current_chain_routing:
+                    self.chain_config["routing"] = self._current_chain_routing
                 if self._current_chain_is_default:
                     self.chain_config["is_default"] = True
 
@@ -889,6 +902,7 @@ class ConfigManager:
                 "orch_synthesize": llm_config.get("orch_synthesize", True),
                 "orch_synthesis_system": llm_config.get("orch_synthesis_system", ""),
                 "orch_use_goal_ledger": llm_config.get("orch_use_goal_ledger", False),
+                "orch_headless": llm_config.get("orch_headless", False),
                 # Web mode (see LLMNode.llm_config).
                 "web_mode": llm_config.get("web_mode", False),
                 "ocr_region": llm_config.get("ocr_region", ""),

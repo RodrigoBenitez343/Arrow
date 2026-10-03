@@ -27,7 +27,10 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..constants import ACCENT_COLOR, DARK_GREY, LIGHT_GREY, TEXT_COLOR
+from ..constants import (ACCENT_COLOR, ACCENT_HOVER, ACCENT_PRESSED, BLOCK_COLOR,
+                        BLOCK_HOVER, DARK_GREY, LIGHT_GREY, TEXT_COLOR, TEXT_MUTED,
+                        WELL_BG, CONTROL_BG, HAIRLINE, BTN_PRIMARY_TEXT, DANGER_COLOR,
+                        RADIUS_SM, RADIUS_MD)
 from ..i18n import _
 from .base_dialog import ModernDialog
 
@@ -169,8 +172,8 @@ class AgentExportDialog(ModernDialog):
         # ── Agent Info Section ──
         info_group = QFrame()
         info_group.setStyleSheet(
-            f"QFrame {{ background-color: {DARK_GREY};"
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"QFrame {{ background-color: {BLOCK_COLOR};"
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}"
         )
         info_layout = QVBoxLayout(info_group)
         info_layout.setContentsMargins(16, 12, 16, 12)
@@ -210,8 +213,8 @@ class AgentExportDialog(ModernDialog):
         # ── Model Selection Section ──
         models_group = QFrame()
         models_group.setStyleSheet(
-            f"QFrame {{ background-color: {DARK_GREY};"
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"QFrame {{ background-color: {BLOCK_COLOR};"
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}"
         )
         models_layout = QVBoxLayout(models_group)
         models_layout.setContentsMargins(16, 12, 16, 12)
@@ -227,8 +230,8 @@ class AgentExportDialog(ModernDialog):
         self._model_list.setMaximumHeight(120)
         self._model_list.setStyleSheet(
             f"QListWidget {{"
-            f"  background-color: #1A1A1A; color: {TEXT_COLOR};"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 6px;"
+            f"  background-color: {WELL_BG}; color: {TEXT_COLOR};"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 11px;"
             f"}}"
             f"QListWidget::item {{ padding: 4px 8px; }}"
@@ -265,8 +268,8 @@ class AgentExportDialog(ModernDialog):
         # ── Output Config Section ──
         output_group = QFrame()
         output_group.setStyleSheet(
-            f"QFrame {{ background-color: {DARK_GREY};"
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"QFrame {{ background-color: {BLOCK_COLOR};"
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}"
         )
         output_layout = QVBoxLayout(output_group)
         output_layout.setContentsMargins(16, 12, 16, 12)
@@ -294,7 +297,7 @@ class AgentExportDialog(ModernDialog):
         )
         self._output_path = QLabel(default_output)
         self._output_path.setStyleSheet(
-            f"color: rgba(255,255,255,0.6); font-size: 10px; border: none; padding: 4px;"
+            f"color: {TEXT_MUTED}; font-size: 10px; border: none; padding: 4px;"
         )
         self._output_path.setWordWrap(True)
         dir_row.addWidget(self._output_path, 1)
@@ -303,8 +306,8 @@ class AgentExportDialog(ModernDialog):
         browse_btn.setFixedHeight(24)
         browse_btn.setStyleSheet(
             f"QPushButton {{"
-            f"  background-color: #1A1A1A; color: {TEXT_COLOR};"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 4px;"
+            f"  background-color: {CONTROL_BG}; color: {TEXT_COLOR};"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 10px; padding: 0 12px;"
             f"}}"
             f"QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}"
@@ -332,8 +335,8 @@ class AgentExportDialog(ModernDialog):
         )
         self._exe_name_input.setStyleSheet(
             f"QTextEdit {{"
-            f"  background-color: #1A1A1A; color: {TEXT_COLOR};"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 4px;"
+            f"  background-color: {CONTROL_BG}; color: {TEXT_COLOR};"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 12px; padding: 2px 6px;"
             f"}}"
             f"QTextEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
@@ -347,8 +350,8 @@ class AgentExportDialog(ModernDialog):
         # ── Build Log Section ──
         log_group = QFrame()
         log_group.setStyleSheet(
-            f"QFrame {{ background-color: {DARK_GREY};"
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"QFrame {{ background-color: {BLOCK_COLOR};"
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}"
         )
         log_layout = QVBoxLayout(log_group)
         log_layout.setContentsMargins(16, 12, 16, 12)
@@ -365,8 +368,8 @@ class AgentExportDialog(ModernDialog):
         self._log_output.setFixedHeight(120)
         self._log_output.setStyleSheet(
             f"QTextEdit {{"
-            f"  background-color: #0D1117; color: #C9D1D9;"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 6px;"
+            f"  background-color: {WELL_BG}; color: {TEXT_COLOR};"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 10px; padding: 8px;"
             f"  font-family: Consolas, monospace;"
             f"}}"
@@ -381,10 +384,10 @@ class AgentExportDialog(ModernDialog):
         self._progress.setTextVisible(False)
         self._progress.setStyleSheet(
             f"QProgressBar {{"
-            f"  background-color: #1A1A1A; border: none; border-radius: 4px;"
+            f"  background-color: {WELL_BG}; border: none; border-radius: {RADIUS_SM}px;"
             f"}}"
             f"QProgressBar::chunk {{"
-            f"  background-color: {ACCENT_COLOR}; border-radius: 4px;"
+            f"  background-color: {ACCENT_COLOR}; border-radius: {RADIUS_SM}px;"
             f"}}"
         )
         self._progress.hide()
@@ -399,8 +402,8 @@ class AgentExportDialog(ModernDialog):
         self._open_folder_btn.setFixedHeight(32)
         self._open_folder_btn.setStyleSheet(
             f"QPushButton {{"
-            f"  background-color: #1A1A1A; color: {TEXT_COLOR};"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 6px;"
+            f"  background-color: {CONTROL_BG}; color: {TEXT_COLOR};"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 11px; padding: 0 16px;"
             f"}}"
             f"QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}"
@@ -415,13 +418,13 @@ class AgentExportDialog(ModernDialog):
         self._build_btn.setFixedHeight(32)
         self._build_btn.setStyleSheet(
             f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR}; color: #0D1117;"
-            f"  border: none; border-radius: 6px;"
+            f"  background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT};"
+            f"  border: none; border-radius: {RADIUS_SM}px;"
             f"  font-size: 12px; font-weight: 700; padding: 0 20px;"
             f"}}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
-            f"QPushButton:pressed {{ background-color: #00b898; }}"
-            f"QPushButton:disabled {{ background-color: #2E2E2E; color: #666; }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}"
+            f"QPushButton:pressed {{ background-color: {ACCENT_PRESSED}; }}"
+            f"QPushButton:disabled {{ background-color: {BLOCK_HOVER}; color: {TEXT_MUTED}; }}"
         )
         self._build_btn.clicked.connect(self._start_build)
         btn_row.addWidget(self._build_btn)
@@ -431,10 +434,10 @@ class AgentExportDialog(ModernDialog):
         self._cancel_btn.setStyleSheet(
             f"QPushButton {{"
             f"  background-color: transparent; color: {TEXT_COLOR};"
-            f"  border: 1px solid {LIGHT_GREY}; border-radius: 6px;"
+            f"  border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;"
             f"  font-size: 11px; padding: 0 16px;"
             f"}}"
-            f"QPushButton:hover {{ border-color: #FF4B4B; color: #FF4B4B; }}"
+            f"QPushButton:hover {{ border-color: {DANGER_COLOR}; color: {DANGER_COLOR}; }}"
         )
         self._cancel_btn.clicked.connect(self._cancel_build)
         btn_row.addWidget(self._cancel_btn)
@@ -449,7 +452,7 @@ class AgentExportDialog(ModernDialog):
         rl.setSpacing(8)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet(f"color: rgba(255,255,255,0.5); font-size: 11px; border: none;")
+        lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; border: none;")
         rl.addWidget(lbl)
 
         val = QLabel(value)

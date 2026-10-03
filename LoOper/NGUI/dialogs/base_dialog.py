@@ -2,10 +2,19 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QWidget, QLabel, QPushButton,
                              QHBoxLayout, QGraphicsDropShadowEffect, QSizeGrip,
                              QScrollArea, QFrame, QTextBrowser, QComboBox, QSpinBox,
                              QDoubleSpinBox, QAbstractButton, QShortcut)
-from PyQt5.QtCore import QRect, Qt, QPoint, QTimer
+from PyQt5.QtCore import QRect, Qt, QPoint, QTimer, QSize
 from PyQt5.QtGui import QColor, QFont, QCursor, QKeySequence
-from ..constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, ACCENT_COLOR
+from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, TEXT_SECONDARY, TEXT_MUTED,
+                         CARD_BG, WELL_BG, CONTROL_BG, CONTROL_HOVER,
+                         ACCENT_COLOR, ACCENT_HOVER, ACCENT_PRESSED, PICKER_ACCENT,
+                         HAIRLINE, BLOCK_COLOR, BLOCK_HOVER, BTN_PRIMARY_TEXT, DANGER_COLOR,
+                         RADIUS_SM, RADIUS_MD, RADIUS_LG, RADIUS_PILL,
+                         DIALOG_W, DIALOG_MIN_W, DIALOG_MIN_H, DIALOG_MAX_H,
+                         FLOAT_SHADOW_BLUR, FLOAT_SHADOW_OFFSET_Y, FLOAT_SHADOW_ALPHA,
+                         DIALOG_SHADOW_MARGIN)
 import os
+
+from ..icons import tabler_qicon
 
 
 _USER_GUIDE_TOPIC_TO_HEADING = {
@@ -94,9 +103,9 @@ class UserGuideDialog(QDialog):
 # The same green as the desktop recorder's element picker (see
 # NGUI/widgets/recording_overlay.py): a border-only box, a solid chip naming
 # the control, and a dark panel carrying the text.
-_HELP_BOX_QSS = f"background: transparent; border: 2px solid {ACCENT_COLOR};"
+_HELP_BOX_QSS = f"background: transparent; border: 2px solid {PICKER_ACCENT};"
 _HELP_CHIP_QSS = (
-    f"background: {ACCENT_COLOR}; color: #00201a;"
+    f"background: {PICKER_ACCENT}; color: #00201a;"
     "padding: 1px 6px; border-radius: 3px; font: 11px monospace;"
 )
 _HELP_PANEL_QSS = (
@@ -327,7 +336,9 @@ class ModernDialog(QDialog):
         # Main layout for the whole dialog (including shadow margin)
         # We use a distinct name to avoid conflict if subclasses try to access 'layout'
         self.root_layout = QVBoxLayout(self)
-        self.root_layout.setContentsMargins(10, 10, 10, 10) # Margin for shadow
+        # Transparent room around the panel so its soft shadow is visible.
+        self.root_layout.setContentsMargins(DIALOG_SHADOW_MARGIN, DIALOG_SHADOW_MARGIN,
+                                            DIALOG_SHADOW_MARGIN, DIALOG_SHADOW_MARGIN)
         
         # Container widget (the actual visible window)
         self.container = QWidget()
@@ -335,16 +346,19 @@ class ModernDialog(QDialog):
         self.container.setStyleSheet(f"""
             #ModernDialogContainer {{
                 background-color: {DARK_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_LG}px;
             }}
         """)
         
-        # Shadow effect
+        # Soft cyan degrade under the panel (the same float treatment as the
+        # graph's floating bars), so the dialog reads as lifted off the desktop.
         shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(0, 0, 0, 150))
-        shadow.setOffset(0, 0)
+        shadow.setBlurRadius(FLOAT_SHADOW_BLUR)
+        shadow.setOffset(0, FLOAT_SHADOW_OFFSET_Y)
+        _shadow_color = QColor(ACCENT_COLOR)
+        _shadow_color.setAlpha(FLOAT_SHADOW_ALPHA)
+        shadow.setColor(_shadow_color)
         self.container.setGraphicsEffect(shadow)
         
         self.root_layout.addWidget(self.container)
@@ -360,10 +374,10 @@ class ModernDialog(QDialog):
         self.title_bar.setFixedHeight(40)
         self.title_bar.setStyleSheet(f"""
             QWidget {{
-                background-color: {MEDIUM_GREY};
-                border-top-left-radius: 9px;  /* Match container radius minus border */
-                border-top-right-radius: 9px;
-                border-bottom: 1px solid {LIGHT_GREY};
+                background-color: {DARK_GREY};
+                border-top-left-radius: {RADIUS_LG - 1}px;  /* Match container radius minus border */
+                border-top-right-radius: {RADIUS_LG - 1}px;
+                border-bottom: 1px solid {HAIRLINE};
             }}
         """)
         
@@ -371,8 +385,10 @@ class ModernDialog(QDialog):
         title_layout.setContentsMargins(15, 0, 15, 0) # Increased right margin to avoid corner clip
         
         self.title_label = QLabel(title)
-        self.title_label.setFont(QFont("Segoe UI", 10, QFont.Bold))
-        self.title_label.setStyleSheet(f"color: {TEXT_COLOR}; border: none; background: transparent;")
+        self.title_label.setFont(QFont("Segoe UI", 10))
+        self.title_label.setStyleSheet(
+            f"color: {TEXT_COLOR}; border: none; background: transparent; font-weight: 600;"
+        )
 
         self.help_btn = None
         if show_help_button:
@@ -417,7 +433,9 @@ class ModernDialog(QDialog):
         self._help_esc.activated.connect(self.close_help)
         self._help_esc.setEnabled(False)
         
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton()
+        self.close_btn.setIcon(tabler_qicon("X", 16))
+        self.close_btn.setIconSize(QSize(16, 16))
         self.close_btn.setFixedSize(30, 30)
         self.close_btn.setCursor(Qt.PointingHandCursor)
         # The ✕ is wired to reject().  A push button inside a dialog is
@@ -444,8 +462,8 @@ class ModernDialog(QDialog):
                 max-height: 30px;
             }}
             QPushButton:hover {{
-                background-color: #FF4B4B;
-                color: white;
+                background-color: rgba(255, 255, 255, 0.10);
+                color: {TEXT_COLOR};
             }}
         """)
         self.close_btn.clicked.connect(self.reject)
@@ -474,10 +492,11 @@ class ModernDialog(QDialog):
                 margin: 0px 0px 0px 0px;
             }}
             QScrollBar::handle:vertical {{
-                background: {LIGHT_GREY};
+                background: #3a3f47;
                 min-height: 20px;
-                border-radius: 5px;
+                border-radius: 6px;
             }}
+            QScrollBar::handle:vertical:hover {{ background: #4a5058; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
             }}
@@ -488,10 +507,11 @@ class ModernDialog(QDialog):
                 margin: 0px 0px 0px 0px;
             }}
             QScrollBar::handle:horizontal {{
-                background: {LIGHT_GREY};
+                background: #3a3f47;
                 min-width: 20px;
-                border-radius: 5px;
+                border-radius: 6px;
             }}
+            QScrollBar::handle:horizontal:hover {{ background: #4a5058; }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
                 width: 0px;
             }}
@@ -507,83 +527,121 @@ class ModernDialog(QDialog):
             }}
             QLabel {{
                 color: {TEXT_COLOR};
+                background: transparent;
             }}
-            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit, QListWidget, QTableWidget {{
-                background-color: {MEDIUM_GREY};
+            QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
-                padding: 5px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
+                padding: 7px 10px;
                 selection-background-color: {ACCENT_COLOR};
-                selection-color: {DARK_GREY};
+                selection-color: {BTN_PRIMARY_TEXT};
             }}
-            QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus, QListWidget:focus {{
+            QTextEdit, QPlainTextEdit, QListWidget, QTableWidget {{
+                background-color: {WELL_BG};
+                color: {TEXT_COLOR};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
+                padding: 8px;
+                selection-background-color: {ACCENT_COLOR};
+                selection-color: {BTN_PRIMARY_TEXT};
+            }}
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QTextEdit:focus, QPlainTextEdit:focus, QListWidget:focus {{
                 border: 1px solid {ACCENT_COLOR};
             }}
+            QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {MEDIUM_GREY};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
+                selection-background-color: {ACCENT_COLOR};
+                selection-color: {BTN_PRIMARY_TEXT};
+                outline: none;
+            }}
             QGroupBox {{
-                font-weight: bold;
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
-                margin-top: 10px;
-                padding-top: 10px;
+                background-color: {CARD_BG};
+                font-weight: 600;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
+                margin-top: 24px;
+                padding: 14px;
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
-                left: 10px;
-                padding: 0 5px 0 5px;
-                color: {ACCENT_COLOR};
+                subcontrol-position: top left;
+                left: 2px;
+                padding: 0 4px;
+                color: {TEXT_SECONDARY};
+                font-size: 12px;
+            }}
+            QCheckBox, QRadioButton {{ color: {TEXT_COLOR}; spacing: 8px; background: transparent; }}
+            QCheckBox::indicator, QRadioButton::indicator {{
+                width: 16px; height: 16px;
+                border: 1px solid rgba(255, 255, 255, 0.28);
+                background: transparent;
+            }}
+            QCheckBox::indicator {{ border-radius: 4px; }}
+            QRadioButton::indicator {{ border-radius: 8px; }}
+            QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+                background-color: {ACCENT_COLOR};
+                border-color: {ACCENT_COLOR};
             }}
             QPushButton {{
-                background-color: {MEDIUM_GREY};
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: bold;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_PILL}px;
+                padding: 9px 20px;
+                font-weight: 500;
                 font-size: 13px;
             }}
             QPushButton:hover {{
-                background-color: #4a4a4a;
-                border: 1px solid {ACCENT_COLOR};
+                background-color: {CONTROL_HOVER};
+                border: 1px solid rgba(255, 255, 255, 0.14);
             }}
-            QPushButton:pressed {{
-                background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
-                border: none;
-            }}
+            QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
+            QPushButton:disabled {{ color: {TEXT_MUTED}; border-color: rgba(255, 255, 255, 0.06); }}
             /* Primary/Action Button Style */
             QPushButton[class="primary"] {{
                 background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
+                color: {BTN_PRIMARY_TEXT};
                 border: none;
+                font-weight: 600;
             }}
             QPushButton[class="primary"]:hover {{
-                background-color: #00E0B8;
-                border: 1px solid {ACCENT_COLOR};
+                background-color: {ACCENT_HOVER};
             }}
             QPushButton[class="primary"]:pressed {{
-                background-color: #008F75;
+                background-color: {ACCENT_PRESSED};
             }}
+            /* Destructive Button Style */
+            QPushButton[class="danger"] {{
+                background-color: transparent;
+                color: {DANGER_COLOR};
+                border: 1px solid {DANGER_COLOR};
+            }}
+            QPushButton[class="danger"]:hover {{ background-color: rgba(239, 68, 68, 0.14); }}
             
             QTabWidget::pane {{
-                border: 1px solid {LIGHT_GREY};
-                background-color: {DARK_GREY};
-                border-radius: 5px;
+                border: 1px solid {HAIRLINE};
+                background-color: {MEDIUM_GREY};
+                border-radius: {RADIUS_MD}px;
+                top: -1px;
             }}
             QTabBar::tab {{
-                background-color: {MEDIUM_GREY};
-                color: {TEXT_COLOR};
+                background: transparent;
+                color: {TEXT_MUTED};
                 padding: 8px 16px;
-                margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
+                margin-right: 4px;
+                border-radius: {RADIUS_SM}px;
             }}
             QTabBar::tab:selected {{
-                background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
+                background-color: {BLOCK_COLOR};
+                color: {TEXT_COLOR};
             }}
             QTabBar::tab:hover {{
-                background-color: {LIGHT_GREY};
+                color: {TEXT_COLOR};
             }}
         """)
         
@@ -604,6 +662,103 @@ class ModernDialog(QDialog):
         self.size_grip.setStyleSheet("background: transparent;")
         grip_layout.addWidget(self.size_grip)
         self.container_layout.addLayout(grip_layout)
+
+        # Consistent geometry: the dialog sizes to its own content on first
+        # show. These are instance attrs so a dialog can raise its floor / set
+        # an initial width; the width itself always follows the content.
+        self._std_w = DIALOG_W          # initial width before the first fit
+        self._min_w = 400               # permissive floor: small dialogs shrink
+        self._min_h = DIALOG_MIN_H
+        self._auto_fit = True
+        self._fitted = False
+        self.setMinimumWidth(self._min_w)
+        self.resize(self._std_w, self._min_h)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Soft white->cyan glow on every interactive element (once, after the
+        # subclass has built its content).
+        if not getattr(self, "_glow_done", False):
+            self._glow_done = True
+            try:
+                from ..glow import attach_glow_tree
+                attach_glow_tree(self)
+            except Exception:
+                pass
+        if getattr(self, "_auto_fit", False) and not getattr(self, "_fitted", False):
+            self._fitted = True
+            QTimer.singleShot(0, self._fit_to_content)
+        else:
+            QTimer.singleShot(0, lambda: self._clamp_and_center())
+
+    def _available_geometry(self):
+        """Screen area (minus the taskbar) this dialog may occupy."""
+        screen = None
+        try:
+            screen = self.screen()
+        except Exception:
+            screen = None
+        if screen is None:
+            try:
+                from PyQt5.QtWidgets import QApplication
+                screen = QApplication.primaryScreen()
+            except Exception:
+                screen = None
+        return screen.availableGeometry() if screen is not None else None
+
+    def _clamp_and_center(self, width=None, height=None):
+        """Keep the dialog on the available screen and center it, so it is
+        never too big to fit nor left hanging off-screen (and never so small
+        that its controls are clipped)."""
+        try:
+            avail = self._available_geometry()
+            if avail is None:
+                return
+            max_w = max(320, int(avail.width() * 0.92))
+            max_h = max(240, int(avail.height() * 0.92))
+            # Allow shrinking below the design minimum on small screens.
+            # Honour any minimum a subclass raised explicitly (its own
+            # setMinimumWidth/Height), else the per-dialog floor.
+            self.setMinimumSize(min(self.minimumWidth() or self._min_w, max_w),
+                                min(self.minimumHeight() or self._min_h, max_h))
+            w = self.width() if width is None else width
+            h = self.height() if height is None else height
+            w = min(max(w, min(self._min_w, max_w)), max_w)
+            h = min(max(h, min(self._min_h, max_h)), max_h)
+            self.resize(w, h)
+            self.move(avail.left() + (avail.width() - w) // 2,
+                      avail.top() + (avail.height() - h) // 2)
+        except Exception:
+            pass
+
+    def _fit_to_content(self):
+        """Size the dialog to its OWN content (not a fixed geometry): the width
+        follows the content between the per-dialog floor and its standard max,
+        the height follows the content, and both are bounded by the screen."""
+        try:
+            avail = self._available_geometry()
+            try:
+                self.content_widget.adjustSize()
+                hint = self.content_widget.sizeHint()
+                content_w = hint.width()
+                content_h = hint.height()
+            except Exception:
+                content_w, content_h = self._min_w, DIALOG_MIN_H
+            margin = self.root_layout.contentsMargins().top()
+            # Root margins (both sides) + container border / scrollbar slack.
+            chrome_w = 2 * margin + 6
+            chrome_h = (self.title_bar.height() or 40) + 2 * margin + 28
+            # Width follows the content (never below the dialog's floor); the
+            # screen is the only upper bound, so a dialog is exactly as wide as
+            # its content needs - no shared fixed geometry.
+            width = max(content_w + chrome_w, self._min_w)
+            height = min(max(content_h + chrome_h, self._min_h), DIALOG_MAX_H)
+            if avail is not None:
+                width = min(width, int(avail.width() * 0.92))
+                height = min(height, int(avail.height() * 0.92))
+            self._clamp_and_center(width, height)
+        except Exception:
+            pass
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

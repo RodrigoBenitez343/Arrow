@@ -10,13 +10,22 @@ import re
 
 from NGUI.constants import (
     ACCENT_COLOR,
-    BAR_BG,
-    BLOCK_COLOR,
+    ACCENT_HOVER,
     BLOCK_HOVER,
+    BTN_PRIMARY_TEXT,
+    CARD_BG,
+    CONTROL_BG,
+    CONTROL_HOVER,
+    DANGER_COLOR,
     DARK_GREY,
+    HAIRLINE,
     MEDIUM_GREY,
-    SIDE_PANEL_BG,
+    RADIUS_MD,
+    RADIUS_SM,
     TEXT_COLOR,
+    TEXT_MUTED,
+    TEXT_SECONDARY,
+    WELL_BG,
 )
 
 VAR_TYPES = ['string', 'int', 'float', 'bool', 'list', 'dict', 'any']
@@ -82,46 +91,55 @@ _MAX_HELPERS_IN_CTX = 2
 _MAX_HISTORY_TURNS = 2      # prior exchanges folded into the next context
 _MAX_HISTORY_CHARS = 320
 
-# Palette-matched stylesheet (mirrors the app's side bars / toolbars).
+# Stylesheet matching the app's plane system (canvas -> card -> well) and its
+# single cyan accent, so the studio reads like the rest of the NGUI.
 _STUDIO_QSS = f"""
-#CodeStudioRoot {{ background: {SIDE_PANEL_BG}; }}
-QLabel {{ color: #AAB4BF; font-size: 11px; }}
-QLabel#StudioTitle {{ color: {ACCENT_COLOR}; font-size: 13px; font-weight: 700; }}
-QLabel#StudioSub {{ color: #8A97A5; font-size: 10px; }}
-QLabel#SectionLabel {{ color: #8A97A5; font-size: 10px; font-weight: 700; }}
+#CodeStudioRoot {{ background: {DARK_GREY}; }}
+/* Labels and plain frames must be transparent: the app-wide QWidget rule paints
+   a DARK_GREY box behind them, which reads as a dark mat inside the CARD_BG
+   sections (the "wrong background box around the text"). */
+QLabel {{ color: {TEXT_SECONDARY}; background: transparent; font-size: 11px; }}
+QFrame {{ background: transparent; }}
+QLabel#StudioTitle {{ color: {TEXT_COLOR}; font-size: 13px; font-weight: 700; }}
+QLabel#StudioSub {{ color: {TEXT_MUTED}; font-size: 10px; }}
+QLabel#SectionLabel {{ color: {TEXT_MUTED}; font-size: 10px; font-weight: 700; }}
 QLabel#FileLabel {{ color: {ACCENT_COLOR}; font-size: 11px; font-family: Consolas; }}
 QPushButton {{
-    background-color: {BAR_BG}; color: {TEXT_COLOR};
-    border: 1px solid #45535F; border-radius: 6px;
+    background-color: {CONTROL_BG}; color: {TEXT_COLOR};
+    border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
     padding: 4px 10px; font-size: 11px;
 }}
-QPushButton:hover {{ background-color: {BLOCK_HOVER}; border-color: {ACCENT_COLOR}; }}
-QPushButton:pressed {{ background-color: {MEDIUM_GREY}; }}
-QPushButton:disabled {{ color: #5A6570; border-color: #313B45; }}
+QPushButton:hover {{ background-color: {CONTROL_HOVER}; border-color: {ACCENT_COLOR}; }}
+QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
+QPushButton:disabled {{ color: {TEXT_MUTED}; border-color: {HAIRLINE}; }}
 QPushButton#primary {{
-    background-color: {ACCENT_COLOR}; color: #04251F;
+    background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT};
     font-weight: 600; border: none;
 }}
-QPushButton#primary:hover {{ background-color: #3AF2D0; }}
-QPushButton#danger {{ color: #FF9B9B; border-color: #7A2E2E; }}
+QPushButton#primary:hover {{ background-color: {ACCENT_HOVER}; }}
+QPushButton#danger {{
+    background-color: transparent; color: {DANGER_COLOR};
+    border: 1px solid {DANGER_COLOR};
+}}
+QPushButton#danger:hover {{ background-color: rgba(239, 68, 68, 0.14); }}
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QTreeWidget {{
-    background-color: #0F151B; color: {TEXT_COLOR};
-    border: 1px solid #2A333D; border-radius: 6px;
-    selection-background-color: #16504A; selection-color: {TEXT_COLOR};
+    background-color: {WELL_BG}; color: {TEXT_COLOR};
+    border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
+    selection-background-color: {ACCENT_COLOR}; selection-color: {BTN_PRIMARY_TEXT};
 }}
 QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus,
 QTreeWidget:focus {{ border: 1px solid {ACCENT_COLOR}; }}
 QPlainTextEdit {{ font-family: Consolas; }}
 QComboBox QAbstractItemView {{
-    background-color: {DARK_GREY}; color: {TEXT_COLOR};
-    selection-background-color: {ACCENT_COLOR}; selection-color: #04251F;
+    background-color: {MEDIUM_GREY}; color: {TEXT_COLOR};
+    selection-background-color: {ACCENT_COLOR}; selection-color: {BTN_PRIMARY_TEXT};
 }}
-QFrame#StudioSection {{ background: {BLOCK_COLOR}; border: 1px solid #2A333D; border-radius: 8px; }}
+QFrame#StudioSection {{ background: {CARD_BG}; border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: #3A4650; border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:vertical {{ background: #3a3f47; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: {ACCENT_COLOR}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 QTreeWidget::item {{ padding: 3px 4px; }}
-QTreeWidget::item:selected {{ background-color: {ACCENT_COLOR}; color: #04251F; }}
+QTreeWidget::item:selected {{ background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT}; }}
 """

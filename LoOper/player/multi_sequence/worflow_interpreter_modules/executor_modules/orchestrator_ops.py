@@ -157,6 +157,13 @@ _ORCH_STOP_WORDS = frozenset((
 _ORCH_STATE_DONE_VERBS = frozenset((
     'open', 'go', 'navigate', 'visit', 'launch', 'start',
 ))
+# URL/domain fragments are SITE glue, not objects: 'linkedin.com' tokenises to
+# 'linkedin' + 'com', and a bare 'com'/'www' must never stand in for an object a
+# chain is required to name (measured 2026-10-02: 'Open LinkedIn.com' left 'com'
+# as the step's only object and the run died 'no_worker').
+_ORCH_URL_GLUE = frozenset((
+    'www', 'http', 'https', 'com', 'org', 'net', 'io', 'co', 'gov', 'edu',
+))
 # Planner meta-commentary never becomes a directive: a line OPENING with one of
 # these words, or one ending in ':' (a lead-in), is narration.  Measured
 # 2026-09-24: SmolLM3 planned "1) navigate to linkedin.com… | 2) However,
@@ -252,6 +259,71 @@ def _orchestrator_directive_key(text, generic=frozenset()):
     words = {_orchestrator_stem(w) for w in _orchestrator_words(text)}
     return {w for w in words
             if w not in _ORCH_STOP_WORDS and w not in (generic or frozenset())}
+
+
+def _orchestrator_chain_signal(description, examples, learned=False):
+    """The text a chain is ROUTED by: its description PLUS learned examples.
+
+    A library chain accumulates verbatim requests it successfully served
+    (``routing.examples``), so what it really does sharpens with use while the
+    description stays naive or generic.  BOTH texts are kept: dropping the
+    description the moment one example lands would lose every object a future
+    step shares with it, while the examples add the discriminators.  A LEARNED
+    artifact keeps examples-only — its description is the freeze narration, not
+    a routing signal.
+    """
+    ex = [str(e).strip() for e in (examples or []) if str(e).strip()]
+    desc = str(description or '').strip()
+    if learned:
+        return ' | '.join(ex) or desc
+    return ' | '.join([p for p in ([desc] + ex) if p])
+
+
+def _orchestrator_append_route_examples(chain_file, steps):
+    """Append VERIFIED steps to a chain file's ``routing.examples`` (atomic).
+
+    Bounded to the NEWEST ``_CHAIN_ROUTING_EXAMPLES`` (oldest evicted), deduped
+    case-insensitively, order-stable, and validated as JSON before the atomic
+    replace.  Returns True only when the file actually changed.
+    """
+    if not chain_file or not steps or not os.path.exists(str(chain_file)):
+        return False
+
+    def _norm(v):
+        return ' '.join(str(v or '').split())[:200]
+
+    with open(str(chain_file), 'r', encoding='utf-8') as f:
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        return False
+    routing = cfg.get('routing')
+    if not isinstance(routing, dict):
+        routing = {}
+    existing = routing.get('examples')
+    if isinstance(existing, str):
+        existing = [existing]
+    if not isinstance(existing, list):
+        existing = []
+    keep = []
+    seen = set()
+    for raw in list(existing) + list(steps):
+        s = _norm(raw)
+        k = s.lower()
+        if s and k not in seen:
+            seen.add(k)
+            keep.append(s)
+    out = keep[-int(_CHAIN_ROUTING_EXAMPLES):]
+    if out == [s for s in (_norm(e) for e in existing) if s]:
+        return False          # nothing new — leave the file untouched
+    routing['examples'] = out
+    cfg['routing'] = routing
+    tmp = str(chain_file) + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(cfg, f, indent=2)
+    with open(tmp, 'r', encoding='utf-8') as f:
+        json.loads(f.read())  # never corrupt a chain: must stay valid JSON
+    os.replace(tmp, str(chain_file))
+    return True
 
 
 def _orchestrator_strip_prefix(line):
@@ -465,6 +537,65 @@ def _orchestrator_owner_id(node):
     )
 
 
+def _orchestrator_truthy(value):
+    """Bool from a node property that may be a real bool or a 'true' string."""
+    if isinstance(value, bool):
+        return value
+    return str(value or '').strip().lower() in ('true', '1', 'yes', 'y', 'on')
+
+
+def _orchestrator_cursor_monitor_rect():
+    """(left, top, right, bottom) of the monitor under the cursor, or None.
+
+    Multi-monitor: a run is started from the screen the user is looking at,
+    so the desktop digest reads THAT screen rather than whatever monitor
+    Windows put the global foreground window on.
+    """
+    if os.name != 'nt':
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+
+        class _MONITORINFO(ctypes.Structure):
+            _fields_ = [
+                ('cbSize', wintypes.DWORD),
+                ('rcMonitor', wintypes.RECT),
+                ('rcWork', wintypes.RECT),
+                ('dwFlags', wintypes.DWORD),
+            ]
+
+        point = wintypes.POINT()
+        if not user32.GetCursorPos(ctypes.byref(point)):
+            return None
+        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        user32.MonitorFromPoint.restype = ctypes.c_void_p
+        monitor = user32.MonitorFromPoint(point, 2)  # MONITOR_DEFAULTTONEAREST
+        if not monitor:
+            return None
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcMonitor
+        return (int(rect.left), int(rect.top),
+                int(rect.right), int(rect.bottom))
+    except Exception:
+        return None
+
+
+def _orchestrator_rect_overlaps(rect, monitor):
+    """True when a window rect's CENTRE falls inside the monitor rect."""
+    try:
+        left, top, right, bottom = (int(v) for v in rect)
+        ml, mt, mr, mb = monitor
+        cx, cy = (left + right) // 2, (top + bottom) // 2
+        return ml <= cx < mr and mt <= cy < mb
+    except Exception:
+        return False
+
+
 # The done-probe: p(the goal has already been fully achieved) over a
 # steps-only premise.  Measured on real failing traces (2026-09-23): genuinely
 # covered 0.587 vs false 0.506 / 0.144 — threshold 0.55.
@@ -587,6 +718,11 @@ class OrchestratorMixin:
             'synthesize': cfg.get('orch_synthesize', True),
             'synthesis_system': cfg.get('orch_synthesis_system') or '',
             'use_goal_ledger': cfg.get('orch_use_goal_ledger', False),
+            # Observation surface (EXCLUSIVE): web_mode ON observes/verifies on
+            # the chain's shared browser, OFF on the desktop.  headless runs the
+            # web actions in an invisible browser.
+            'web_mode': _orchestrator_truthy(cfg.get('web_mode')),
+            'headless': _orchestrator_truthy(cfg.get('orch_headless')),
         }
         return {
             'type': 'orchestrator',
@@ -605,6 +741,12 @@ class OrchestratorMixin:
             node.get('id') or node.get('node_id')
             or node_data.get('node_id') or node_data.get('id')
         )
+        # Observation surface for THIS activation (see _orchestrator_from_llm_node):
+        # web-exclusive or desktop-exclusive, plus the headless-web dispatch flag.
+        self._orchestrator_web_mode = _orchestrator_truthy(
+            node_data.get('web_mode'))
+        self._orchestrator_headless = _orchestrator_truthy(
+            node_data.get('headless'))
         try:
             max_steps = int(node_data.get('max_steps', _DEFAULT_MAX_STEPS) or _DEFAULT_MAX_STEPS)
         except Exception:
@@ -889,6 +1031,10 @@ class OrchestratorMixin:
                         return None
                     if _entry is not None:
                         trace.append(_entry)
+                        # dir_trace is a slice taken at the top of THIS
+                        # iteration; refresh it so the fall-through below sees
+                        # the run that just happened.
+                        dir_trace = trace[_dir_start:]
                         if _entry.get('ok') is not False:
                             stop_reason = 'done'
                             break
@@ -912,6 +1058,14 @@ class OrchestratorMixin:
                         return None
                     if _entry is not None:
                         trace.append(_entry)
+                        # dir_trace was sliced BEFORE this append: without the
+                        # refresh the chains-only done-probe below reads an
+                        # EMPTY trace, logs no verdict, and the run closes
+                        # 'no_worker' (never 'done') — so a goal served by the
+                        # chains port alone could never freeze into a learned
+                        # chain (measured 2026-10-02: 2 directives, both chains
+                        # ran, no done-probe line, stop_reason=no_worker).
+                        dir_trace = trace[_dir_start:]
                         if _entry.get('ok') is not False:
                             # A CHAIN IS NOT ONE ACTION: the cerebellum runs
                             # whole routines ("opens linkedin and clicks on
@@ -1431,6 +1585,13 @@ class OrchestratorMixin:
                 goal, trace, brains, node, stop_reason, chains)
         except Exception as e:
             logger.warning("[ORCH] freeze step failed: %s", e)
+        # Positive reinforcement (LOOPER_ORCH_ROUTES=off disables): a run that
+        # closed 'done' teaches each VERIFIED step back to the chain that served
+        # it — per-step attribution, never the run's single final rating.
+        try:
+            self._orchestrator_record_route_examples(chains, trace, stop_reason)
+        except Exception as e:
+            logger.warning("[ORCH] route-example recording failed: %s", e)
         return self._get_input_next_node(node, 'output')
 
     # ------------------------------------------------------------- resolution
@@ -1693,8 +1854,11 @@ class OrchestratorMixin:
                 'description': description,
                 'examples': examples,
                 # The text this chain is ROUTED by (and the corpus the library
-                # profile is computed from).
-                'signal': ' | '.join(examples) or str(description or ''),
+                # profile is computed from): description + accumulated examples
+                # (see _orchestrator_chain_signal), so a naive description
+                # sharpens with use instead of being replaced by one example.
+                'signal': _orchestrator_chain_signal(
+                    description, examples, bool(cfg.get('learned'))),
                 # A freeze artifact (learned: true) is a WHOLE-JOB candidate
                 # only — it composes several steps and must never compete in
                 # the per-step gate (measured 2026-09-24: it scored 0.756 on
@@ -2500,8 +2664,7 @@ class OrchestratorMixin:
         chain therefore advances 1, as always, and a directive the description
         does not name stops the walk — the count is computed, never assumed.
         """
-        signal = ' | '.join(chain.get('examples') or []) \
-            or str(chain.get('description') or '')
+        signal = str(chain.get('signal') or chain.get('description') or '')
         chain_key = _orchestrator_directive_key(signal, generic)
         span = 1
         for i in range(int(start) + 1, len(directives)):
@@ -2568,7 +2731,10 @@ class OrchestratorMixin:
         a word the observed state already shows is AMBIENT (the environment,
         not the task) and is excluded from the object-naming rule; and when
         the step names a non-ambient object that NO chain's description names,
-        the gate declines instead of scoring the whole field.
+        the gate declines instead of scoring the whole field.  Glue is never an
+        object: the step's verb and URL fragments are dropped first, so a
+        reaching step like 'Open LinkedIn.com' names nothing and the scorer's
+        top pick decides on the floor alone.
         """
         used = used or set()
         # Learned artifacts are excluded: they compose several steps, so they
@@ -2599,6 +2765,18 @@ class OrchestratorMixin:
         generic = _orchestrator_library_generic(
             [c.get('signal') for c in chains])
         goal_key = _orchestrator_directive_key(goal, generic)
+        # Glue is not an object: the step's verb ('open', 'navigate', ...) and
+        # any URL/domain fragment name no thing a chain's description can carry,
+        # so they must not be required to be NAMED.  Leaving them in made
+        # 'Open LinkedIn.com' demand that some chain name 'open'/'com' — and
+        # with 'linkedin' classified generic by the library, the step's object
+        # set was EXACTLY those two, so the gate refused although the
+        # 'navigate to linkedin' chain was wired (measured 2026-10-02).
+        goal_key = goal_key - _ORCH_STATE_DONE_VERBS - _ORCH_URL_GLUE
+        _lead = str(goal or '').split()
+        if _lead:
+            goal_key = goal_key - {
+                _orchestrator_stem(_lead[0].strip('",.;:').lower())}
         # Ambient words: what the observed state ALREADY shows describes the
         # environment, not the task — it must not confirm a chain (measured
         # 2026-09-25: 'Open Chrome browser' matched 'go to linkedin' on the
@@ -2607,9 +2785,11 @@ class OrchestratorMixin:
         ambient = (_orchestrator_directive_key(state, frozenset())
                    if state else set())
         for c in candidates:
-            signal = ' | '.join(c.get('examples') or []) \
-                or str(c.get('description') or '')
-            signal = ' '.join(signal.split())[:240]
+            # The chain's routing text: its description PLUS the requests it
+            # has already served (see _orchestrator_chain_signal) — an example
+            # can only ADD signal, never erase the description.
+            signal = ' '.join(
+                str(c.get('signal') or c.get('description') or '').split())[:240]
             if not signal:
                 logger.warning(
                     "[ORCH] Direct-chain gate: %s carries no description or "
@@ -2664,8 +2844,14 @@ class OrchestratorMixin:
         # network' at 0.641 vs an unrelated 0.620 was a perfect match declined
         # by 0.021).
         confirmed = top_named > second_named
+        # The margin breaks an OBJECT-level tie.  A step that names no object
+        # (named is empty) has no tie to break, so the scorer's top pick is the
+        # only evidence there is — accepting it on the floor alone keeps such
+        # steps servable (measured 2026-10-02: 'Open LinkedIn.com' chose the
+        # right chain 0.751 vs 0.712, margin 0.039 < 0.10).
         if top_p < _CHAIN_GATE_MIN or (
-                not confirmed and (top_p - second_p) < _CHAIN_GATE_MARGIN):
+                named and not confirmed
+                and (top_p - second_p) < _CHAIN_GATE_MARGIN):
             logger.info(
                 "[ORCH] Direct-chain gate: %s not convincing (p=%.3f, next=%.3f, "
                 "margin %.3f, objects named %d vs %d) — falling back to the "
@@ -2786,6 +2972,31 @@ class OrchestratorMixin:
         return text[:_NODE_BRAIN_DESC_CAP]
 
     def _orchestrator_invoke_brain(self, brain, stop_flag):
+        """Dispatch ONE step, with the activation's headless-web override.
+
+        A web orchestrator with the Headless toggle ON makes its child chains
+        launch the shared browser without a window; the run flag is restored
+        afterwards (a parent run may already have set it).
+        """
+        restore = None
+        if bool(getattr(self, '_orchestrator_headless', False)):
+            try:
+                from ....web.session import set_run_headless, run_headless
+                restore = run_headless()
+                set_run_headless(True)
+            except Exception:
+                restore = None
+        try:
+            return self._orchestrator_dispatch_brain(brain, stop_flag)
+        finally:
+            if restore is not None:
+                try:
+                    from ....web.session import set_run_headless as _set_headless
+                    _set_headless(restore)
+                except Exception:
+                    pass
+
+    def _orchestrator_dispatch_brain(self, brain, stop_flag):
         """Dispatch ONE orchestrator step to the picked brain (chain or node).
 
         Node brains run in-player through the same executors the main loop
@@ -3046,9 +3257,16 @@ class OrchestratorMixin:
         """
         if not self._orchestrator_state_enabled():
             return ''
+        # EXCLUSIVE surface: a web orchestrator observes/verifies on the
+        # browser only, a desktop orchestrator on the screen only.  Keeping
+        # both concatenated made a desktop-level verdict read a browser page
+        # it does not own.
+        if bool(getattr(self, '_orchestrator_web_mode', False)):
+            probes = (self._orchestrator_web_state,)
+        else:
+            probes = (self._orchestrator_desktop_state,)
         parts = []
-        for probe in (self._orchestrator_web_state,
-                      self._orchestrator_desktop_state):
+        for probe in probes:
             try:
                 text = probe()
             except Exception as exc:
@@ -3066,13 +3284,24 @@ class OrchestratorMixin:
         """
         executor = getattr(self, 'sequence_executor', None)
         driver = getattr(executor, '_web_session_driver', None) if executor else None
-        if executor is None or driver is None:
-            return ''
-        try:
-            if not executor._web_driver_alive(driver):
+        if driver is not None:
+            try:
+                if not executor._web_driver_alive(driver):
+                    return ''
+            except Exception:
                 return ''
-        except Exception:
-            return ''
+        else:
+            # This chain usually owns no web session: the browser was opened by
+            # the web chains dispatched from the 'tools' port.  Read that SHARED
+            # browser, and never launch one just to observe.
+            try:
+                from ....web.session import (
+                    SHARED_WEB_SCOPE, existing_workbench_driver)
+                driver = existing_workbench_driver(SHARED_WEB_SCOPE)
+            except Exception:
+                driver = None
+            if driver is None:
+                return ''
         try:
             try:
                 from ....web.actions import JS_VISIBLE_TEXT
@@ -3090,35 +3319,73 @@ class OrchestratorMixin:
         return line
 
     def _orchestrator_desktop_state(self):
-        """Foreground window + its process (win32 only — no COM/UIA here).
+        """Focused window on the monitor the CURSOR is on (win32/psutil only).
 
-        A UIA element sample was the natural next source, but walking the tree
-        on a short-lived thread made comtypes tear its cached UIA object down
-        inside a dying apartment (Windows fatal 0x80010108 + access violation
-        in tests, 2026-09-23).  It needs a persistent UIA worker thread first;
-        until then this probe stays on win32/psutil, which never blocks.
+        Multi-monitor: the run is started from the screen the user is looking
+        at, so the digest reports THAT screen's focused window - or its topmost
+        window when the focus sits elsewhere - instead of the global foreground
+        window, which may be on another monitor.  Read-only and win32/psutil
+        only: walking the UIA tree on a short-lived thread tore comtypes'
+        cached object down inside a dying apartment (2026-09-23), so no COM/UIA
+        here.
         """
         try:
             import win32gui
         except Exception:
             return ''
-        try:
-            hwnd = int(win32gui.GetForegroundWindow() or 0)
-            if not hwnd:
+        monitor = _orchestrator_cursor_monitor_rect()
+
+        def _title(h):
+            try:
+                return str(win32gui.GetWindowText(h) or '')
+            except Exception:
                 return ''
-            title = str(win32gui.GetWindowText(hwnd) or '')
-        except Exception:
-            return ''
-        process = ''
+
+        def _process(h):
+            try:
+                import psutil
+                import win32process
+                _tid, pid = win32process.GetWindowThreadProcessId(h)
+                return str(psutil.Process(int(pid)).name() or '') if pid else ''
+            except Exception:
+                return ''
+
+        def _on_cursor_monitor(h):
+            if not monitor:
+                return True
+            try:
+                return _orchestrator_rect_overlaps(
+                    win32gui.GetWindowRect(h), monitor)
+            except Exception:
+                return False
+
         try:
-            import psutil
-            import win32process
-            _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
-            if pid:
-                process = str(psutil.Process(int(pid)).name() or '')
+            target = int(win32gui.GetForegroundWindow() or 0)
         except Exception:
-            process = ''
-        return f"Desktop now: '{title[:80]}' (process: {process or 'unknown'})"
+            target = 0
+        if not target or (monitor and not _on_cursor_monitor(target)):
+            # Focus is elsewhere (or unknown): the topmost visible window on
+            # the cursor's monitor - EnumWindows enumerates front-to-back.
+            found = []
+            try:
+                def _collect(hwnd, _):
+                    try:
+                        if (win32gui.IsWindowVisible(hwnd)
+                                and _title(hwnd).strip()
+                                and _on_cursor_monitor(hwnd)):
+                            found.append(int(hwnd))
+                    except Exception:
+                        pass
+                    return True
+                win32gui.EnumWindows(_collect, None)
+            except Exception:
+                pass
+            target = found[0] if found else 0
+        title = _title(target) if target else ''
+        if not title:
+            return ''
+        return (f"Desktop now: '{title[:80]}' "
+                f"(process: {_process(target) or 'unknown'})")
 
     def _orchestrator_verify_step(self, goal, step_text, result, allow_start=False,
                                   state=None):
@@ -3395,6 +3662,62 @@ class OrchestratorMixin:
                 os.path.basename(path), e,
             )
 
+    def _orchestrator_record_route_examples(self, chains, trace, stop_reason):
+        """Positive reinforcement: remember the steps each chain VERIFIED.
+
+        Called ONLY for a run that closed 'done'.  The learning signal is PER
+        STEP — the chain that served a directive AND whose step verified
+        (``ok is True``) — and never the run's final rating: a rating judges
+        the whole synthesis and cannot point at the one sub-step that
+        misrouted (an orchestrator doing three things and failing one collides
+        into a single score), so it must not drive routing here.  The step text
+        lands in that chain file's ``routing.examples``, the text the gate
+        routes by next time (see _orchestrator_chain_signal).  Learned
+        artifacts are skipped (a freeze records its own goal), the write is
+        bounded, deduped, atomic and never fatal.  ``LOOPER_ORCH_ROUTES=off``
+        disables it.
+        """
+        if str(stop_reason or '') != 'done':
+            return
+        if str(os.environ.get("LOOPER_ORCH_ROUTES", "")).strip().lower() in (
+                '0', 'off', 'false', 'no', 'disabled'):
+            return
+        by_id = {}
+        for c in (chains or []):
+            if c.get('learned'):
+                continue          # a freeze artifact owns its own example
+            cid = str(c.get('chain_id') or '')
+            path = str(c.get('chain_file') or '')
+            if cid and path:
+                by_id[cid] = path
+        if not by_id or not trace:
+            return
+        served = {}
+        for entry in (trace or []):
+            try:
+                if not isinstance(entry, dict) or entry.get('ok') is not True:
+                    continue
+                cid = str(entry.get('brain_id') or '')
+                step = ' '.join(str(entry.get('step') or '').split())
+                if cid in by_id and step:
+                    served.setdefault(cid, [])
+                    if step not in served[cid]:
+                        served[cid].append(step)
+            except Exception:
+                continue
+        for cid, steps in served.items():
+            try:
+                if _orchestrator_append_route_examples(by_id[cid], steps):
+                    logger.info(
+                        "[ORCH] route example(s) recorded for %s: %s",
+                        os.path.basename(by_id[cid]), ' | '.join(steps)[:160],
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[ORCH] route-example write failed for %s: %s",
+                    os.path.basename(by_id[cid]), e,
+                )
+
     def _orchestrator_retire_learned_chain(self, chain):
         """Mark a losing artifact retired, in place.
 
@@ -3598,7 +3921,7 @@ class OrchestratorMixin:
         return out_path
 
     def _orchestrator_attach_learned_chain(self, learned_path, node):
-        """Wire a fresh learned chain into this orchestrator's 'chains' port.
+        """Wire a fresh learned chain into this orchestrator's action port.
 
         Edits the chain file the run belongs to (identity first — never a temp
         copy), post-run so json_cache cannot serve a stale copy mid-run, and
@@ -3629,20 +3952,39 @@ class OrchestratorMixin:
         # an orphan starting node and empties the 'chains' port (measured
         # 2026-09-23).  Match by id, else use the file's only orchestrator,
         # else refuse and leave the artifact on disk to wire by hand.
-        _file_orch_ids = [
-            str(n.get('node_id') or n.get('id') or '')
-            for n in (cfg.get('orchestrator_nodes') or [])
-            if isinstance(n, dict)
-        ]
-        if orch_id in _file_orch_ids:
+        # Every orchestrator the file actually CONTAINS, with the port its
+        # edges must land on: a legacy Orchestrator node ('chains') or — since
+        # the switch replaced the node type — an LLM node in orchestrator mode,
+        # whose action port is 'tools' (see
+        # config_manager._migrate_orchestrator_nodes).  Reading only
+        # orchestrator_nodes left every learned chain of an LLM-node
+        # orchestrator on disk but UNWIRED, and the 'chains' port does not
+        # exist on an LLM node (the builder drops the dangling edge).
+        _file_orch = []
+        for n in (cfg.get('orchestrator_nodes') or []):
+            if isinstance(n, dict):
+                _nid = str(n.get('node_id') or n.get('id') or '')
+                if _nid:
+                    _file_orch.append((_nid, 'chains'))
+        for n in (cfg.get('llm_nodes') or []):
+            if not isinstance(n, dict):
+                continue
+            _on = bool(n.get('orchestrator_mode') or (
+                (n.get('llm_configuration') or {}).get('orchestrator_mode')))
+            _nid = str(n.get('node_id') or n.get('id') or '')
+            if _on and _nid:
+                _file_orch.append((_nid, 'tools'))
+        _port = 'chains'
+        if any(_id == orch_id for _id, _ in _file_orch):
             target_id = orch_id
-        elif len(_file_orch_ids) == 1 and _file_orch_ids[0]:
-            target_id = _file_orch_ids[0]
+            _port = next(p for _id, p in _file_orch if _id == orch_id)
+        elif len(_file_orch) == 1:
+            target_id, _port = _file_orch[0]
         else:
             logger.warning(
                 "[LEARN] learned chain kept but NOT wired: orchestrator %r "
                 "is not in %s (found %s)",
-                orch_id, os.path.basename(source), _file_orch_ids,
+                orch_id, os.path.basename(source), _file_orch,
             )
             return False
         imports = cfg.setdefault('chain_import_nodes', [])
@@ -3672,7 +4014,7 @@ class OrchestratorMixin:
             'position': [200.0, 400.0 + 80.0 * len(imports)],
             'connections': [
                 {'output_port': 'output',
-                 'target_node_id': target_id, 'input_port': 'chains'},
+                 'target_node_id': target_id, 'input_port': _port},
             ],
         })
         try:
@@ -3699,8 +4041,8 @@ class OrchestratorMixin:
                 pass
             return False
         logger.info(
-            "[LEARN] wired learned chain %s → %s ('chains' port)",
-            _learned_base, os.path.basename(source),
+            "[LEARN] wired learned chain %s → %s (%r port)",
+            _learned_base, os.path.basename(source), _port,
         )
         return True
 

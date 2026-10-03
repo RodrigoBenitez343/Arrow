@@ -35,6 +35,32 @@ from ..dialogs.toggle_switch import ModernToggle
 
 logger = logging.getLogger(__name__)
 
+# Shared style for every button on the actions (top) bar. The [icononly="true"]
+# rule lets the buttons shrink to icon-only when the bar is too narrow for text.
+_ACTION_BUTTON_QSS = f"""
+    QPushButton {{
+        background: rgba(255, 255, 255, 0.05);
+        color: {TEXT_COLOR};
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 1px 6px;
+        min-width: 64px;
+        min-height: 22px;
+        font-weight: 500;
+    }}
+    QPushButton:hover {{
+        background: rgba(255, 255, 255, 0.08);
+        border-color: {ACCENT_COLOR};
+    }}
+    QPushButton:pressed {{
+        background: rgba(255, 255, 255, 0.12);
+    }}
+    QPushButton[icononly="true"] {{
+        min-width: 18px;
+        padding: 0px 2px;
+    }}
+"""
+
 class SearchResultButton(QPushButton):
     def __init__(self, item_type: str, title: str, description: str, file_path: str, graph_view, parent=None):
         super().__init__(title, parent)
@@ -510,6 +536,10 @@ class ActionsToolbar(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(4)
 
+        # Buttons whose text hides when the bar is too narrow for it.
+        self._label_buttons = []
+        self._labels_needed = None
+
         # Content frame (framed)
         self._content_frame = QFrame(self)
         self._content_frame.setObjectName("actionsContent")
@@ -524,12 +554,14 @@ class ActionsToolbar(QWidget):
         layout.addWidget(self._make_custom_icon_button(self._icon_open(), self._open_chain, tooltip=_("Load Chain"), label_text=_("Load")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_save(), self._save_chain, tooltip=_("Save Chain"), label_text=_("Save")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_play(), self._run_chain, tooltip=_("Run Chain"), label_text=_("Run")), alignment=Qt.AlignVCenter)
-        layout.addWidget(self._make_custom_icon_button(self._icon_delete(), self._delete_selected, tooltip=_("Delete Selected"), label_text=_("Delete")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_copy(), self._copy_selected, tooltip=_("Copy Selected"), label_text=_("Copy")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_paste(), self._paste_selected, tooltip=_("Paste"), label_text=_("Paste")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_undo(), self._undo_selected, tooltip=_("Undo Ctrl+Z"), label_text=_("Undo")), alignment=Qt.AlignVCenter)
         layout.addWidget(self._make_custom_icon_button(self._icon_redo(), self._redo_selected, tooltip=_("Redo Ctrl+Y"), label_text=_("Redo")), alignment=Qt.AlignVCenter)
         outer.addWidget(self._content_frame)
+        # Anchor the frame to the top so the collapse animation shrinks it
+        # upward (toward the top frame) instead of collapsing toward the middle.
+        outer.addStretch(1)
 
         # Floating toggle button (solid triangle) centered under the actions frame
         self._toggle_btn_actions = QToolButton(self.graph_view)
@@ -549,6 +581,13 @@ class ActionsToolbar(QWidget):
             QTimer.singleShot(0, self._position_actions_toggle)
         except Exception:
             pass
+
+        # Responsive: text shows only while the bar is wide enough for it.
+        try:
+            self._labels_needed = self._compute_labels_needed()
+        except Exception:
+            self._labels_needed = None
+        QTimer.singleShot(0, self._update_responsive_labels)
 
     def _toggle_actions_toolbar(self):
         try:
@@ -597,6 +636,7 @@ class ActionsToolbar(QWidget):
             QTimer.singleShot(0, self._position_actions_toggle)
         except Exception:
             pass
+        self._update_responsive_labels()
 
     def _position_actions_toggle(self):
         try:
@@ -615,6 +655,45 @@ class ActionsToolbar(QWidget):
         except Exception:
             pass
 
+    def _compute_labels_needed(self):
+        """Minimum width the bar needs to keep every button's text visible.
+        Below this the labelled buttons would be clipped, so we go icon-only."""
+        try:
+            lay = self._content_frame.layout()
+            if lay is not None:
+                lay.activate()
+                return lay.minimumSize().width()
+        except Exception:
+            pass
+        return 0
+
+    def _set_icon_only(self, btn, on):
+        if btn.property("icononly") == on:
+            return
+        btn.setProperty("icononly", on)
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+
+    def _update_responsive_labels(self):
+        """Drop the button text to icons-only when the bar is too narrow for it."""
+        buttons = getattr(self, "_label_buttons", None)
+        if not buttons:
+            return
+        try:
+            if self._labels_needed is None:
+                self._labels_needed = self._compute_labels_needed()
+            avail = max(0, self.width() - 8)
+            want_labels = avail >= self._labels_needed
+            for btn, label in buttons:
+                if want_labels and not btn.text():
+                    btn.setText(label)
+                    self._set_icon_only(btn, False)
+                elif not want_labels and btn.text():
+                    btn.setText("")
+                    self._set_icon_only(btn, True)
+        except Exception:
+            pass
+
     def _make_custom_icon_button(self, icon: QIcon, handler, tooltip=None, label_text=None):
         btn = QPushButton(label_text or "", self)
         btn.clicked.connect(handler)
@@ -627,27 +706,8 @@ class ActionsToolbar(QWidget):
             pass
         btn.setIcon(icon)
         btn.setIconSize(QSize(18, 18))
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: rgba(255, 255, 255, 0.05);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                padding: 1px 6px;
-                min-width: 64px;
-                min-height: 22px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background: rgba(255, 255, 255, 0.12);
-            }}
-            """
-        )
+        btn.setStyleSheet(_ACTION_BUTTON_QSS)
+        self._label_buttons.append((btn, label_text or ""))
         return btn
 
     def _make_record_icon_button(self):
@@ -669,27 +729,8 @@ class ActionsToolbar(QWidget):
         p.end()
         btn.setIcon(QIcon(pix))
         btn.setIconSize(QSize(18, 18))
-        btn.setStyleSheet(
-            f"""
-            QPushButton {{
-                background: rgba(255, 255, 255, 0.05);
-                color: {TEXT_COLOR};
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 8px;
-                padding: 1px 6px;
-                min-width: 64px;
-                min-height: 22px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background: rgba(255, 255, 255, 0.08);
-                border-color: {ACCENT_COLOR};
-            }}
-            QPushButton:pressed {{
-                background: rgba(255, 255, 255, 0.12);
-            }}
-            """
-        )
+        btn.setStyleSheet(_ACTION_BUTTON_QSS)
+        self._label_buttons.append((btn, _("Record")))
         return btn
 
     def _run_chain(self):
@@ -701,13 +742,6 @@ class ActionsToolbar(QWidget):
                 logger.warning('MainWindow.run_chain not found')
         except Exception as e:
             logger.error(f"Run chain error: {e}")
-
-    def _delete_selected(self):
-        try:
-            if hasattr(self.graph_view, 'delete_selected_nodes'):
-                self.graph_view.delete_selected_nodes()
-        except Exception as e:
-            logger.error(f"Delete selected error: {e}")
 
     def _copy_selected(self):
         try:
@@ -827,31 +861,6 @@ class ActionsToolbar(QWidget):
         p.drawLine(12, 6, 12, 13)
         p.drawLine(12, 13, 9, 10)
         p.drawLine(12, 13, 15, 10)
-        p.end()
-        return QIcon(pix)
-
-    def _icon_delete(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.TRASH, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
-        pix = QPixmap(24, 24)
-        pix.fill(Qt.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.Antialiasing)
-        pen = p.pen()
-        pen.setColor(QColor(TEXT_COLOR))
-        pen.setWidth(2)
-        p.setPen(pen)
-        p.drawRect(6, 9, 12, 12)
-        p.drawLine(9, 12, 9, 18)
-        p.drawLine(15, 12, 15, 18)
-        p.drawLine(7, 9, 17, 9)
-        p.drawLine(10, 6, 14, 6)
-        p.drawLine(10, 6, 8, 9)
-        p.drawLine(14, 6, 16, 9)
         p.end()
         return QIcon(pix)
 
