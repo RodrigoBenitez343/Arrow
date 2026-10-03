@@ -744,10 +744,17 @@ def replay_session(
     config = config or ReplayConfig()
     data = load_session(session_path)
     own_driver = driver is None
+    # A headless web orchestrator forces an invisible browser even when the
+    # node itself did not opt in (see web.session.run_headless).
+    try:
+        from .session import run_headless
+        headless = bool(config.headless) or bool(run_headless())
+    except Exception:
+        headless = bool(config.headless)
     if own_driver:
-        driver = create_session(headless=config.headless)
+        driver = create_session(headless=headless)
         driver_factory = driver_factory or (
-            lambda: create_session(headless=config.headless)
+            lambda: create_session(headless=headless)
         )
     engine = ReplayEngine(driver, config, driver_factory=driver_factory)
     try:
@@ -755,7 +762,7 @@ def replay_session(
     finally:
         driver = getattr(engine, "driver", driver)  # may have been reconnected
         if own_driver:
-            if config.headless:
+            if headless:
                 cleanup_session(driver)
             else:
                 detach_session(driver)

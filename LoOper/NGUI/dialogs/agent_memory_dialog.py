@@ -40,7 +40,9 @@ from PyQt5.QtWidgets import (
 )
 
 from ..constants import (
-    ACCENT_COLOR, BAR_BG, CENTER_BG, DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR,
+    ACCENT_COLOR, ACCENT_HOVER, BAR_BG, CENTER_BG, DARK_GREY, LIGHT_GREY, MEDIUM_GREY,
+    TEXT_COLOR, BLOCK_HOVER, WELL_BG, HAIRLINE, DANGER_COLOR, BTN_PRIMARY_TEXT,
+    RADIUS_SM, RADIUS_MD, DIALOG_LARGE_W, DIALOG_LARGE_H,
 )
 from ..i18n import _
 from .base_dialog import ModernDialog
@@ -50,7 +52,7 @@ logger = logging.getLogger(__name__)
 # ── Graph color palette ──
 EDGE_KEYWORD = QColor(100, 180, 140, 100)   # greenish — query similarity
 EDGE_CHAIN = QColor(140, 140, 200, 80)       # bluish — shared chain
-COLOR_GOAL_FRESH = QColor("#00E0B8")          # accent
+COLOR_GOAL_FRESH = QColor(ACCENT_COLOR)          # accent
 COLOR_GOAL_OLD = QColor("#4E5D58")            # dimmed
 COLOR_GOAL_HIGHLIGHT = QColor("#FFFFFF")
 
@@ -672,10 +674,10 @@ class MemoryDetailsPanel(QWidget):
     def _table_style() -> str:
         return f"""
             QTableWidget {{
-                background-color: {MEDIUM_GREY};
+                background-color: {WELL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
                 gridline-color: rgba(255,255,255,0.04);
                 font-size: 12px;
             }}
@@ -691,7 +693,7 @@ class MemoryDetailsPanel(QWidget):
                 color: {TEXT_COLOR};
                 padding: 4px 8px;
                 border: none;
-                border-bottom: 1px solid {LIGHT_GREY};
+                border-bottom: 1px solid {HAIRLINE};
                 font-weight: 600;
                 font-size: 11px;
             }}
@@ -701,17 +703,17 @@ class MemoryDetailsPanel(QWidget):
     def _tab_style() -> str:
         return f"""
             QTabWidget::pane {{
-                border: 1px solid {LIGHT_GREY};
+                border: 1px solid {HAIRLINE};
                 background-color: {DARK_GREY};
-                border-radius: 5px;
+                border-radius: {RADIUS_MD}px;
             }}
             QTabBar::tab {{
                 background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
                 padding: 6px 18px;
                 margin-right: 2px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
+                border-top-left-radius: {RADIUS_SM}px;
+                border-top-right-radius: {RADIUS_SM}px;
                 font-size: 12px;
             }}
             QTabBar::tab:selected {{
@@ -719,7 +721,7 @@ class MemoryDetailsPanel(QWidget):
                 color: {DARK_GREY};
             }}
             QTabBar::tab:hover:!selected {{
-                background-color: {LIGHT_GREY};
+                background-color: {BLOCK_HOVER};
             }}
         """
 
@@ -923,8 +925,8 @@ class AgentMemoryDialog(ModernDialog):
     def __init__(self, parent=None):
         super().__init__(parent, title=_("Agent Settings"), help_topic="general")
         self.setModal(True)
-        self.resize(920, 780)
-        self.setMinimumSize(760, 560)
+        self._auto_fit = False
+        self.resize(DIALOG_LARGE_W, DIALOG_LARGE_H)
 
         self._goals: Dict[str, Any] = {}
         self._fragments: List[Dict[str, Any]] = []
@@ -946,7 +948,7 @@ class AgentMemoryDialog(ModernDialog):
         self._refresh_btn.setFixedHeight(28)
         self._refresh_btn.setStyleSheet(
             f"QPushButton {{ background-color: transparent; color: {TEXT_COLOR}; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 6px; "
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px; "
             f"padding: 0 14px; font-size: 12px; }}"
             f"QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}"
         )
@@ -960,7 +962,7 @@ class AgentMemoryDialog(ModernDialog):
         self._search_input.setMinimumWidth(160)
         self._search_input.setStyleSheet(
             f"QLineEdit {{ background-color: {CENTER_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 6px; "
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px; "
             f"padding: 0 10px; font-size: 12px; }}"
             f"QLineEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
         )
@@ -972,9 +974,9 @@ class AgentMemoryDialog(ModernDialog):
         self._search_btn.setFixedHeight(28)
         self._search_btn.setStyleSheet(
             f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR}; "
-            f"border: 1px solid {ACCENT_COLOR}; border-radius: 6px; "
+            f"border: 1px solid {ACCENT_COLOR}; border-radius: {RADIUS_SM}px; "
             f"padding: 0 12px; font-size: 12px; }}"
-            f"QPushButton:hover {{ background-color: rgba(0,224,184,0.10); }}"
+            f"QPushButton:hover {{ background-color: rgba(34,211,238,0.10); }}"
         )
         self._search_btn.clicked.connect(self._search_memory)
         toolbar.addWidget(self._search_btn)
@@ -985,10 +987,10 @@ class AgentMemoryDialog(ModernDialog):
         self._clear_btn.setCursor(Qt.PointingHandCursor)
         self._clear_btn.setFixedHeight(28)
         self._clear_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: #ff6b6b; "
-            f"border: 1px solid #ff6b6b; border-radius: 6px; "
+            f"QPushButton {{ background-color: transparent; color: {DANGER_COLOR}; "
+            f"border: 1px solid {DANGER_COLOR}; border-radius: {RADIUS_SM}px; "
             f"padding: 0 14px; font-size: 12px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: rgba(255,107,107,0.12); }}"
+            f"QPushButton:hover {{ background-color: rgba(239,68,68,0.12); }}"
         )
         self._clear_btn.clicked.connect(self._clear_memory)
         toolbar.addWidget(self._clear_btn)
@@ -998,10 +1000,10 @@ class AgentMemoryDialog(ModernDialog):
         self._chain_editor_btn.setCursor(Qt.PointingHandCursor)
         self._chain_editor_btn.setFixedHeight(28)
         self._chain_editor_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: #00E0B8; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 6px; "
+            f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR}; "
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px; "
             f"padding: 0 14px; font-size: 12px; }}"
-            f"QPushButton:hover {{ border-color: #00E0B8; }}"
+            f"QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}"
         )
         self._chain_editor_btn.clicked.connect(self._open_chain_editor)
         toolbar.addWidget(self._chain_editor_btn)
@@ -1013,7 +1015,7 @@ class AgentMemoryDialog(ModernDialog):
         graph_box.setMinimumHeight(260)
         graph_box.setStyleSheet(
             f"QWidget {{ background-color: {CENTER_BG}; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 8px; }}"
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}"
         )
         g_layout = QVBoxLayout(graph_box)
         g_layout.setContentsMargins(4, 4, 4, 4)
@@ -1155,8 +1157,6 @@ class ChainDescriptionEditor(ModernDialog):
     def __init__(self, parent=None):
         super().__init__(parent, title=_("Edit Chain Descriptions"), help_topic="general")
         self.setModal(True)
-        self.resize(700, 520)
-        self.setMinimumSize(500, 380)
         self._chains: list[dict] = []  # {name, path, description}
         self._build_ui()
         self._scan_chains()
@@ -1176,7 +1176,7 @@ class ChainDescriptionEditor(ModernDialog):
         self._chain_list.setMinimumWidth(180)
         self._chain_list.setStyleSheet(
             f"QListWidget {{ background-color: {CENTER_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 6px; "
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px; "
             f"font-size: 12px; padding: 4px; }}"
             f"QListWidget::item:selected {{ background-color: {ACCENT_COLOR}; color: {DARK_GREY}; }}"
         )
@@ -1195,7 +1195,7 @@ class ChainDescriptionEditor(ModernDialog):
         self._desc_editor.setPlaceholderText(_("Select a chain to edit its description..."))
         self._desc_editor.setStyleSheet(
             f"QTextEdit {{ background-color: {CENTER_BG}; color: {TEXT_COLOR}; "
-            f"border: 1px solid {LIGHT_GREY}; border-radius: 6px; "
+            f"border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px; "
             f"padding: 8px; font-size: 13px; }}"
             f"QTextEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
         )
@@ -1210,10 +1210,10 @@ class ChainDescriptionEditor(ModernDialog):
         self._save_btn.setCursor(Qt.PointingHandCursor)
         self._save_btn.setFixedHeight(30)
         self._save_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
-            f"border: 0px; border-radius: 6px; padding: 0 20px; "
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT}; "
+            f"border: 0px; border-radius: {RADIUS_SM}px; padding: 0 20px; "
             f"font-size: 12px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
+            f"QPushButton:hover {{ background-color: {ACCENT_HOVER}; }}"
         )
         self._save_btn.clicked.connect(self._save_description)
         btn_row.addWidget(self._save_btn)

@@ -40,6 +40,7 @@ up as overhead.
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
 
@@ -285,6 +286,10 @@ class RecordingOverlay(QWidget):
         self._hit = None
         self._hit_lock = threading.Lock()
         self._dpr = 1.0
+        # UIA descriptor requests from the recorder (see element_descriptor):
+        # queued here and answered by _hit_loop, the thread that owns UIA.
+        self._req = queue.Queue()
+        self._serving = threading.Event()
 
         self.setWindowFlags(
             Qt.FramelessWindowHint
@@ -355,6 +360,27 @@ class RecordingOverlay(QWidget):
         """Register a callable: True while the visual-match marker is held."""
         self._visual_provider = provider
 
+    def element_descriptor(self, x, y, timeout: float = 1.5):
+        """UIA descriptor at (x, y) computed on the hit-test thread, or None.
+
+        The recorder calls this from pynput's LOW-LEVEL MOUSE-HOOK thread, where
+        an outbound COM call is illegal: doing the UIA work there raised
+        ``RPC_E_CANTCALLOUT_ININPUTSYNCCALL`` (0x8001010d) and hard-killed the
+        app mid-recording (ten faults, then an access violation, with no Python
+        traceback - the log just ended).  Hand the work to the worker thread,
+        which owns a UIA apartment, and only wait for the answer.
+
+        Returns None when there is no worker to answer, or when it does not
+        answer in time: the recorder then stores no element instead of dying.
+        """
+        if self._kill.is_set() or not self._serving.is_set():
+            return None
+        slot = {"done": threading.Event(), "desc": None}
+        self._req.put((int(x), int(y), slot))
+        if not slot["done"].wait(timeout):
+            return None
+        return slot["desc"]
+
     def stop(self) -> None:
         """Hide and stop both the draw timer and the hit-test thread."""
         self._kill.set()
@@ -391,8 +417,26 @@ class RecordingOverlay(QWidget):
             return None
         return res.get("rect")
 
+    def _serve_requests(self, budget: int = 8) -> None:
+        """Answer the recorder's queued descriptor requests on THIS thread.
+
+        This thread owns a valid UIA apartment, so it is the only place a UIA
+        call may happen.  See ``element_descriptor``.
+        """
+        for _ in range(budget):
+            try:
+                x, y, slot = self._req.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                slot["desc"] = element_descriptor_at(x, y)
+            except Exception:
+                slot["desc"] = None
+            finally:
+                slot["done"].set()
+
     def _hit_loop(self) -> None:
-        """Worker: poll the cursor, UIA hit-test, publish the mark to draw.
+        """Worker: answer descriptor requests, poll the cursor, publish a mark.
 
         Keeps running while a button is held: the recorder reads the element
         rect from here to size its crop, while the GUI simply does not DRAW
@@ -402,20 +446,27 @@ class RecordingOverlay(QWidget):
             import pyautogui
         except Exception:
             return
-        last = None
-        while not (self._stop.is_set() or self._kill.is_set()):
-            try:
-                x, y = pyautogui.position()
-            except Exception:
-                time.sleep(0.1)
-                continue
-            x, y = int(x), int(y)
-            if last is not None and abs(x - last[0]) + abs(y - last[1]) < _HIT_MIN_MOVE:
+        self._serving.set()
+        try:
+            last = None
+            while not (self._stop.is_set() or self._kill.is_set()):
+                # The recorder asks for descriptors from pynput's mouse-hook
+                # thread, where a UIA/COM call is illegal; serve them here.
+                self._serve_requests()
+                try:
+                    x, y = pyautogui.position()
+                except Exception:
+                    time.sleep(0.1)
+                    continue
+                x, y = int(x), int(y)
+                if last is not None and abs(x - last[0]) + abs(y - last[1]) < _HIT_MIN_MOVE:
+                    time.sleep(_HIT_IDLE_S)
+                    continue
+                last = (x, y)
+                self._publish(self._mark_for(x, y))
                 time.sleep(_HIT_IDLE_S)
-                continue
-            last = (x, y)
-            self._publish(self._mark_for(x, y))
-            time.sleep(_HIT_IDLE_S)
+        finally:
+            self._serving.clear()
 
     def _mark_for(self, x, y):
         """UIA element at (x, y), or a cursor reticle when there is none.
@@ -552,3 +603,39 @@ class RecordingOverlay(QWidget):
             label_y = t - self.y() - self._crop_label.height() - 2
         self._crop_label.move(max(0, l - self.x()), max(0, label_y))
         self._crop_label.show()
+
+
+if __name__ == "__main__":
+    # Self-check: the recorder asks from the mouse-hook thread, so the bridge
+    # must compute the descriptor on the WORKER thread, never on the caller.
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication
+
+    _app = QApplication([])
+    _seen = {}
+
+    def _stub(x, y):
+        _seen["tid"] = threading.get_ident()
+        return {"rect": (0, 0, 9, 9), "label": "stub"}
+
+    globals()["element_descriptor_at"] = _stub
+
+    _ov = RecordingOverlay(threading.Event(), threading.Event())
+    assert _ov.element_descriptor(1, 2) is None, "no servicer must not block"
+
+    _ov._serving.set()
+    _stop_pump = threading.Event()
+
+    def _pump():
+        while not _stop_pump.is_set():
+            _ov._serve_requests()
+            time.sleep(0.005)
+
+    threading.Thread(target=_pump, daemon=True).start()
+    _res = _ov.element_descriptor(5, 6)
+    _stop_pump.set()
+    assert _res and _res["rect"] == (0, 0, 9, 9), _res
+    assert _seen["tid"] != threading.get_ident(), "ran on the caller thread"
+    print("RecordingOverlay bridge self-check OK")

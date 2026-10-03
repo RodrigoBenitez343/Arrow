@@ -25,7 +25,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from ..constants import ACCENT_COLOR, DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR
+from ..constants import (ACCENT_COLOR, DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR,
+                         HAIRLINE, BTN_PRIMARY_TEXT)
 from ..i18n import _
 from .base_dialog import ModernDialog, UserGuideDialog
 from .toggle_switch import ModernToggle
@@ -151,8 +152,6 @@ class AISettingsDialog(ModernDialog):
     def __init__(self, parent=None):
         super().__init__(parent, title=_("AI Settings"), help_topic="general")
         self.setModal(True)
-        self.resize(700, 700)
-        self.setMinimumSize(650, 600)
 
         # Style logic moved to ModernDialog
 
@@ -180,14 +179,14 @@ class AISettingsDialog(ModernDialog):
             QPushButton {{
                 color: {TEXT_COLOR};
                 background: transparent;
-                border: 1px solid {LIGHT_GREY};
+                border: 1px solid {HAIRLINE};
                 border-radius: 12px;
                 font-size: 12px;
                 padding: 0px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
-                color: {DARK_GREY};
+                color: {BTN_PRIMARY_TEXT};
                 border: 1px solid {ACCENT_COLOR};
             }}
         """)

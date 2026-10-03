@@ -563,6 +563,9 @@ class LLMOperationsMixin:
                     node.set_property(
                         "orch_use_goal_ledger",
                         bool(dialog.orch_use_goal_ledger_check.isChecked()))
+                    node.set_property(
+                        "orch_headless",
+                        bool(dialog.orch_headless_check.isChecked()))
                 except Exception:
                     node.set_property("orchestrator_mode", False)
 

@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItem,
 )
 
+from NGUI.constants import TEXT_SECONDARY, WELL_BG
 from NGUI.i18n import _
 from player.code_agent_ops.constants import (
     MAIN_FILE,
@@ -376,12 +377,13 @@ class FilesRunMixin(object):
         safe = safe.replace('&', '&amp;').replace('<', '&lt;') \
             .replace('>', '&gt;').replace('\n', '<br>')
         body = (
-            '<div style="background:#0B1116; border-left:3px solid ' + accent
+            '<div style="background:' + WELL_BG + '; border-left:3px solid '
+            + accent
             + '; border-radius:6px; padding:6px 8px; margin:6px 2px;">'
             '<span style="color:' + accent
             + '; font-size:10px; font-weight:700;">' + title_safe
             + '</span><br>'
-            '<span style="color:#C8D3DC; font-family:Consolas; '
+            '<span style="color:' + TEXT_SECONDARY + '; font-family:Consolas; '
             'font-size:11px;">' + safe + '</span></div>'
         )
         self._chat_view.append(body)

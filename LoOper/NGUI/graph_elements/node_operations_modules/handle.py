@@ -1,4 +1,5 @@
-from PyQt5.QtWidgets import QMessageBox, QLineEdit, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QCheckBox
+from PyQt5.QtWidgets import (QMessageBox, QLineEdit, QComboBox, QDialog, QDialogButtonBox,
+                             QFormLayout, QLabel, QCheckBox, QGroupBox, QVBoxLayout)
 from .utils import get_logger
 
 logger = get_logger(__name__)
@@ -51,10 +52,17 @@ class HandleOperationsMixin:
             current_adaptive = bool(node.get_property('agent_adaptive'))
             current_web_mode = bool(node.get_property('web_mode'))
 
-            # Build dialog with dropdown for action type and text for goal
-            dialog = QDialog(self.parent_widget)
-            dialog.setWindowTitle("Edit Handle Node")
-            layout = QFormLayout(dialog)
+            # Build a themed ModernDialog (matches every other node editor)
+            from ...dialogs.base_dialog import ModernDialog
+            dialog = ModernDialog(
+                self.parent_widget, title="Handle Node", help_topic="handle-node"
+            )
+            dialog.resize(520, 400)
+            card = QGroupBox("Action")
+            layout = QFormLayout(card)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(10)
+            dialog.content_layout.addWidget(card)
 
             # Action type dropdown
             action_combo = QComboBox(dialog)
@@ -136,7 +144,7 @@ class HandleOperationsMixin:
             )
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
-            layout.addRow(buttons)
+            dialog.content_layout.addWidget(buttons)
 
             if dialog.exec_() != QDialog.Accepted:
                 logger.debug("Dialog cancelled")

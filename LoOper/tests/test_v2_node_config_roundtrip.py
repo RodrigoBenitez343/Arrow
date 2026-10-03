@@ -192,6 +192,25 @@ def test_is_default_flag_survives_editor_save_cycle():
     assert "is_default" not in cm2.chain_config
 
 
+def test_routing_examples_survive_editor_save_cycle():
+    """Accumulated routing.examples must not be dropped on editor load/save.
+
+    The editor rebuilds the chain dict from a FIXED key set, so a key it does
+    not know is erased on the next save.  The orchestrator writes 'routing'
+    into the chain file; without this the accumulated reinforcement would
+    silently vanish the moment the user opens and saves the chain."""
+    cm = ConfigManager(_ChainParent())
+    cm._current_chain_routing = {"examples": ["Click the jobs button"]}
+    cm.save_current_state()
+    assert cm.chain_config.get("routing") == {
+        "examples": ["Click the jobs button"]}
+
+    # No routing -> no key noise injected into a plain chain.
+    cm2 = ConfigManager(_ChainParent())
+    cm2.save_current_state()
+    assert "routing" not in cm2.chain_config
+
+
 # ---------------------------------------------------------------------------
 # Legacy Orchestrator nodes fold into LLM 'orchestrator' mode on load
 # ---------------------------------------------------------------------------

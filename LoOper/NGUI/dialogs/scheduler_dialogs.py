@@ -1,13 +1,16 @@
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QWidget, QComboBox, QSpinBox, QTimeEdit, QDateTimeEdit, QFileDialog, QMessageBox, QLineEdit,
-    QGroupBox, QFrame, QHeaderView, QSizePolicy
+    QGroupBox, QFrame, QHeaderView, QSizePolicy, QTabWidget
 )
 from PyQt5.QtCore import QTime, QDateTime, Qt, QTimer
 from ..constants import (
-    DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER, RED_PRIMARY
+    DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_COLOR, BLOCK_HOVER,
+    ACCENT_COLOR, ACCENT_HOVER, BTN_PRIMARY_TEXT, RADIUS_PILL, RADIUS_MD, RADIUS_SM,
+    CONTROL_BG, HAIRLINE, DANGER_COLOR, DANGER_HOVER
 )
 from ..i18n import _
+from ..icons import tabler_qicon
 from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 
@@ -16,8 +19,7 @@ class SchedulerManagerDialog(ModernDialog):
     def __init__(self, parent, scheduler_service):
         super().__init__(parent, title=_("Manage Schedules"), help_topic="schedules")
         self.scheduler = scheduler_service
-        self.resize(800, 500)  # Slightly larger default
-        self.setMinimumSize(600, 400)
+        self.setMinimumWidth(680)
         
         layout = self.content_layout
         # layout.setContentsMargins(15, 15, 15, 15) # ModernDialog handles this
@@ -64,14 +66,14 @@ class SchedulerManagerDialog(ModernDialog):
             QTableWidget {{
                 background-color: {MEDIUM_GREY};
                 color: {TEXT_COLOR};
-                gridline-color: {LIGHT_GREY};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
+                gridline-color: {HAIRLINE};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
                 selection-background-color: {BLOCK_HOVER};
             }}
             QTableWidget::item {{
                 padding: 8px;
-                border-bottom: 1px solid {LIGHT_GREY};
+                border-bottom: 1px solid {HAIRLINE};
             }}
             QTableWidget::item:selected {{
                 background-color: {BLOCK_HOVER};
@@ -80,12 +82,12 @@ class SchedulerManagerDialog(ModernDialog):
                 background-color: {BLOCK_COLOR};
                 color: {TEXT_COLOR};
                 padding: 8px;
-                border: 1px solid {LIGHT_GREY};
-                font-weight: bold;
+                border: 1px solid {HAIRLINE};
+                font-weight: 600;
             }}
             QTableCornerButton::section {{
                 background-color: {BLOCK_COLOR};
-                border: 1px solid {LIGHT_GREY};
+                border: 1px solid {HAIRLINE};
             }}
         """)
         
@@ -98,8 +100,8 @@ class SchedulerManagerDialog(ModernDialog):
         btn_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {BLOCK_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
                 padding: 5px;
             }}
         """)
@@ -107,17 +109,20 @@ class SchedulerManagerDialog(ModernDialog):
         btn_row.setContentsMargins(10, 8, 10, 8)
         btn_row.setSpacing(10)
         
-        add_btn = QPushButton(f" {_('Add Schedule')}")
+        add_btn = QPushButton(_('Add Schedule'))
+        add_btn.setIcon(tabler_qicon("PLUS", 16))
         add_btn.clicked.connect(self.add_schedule)
         btn_row.addWidget(add_btn)
 
-        refresh_btn = QPushButton(f"🔄 {_('Refresh')}")
+        refresh_btn = QPushButton(_('Refresh'))
+        refresh_btn.setIcon(tabler_qicon("REFRESH", 16))
         refresh_btn.clicked.connect(self.reload)
         btn_row.addWidget(refresh_btn)
 
         btn_row.addStretch(1)
         
-        close_btn = QPushButton(f"✖ {_('Close')}")
+        close_btn = QPushButton(_('Close'))
+        close_btn.setIcon(tabler_qicon("X", 16))
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(close_btn)
 
@@ -172,17 +177,22 @@ class SchedulerManagerDialog(ModernDialog):
         # Sandbox indicator
         run_in_sandbox = s.get('run_in_sandbox', False)
         show_sandbox_window = s.get('show_sandbox_window', True)
+        sandbox_icon = ""
         if run_in_sandbox:
             if show_sandbox_window:
-                sandbox_text = "🖥 Visible"
+                sandbox_text = "Visible"
+                sandbox_icon = "EYE"
                 sandbox_tooltip = _("Runs in RDP sandbox with visible window")
             else:
-                sandbox_text = "🖥 Hidden"
+                sandbox_text = "Hidden"
+                sandbox_icon = "EYE_OFF"
                 sandbox_tooltip = _("Runs in RDP sandbox (hidden window)")
         else:
             sandbox_text = "—"
             sandbox_tooltip = _("Runs directly on desktop")
         sandbox_item = QTableWidgetItem(sandbox_text)
+        if sandbox_icon:
+            sandbox_item.setIcon(tabler_qicon(sandbox_icon, 16))
         sandbox_item.setToolTip(sandbox_tooltip)
         self.table.setItem(row, 6, sandbox_item)
 
@@ -195,10 +205,10 @@ class SchedulerManagerDialog(ModernDialog):
                 background-color: transparent;
             }}
             QPushButton {{
-                background-color: {BLOCK_COLOR};
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 3px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 4px 8px;
                 font-size: 11px;
                 min-width: 70px;
@@ -212,33 +222,36 @@ class SchedulerManagerDialog(ModernDialog):
         actions_layout.setContentsMargins(0, 0, 0, 0)
         actions_layout.setSpacing(6)
 
-        run_btn = QPushButton(f"▶ {_('Run')}")
+        run_btn = QPushButton(_('Run'))
+        run_btn.setIcon(tabler_qicon("PLAYER_PLAY", 16))
         run_btn.setToolTip(_("Run this schedule now"))
         run_btn.setFixedWidth(78)
         run_btn.setMinimumHeight(28)
         run_btn.clicked.connect(lambda _, sid=s['id']: self._run_now(sid))
         actions_layout.addWidget(run_btn)
 
-        edit_btn = QPushButton(f"✏ {_('Edit')}")
+        edit_btn = QPushButton(_('Edit'))
+        edit_btn.setIcon(tabler_qicon("PENCIL", 16))
         edit_btn.setToolTip(_("Edit this schedule"))
         edit_btn.setFixedWidth(78)
         edit_btn.setMinimumHeight(28)
         edit_btn.clicked.connect(lambda _, sched=s: self._edit_schedule(sched))
         actions_layout.addWidget(edit_btn)
 
-        del_btn = QPushButton(f"🗑 {_('Del')}")
+        del_btn = QPushButton(_('Del'))
+        del_btn.setIcon(tabler_qicon("TRASH", 16))
         del_btn.setToolTip(_("Delete this schedule"))
         del_btn.setFixedWidth(90)
         del_btn.setMinimumHeight(28)
         del_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {RED_PRIMARY};
-                color: {TEXT_COLOR};
-                border: 1px solid {RED_PRIMARY};
+                background-color: {DANGER_COLOR};
+                color: #ffffff;
+                border: 1px solid {DANGER_COLOR};
             }}
             QPushButton:hover {{
-                background-color: #FF6B6B;
-                border-color: #FF6B6B;
+                background-color: {DANGER_HOVER};
+                border-color: {DANGER_HOVER};
             }}
         """)
         del_btn.clicked.connect(lambda _, sid=s['id']: self._delete_schedule(sid))
@@ -328,14 +341,27 @@ class SchedulerManagerDialog(ModernDialog):
 class EditScheduleDialog(ModernDialog):
     def __init__(self, parent, schedule=None):
         super().__init__(parent, title=_("Schedule Configuration"), help_topic="schedules")
-        self.resize(580, 680)
-        self.setMinimumSize(500, 620)
+        self.setMinimumWidth(560)
         self._schedule = schedule or {}
         
         layout = self.content_layout
 
+        _tabs = QTabWidget()
+        _tab_basic = QWidget()
+        _bl = QVBoxLayout(_tab_basic)
+        _bl.setContentsMargins(4, 12, 4, 4)
+        _bl.setSpacing(12)
+        _tab_timing = QWidget()
+        _tl = QVBoxLayout(_tab_timing)
+        _tl.setContentsMargins(4, 12, 4, 4)
+        _tl.setSpacing(12)
+        _tab_sandbox = QWidget()
+        _sl = QVBoxLayout(_tab_sandbox)
+        _sl.setContentsMargins(4, 12, 4, 4)
+        _sl.setSpacing(12)
+
         # Basic Configuration Group
-        basic_group = QGroupBox(_("📋 Basic Configuration"))
+        basic_group = QGroupBox(_("Basic Configuration"))
         basic_layout = QVBoxLayout(basic_group)
         basic_layout.setSpacing(10)
         
@@ -366,7 +392,8 @@ class EditScheduleDialog(ModernDialog):
         # Chain file
         chain_row = QHBoxLayout()
         chain_row.addWidget(QLabel(_("Chain File:")))
-        self.chain_btn = QPushButton(f"📁 {_('Select Chain JSON...')}")
+        self.chain_btn = QPushButton(_('Select Chain JSON...'))
+        self.chain_btn.setIcon(tabler_qicon("FOLDER", 16))
         self.chain_btn.clicked.connect(self._select_chain)
         chain_row.addWidget(self.chain_btn)
         basic_layout.addLayout(chain_row)
@@ -375,18 +402,18 @@ class EditScheduleDialog(ModernDialog):
         self.chain_lbl.setStyleSheet(f"""
             QLabel {{
                 background-color: {BLOCK_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 6px;
                 font-style: italic;
             }}
         """)
         basic_layout.addWidget(self.chain_lbl)
         
-        layout.addWidget(basic_group)
+        _bl.addWidget(basic_group)
 
         # Timing Configuration Group
-        timing_group = QGroupBox(_("⏰ Timing Configuration"))
+        timing_group = QGroupBox(_("Timing Configuration"))
         timing_layout = QVBoxLayout(timing_group)
         timing_layout.setSpacing(10)
         
@@ -394,7 +421,7 @@ class EditScheduleDialog(ModernDialog):
         self.once_row_w = QWidget()
         once_layout = QVBoxLayout(self.once_row_w)
         once_layout.setContentsMargins(0, 0, 0, 0)
-        once_layout.addWidget(QLabel(_("📅 Run at specific date and time:")))
+        once_layout.addWidget(QLabel(_("Run at specific date and time:")))
         self.once_dt = QDateTimeEdit(QDateTime.currentDateTime())
         self.once_dt.setCalendarPopup(True)
         self.once_dt.setDisplayFormat("yyyy-MM-dd hh:mm:ss")
@@ -405,7 +432,7 @@ class EditScheduleDialog(ModernDialog):
         self.daily_row_w = QWidget()
         daily_layout = QVBoxLayout(self.daily_row_w)
         daily_layout.setContentsMargins(0, 0, 0, 0)
-        daily_layout.addWidget(QLabel(_("🌅 Daily at time:")))
+        daily_layout.addWidget(QLabel(_("Daily at time:")))
         self.daily_time = QTimeEdit(QTime.currentTime())
         self.daily_time.setDisplayFormat("hh:mm")
         daily_layout.addWidget(self.daily_time)
@@ -415,7 +442,7 @@ class EditScheduleDialog(ModernDialog):
         self.weekly_row_w = QWidget()
         weekly_layout = QVBoxLayout(self.weekly_row_w)
         weekly_layout.setContentsMargins(0, 0, 0, 0)
-        weekly_layout.addWidget(QLabel(_("📅 Weekly schedule:")))
+        weekly_layout.addWidget(QLabel(_("Weekly schedule:")))
         
         time_row = QHBoxLayout()
         time_row.addWidget(QLabel(_("Time:")))
@@ -439,7 +466,7 @@ class EditScheduleDialog(ModernDialog):
         self.interval_row_w = QWidget()
         interval_layout = QVBoxLayout(self.interval_row_w)
         interval_layout.setContentsMargins(0, 0, 0, 0)
-        interval_layout.addWidget(QLabel(_("🔄 Repeat every (minutes):")))
+        interval_layout.addWidget(QLabel(_("Repeat every (minutes):")))
         interval_row = QHBoxLayout()
         self.interval_spin = QSpinBox()
         self.interval_spin.setRange(1, 100000)
@@ -449,10 +476,10 @@ class EditScheduleDialog(ModernDialog):
         interval_layout.addLayout(interval_row)
         timing_layout.addWidget(self.interval_row_w)
         
-        layout.addWidget(timing_group)
+        _tl.addWidget(timing_group)
 
         # Sandbox Execution Options Group
-        sandbox_group = QGroupBox(_("🖥 Sandbox Execution (RDP Session)"))
+        sandbox_group = QGroupBox(_("Sandbox Execution (RDP Session)"))
         sandbox_layout = QVBoxLayout(sandbox_group)
         sandbox_layout.setSpacing(10)
 
@@ -479,7 +506,12 @@ class EditScheduleDialog(ModernDialog):
         sandbox_help.setWordWrap(True)
         sandbox_layout.addWidget(sandbox_help)
 
-        layout.addWidget(sandbox_group)
+        _sl.addWidget(sandbox_group)
+
+        _tabs.addTab(_tab_basic, _("Basic"))
+        _tabs.addTab(_tab_timing, _("Timing"))
+        _tabs.addTab(_tab_sandbox, _("Sandbox"))
+        layout.addWidget(_tabs, 1)
 
         # Buttons
         btn_frame = QFrame()
@@ -487,8 +519,8 @@ class EditScheduleDialog(ModernDialog):
         btn_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {BLOCK_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                border-radius: 5px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
                 padding: 5px;
             }}
         """)
@@ -498,22 +530,24 @@ class EditScheduleDialog(ModernDialog):
         
         btn_row.addStretch(1)
         
-        cancel_btn = QPushButton(f"✖ {_('Cancel')}")
+        cancel_btn = QPushButton(_('Cancel'))
+        cancel_btn.setIcon(tabler_qicon("X", 16))
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
         
-        save_btn = QPushButton(f"💾 {_('Save Schedule')}")
+        save_btn = QPushButton(_('Save Schedule'))
+        save_btn.setIcon(tabler_qicon("DEVICE_FLOPPY", 16, BTN_PRIMARY_TEXT))
         save_btn.setStyleSheet(f"""
             QPushButton {{
-                background-color: {RED_PRIMARY};
-                color: {TEXT_COLOR};
-                border: 1px solid {RED_PRIMARY};
-                font-weight: bold;
-                padding: 8px 16px;
+                background-color: {ACCENT_COLOR};
+                color: {BTN_PRIMARY_TEXT};
+                border: none;
+                font-weight: 600;
+                padding: 8px 18px;
+                border-radius: {RADIUS_PILL}px;
             }}
             QPushButton:hover {{
-                background-color: #FF6B6B;
-                border-color: #FF6B6B;
+                background-color: {ACCENT_HOVER};
             }}
         """)
         save_btn.clicked.connect(self.accept)

@@ -40,6 +40,11 @@ class ClipboardManager:
                 "model","prompt","system_message","temperature","max_tokens","output_variable","api_url",
                 "write_text","use_vision","screenshot_enabled",
                 "typing_batch_size","typing_batch_delay","input_source","ocr_confidence","ocr_preprocessing","use_async",
+                # The orchestrator switch and its settings: without these a
+                # pasted orchestrator node would come back as a vanilla LLM
+                # node and lose its web/headless observation surface.
+                "orchestrator_mode","orch_max_steps","orch_goal","orch_synthesize",
+                "orch_synthesis_system","orch_use_goal_ledger","orch_headless","web_mode",
             }
         if node_type in ("chain_import", "chain_import.ChainImportNode") or node_type.endswith("ChainImportNode"):
             return {"chain_file","import_mode","prefix","loop_count","extra_delay","enabled","emit_data","data_output_nodes"}

@@ -6,7 +6,7 @@ import os
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QDialogButtonBox, QPushButton, QFileDialog, QComboBox, 
                              QTextEdit, QGroupBox, QMessageBox, QListWidget,
-                             QListWidgetItem)
+                             QListWidgetItem, QTabWidget, QWidget)
 from PyQt5.QtCore import Qt
 from ..constants import TEXT_COLOR
 from ..i18n import _
@@ -47,6 +47,16 @@ class ChainImportDialog(ModernDialog):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
         
+        tabs = QTabWidget()
+        _tab_general = QWidget()
+        _gl = QVBoxLayout(_tab_general)
+        _gl.setContentsMargins(4, 12, 4, 4)
+        _gl.setSpacing(12)
+        _tab_advanced = QWidget()
+        _al = QVBoxLayout(_tab_advanced)
+        _al.setContentsMargins(4, 12, 4, 4)
+        _al.setSpacing(12)
+
         # Chain File Selection Group
         file_group = QGroupBox(_("Chain File Selection"))
         file_layout = QVBoxLayout(file_group)
@@ -73,7 +83,7 @@ class ChainImportDialog(ModernDialog):
         file_layout.addWidget(QLabel(_("Chain Information:")))
         file_layout.addWidget(self.chain_info)
         
-        layout.addWidget(file_group)
+        _gl.addWidget(file_group)
         
         # Import Configuration Group
         config_group = QGroupBox(_("Import Configuration"))
@@ -128,7 +138,7 @@ class ChainImportDialog(ModernDialog):
         self.enabled_checkbox.setChecked(True)
         config_layout.addWidget(self.enabled_checkbox)
         
-        layout.addWidget(config_group)
+        _gl.addWidget(config_group)
         
         # Output content sent to the outer connection (the tool consumer /
         # agent context).  No ports are involved: the selected Output nodes'
@@ -159,7 +169,7 @@ class ChainImportDialog(ModernDialog):
         self.data_warning_label.setWordWrap(True)
         data_layout.addWidget(self.data_warning_label)
 
-        layout.addWidget(data_group)
+        _al.addWidget(data_group)
         
         # Sandbox execution options
         sandbox_group = QGroupBox(_("Sandbox Execution"))
@@ -180,8 +190,12 @@ class ChainImportDialog(ModernDialog):
         
         sandbox_layout.addWidget(self.show_sandbox_window_toggle)
         sandbox_group.setLayout(sandbox_layout)
-        layout.addWidget(sandbox_group)
+        _al.addWidget(sandbox_group)
         
+        tabs.addTab(_tab_general, _("General"))
+        tabs.addTab(_tab_advanced, _("Advanced"))
+        layout.addWidget(tabs, 1)
+
         # Button box
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         ok_btn = self.button_box.button(QDialogButtonBox.Ok)

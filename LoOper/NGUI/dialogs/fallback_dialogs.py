@@ -5,7 +5,7 @@ from .toggle_switch import ModernToggle
 import json
 from PyQt5.QtWidgets import (QVBoxLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout,
                              QGroupBox, QGridLayout, QSpinBox, QDoubleSpinBox, QWidget, QFileDialog)
-from ..constants import TEXT_COLOR
+from ..constants import TEXT_COLOR, DANGER_COLOR
 from ..i18n import _
 
 
@@ -53,7 +53,7 @@ class ActionFallbackConfigDialog(ModernDialog):
             
         except Exception as e:
             error_label = QLabel(_("Error loading action info: {error}").format(error=str(e)))
-            error_label.setStyleSheet("color: #FF6B6B;")
+            error_label.setStyleSheet(f"color: {DANGER_COLOR};")
             info_layout.addWidget(error_label)
         
         layout.addWidget(info_group)

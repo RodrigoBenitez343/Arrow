@@ -6,6 +6,7 @@ agent dispatch — same backend as the full-screen agent mode.
 """
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -47,7 +48,9 @@ from ..constants import (
     TEXT_COLOR,
 )
 from ..i18n import _
+from ..icons import tabler_qicon
 from .agent_web_server import AgentWebServer, detect_tailscale_ip
+from .hover_button import HoverGlowButton
 from .memory_graph_panel import MemoryGraphPanel
 from .scheduler_panel import SchedulerPanel
 
@@ -73,10 +76,29 @@ BG_RGBA = "rgba(11, 14, 18, 232)"
 HEADER_RGBA = "rgba(18, 22, 28, 232)"
 
 # Chat bubble colours (modern rounded chat look)
-USER_BUBBLE_BG = "rgba(0, 224, 184, 0.16)"
-USER_BUBBLE_BORDER = "rgba(0, 224, 184, 0.28)"
+USER_BUBBLE_BG = "rgba(34, 211, 238, 0.16)"
+USER_BUBBLE_BORDER = "rgba(34, 211, 238, 0.28)"
 AGENT_BUBBLE_BG = "rgba(255, 255, 255, 0.05)"
 AGENT_BUBBLE_BORDER = "rgba(255, 255, 255, 0.07)"
+
+# Vector avatars each System chain gets, so coworkers read as people rather
+# than as a bare chain name. Picked deterministically (stable per chain).
+_AVATAR_PX = 18
+_COWORKER_AVATARS = (
+    "ROBOT", "USER_CIRCLE", "STAR", "ROCKET", "BOLT", "BULB", "WAND", "PUZZLE",
+    "GHOST", "PLANET", "CAMERA", "CHART_BAR", "SHIELD", "COIN", "CLOUD", "MUG",
+    "LEAF", "CROWN", "SPARKLES", "BRAIN", "HEART", "CAT", "FLAME", "MOON",
+    "SUN", "TREE", "DIAMOND", "BATTERY",
+)
+
+
+def _avatar_name(seed: str) -> str:
+    """Stable pseudo-random avatar for a coworker (same chain -> same icon)."""
+    try:
+        idx = int(hashlib.md5(str(seed).encode("utf-8")).hexdigest(), 16)
+    except Exception:
+        idx = sum(ord(ch) for ch in str(seed))
+    return _COWORKER_AVATARS[idx % len(_COWORKER_AVATARS)]
 
 # ── Persistent agent-mode remote IP (Tailscale/LAN) ──────────────────────
 _AGENT_IP_KEY = "AGENT_TAILSCALE_IP"
@@ -263,6 +285,9 @@ class AgentOverlay(QFrame):
         # ── Fullscreen state ──
         self._is_fullscreen = False
         self._saved_geometry = None
+        # True when presented as a child filling the main window (in-window agent
+        # mode) instead of a floating always-on-top window.
+        self._embedded = False
 
         # ── Automation hide state ──
         self._was_visible_for_automation = False
@@ -357,6 +382,14 @@ class AgentOverlay(QFrame):
                 item.setData(Qt.UserRole, c["path"])
                 item.setData(Qt.UserRole + 1, c["id"])
                 item.setToolTip(c["description"] or c["name"])
+                # A stable vector avatar so coworkers read as people.
+                try:
+                    _ico = tabler_qicon(_avatar_name(c["id"] or c["path"]),
+                                        _AVATAR_PX, ACCENT_COLOR)
+                    if not _ico.isNull():
+                        item.setIcon(_ico)
+                except Exception:
+                    pass
                 listw.addItem(item)
                 if c["id"] == new_active:
                     listw.setCurrentItem(item)
@@ -398,6 +431,16 @@ class AgentOverlay(QFrame):
             self._input_field.setFocus()
         except Exception:
             logger.exception("_on_coworker_selected: error")
+
+    def current_chain_avatar(self) -> str:
+        """Tabler icon name for the SELECTED system chain ("" when none).
+
+        The compact notch shows this so the user can see who they are talking
+        to.  It is the same avatar the coworker list uses, so the two always
+        agree (see _avatar_name).
+        """
+        chain_id = getattr(self, '_active_chain_id', '') or ''
+        return _avatar_name(chain_id) if chain_id else ""
 
     def _update_title(self):
         """Reflect the active coworker in the header title."""
@@ -453,6 +496,10 @@ class AgentOverlay(QFrame):
         # ── Install event filter for Enter key and Ctrl+A on input ──
         self._input_field.installEventFilter(self)
 
+        # The app-wide QWidget rule paints a DARK_GREY box behind labels; keep
+        # every label in the overlay transparent so bubbles/text have no mat.
+        self.setStyleSheet("QLabel { background: transparent; }")
+
     def _build_header(self) -> QFrame:
         header = QFrame(self)
         header.setObjectName("overlayHeader")
@@ -473,6 +520,14 @@ class AgentOverlay(QFrame):
         hlayout = QHBoxLayout(header)
         hlayout.setContentsMargins(14, 0, 8, 0)
         hlayout.setSpacing(8)
+
+        # Right-side action cluster. MainWindow lifts this into the window's top
+        # bar (right of the window controls), so the panel's own width can never
+        # squeeze these buttons into each other.
+        self._header_actions = QWidget(header)
+        actions_lay = QHBoxLayout(self._header_actions)
+        actions_lay.setContentsMargins(0, 0, 0, 0)
+        actions_lay.setSpacing(8)
 
         # Back to GUI button (left side, beside title)
         self._gui_btn = QPushButton(header)
@@ -525,7 +580,7 @@ class AgentOverlay(QFrame):
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; background-color: rgba(255,255,255,0.06); }}"
         )
         self._reload_btn.clicked.connect(self._reload_system_chains)
-        hlayout.addWidget(self._reload_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._reload_btn, 0, Qt.AlignVCenter)
 
         # Active coworker name (the System chain currently answering)
         self._title_label = QLabel(_("Agent"), header)
@@ -535,6 +590,7 @@ class AgentOverlay(QFrame):
         hlayout.addWidget(self._title_label, 0, Qt.AlignVCenter)
 
         hlayout.addStretch(1)
+        hlayout.addWidget(self._header_actions)
 
         # ── Scheduler button (opens the full Scheduler dialog) ──
         self._scheduler_btn = QPushButton(header)
@@ -553,11 +609,11 @@ class AgentOverlay(QFrame):
             f"border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 2px; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
             f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(0,224,184,0.10); }}"
+            f"background-color: rgba(34,211,238,0.10); }}"
         )
         self._scheduler_btn.clicked.connect(self._toggle_scheduler)
         self._scheduler_btn.hide()  # shown once a scheduler service is attached
-        hlayout.addWidget(self._scheduler_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._scheduler_btn, 0, Qt.AlignVCenter)
 
         # ── Memory chat toggle (answers from recorded activity only) ──
         self._memory_btn = QPushButton("M", header)
@@ -573,10 +629,10 @@ class AgentOverlay(QFrame):
             f"font-size: 11px; font-weight: 700; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
             f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(0,224,184,0.10); }}"
+            f"background-color: rgba(34,211,238,0.10); }}"
         )
         self._memory_btn.clicked.connect(self._toggle_memory_chat)
-        hlayout.addWidget(self._memory_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._memory_btn, 0, Qt.AlignVCenter)
 
         # ── Memory graph toggle (recorded activity as a knowledge network) ──
         self._memory_graph_btn = QPushButton("G", header)
@@ -592,10 +648,10 @@ class AgentOverlay(QFrame):
             f"font-size: 11px; font-weight: 700; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
             f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(0,224,184,0.10); }}"
+            f"background-color: rgba(34,211,238,0.10); }}"
         )
         self._memory_graph_btn.clicked.connect(self._toggle_memory_graph)
-        hlayout.addWidget(self._memory_graph_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._memory_graph_btn, 0, Qt.AlignVCenter)
 
         # ── Export button ──
         self._gear_btn = QPushButton(header)
@@ -614,7 +670,7 @@ class AgentOverlay(QFrame):
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
         )
         self._gear_btn.clicked.connect(self._open_export_dialog)
-        hlayout.addWidget(self._gear_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._gear_btn, 0, Qt.AlignVCenter)
 
         # ── Web server toggle button ──
         self._server_btn = QPushButton(header)
@@ -633,11 +689,11 @@ class AgentOverlay(QFrame):
             f"border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 2px; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
             f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(0,224,184,0.10); }} "
-            f"QPushButton:checked:hover {{ background-color: rgba(0,224,184,0.18); }}"
+            f"background-color: rgba(34,211,238,0.10); }} "
+            f"QPushButton:checked:hover {{ background-color: rgba(34,211,238,0.18); }}"
         )
         self._server_btn.clicked.connect(self._toggle_server_panel)
-        hlayout.addWidget(self._server_btn, 0, Qt.AlignVCenter)
+        actions_lay.addWidget(self._server_btn, 0, Qt.AlignVCenter)
 
         # ── Fullscreen toggle button ──
         self._fullscreen_btn = QPushButton(header)
@@ -654,22 +710,14 @@ class AgentOverlay(QFrame):
         self._fullscreen_btn.clicked.connect(self._toggle_fullscreen)
         hlayout.addWidget(self._fullscreen_btn, 0, Qt.AlignVCenter)
 
-        # Close button
-        close_btn = QPushButton(header)
-        close_btn.setToolTip(_("Collapse overlay"))
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setFixedSize(24, 24)
-        close_btn.setIcon(self._make_icon_close(20))
-        close_btn.setIconSize(QSize(20, 20))
-        close_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: transparent; color: rgba(255,255,255,0.5);"
-            f"  border: 0px; border-radius: 12px; font-size: 14px;"
-            f"}}"
-            f"QPushButton:hover {{ color: {ACCENT_COLOR}; background-color: rgba(255,255,255,0.06); }}"
-        )
-        close_btn.clicked.connect(self._collapse_to_dot)
-        hlayout.addWidget(close_btn, 0, Qt.AlignVCenter)
+        # Collapse button — bigger, with a cyan fog + grow animation on hover.
+        # In-window it collapses to the compact notch; floating it collapses to
+        # the dot (_collapse_to_dot -> collapsed -> MainWindow).
+        self._collapse_btn = HoverGlowButton(
+            "CHEVRON_DOWN", size=32, icon=18, parent=header)
+        self._collapse_btn.setToolTip(_("Collapse"))
+        self._collapse_btn.clicked.connect(self._collapse_to_dot)
+        hlayout.addWidget(self._collapse_btn, 0, Qt.AlignVCenter)
 
         return header
 
@@ -709,14 +757,8 @@ class AgentOverlay(QFrame):
         layout.setContentsMargins(8, 10, 8, 10)
         layout.setSpacing(6)
 
-        label = QLabel(_("Coworkers"), bar)
-        label.setStyleSheet(
-            "color: rgba(255,255,255,0.35); font-size: 10px;"
-            "font-weight: 700; letter-spacing: 1px; padding-left: 4px;"
-        )
-        layout.addWidget(label)
-
         self._coworker_list = QListWidget(bar)
+        self._coworker_list.setIconSize(QSize(_AVATAR_PX, _AVATAR_PX))
         self._coworker_list.setFrameShape(QFrame.NoFrame)
         self._coworker_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._coworker_list.setStyleSheet(
@@ -726,7 +768,7 @@ class AgentOverlay(QFrame):
             "  border-radius: 8px; margin: 1px 0px; font-size: 12px;"
             "}"
             "QListWidget::item:hover { background: rgba(255,255,255,0.06); }"
-            f"QListWidget::item:selected {{ background: rgba(0,224,184,0.15);"
+            f"QListWidget::item:selected {{ background: rgba(34,211,238,0.15);"
             f"  color: {ACCENT_COLOR}; }}"
         )
         self._coworker_list.currentItemChanged.connect(self._on_coworker_selected)
@@ -796,8 +838,8 @@ class AgentOverlay(QFrame):
             f"border: 1px solid rgba(255,255,255,0.10); border-radius: 15px; padding: 2px; }}"
             f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
             f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(0,224,184,0.10); }} "
-            f"QPushButton:checked:hover {{ background-color: rgba(0,224,184,0.18); }}"
+            f"background-color: rgba(34,211,238,0.10); }} "
+            f"QPushButton:checked:hover {{ background-color: rgba(34,211,238,0.18); }}"
         )
         self._voice_btn.clicked.connect(self._toggle_voice_mode)
         blayout.addWidget(self._voice_btn, 0)
@@ -838,11 +880,11 @@ class AgentOverlay(QFrame):
         self._send_btn.setFixedSize(50, 30)
         self._send_btn.setStyleSheet(
             f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR}; color: #0D1117;"
+            f"  background-color: {ACCENT_COLOR}; color: #0a0a0a;"
             f"  border: 0px; border-radius: 8px; font-size: 11px; font-weight: 700;"
             f"}}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
-            f"QPushButton:pressed {{ background-color: #00b898; }}"
+            f"QPushButton:hover {{ background-color: #4fdcf0; }}"
+            f"QPushButton:pressed {{ background-color: #0ea5b7; }}"
         )
         self._send_btn.clicked.connect(self._handle_send)
         blayout.addWidget(self._send_btn, 0)
@@ -869,6 +911,8 @@ class AgentOverlay(QFrame):
     # ── Drag ─────────────────────────────────────────────────────────
 
     def _header_mouse_press(self, event):
+        if self._embedded:
+            return
         if event.button() == Qt.LeftButton:
             self._dragging = True
             self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
@@ -932,6 +976,54 @@ class AgentOverlay(QFrame):
         """Register callbacks to minimize/restore the main application window."""
         self._window_minimize_cb = minimize_cb
         self._window_restore_cb = restore_cb
+
+    def embed(self, parent):
+        """Present as a child filling *parent* (in-window agent mode) instead of
+        a floating always-on-top window: drop the window flags and fixed size,
+        and disable the floating-only affordances (drag, expand, fullscreen)."""
+        self._embedded = True
+        self.setParent(parent)
+        try:
+            self.setWindowFlags(Qt.Widget)
+            self.setAttribute(Qt.WA_TranslucentBackground, False)
+            self.setAttribute(Qt.WA_ShowWithoutActivating, False)
+        except Exception:
+            pass
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)
+        # Always expanded in-window; hide the floating-only header controls.
+        self._compact = False
+        try:
+            self._body.show()
+            self._expand_btn.hide()
+            self._fullscreen_btn.hide()
+            # Navigation lives in the base window's top bar, not here: hide the
+            # overlay's own back button so the two chromes never compete.
+            self._gui_btn.hide()
+            self._collapse_btn.setToolTip(_("Collapse to the notch"))
+        except Exception:
+            pass
+        # Keep the action wired (the base frame drives it) even though the
+        # button is not shown in-window.
+        try:
+            self._gui_btn.clicked.disconnect()
+        except Exception:
+            pass
+        self._gui_btn.clicked.connect(self._switch_to_gui)
+        self._gui_btn.setToolTip(_("Back to build mode"))
+
+    def detach_header_actions(self):
+        """Hand the header's action cluster to the host window.
+
+        MainWindow reparents it into the top bar (right of the window controls),
+        where the layout cannot be squeezed by the panel's width. Returns the
+        widget, or None if the header was never built.
+        """
+        widget = getattr(self, '_header_actions', None)
+        if widget is None:
+            return None
+        widget.setParent(None)
+        return widget
 
     def set_scheduler_service(self, service):
         """Attach the live SchedulerService and reveal the header button.
@@ -1041,6 +1133,14 @@ class AgentOverlay(QFrame):
 
     def _set_compact_mode(self, compact: bool):
         """Toggle between compact (header+input only) and expanded (full chat)."""
+        if self._embedded:
+            # In-window: always expanded, the overlay fills its parent.
+            self._compact = False
+            try:
+                self._body.show()
+            except Exception:
+                pass
+            return
         self._compact = compact
         if compact:
             self._reset_fullscreen()
@@ -1095,6 +1195,8 @@ class AgentOverlay(QFrame):
 
     def _toggle_fullscreen(self):
         """Expand the overlay to fill the screen, or restore its windowed size."""
+        if self._embedded:
+            return
         try:
             if self._is_fullscreen:
                 self._reset_fullscreen()
@@ -1141,11 +1243,13 @@ class AgentOverlay(QFrame):
             self._was_visible_for_automation = False
             # Restore expanded so the user sees the agent's response
             self._set_compact_mode(False)
-            self._position_top_right()
+            if not self._embedded:
+                self._position_top_right()
             self.show()
             self.raise_()
-            self.activateWindow()
-            self._input_field.setFocus()
+            if not self._embedded:
+                self.activateWindow()
+                self._input_field.setFocus()
             # Restore main window if a restore callback was registered
             if self._window_restore_cb:
                 try:
@@ -1374,7 +1478,7 @@ class AgentOverlay(QFrame):
             f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR};"
             f"border: 1px solid {ACCENT_COLOR}; border-radius: 8px;"
             f"padding: 0px 14px; font-size: 11px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: rgba(0,224,184,0.12); }}"
+            f"QPushButton:hover {{ background-color: rgba(34,211,238,0.12); }}"
         )
 
         # ~100 ms of audio = treat as no capture (accidental tap)
@@ -2033,9 +2137,9 @@ class AgentOverlay(QFrame):
         fb_submit.setCursor(Qt.PointingHandCursor)
         fb_submit.setFixedHeight(26)
         fb_submit.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0a0a0a; "
             f"border: 0px; border-radius: 6px; padding: 0 14px; font-size: 11px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
+            f"QPushButton:hover {{ background-color: #4fdcf0; }}"
         )
 
         def _submit():
@@ -2603,6 +2707,22 @@ class AgentOverlay(QFrame):
             visible = False
         self._server_panel.setVisible(not visible)
         self._server_btn.setChecked(not visible)
+
+        if self._embedded:
+            # In-window the overlay FILLS its parent, so it must stay
+            # layout-managed.  Sizing it here (setFixedSize to the floating
+            # OVERLAY_WIDTH/HEIGHT) pins it to a fixed box: the 288px panel then
+            # pushes the layout out of shape and the overlay stays glitched,
+            # because a fixed size survives every later hide/show (so switching
+            # to the notch or the graph and back did not clear it).  Drop any
+            # stale constraint and let the parent's layout give it the space;
+            # this also heals an overlay left pinned by an earlier version.
+            try:
+                self.setMinimumSize(0, 0)
+                self.setMaximumSize(16777215, 16777215)
+            except Exception:
+                pass
+            return
 
         if not visible:
             # Panel just became visible — bump overlay height to fit it,

@@ -452,9 +452,31 @@ class LLMPropertiesDialog(ModernDialog):
         )
         orch_layout.addWidget(self.orch_use_goal_ledger_check, 4, 0, 1, 2)
 
+        # Observation surface (EXCLUSIVE): ON observes/verifies on the chain's
+        # shared browser, OFF on the desktop screen.  This drives the SAME
+        # `web_mode` setting as the Prompt tab's Web Mode toggle, mirrored here
+        # because that tab is hidden while the switch is ON.
+        self.orch_web_mode_check = ModernToggle(
+            text=_("Web Mode (observe/verify on the chain's browser; OFF = desktop)")
+        )
+        self.orch_web_mode_check.setToolTip(_(
+            "Observation surface for the loop: ON observes/verifies on the "
+            "chain's shared browser, OFF on the desktop screen."))
+        orch_layout.addWidget(self.orch_web_mode_check, 5, 0, 1, 2)
+
+        # Web orchestrators only: run the loop's web actions in an invisible
+        # browser.  Hidden unless Web Mode is ON (see _sync_orch_scope_visibility).
+        self.orch_headless_check = ModernToggle(
+            text=_("Headless web (no visible browser window)")
+        )
+        self.orch_headless_check.setToolTip(_(
+            "Web orchestrator: run this loop's web actions in a headless "
+            "browser instead of the visible shared one."))
+        orch_layout.addWidget(self.orch_headless_check, 6, 0, 1, 2)
+
         orch_note = QLabel(_("Worker picker: Laya (fixed)."))
         orch_note.setStyleSheet("color: #888; font-size: 10px;")
-        orch_layout.addWidget(orch_note, 5, 0, 1, 2)
+        orch_layout.addWidget(orch_note, 7, 0, 1, 2)
         self.orch_group.setVisible(False)
         layout.addWidget(self.orch_group)
 
@@ -684,6 +706,17 @@ class LLMPropertiesDialog(ModernDialog):
                 pass
         layout.addWidget(self.web_mode_checkbox)
 
+        # One setting, two toggles: the Orchestrator group carries its own Web
+        # Mode switch (its Prompt-tab twin is hidden in orchestrator mode), so
+        # keep them mirrored — either one drives web_mode.
+        try:
+            self.web_mode_checkbox.toggled.connect(
+                self.orch_web_mode_check.setChecked)
+            self.orch_web_mode_check.toggled.connect(
+                self.web_mode_checkbox.setChecked)
+        except Exception:
+            pass
+
         # External input Group — only NON-connection readers live here. Text
         # from other nodes arrives through the 'prompt' and 'context' ports (a
         # connection IS the instruction), exactly like a web sequence's output
@@ -910,6 +943,7 @@ class LLMPropertiesDialog(ModernDialog):
         except Exception:
             pass
         self._update_ocr_region_label()
+        self._sync_orch_scope_visibility()
 
     @staticmethod
     def _locator_summary(locator):
@@ -1128,6 +1162,8 @@ class LLMPropertiesDialog(ModernDialog):
                 self.current_config.get("orch_synthesis_system") or "")
             self.orch_use_goal_ledger_check.setChecked(
                 bool(self.current_config.get("orch_use_goal_ledger", False)))
+            self.orch_headless_check.setChecked(
+                bool(self.current_config.get("orch_headless", False)))
             try:
                 self._apply_node_mode_visibility()
             except Exception:
@@ -1320,6 +1356,16 @@ class LLMPropertiesDialog(ModernDialog):
             self._refit_to_current_tab()
         except Exception:
             pass
+        self._sync_orch_scope_visibility()
+
+    def _sync_orch_scope_visibility(self):
+        """The Headless toggle only applies to a WEB orchestrator."""
+        try:
+            show = (bool(self.orchestrator_mode_check.isChecked())
+                    and bool(self.web_mode_checkbox.isChecked()))
+            self.orch_headless_check.setVisible(show)
+        except Exception:
+            pass
 
     def get_config(self):
         """Get the LLM configuration from the dialog"""
@@ -1346,6 +1392,7 @@ class LLMPropertiesDialog(ModernDialog):
             "orch_synthesize": self.orch_synthesize_check.isChecked(),
             "orch_synthesis_system": self.orch_synthesis_system_edit.text(),
             "orch_use_goal_ledger": self.orch_use_goal_ledger_check.isChecked(),
+            "orch_headless": self.orch_headless_check.isChecked(),
             "write_text": self.write_text_checkbox.isChecked(),
             "use_async": self.use_async_checkbox.isChecked(),
             "use_vision": self.use_vision_checkbox.isChecked(),

@@ -23,7 +23,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from NGUI.constants import ACCENT_COLOR, BAR_BG, TEXT_COLOR
+from NGUI.constants import (
+    ACCENT_COLOR,
+    BTN_PRIMARY_TEXT,
+    CONTROL_BG,
+    HAIRLINE,
+    RADIUS_SM,
+    TEXT_COLOR,
+)
 from NGUI.i18n import _
 from player.code_agent_ops.constants import (
     MAIN_FILE,
@@ -433,11 +440,11 @@ class UiMixin(object):
             btn.setProperty('checked', active)
             btn.setStyleSheet(
                 f'QPushButton {{ background-color: '
-                f"{ACCENT_COLOR if active else BAR_BG}; "
-                f'color: {"#04251F" if active else TEXT_COLOR}; '
-                f'border-radius: 6px; padding: 0px 14px; font-size: 11px; '
-                f'font-weight: 600; border: 1px solid '
-                f'{"transparent" if active else "#45535F"}; }}'
+                f"{ACCENT_COLOR if active else CONTROL_BG}; "
+                f'color: {BTN_PRIMARY_TEXT if active else TEXT_COLOR}; '
+                f'border-radius: {RADIUS_SM}px; padding: 0px 14px; font-size: 11px; '
+                f"font-weight: 600; border: 1px solid "
+                f"{'transparent' if active else HAIRLINE}; }}"
             )
         if key == 'files':
             self._refresh_files()

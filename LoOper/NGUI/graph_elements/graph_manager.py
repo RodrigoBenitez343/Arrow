@@ -1,9 +1,21 @@
 import logging
 from NodeGraphQt import NodeGraph
-from PyQt5.QtWidgets import QVBoxLayout, QSplitter
+from PyQt5.QtWidgets import QVBoxLayout, QSplitter, QGraphicsView
 from ..nodes import SequenceNode, WebSequenceNode, ActionNode, ConditionalNode, LLMNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode, InputNode, HandleNode, MCPNode, OutputNode
+from ..constants import GRAPH_PLANE
 
 logger = logging.getLogger(__name__)
+
+
+# NOTE: canvas nodes used to carry a per-node QGraphicsDropShadowEffect "glow".
+# That is REMOVED: NodeGraphQt rebuilds the graph on every chain load, and a
+# QGraphicsEffect on a node view is not safe across that teardown - Qt took an
+# ACCESS VIOLATION (silent crash, no Python traceback) while repainting the
+# rebuilt graph. Reproduced by bisecting graph rebuilds: 30 rounds with the
+# glow died on the first round (exit 0xC0000005); 30 rounds without it are
+# clean. (Forcing setCacheMode(NoCache) did not save it.) If the halo is wanted
+# back it must be PAINTED inside the node's own paint(), not applied as an
+# effect.
 
 
 # --- Monkey Patch for NodeGraphQt KeyError ---
@@ -34,7 +46,42 @@ def _patch_nodegraph_moved_error():
     except Exception as e:
         logger.error(f"Failed to apply monkey patch to NodeGraphQt: {e}")
 
+
+def _patch_nodegraph_selected_none():
+    """Guard NodeGraphQt's node-selected/double-click emits against a None node.
+
+    The viewer emits a node id and the graph resolves it with get_node_by_id();
+    when that id is no longer in the model - a QUEUED select or double-click for
+    a node that was deleted earlier in the same event turn - the resolved node
+    is None.  NodeGraphQt then emits a ``Signal(NodeObject)`` with None, which
+    raises TypeError inside a Qt slot; PyQt5 turns an unhandled slot exception
+    into a fatal abort with no logged error (the app "crashes silently and
+    emits no failures").  Skip the emit when the node is gone.
+    """
+    try:
+        def make_guard(original):
+            def guarded(self, node_id):
+                try:
+                    if self.get_node_by_id(node_id) is None:
+                        return None
+                except Exception:
+                    return None
+                return original(self, node_id)
+            guarded._looper_none_guard = True
+            return guarded
+
+        for method_name in ("_on_node_selected", "_on_node_double_clicked"):
+            original = getattr(NodeGraph, method_name, None)
+            if original is None or getattr(original, "_looper_none_guard", False):
+                continue
+            setattr(NodeGraph, method_name, make_guard(original))
+        logger.info("Applied monkey patch for NodeGraph node-selected None guard")
+    except Exception as e:
+        logger.error(f"Failed to apply NodeGraph node-selected guard: {e}")
+
+
 _patch_nodegraph_moved_error()
+_patch_nodegraph_selected_none()
 # ---------------------------------------------
 
 
@@ -59,7 +106,23 @@ class GraphManager:
             # Create the node graph
             logger.debug("Creating NodeGraph instance")
             self.node_graph = NodeGraph()
-            
+
+            # Repaint the WHOLE viewport whenever anything changes.
+            # NodeGraphQt defaults to BoundingRectViewportUpdate (+ a
+            # CacheBackground) while its node items use DeviceCoordinateCache,
+            # and our nodes carry always-on drop-shadow GLOW effects that paint
+            # OUTSIDE their boundingRect. Qt only invalidates an item's own
+            # boundingRect on change, so a deleted/moved node left a stale
+            # "after image" until some other action happened to repaint that
+            # region. FullViewportUpdate is the correct mode when items paint
+            # outside their rects and clears every such ghost (add / delete /
+            # move / connect).
+            try:
+                self.node_graph.viewer().setViewportUpdateMode(
+                    QGraphicsView.FullViewportUpdate)
+            except Exception as e:
+                logger.debug(f"Could not set full viewport update: {e}")
+
             # Register custom nodes
             logger.debug("Registering custom nodes")
             self.register_nodes()
@@ -191,7 +254,7 @@ class GraphManager:
             logger.debug("Storing graph widget references")
             self.parent_widget.node_graph_widget = graph_widget
             self.parent_widget.view = graph_widget  # For backward compatibility
-            
+
             logger.info("Graph widget setup completed successfully")
         except Exception as e:
             logger.error(f"Error setting up graph widget: {e}")
@@ -212,14 +275,14 @@ class GraphManager:
                 self.node_graph.set_grid_mode(ViewerEnum.GRID_DISPLAY_SQUARES.value)
             except Exception:
                 pass
-            # Set background darker than bars for contrast (bars are #1E2329)
+            # The graph canvas fills its area and shares the frame colour
+            # (GRAPH_PLANE) so there is no seam; the bars float on top of it.
             try:
-                self.node_graph.set_background_color(13, 17, 23)
-            except Exception:
-                pass
-            # Set grid barely visible on dark canvas
-            try:
-                self.node_graph.set_grid_color(22, 26, 32)
+                r, g, b = (int(GRAPH_PLANE.strip('#')[i:i + 2], 16) for i in (0, 2, 4))
+                self.node_graph.set_background_color(r, g, b)
+                self.node_graph.set_grid_color(
+                    min(255, r + 12), min(255, g + 12), min(255, b + 14)
+                )
             except Exception:
                 pass
             logger.debug("Graph configuration completed (curved pipes, grid mode, and background colors applied)")
@@ -354,8 +417,66 @@ class GraphManager:
                 node_id = node.id
                 node_type = type(node).__name__
                 logger.debug(f"Deleting {node_type} node with ID: {node_id}")
+                # Detach the hover button bar FIRST for EVERY delete path (key,
+                # context menu, drop zone). The bar is a child graphics item of
+                # the node view; removing it before the node dies keeps the
+                # scene's mouse-grabber bookkeeping clean.
+                try:
+                    mgr = getattr(self.parent_widget, 'node_button_manager', None)
+                    if mgr is not None:
+                        mgr.detach(node_id)
+                except Exception:
+                    pass
+                view = getattr(node, 'view', None)
+                # Capture the region the node occupies (plus room for its glow)
+                # BEFORE removal: a QGraphicsScene only invalidates the removed
+                # item's own boundingRect, but the node paints a drop-shadow
+                # glow OUTSIDE that rect (and caches in device coordinates), so
+                # the vacated pixels otherwise lingered as an on-screen ghost
+                # until some other action repainted that area.
+                stale_rect = None
+                try:
+                    if view is not None:
+                        stale_rect = view.sceneBoundingRect().adjusted(
+                            -48, -48, 48, 48)
+                except Exception:
+                    stale_rect = None
+                # Drop the node's graphics effect first: leaving a
+                # QGraphicsDropShadowEffect attached while NodeGraphQt tears the
+                # item down can hard-crash the app (no traceback, log just ends)
+                # right after an otherwise successful delete.
+                try:
+                    if view is not None and view.graphicsEffect() is not None:
+                        view.setGraphicsEffect(None)
+                except Exception:
+                    pass
                 self.node_graph.delete_node(node)
                 logger.info(f"Successfully deleted {node_type} node with ID: {node_id}")
+                # NodeGraphQt leaves the removed view in the scene's spatial
+                # index: its scene is cleared (view.scene() is None) but
+                # scene.items() still returns it. Every later mouse press then
+                # re-grabs that orphan, and Qt floods "QGraphicsItem::ungrabMouse:
+                # cannot ungrab mouse without scene" (one warning per mouse
+                # event, wedging the UI). Hiding the orphan drops it from the
+                # index and ends the flood (verified). This is unrelated to the
+                # hover button bar - it reproduces with a pure NodeGraphQt
+                # delete too.
+                try:
+                    if view is not None and view.scene() is None:
+                        view.setVisible(False)
+                except Exception:
+                    pass
+                # Force the vacated region to repaint so no ghost is left behind.
+                try:
+                    if stale_rect is not None:
+                        scene = self.node_graph.scene()
+                        if scene is not None:
+                            scene.update(stale_rect)
+                    viewer = self.node_graph.viewer()
+                    if viewer is not None:
+                        viewer.viewport().update()
+                except Exception:
+                    pass
             else:
                 if not self.node_graph:
                     logger.warning("No node graph available for node deletion")

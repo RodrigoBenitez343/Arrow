@@ -30,6 +30,12 @@ class _ExecutionBus:
         # Set by the overlay: hides it (blocking) so a screen read never sees it.
         # The overlay lives in the GUI layer; the player only calls this slot.
         self.capture_hook = None
+        # Extra USER-ONLY windows that must also leave the screen for a capture
+        # (e.g. the agent notch, which now stays up while a chain runs).  Kept
+        # apart from capture_hook so the single-hook contract is untouched, and
+        # they run even when capture_hook is None (a notch-only run creates no
+        # execution overlay).
+        self.extra_capture_hooks = []
 
     def set_action(self, text: str) -> None:
         """Name the action about to run (e.g. ``"3: click"``)."""
@@ -80,12 +86,16 @@ class _ExecutionBus:
         until the window is hidden, so the capture can never contain it.
         """
         hook = self.capture_hook
-        if hook is None:
-            return
-        try:
-            hook()
-        except Exception:
-            pass
+        if hook is not None:
+            try:
+                hook()
+            except Exception:
+                pass
+        for extra in list(self.extra_capture_hooks):
+            try:
+                extra()
+            except Exception:
+                pass
 
 
 bus = _ExecutionBus()

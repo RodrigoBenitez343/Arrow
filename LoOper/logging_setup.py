@@ -45,6 +45,7 @@ _RICH_CHECKED = False
 _SESSION_STARTED = time.time()
 _STDOUT_BRIDGE = None
 _STDERR_BRIDGE = None
+_FAULT_FILE = None
 
 # Block-content truncation: the live terminal stays lean, the Markdown
 # session log keeps the full payload, and the text log is the raw archive.
@@ -75,6 +76,26 @@ def resolve_logs_dir() -> str:
         except Exception:
             pass
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
+
+def _install_native_crash_capture(logs_dir: str) -> None:
+    """Dump a native-crash stack to ``logs/native_crash.log``.
+
+    A segfault (a Qt/C++ object freed underneath the Python wrapper) kills the
+    process with NO Python traceback - the app "crashes silently and emits no
+    failures".  faulthandler writes the stacks of every thread at the moment
+    of the fault, so the crash leaves evidence to fix against.
+    """
+    global _FAULT_FILE
+    try:
+        import faulthandler
+        if _FAULT_FILE is None or _FAULT_FILE.closed:
+            _FAULT_FILE = open(
+                os.path.join(logs_dir, "native_crash.log"), "a",
+                buffering=1, encoding="utf-8", errors="replace")
+        faulthandler.enable(file=_FAULT_FILE, all_threads=True)
+    except Exception:
+        pass
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -715,6 +736,8 @@ def setup_logging(session_id: Optional[str] = None) -> str:
             os.makedirs(logs_dir, exist_ok=True)
         except Exception:
             logs_dir = tempfile.gettempdir()
+
+    _install_native_crash_capture(logs_dir)
 
     inherited = bool(os.environ.get("ARROW_SESSION_ID"))
     sid = session_id or os.environ.get("ARROW_SESSION_ID")

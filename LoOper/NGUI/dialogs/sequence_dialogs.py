@@ -1,7 +1,8 @@
 # dialogs/sequence_dialogs.py
 
 from .base_dialog import ModernDialog
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QDialogButtonBox, QCheckBox
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                             QDialogButtonBox, QCheckBox, QGroupBox)
 from ..i18n import _
 
 
@@ -12,8 +13,13 @@ class SequencePropertiesDialog(ModernDialog):
         super().__init__(parent, title=_("Sequence Properties"), help_topic="sequence-dialog")
         
         # Use content_layout from ModernDialog
-        self.layout = self.content_layout
-        
+        _content_layout = self.content_layout
+        _card = QGroupBox(_("Sequence Properties"))
+        _card_layout = QVBoxLayout(_card)
+        _card_layout.setContentsMargins(0, 0, 0, 0)
+        _card_layout.setSpacing(8)
+        self.layout = _card_layout
+
         self.loop_count_label = QLabel(_("Loop Count:"))
         self.loop_count_input = QLineEdit(str(sequence_config.get('loop_count', 1)))
         self.layout.addWidget(self.loop_count_label)
@@ -53,6 +59,9 @@ class SequencePropertiesDialog(ModernDialog):
         self.use_app_opened_checkbox.setChecked(bool(use_app_opened))
         self.layout.addWidget(self.use_app_opened_checkbox)
         
+        _content_layout.addWidget(_card)
+        self.layout = _content_layout
+
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         # Localize button texts
         ok_btn = self.button_box.button(QDialogButtonBox.Ok)

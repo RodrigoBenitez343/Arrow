@@ -4,7 +4,7 @@ import os
 import sys
 import logging
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, QTimer
 from PyQt5.QtGui import QCursor
 from .constants import *
 from .node_context_menu import NodeContextMenuManager
@@ -135,27 +135,13 @@ class GraphViewWidget(QWidget):
             raise
 
     def set_toolbar_visible(self, visible: bool):
-        """Show or hide the right-side toolbar pane completely.
-        When hidden, the splitter assigns zero width to the toolbar.
-        When shown, it restores a reasonable width.
-        """
+        """Show or hide the right-side floating toolbar overlay."""
         try:
-            splitter = getattr(self, '_splitter', None)
             toolbar = getattr(self, '_toolbar_widget', None)
-            if splitter is None or toolbar is None:
+            if toolbar is None:
                 return
-            # Ensure the toolbar is part of the splitter
-            idx = splitter.indexOf(toolbar)
-            if idx == -1:
-                return
-            current_sizes = splitter.sizes()
-            if not current_sizes or len(current_sizes) < 2:
-                current_sizes = [900, 120]
-            if visible:
-                splitter.setSizes([max(1, current_sizes[0]), 160])
-            else:
-                # collapse right pane to zero width
-                splitter.setSizes([max(1, sum(current_sizes)), 0])
+            toolbar.setVisible(bool(visible))
+            self.ui_components.layout_floating_bars()
         except Exception as e:
             logger.error(f"Error toggling toolbar visibility: {e}")
 
@@ -178,6 +164,12 @@ class GraphViewWidget(QWidget):
                 self.node_button_manager.install()
             except Exception as e:
                 logger.debug(f"Non-critical: node button manager init failed: {e}")
+            # Floating delete drop zone (slides up from the bottom while dragging).
+            try:
+                from .widgets.delete_drop_zone import install_delete_drop_zone
+                install_delete_drop_zone(self)
+            except Exception as e:
+                logger.debug(f"Non-critical: delete drop zone init failed: {e}")
             logger.debug("Node graph setup completed successfully")
         except Exception as e:
             logger.error(f"Error setting up node graph: {str(e)}", exc_info=True)
@@ -186,6 +178,21 @@ class GraphViewWidget(QWidget):
     def resizeEvent(self, event):
         """Handle resize events"""
         super().resizeEvent(event)
+        try:
+            self.ui_components.layout_floating_bars()
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        """Re-run the floating-bar layout once on screen. The first layout runs
+        during construction with placeholder sizes, so the bars can settle wrong
+        (e.g. the top bar spanning too wide) until a resize happens; this lays
+        them out against the real, shown geometry."""
+        super().showEvent(event)
+        try:
+            QTimer.singleShot(0, self.ui_components.layout_floating_bars)
+        except Exception:
+            pass
 
     def keyPressEvent(self, event):
         """Handle keyboard events for copy/paste functionality"""
@@ -208,8 +215,11 @@ class GraphViewWidget(QWidget):
             self.paste_copied_nodes(paste_pos=paste_pos)
             event.accept()
         elif event.key() == Qt.Key_Delete:
-            # Supr/Delete - Remove selected nodes
-            self.delete_selected_nodes()
+            # Supr/Delete - Remove selected nodes. Ignore auto-repeat (holding
+            # the key) so the delete runs ONCE, and route through the SAME
+            # guarded entry point the trash drop zone uses.
+            if not event.isAutoRepeat():
+                self.request_delete_selected()
             event.accept()
         elif event.key() == Qt.Key_Z and event.modifiers() & Qt.ControlModifier:
             # Ctrl+Z - Undo last operation
@@ -1038,6 +1048,20 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error opening chain editor: {str(e)}", exc_info=True)
 
+    def expand_sequence(self, node):
+        """Expand a Sequence node into an overlay showing its recorded steps.
+
+        Like a chain import expansion, but the overlay shows the sequence's
+        recorded actions as a graph and keeps only the top toolbar.
+        """
+        logger.debug(f"Opening sequence expansion for: {node.name() if node else 'None'}")
+        try:
+            from .dialogs.sequence_expansion_dialog import SequenceExpansionDialog
+            dialog = SequenceExpansionDialog(node, self)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Error opening sequence expansion: {str(e)}", exc_info=True)
+
     def delete_node(self, node):
         """Delete a node from the graph"""
         logger.debug(f"Deleting node: {node.name() if node else 'None'}")
@@ -1162,6 +1186,18 @@ class GraphViewWidget(QWidget):
         except Exception as e:
             logger.error(f"Error adding conditional branch to Chain Import: {str(e)}", exc_info=True)
 
+    def request_delete_selected(self):
+        """Delete the selected nodes - the SINGLE entry point shared by the
+        Supr key and the drop-to-delete (trash) zone, so both behave
+        identically.
+
+        Wrapped like the drop zone's call so a failure is logged, not fatal.
+        """
+        try:
+            self.delete_selected_nodes()
+        except Exception as e:
+            logger.debug(f"Delete selected failed: {e}")
+
     def delete_selected_nodes(self):
         """Delete all currently selected nodes using node operations."""
         logger.debug("Deleting selected nodes")
@@ -1175,6 +1211,16 @@ class GraphViewWidget(QWidget):
             for node in list(selected_nodes):
                 try:
                     logger.debug(f"Deleting node: {node.name()} ({type(node).__name__})")
+                    # Detach the hover button bar FIRST (same as the single-node
+                    # delete_node path). Its bar is a child of the node view, and
+                    # the manager polls every 100 ms - without this, a stale
+                    # entry reaches into the destroyed QGraphicsItem and hard-
+                    # crashes the app right after the delete.
+                    try:
+                        if hasattr(self, 'node_button_manager'):
+                            self.node_button_manager.detach(node.id)
+                    except Exception:
+                        pass
                     self.node_operations.delete_node(node)
                 except Exception as inner_e:
                     logger.error(f"Failed to delete node {node.name()}: {inner_e}", exc_info=True)

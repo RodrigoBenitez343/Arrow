@@ -20,7 +20,7 @@ from .config import CV2_AVAILABLE
 from .computer_vision import TemplateMatching
 from .key_defs import MODIFIER_NAMES, key_to_name, pynput_key_for
 from .screenshot_cleanup import register_temporal_screenshot
-from .uia_locator import resolve_element, resolve_repeat
+from .uia_locator import element_tiers, resolve_element, resolve_repeat
 
 if CV2_AVAILABLE:
     import cv2
@@ -115,6 +115,16 @@ def _resolve_point(desc):
     if not point:
         return None
     return {"x": int(point[0]), "y": int(point[1])}
+
+
+def _tier_count(desc):
+    """How many UIA identity tiers a recorded element offers (0 = none)."""
+    if not isinstance(desc, dict):
+        return 0
+    try:
+        return len(element_tiers(desc))
+    except Exception:
+        return 0
 
 
 def _with_row_parity(repeat, action):
@@ -1429,8 +1439,26 @@ class ActionHandlers:
                 # Entity-based drag: re-find BOTH endpoints, so a moved window or
                 # reflowed layout still drags the right thing to the right place.
                 # `absolute` (shift(R)) and a plain miss keep the recorded coords.
-                start = _resolve_point(action.get('from_element')) or start
-                end = _resolve_point(action.get('to_element')) or end
+                from_element = action.get('from_element')
+                to_element = action.get('to_element')
+                resolved_start = _resolve_point(from_element)
+                resolved_end = _resolve_point(to_element)
+                if ((from_element or to_element) and resolved_start is None
+                        and resolved_end is None):
+                    # The drag was recorded ELEMENT-based but neither endpoint
+                    # re-found its element, so it silently runs on the recorded
+                    # ABSOLUTE coordinates (brittle across a moved window).
+                    # Log it, with the identity tiers each endpoint offered, so
+                    # an unwanted fallback is never mistaken for a recorded-
+                    # absolute drag nor for the modifier (Shift(R)+drag) path.
+                    logger.warning(
+                        "drag_drop action %s: entity endpoints did not resolve "
+                        "(from_element=%s tiers=%s, to_element=%s tiers=%s); "
+                        "using the recorded absolute coordinates",
+                        idx, bool(from_element), _tier_count(from_element),
+                        bool(to_element), _tier_count(to_element))
+                start = resolved_start or start
+                end = resolved_end or end
             start_x, start_y = start.get('x'), start.get('y')
             end_x, end_y = end.get('x'), end.get('y')
             if start_x is None or start_y is None or end_x is None or end_y is None:

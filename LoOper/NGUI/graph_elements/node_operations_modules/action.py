@@ -56,50 +56,50 @@ class ActionOperationsMixin:
         return None
 
     def delete_action_node(self, node):
-        """Delete an action node and remove it from sequences."""
+        """Delete an action node.
+
+        Actions live INSIDE sequences now, not as standalone files, so this is a
+        graph-only delete unless a legacy actions folder exists. Reading a
+        missing ``actions_folder`` is what produced the "no action folder"
+        errors.
+        """
         logger.info(f"Deleting action node: {node.id}")
         try:
             action_name = node.get_property('action_name') or ''
             logger.debug(f"Action name: {action_name}")
-            
-            # Remove action from all sequences
-            logger.debug("Removing action from all sequences")
-            self.parent_widget.config_manager.remove_action_from_sequence(action_name)
-            
-            # Delete action file
-            action_file = os.path.join(
-                self.parent_widget.actions_folder, 
-                f"{action_name}.json"
-            )
-            logger.debug(f"Checking for action file: {action_file}")
-            if os.path.exists(action_file):
-                logger.debug(f"Deleting action file: {action_file}")
-                os.remove(action_file)
-            else:
-                logger.warning(f"Action file not found: {action_file}")
-                
-            # Delete the node
+
+            actions_folder = getattr(self.parent_widget, 'actions_folder', None)
+            if actions_folder:
+                try:
+                    self.parent_widget.config_manager.remove_action_from_sequence(
+                        action_name)
+                except Exception as e:
+                    logger.debug(f"remove_action_from_sequence skipped: {e}")
+                action_file = os.path.join(actions_folder, f"{action_name}.json")
+                if os.path.exists(action_file):
+                    os.remove(action_file)
+
             logger.debug("Deleting action node from graph")
             self.parent_widget.graph_manager.delete_node(node)
-            
             logger.info(f"Successfully deleted action node: {action_name}")
-            
+
         except Exception as e:
-            logger.error(f"Error deleting action node: {e}")
+            logger.error(f"Error deleting action node: {e}", exc_info=True)
             QMessageBox.critical(
-                self.parent_widget, 
-                "Error", 
+                self.parent_widget,
+                "Error",
                 f"Failed to delete action node: {str(e)}"
             )
 
     def _create_action_file(self, action_name):
-        """Create a new action file."""
+        """Create a new action file (legacy: only if a folder exists)."""
+        actions_folder = getattr(self.parent_widget, 'actions_folder', None)
+        if not actions_folder:
+            # Actions live inside sequence files now, not as separate JSONs.
+            return
         logger.info(f"Creating action file for: {action_name}")
         try:
-            action_file = os.path.join(
-                self.parent_widget.actions_folder, 
-                f"{action_name}.json"
-            )
+            action_file = os.path.join(actions_folder, f"{action_name}.json")
             logger.debug(f"Action file path: {action_file}")
             
             if not os.path.exists(action_file):

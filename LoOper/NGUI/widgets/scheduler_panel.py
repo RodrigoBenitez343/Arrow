@@ -256,10 +256,10 @@ class SchedulerPanel(QFrame):
         self._save_btn.setCursor(Qt.PointingHandCursor)
         self._save_btn.setFixedHeight(26)
         self._save_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117;"
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0a0a0a;"
             f"  border: 0px; border-radius: 6px; padding: 0px 16px;"
             f"  font-size: 11px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
+            f"QPushButton:hover {{ background-color: #4fdcf0; }}"
         )
         self._save_btn.clicked.connect(self._save)
         actions.addWidget(self._save_btn)
@@ -294,7 +294,7 @@ class SchedulerPanel(QFrame):
         btn.setFixedHeight(26)
         fg = color or "rgba(255,255,255,0.72)"
         border = color or "rgba(255,255,255,0.15)"
-        hover = "rgba(0,224,184,0.12)" if color == ACCENT_COLOR else "rgba(255,255,255,0.08)"
+        hover = "rgba(34,211,238,0.12)" if color == ACCENT_COLOR else "rgba(255,255,255,0.08)"
         btn.setStyleSheet(
             f"QPushButton {{ background-color: transparent; color: {fg};"
             f"  border: 1px solid {border}; border-radius: 6px; padding: 0px 12px;"

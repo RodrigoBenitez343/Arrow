@@ -8,11 +8,12 @@ from PyQt5.QtWidgets import (
     QLineEdit, QDialog, QDialogButtonBox, QFormLayout, QLabel,
     QFileDialog, QPushButton, QHBoxLayout, QComboBox, QTextEdit,
     QMessageBox, QCheckBox, QSpinBox, QDoubleSpinBox,
-    QScrollArea, QVBoxLayout, QWidget, QFrame,
+    QScrollArea, QVBoxLayout, QWidget, QFrame, QGroupBox,
 )
 from PyQt5.QtCore import Qt, QTimer
 
 from .utils import get_logger
+from ...constants import WELL_BG, TEXT_COLOR
 
 logger = get_logger(__name__)
 
@@ -393,11 +394,16 @@ class MCPOperationsMixin:
             # Mutable ref so closures and discovery callback share the same tools list
             tools_ref = {'tools': discovered_tools, 'args_dict': current_args_dict}
 
-            dialog = QDialog(self.parent_widget)
-            dialog.setWindowTitle("Edit MCP Server Node")
-            dialog.resize(560, 620)
-            layout = QVBoxLayout(dialog)
-            layout.setSpacing(6)
+            from ...dialogs.base_dialog import ModernDialog
+            dialog = ModernDialog(
+                self.parent_widget, title="MCP Server Node", help_topic="mcp-node"
+            )
+            dialog.resize(580, 680)
+            card = QGroupBox("MCP Server")
+            layout = QVBoxLayout(card)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+            dialog.content_layout.addWidget(card)
 
             # ── Folder row with Browse button ──
             folder_row = QHBoxLayout()
@@ -488,7 +494,9 @@ class MCPOperationsMixin:
                 "Page text will appear here after clicking 'Snapshot Page'"
             )
             snapshot_output.setStyleSheet(
-                "QTextEdit { background: #1e1e1e; color: #ccc; font-family: Consolas; font-size: 12px; }"
+                f"QTextEdit {{ background: {WELL_BG}; color: {TEXT_COLOR}; "
+                f"border: 1px solid rgba(255,255,255,0.06); border-radius: 8px; "
+                f"font-family: Consolas; font-size: 12px; }}"
             )
             snapshot_output.hide()
             layout.addWidget(snapshot_output)
@@ -532,7 +540,7 @@ class MCPOperationsMixin:
             )
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
-            layout.addWidget(buttons)
+            dialog.content_layout.addWidget(buttons)
 
             # Populate tool combo if we have cached tools
             self._populate_tool_combo(tool_combo, tools_ref['tools'], current_tool)

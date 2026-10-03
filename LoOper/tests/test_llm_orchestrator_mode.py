@@ -64,6 +64,21 @@ def test_tools_are_retagged_as_chains():
     assert {i["from_node"] for i in orch["inputs"]} == {"c1", "c2"}
 
 
+def test_web_scope_and_headless_ride_into_orch_data():
+    """The observation surface (web vs desktop) and the headless web override
+    travel with the bridge; a string 'true'/'false' is coerced, not truthy."""
+    h = _Harness()
+    orch = h._orchestrator_from_llm_node(
+        _llm_node(tools=["c1"], web_mode="true", orch_headless="true"))
+    assert orch["data"]["web_mode"] is True
+    assert orch["data"]["headless"] is True
+
+    orch2 = h._orchestrator_from_llm_node(
+        _llm_node(tools=["c1"], web_mode="false", orch_headless="false"))
+    assert orch2["data"]["web_mode"] is False
+    assert orch2["data"]["headless"] is False
+
+
 def test_laya_is_fixed_and_steps_map():
     h = _Harness()
     orch = h._orchestrator_from_llm_node(_llm_node(tools=["c1"], orch_max_steps=7))

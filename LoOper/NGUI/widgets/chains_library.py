@@ -15,7 +15,7 @@ from ..constants import (
     BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, CONTEXT_NODE_COLOR,
     CODE_NODE_COLOR, LLM_COLOR, WEB_SEQUENCE_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
 )
-from .collapsible_toolbar import get_node_icon, load_tabler_icon, make_toggle_triangle_icon, _painter_icon_folder, TrashBinWidget
+from .collapsible_toolbar import get_node_icon, load_tabler_icon, make_toggle_triangle_icon, _painter_icon_folder
 from ..i18n import _
 
 logger = logging.getLogger(__name__)
@@ -1394,7 +1394,7 @@ class ChainsLibrary(QWidget):
         self._rename_coll_btn.clicked.connect(self._rename_collection)
         coll_bar_layout.addWidget(self._rename_coll_btn)
 
-        self._delete_coll_btn = _make_coll_btn("✕", _("Delete collection"), "#FF6B6B")
+        self._delete_coll_btn = _make_coll_btn("✕", _("Delete collection"), "#ef4444")
         self._delete_coll_btn.clicked.connect(self._delete_collection)
         coll_bar_layout.addWidget(self._delete_coll_btn)
 
@@ -1501,12 +1501,7 @@ class ChainsLibrary(QWidget):
         
         self._llm_scroll_area.setWidget(self._llm_container)
         content_layout.addWidget(self._llm_scroll_area)
-        
-        # Trash bin for deleting saved files/library nodes via drag-and-drop
-        self.trash_bin = TrashBinWidget(self._content_frame)
-        self.trash_bin.set_node_drop_handler(self.delete_shared_node)
-        content_layout.addWidget(self.trash_bin)
-        
+
         main_layout.addWidget(self._content_frame)
 
         # Toggle button

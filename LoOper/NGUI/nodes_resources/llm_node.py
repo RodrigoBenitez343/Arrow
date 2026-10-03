@@ -48,6 +48,11 @@ class LLMNode(BaseNode):
             "orch_synthesize": True,
             "orch_synthesis_system": "",
             "orch_use_goal_ledger": False,
+            # Orchestrator mode only.  Web mode makes the loop observe/verify
+            # on the chain's shared browser (web-exclusive); OFF observes the
+            # desktop (desktop-exclusive).  Headless runs those web actions in
+            # an invisible browser.
+            "orch_headless": False,
             # Web mode: route input/vision/write on the chain's shared browser
             # instead of the desktop screen (mirrors ConditionalNode.web_mode).
             "web_mode": False,
@@ -173,6 +178,7 @@ class LLMNode(BaseNode):
         self.create_property("orch_synthesize", True)
         self.create_property("orch_synthesis_system", "")
         self.create_property("orch_use_goal_ledger", False)
+        self.create_property("orch_headless", False)
         # Web mode (see llm_config comment above).
         self.create_property("web_mode", "false")
         self.create_property("ocr_region", "")
@@ -259,6 +265,7 @@ class LLMNode(BaseNode):
         self.set_property("orch_synthesize", bool(config.get("orch_synthesize", True)))
         self.set_property("orch_synthesis_system", config.get("orch_synthesis_system") or "")
         self.set_property("orch_use_goal_ledger", bool(config.get("orch_use_goal_ledger", False)))
+        self.set_property("orch_headless", bool(config.get("orch_headless", False)))
         self.rebuild_orchestrator_ports()
         self.set_property("web_mode", str(config.get("web_mode", False)).lower())
         self.set_property("ocr_region", config.get("ocr_region", "") or "")
@@ -540,6 +547,7 @@ class LLMNode(BaseNode):
             "orch_synthesize": bool(self.get_property("orch_synthesize")),
             "orch_synthesis_system": self.get_property("orch_synthesis_system") or "",
             "orch_use_goal_ledger": bool(self.get_property("orch_use_goal_ledger")),
+            "orch_headless": bool(self.get_property("orch_headless")),
             "web_mode": str(self.get_property("web_mode") or "false").lower()
             in ("true", "1", "yes", "on"),
             "ocr_region": self.get_property("ocr_region") or "",

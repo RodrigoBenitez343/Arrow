@@ -20,7 +20,9 @@ from PyQt5.QtWidgets import (
     QFrame, QMessageBox, QStackedWidget, QGridLayout, QSizePolicy, QApplication
 )
 from PyQt5.QtGui import QPixmap, QFont
-from ..constants import TEXT_COLOR, ACCENT_COLOR, SIDE_PANEL_BG, LIGHT_GREY
+from ..constants import (TEXT_COLOR, TEXT_MUTED, ACCENT_COLOR, SIDE_PANEL_BG, LIGHT_GREY,
+                         BLOCK_COLOR, DARK_GREY, WELL_BG, CONTROL_BG, HAIRLINE,
+                         RADIUS_SM, RADIUS_MD)
 from .trigger_dialogs import TriggerConfigDialog, OCRTriggerConfigDialog, ConditionalLoopDialog, WaitConditionDialog, LayoutMatchConfigDialog
 from ..i18n import _
 
@@ -83,9 +85,9 @@ class ConditionItemWidget(QFrame):
         # Style
         self.setStyleSheet(f"""
             ConditionItemWidget {{
-                background-color: #2b2b2b;
-                border: 1px solid #3d3d3d;
-                border-radius: 8px;
+                background-color: {BLOCK_COLOR};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_MD}px;
             }}
             QLabel {{
                 color: {TEXT_COLOR};
@@ -97,7 +99,7 @@ class ConditionItemWidget(QFrame):
         preview_label = QLabel()
         preview_label.setFixedSize(60, 60)
         preview_label.setAlignment(Qt.AlignCenter)
-        preview_label.setStyleSheet("background-color: #1e1e1e; border-radius: 4px;")
+        preview_label.setStyleSheet(f"background-color: {DARK_GREY}; border-radius: {RADIUS_SM}px;")
         
         info_text = ""
         
@@ -184,6 +186,7 @@ class AdvancedConditionalDialog(ModernDialog):
         self._initial_description = str(self.current_config.get('description') or '')
         
         self.setModal(True)
+        self._auto_fit = False
         self.resize(800, 700)  # Increased size for better visibility
         self.setMinimumSize(750, 650)  # Set minimum size to prevent content clipping
         # Size to restore when Web Mode is switched back off (it shrinks the
@@ -283,10 +286,10 @@ class AdvancedConditionalDialog(ModernDialog):
         info_label.setWordWrap(True)
         info_label.setStyleSheet(f"""
             QLabel {{
-                color: #a0a0a0;
-                background-color: #1e1e1e;
-                border: 1px solid #333333;
-                border-radius: 4px;
+                color: {TEXT_MUTED};
+                background-color: {WELL_BG};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 6px;
                 font-size: 11px;
             }}
@@ -306,10 +309,10 @@ class AdvancedConditionalDialog(ModernDialog):
         self.code_edit.setMinimumHeight(160)
         self.code_edit.setStyleSheet(f"""
             QTextEdit {{
-                background-color: #252526;
+                background-color: {WELL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 6px;
             }}
         """)
@@ -326,10 +329,10 @@ class AdvancedConditionalDialog(ModernDialog):
         self.code_timeout_spin.setValue(5.0)
         self.code_timeout_spin.setStyleSheet(f"""
             QDoubleSpinBox {{
-                background-color: #252526;
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 4px;
             }}
         """)
@@ -341,7 +344,7 @@ class AdvancedConditionalDialog(ModernDialog):
         # ── AI Code Generation bar ──
         gen_sep = QFrame()
         gen_sep.setFrameShape(QFrame.HLine)
-        gen_sep.setStyleSheet("color: #333;")
+        gen_sep.setStyleSheet(f"color: {HAIRLINE};")
         code_layout.addWidget(gen_sep)
 
         gen_header = QLabel(_("Generate code with AI:"))
@@ -415,10 +418,10 @@ class AdvancedConditionalDialog(ModernDialog):
         llm_info_label.setWordWrap(True)
         llm_info_label.setStyleSheet(f"""
             QLabel {{
-                color: #a0a0a0;
-                background-color: #1e1e1e;
-                border: 1px solid #333333;
-                border-radius: 4px;
+                color: {TEXT_MUTED};
+                background-color: {WELL_BG};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 6px;
                 font-size: 11px;
             }}
@@ -469,10 +472,10 @@ class AdvancedConditionalDialog(ModernDialog):
         self.llm_prompt_edit.setMinimumHeight(100)
         self.llm_prompt_edit.setStyleSheet(f"""
             QTextEdit {{
-                background-color: #252526;
+                background-color: {WELL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 6px;
             }}
         """)
@@ -490,10 +493,10 @@ class AdvancedConditionalDialog(ModernDialog):
         self.llm_timeout_spin.setValue(10.0)
         self.llm_timeout_spin.setStyleSheet(f"""
             QDoubleSpinBox {{
-                background-color: #252526;
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid #3d3d3d;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 4px;
             }}
         """)
@@ -653,8 +656,8 @@ class AdvancedConditionalDialog(ModernDialog):
         ))
         info.setWordWrap(True)
         info.setStyleSheet(
-            "color:#a0a0a0; background-color:#1e1e1e; border:1px solid #333333;"
-            "border-radius:4px; padding:6px; font-size:11px;"
+            f"color:{TEXT_MUTED}; background-color:{BLOCK_COLOR}; border:1px solid {HAIRLINE};"
+            f"border-radius:{RADIUS_SM}px; padding:6px; font-size:11px;"
         )
         layout.addWidget(info)
 

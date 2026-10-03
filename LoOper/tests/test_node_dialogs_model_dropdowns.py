@@ -64,6 +64,57 @@ def test_llm_dialog_exposes_orchestrator_mode(qapp):
     assert dlg2.get_config()["orchestrator_mode"] is False
 
 
+def test_llm_dialog_headless_web_toggle_round_trips(qapp):
+    """The Headless web toggle is saved, and only shows for a WEB orchestrator."""
+    import NGUI.graph_elements  # noqa: F401
+    from NGUI.dialogs.llm_dialogs import LLMPropertiesDialog
+
+    dlg = LLMPropertiesDialog(None, {"orchestrator_mode": True,
+                                     "orch_headless": True})
+    assert dlg.get_config()["orch_headless"] is True
+
+    def _shown():
+        return not dlg.orch_headless_check.isHidden()
+
+    # Off a web orchestrator the toggle is hidden.
+    dlg.web_mode_checkbox.setChecked(False)
+    dlg._sync_orch_scope_visibility()
+    assert not _shown()
+
+    # Orchestrator + web mode -> shown.
+    dlg.web_mode_checkbox.setChecked(True)
+    dlg._sync_orch_scope_visibility()
+    assert _shown()
+
+    # Vanilla LLM node -> hidden again.
+    dlg.orchestrator_mode_check.setChecked(False)
+    dlg._sync_orch_scope_visibility()
+    assert not _shown()
+
+
+def test_llm_dialog_orchestrator_web_mode_toggle(qapp):
+    """An orchestrator exposes its Web/Desktop observation surface and that
+    toggle drives the same `web_mode` as the Prompt tab's Web Mode switch."""
+    import NGUI.graph_elements  # noqa: F401
+    from NGUI.dialogs.llm_dialogs import LLMPropertiesDialog
+
+    dlg = LLMPropertiesDialog(None, {"orchestrator_mode": True, "web_mode": True})
+    assert dlg.orch_web_mode_check.isChecked()
+    assert dlg.web_mode_checkbox.isChecked()
+    assert dlg.get_config()["web_mode"] is True
+
+    # Either toggle drives the shared setting (mirrored, not a second key).
+    dlg.orch_web_mode_check.setChecked(False)
+    assert not dlg.web_mode_checkbox.isChecked()
+    assert dlg.get_config()["web_mode"] is False
+    dlg.web_mode_checkbox.setChecked(True)
+    assert dlg.orch_web_mode_check.isChecked()
+
+    # Choosing the web surface reveals the Headless toggle without leaving
+    # the Orchestrator group (the Prompt tab is hidden in orchestrator mode).
+    assert not dlg.orch_headless_check.isHidden()
+
+
 def test_llm_node_orchestrator_switch_is_reversible(qapp):
     """ON adds the orchestrator ports; OFF removes them again."""
     import NGUI.graph_elements  # noqa: F401

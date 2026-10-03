@@ -1,11 +1,12 @@
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QSpinBox, QCheckBox, QComboBox,
-    QScrollArea, QFrame, QWidget, QSizePolicy, QRadioButton, QButtonGroup
+    QScrollArea, QFrame, QWidget, QSizePolicy, QRadioButton, QButtonGroup, QGroupBox
 )
 from PyQt5.QtCore import Qt
 from .base_dialog import ModernDialog
-from ..constants import TEXT_COLOR, LIGHT_GREY, ACCENT_COLOR
+from ..constants import (TEXT_COLOR, LIGHT_GREY, BLOCK_COLOR, BLOCK_HOVER, HAIRLINE,
+                         WELL_BG, CONTROL_BG, ACCENT_COLOR, RADIUS_SM, RADIUS_MD, RADIUS_PILL)
 from ..i18n import _
 import json
 import datetime
@@ -17,8 +18,8 @@ class _ContextEntryCard(QFrame):
     def __init__(self, title: str, body: str, parent=None):
         super().__init__(parent)
         self.setStyleSheet(
-            "QFrame { background-color: #252526; border: 1px solid #3d3d3d; "
-            "border-radius: 6px; }"
+            f"QFrame {{ background-color: {BLOCK_COLOR}; border: 1px solid {HAIRLINE}; "
+            f"border-radius: {RADIUS_MD}px; }}"
         )
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 8, 10, 8)
@@ -88,8 +89,9 @@ class ContextDialog(ModernDialog):
         self.entries_scroll = QScrollArea()
         self.entries_scroll.setWidgetResizable(True)
         self.entries_scroll.setStyleSheet(
-            f"QScrollArea {{ background-color: #1E1E1E; border: 1px solid "
-            f"{LIGHT_GREY}; border-radius: 4px; }}"
+            f"QScrollArea {{ background-color: {WELL_BG}; border: 1px solid "
+            f"{HAIRLINE}; border-radius: {RADIUS_SM}px; }}"
+            f"QScrollArea > QWidget > QWidget {{ background-color: {WELL_BG}; }}"
         )
         self.entries_container = QWidget()
         self.entries_layout = QVBoxLayout(self.entries_container)
@@ -106,22 +108,27 @@ class ContextDialog(ModernDialog):
         refresh_btn.setStyleSheet(self._btn_style())
         refresh_btn.clicked.connect(self._refresh_preview)
 
-        # --- Layout ---
-        self.content_layout.addWidget(label_lbl)
-        self.content_layout.addWidget(self.label_edit)
-        self.content_layout.addSpacing(10)
-        self.content_layout.addWidget(history_lbl)
+        # --- Layout (two filled cards) ---
+        config_card = QGroupBox(_("Configuration"))
+        cc = QVBoxLayout(config_card)
+        cc.setContentsMargins(0, 0, 0, 0)
+        cc.setSpacing(8)
+        cc.addWidget(label_lbl)
+        cc.addWidget(self.label_edit)
+        cc.addSpacing(6)
+        cc.addWidget(history_lbl)
 
         hrow = QHBoxLayout()
         hrow.addWidget(self.history_spin)
-        hrow.addWidget(QLabel(_("The N most recent entries are served to downstream nodes")))
-        hrow.addStretch()
-        self.content_layout.addLayout(hrow)
+        _hist_hint = QLabel(_("The N most recent entries are served to downstream nodes"))
+        _hist_hint.setWordWrap(True)
+        hrow.addWidget(_hist_hint, 1)
+        cc.addLayout(hrow)
 
-        self.content_layout.addSpacing(5)
-        self.content_layout.addWidget(lifetime_title)
-        self.content_layout.addWidget(self.radio_persist)
-        self.content_layout.addWidget(self.radio_clear)
+        cc.addSpacing(6)
+        cc.addWidget(lifetime_title)
+        cc.addWidget(self.radio_persist)
+        cc.addWidget(self.radio_clear)
 
         # --- Scope selector ---
         scope_lbl = QLabel(_("Scope:"))
@@ -139,12 +146,16 @@ class ContextDialog(ModernDialog):
         scope_row.addWidget(scope_lbl)
         scope_row.addWidget(self.scope_combo)
         scope_row.addStretch()
-        self.content_layout.addLayout(scope_row)
+        cc.addLayout(scope_row)
+        self.content_layout.addWidget(config_card)
 
-        self.content_layout.addSpacing(15)
-        self.content_layout.addWidget(preview_lbl)
-        self.content_layout.addWidget(self.entries_scroll, 1)
-        self.content_layout.addWidget(refresh_btn)
+        preview_card = QGroupBox(_("Stored Contents (read-only)"))
+        pc = QVBoxLayout(preview_card)
+        pc.setContentsMargins(0, 0, 0, 0)
+        pc.setSpacing(8)
+        pc.addWidget(self.entries_scroll, 1)
+        pc.addWidget(refresh_btn, 0, Qt.AlignRight)
+        self.content_layout.addWidget(preview_card, 1)
 
         # --- Buttons ---
         btn_row = QHBoxLayout()
@@ -304,11 +315,11 @@ class ContextDialog(ModernDialog):
     def _input_style(self):
         return f"""
             QLineEdit, QSpinBox {{
-                background-color: #252526;
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: 1px solid {LIGHT_GREY};
-                padding: 5px;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                padding: 6px 8px;
+                border-radius: {RADIUS_SM}px;
             }}
             QSpinBox::up-button, QSpinBox::down-button {{
                 background-color: {LIGHT_GREY};
@@ -319,13 +330,14 @@ class ContextDialog(ModernDialog):
     def _btn_style(self):
         return f"""
             QPushButton {{
-                background-color: {LIGHT_GREY};
+                background-color: {CONTROL_BG};
                 color: {TEXT_COLOR};
-                border: none;
-                padding: 6px 12px;
-                border-radius: 4px;
+                border: 1px solid {HAIRLINE};
+                padding: 6px 16px;
+                border-radius: {RADIUS_PILL}px;
+                font-weight: 500;
             }}
             QPushButton:hover {{
-                background-color: #3E3E3E;
+                background-color: {BLOCK_HOVER};
             }}
         """
