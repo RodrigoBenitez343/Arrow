@@ -327,7 +327,7 @@ class AgentModeWidget(QWidget):
         self._clear_memory_btn.setFixedHeight(26)
         self._clear_memory_btn.setStyleSheet(
             f"QPushButton {{ background-color: transparent; color: {LIGHT_GREY}; border: 1px solid rgba(255,255,255,0.10); border-radius: 6px; font-size: 11px; padding: 0px 10px; }}"
-            f"QPushButton:hover {{ color: #ff6b6b; border-color: #ff6b6b; }}"
+            f"QPushButton:hover {{ color: #ef4444; border-color: #ef4444; }}"
         )
         self._clear_memory_btn.clicked.connect(self._clear_memory)
         top_layout.addWidget(self._clear_memory_btn, 0, Qt.AlignRight)
@@ -508,10 +508,10 @@ class AgentModeWidget(QWidget):
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setFixedHeight(36)
         self._send_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0D1117; "
+            f"QPushButton {{ background-color: {ACCENT_COLOR}; color: #0a0a0a; "
             f"border: 0px; border-radius: 10px; padding: 8px 20px; font-size: 13px; font-weight: 700; }}"
-            f"QPushButton:hover {{ background-color: #00f0c6; }}"
-            f"QPushButton:pressed {{ background-color: #00b898; }}"
+            f"QPushButton:hover {{ background-color: #4fdcf0; }}"
+            f"QPushButton:pressed {{ background-color: #0ea5b7; }}"
         )
         self._send_btn.clicked.connect(self._handle_send)
         input_layout.addWidget(self._send_btn, 0)

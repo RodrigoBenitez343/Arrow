@@ -183,39 +183,38 @@ class SequenceOperationsMixin:
         return None
 
     def delete_sequence_node(self, node):
-        """Delete a sequence node and its associated file."""
+        """Remove a sequence node from the graph and the chain config.
+
+        The recorded sequence FILE is kept on disk: deleting the node removes it
+        from the graph only (the same rule as the drop-to-delete zone), so a
+        recording is never lost by accident. The node stores the file in the
+        ``sequence_file`` property, not ``sequence_name`` - reading the wrong
+        property is what produced the bogus "Sequence file not found" warnings
+        and left the chain entry behind.
+        """
         logger.info(f"Deleting sequence node: {node.id}")
         try:
-            sequence_name = node.get_property('sequence_name') or ''
-            logger.debug(f"Sequence name: {sequence_name}")
-            
-            # Remove from chain config
-            logger.debug("Removing sequence from chain config")
-            self.parent_widget.config_manager.remove_sequence_from_chain(sequence_name)
-            
-            # Delete sequence file
-            sequence_file = os.path.join(
-                self.parent_widget.sequences_folder, 
-                f"{sequence_name}.json"
-            )
-            logger.debug(f"Checking for sequence file: {sequence_file}")
-            if os.path.exists(sequence_file):
-                logger.debug(f"Deleting sequence file: {sequence_file}")
-                os.remove(sequence_file)
-            else:
-                logger.warning(f"Sequence file not found: {sequence_file}")
-                
-            # Delete the node
+            sequence_file = node.get_property('sequence_file') or ''
+            sequence_name = os.path.basename(sequence_file) if sequence_file else node.name()
+            logger.debug(f"Sequence file: {sequence_file} (name: {sequence_name})")
+
+            # Best-effort: drop the matching entry from the chain config.
+            try:
+                self.parent_widget.config_manager.remove_sequence_from_chain(
+                    sequence_name)
+            except Exception as e:
+                logger.debug(f"remove_sequence_from_chain skipped: {e}")
+
+            # Delete the node from the graph (not the file).
             logger.debug("Deleting sequence node from graph")
             self.parent_widget.graph_manager.delete_node(node)
-            
             logger.info(f"Successfully deleted sequence node: {sequence_name}")
-            
+
         except Exception as e:
-            logger.error(f"Error deleting sequence node: {e}")
+            logger.error(f"Error deleting sequence node: {e}", exc_info=True)
             QMessageBox.critical(
-                self.parent_widget, 
-                "Error", 
+                self.parent_widget,
+                "Error",
                 f"Failed to delete sequence node: {str(e)}"
             )
 

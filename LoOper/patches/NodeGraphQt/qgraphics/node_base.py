@@ -13,6 +13,13 @@ from NodeGraphQt.qgraphics.node_text_item import NodeTextItem
 from NodeGraphQt.qgraphics.port import CustomPortItem, PortItem
 
 
+# LoOper node look: every node is a uniform rounded SQUARE.  The node-type
+# glyph is centred on the card (sized by the caller) and the node name is kept
+# in the tooltip, so the card stays icon-only and the glyph is never overlapped.
+SQUARE_NODE_SIZE = 96.0
+SQUARE_RADIUS = 16.0
+
+
 class NodeItem(AbstractNodeItem):
     """
     Base Node item.
@@ -66,7 +73,7 @@ class NodeItem(AbstractNodeItem):
         painter.setPen(QtCore.Qt.NoPen)
         painter.setBrush(QtCore.Qt.NoBrush)
 
-        # base background.
+        # base background (rounded square).
         margin = 1.0
         rect = self.boundingRect()
         rect = QtCore.QRectF(rect.left() + margin,
@@ -74,7 +81,7 @@ class NodeItem(AbstractNodeItem):
                              rect.width() - (margin * 2),
                              rect.height() - (margin * 2))
 
-        radius = 4.0
+        radius = SQUARE_RADIUS
         painter.setBrush(QtGui.QColor(*self.color))
         painter.drawRoundedRect(rect, radius, radius)
 
@@ -82,19 +89,6 @@ class NodeItem(AbstractNodeItem):
         if self.selected:
             painter.setBrush(QtGui.QColor(*NodeEnum.SELECTED_COLOR.value))
             painter.drawRoundedRect(rect, radius, radius)
-
-        # node name background.
-        padding = 3.0, 2.0
-        text_rect = self._text_item.boundingRect()
-        text_rect = QtCore.QRectF(text_rect.x() + padding[0],
-                                  rect.y() + padding[1],
-                                  rect.width() - padding[0] - margin,
-                                  text_rect.height() - (padding[1] * 2))
-        if self.selected:
-            painter.setBrush(QtGui.QColor(*NodeEnum.SELECTED_COLOR.value))
-        else:
-            painter.setBrush(QtGui.QColor(0, 0, 0, 80))
-        painter.drawRoundedRect(text_rect, 3.0, 3.0)
 
         # node border
         if self.selected:
@@ -110,7 +104,11 @@ class NodeItem(AbstractNodeItem):
                                     rect.width(), rect.height())
 
         pen = QtGui.QPen(border_color, border_width)
-        pen.setCosmetic(self.viewer().get_zoom() < 0.0)
+        # LoOper guard: viewer() is None while the node's scene has no attached
+        # view (it is being removed). Touching it here raised AttributeError
+        # ('NoneType' has no attribute 'get_zoom') mid-paint and aborted the app.
+        _viewer = self.viewer()
+        pen.setCosmetic(_viewer.get_zoom() < 0.0 if _viewer else False)
         path = QtGui.QPainterPath()
         path.addRoundedRect(border_rect, radius, radius)
         painter.setBrush(QtCore.Qt.NoBrush)
@@ -167,7 +165,11 @@ class NodeItem(AbstractNodeItem):
                                     rect.width(), rect.height())
 
         pen = QtGui.QPen(border_color, border_width)
-        pen.setCosmetic(self.viewer().get_zoom() < 0.0)
+        # LoOper guard: viewer() is None while the node's scene has no attached
+        # view (it is being removed). Touching it here raised AttributeError
+        # ('NoneType' has no attribute 'get_zoom') mid-paint and aborted the app.
+        _viewer = self.viewer()
+        pen.setCosmetic(_viewer.get_zoom() < 0.0 if _viewer else False)
         painter.setBrush(QtCore.Qt.NoBrush)
         painter.setPen(pen)
         painter.drawRoundedRect(border_rect, radius, radius)
@@ -279,15 +281,15 @@ class NodeItem(AbstractNodeItem):
         """
         Sets the initial base size for the node.
 
+        LoOper: every node is a uniform rounded square regardless of its label
+        or port count, so the graph reads as a grid of icons.
+
         Args:
-            add_w (float): add additional width.
-            add_h (float): add additional height.
+            add_w (float): ignored.
+            add_h (float): ignored.
         """
-        self._width, self._height = self.calc_size(add_w, add_h)
-        if self._width < NodeEnum.WIDTH.value:
-            self._width = NodeEnum.WIDTH.value
-        if self._height < NodeEnum.HEIGHT.value:
-            self._height = NodeEnum.HEIGHT.value
+        self._width = SQUARE_NODE_SIZE
+        self._height = SQUARE_NODE_SIZE
 
     def _set_text_color(self, color):
         """
@@ -445,10 +447,11 @@ class NodeItem(AbstractNodeItem):
         return width, height
 
     def _align_icon_horizontal(self, h_offset, v_offset):
+        # centre the glyph in the square card.
         icon_rect = self._icon_item.boundingRect()
-        text_rect = self._text_item.boundingRect()
-        x = self.boundingRect().left() + 2.0
-        y = text_rect.center().y() - (icon_rect.height() / 2)
+        rect = self.boundingRect()
+        x = rect.center().x() - (icon_rect.width() / 2)
+        y = rect.center().y() - (icon_rect.height() / 2)
         self._icon_item.setPos(x + h_offset, y + v_offset)
 
     def _align_icon_vertical(self, h_offset, v_offset):
@@ -560,10 +563,22 @@ class NodeItem(AbstractNodeItem):
         else:
             raise RuntimeError('Node graph layout direction not valid!')
 
+    @staticmethod
+    def _port_step(port_height, node_height, count):
+        """Even spacing that keeps the whole port stack inside the card."""
+        if count <= 1:
+            return port_height + 1.0
+        return min(port_height + 1.0, (node_height - port_height) / (count - 1))
+
     def _align_ports_horizontal(self, v_offset):
+        # LoOper: the card is a compact square, so stack the ports EVENLY and
+        # centre the stack on the left/right edge. The stock layout anchored
+        # them at the (hidden) title height and grew downwards, so a node whose
+        # ports change at runtime (LLM -> Orchestrator adds the 'tools' input +
+        # 'trace'/'route' outputs) pushed its lower ports off the card and left
+        # them "floating in the air".
         width = self._width
-        txt_offset = PortEnum.CLICK_FALLOFF.value - 2
-        spacing = 1
+        height = self._height
 
         # adjust input position
         inputs = [p for p in self.inputs if p.isVisible()]
@@ -571,15 +586,17 @@ class NodeItem(AbstractNodeItem):
             port_width = inputs[0].boundingRect().width()
             port_height = inputs[0].boundingRect().height()
             port_x = (port_width / 2) * -1
-            port_y = v_offset
-            for port in inputs:
-                port.setPos(port_x, port_y)
-                port_y += port_height + spacing
-        # adjust input text position
+            count = len(inputs)
+            step = self._port_step(port_height, height, count)
+            start_y = (height - (count - 1) * step) / 2 - (port_height / 2)
+            for i, port in enumerate(inputs):
+                port.setPos(port_x, start_y + i * step)
+        # adjust input text position (vertically centred on each port)
         for port, text in self._input_items.items():
             if port.isVisible():
                 txt_x = port.x() + port.boundingRect().width() / 2 - text.boundingRect().width() - 10
-                text.setPos(txt_x, port.y() - 1.5)
+                txt_y = port.y() + (port.boundingRect().height() - text.boundingRect().height()) / 2
+                text.setPos(txt_x, txt_y)
 
         # adjust output position
         outputs = [p for p in self.outputs if p.isVisible()]
@@ -587,15 +604,17 @@ class NodeItem(AbstractNodeItem):
             port_width = outputs[0].boundingRect().width()
             port_height = outputs[0].boundingRect().height()
             port_x = width - (port_width / 2)
-            port_y = v_offset
-            for port in outputs:
-                port.setPos(port_x, port_y)
-                port_y += port_height + spacing
-        # adjust output text position
+            count = len(outputs)
+            step = self._port_step(port_height, height, count)
+            start_y = (height - (count - 1) * step) / 2 - (port_height / 2)
+            for i, port in enumerate(outputs):
+                port.setPos(port_x, start_y + i * step)
+        # adjust output text position (vertically centred on each port)
         for port, text in self._output_items.items():
             if port.isVisible():
                 txt_x = port.x() + port.boundingRect().width() / 2 + 10
-                text.setPos(txt_x, port.y() - 1.5)
+                txt_y = port.y() + (port.boundingRect().height() - text.boundingRect().height()) / 2
+                text.setPos(txt_x, txt_y)
 
     def _align_ports_vertical(self, v_offset):
         # adjust input position
@@ -659,10 +678,11 @@ class NodeItem(AbstractNodeItem):
         # --- set the initial node layout ---
         # (do all the graphic item layout offsets here)
 
-        # align label text
-        self.align_label()
+        # The card is icon-only: the name lives in the tooltip (set above), so
+        # the centred glyph is not overlapped by a label.
+        self._text_item.setVisible(False)
         # align icon
-        self.align_icon(h_offset=2.0, v_offset=1.0)
+        self.align_icon()
         # arrange input and output ports.
         self.align_ports(v_offset=height)
         # arrange node widgets
@@ -733,11 +753,19 @@ class NodeItem(AbstractNodeItem):
         if ITEM_CACHE_MODE is QtWidgets.QGraphicsItem.ItemCoordinateCache:
             return
 
+        # LoOper guard: viewer() returns None while the node's scene has no
+        # attached view - exactly the moment a node is being torn down / removed
+        # from the scene. The stock code then raised "'NoneType' object has no
+        # attribute 'mapToGlobal'" from inside paint(), which PyQt5 turns into a
+        # fatal error and aborts the app: node deletion removed the connections
+        # but never finished removing the node. Skip the proxy decision instead.
+        viewer = self.viewer()
+        if viewer is None:
+            return
+
         rect = self.sceneBoundingRect()
-        l = self.viewer().mapToGlobal(
-            self.viewer().mapFromScene(rect.topLeft()))
-        r = self.viewer().mapToGlobal(
-            self.viewer().mapFromScene(rect.topRight()))
+        l = viewer.mapToGlobal(viewer.mapFromScene(rect.topLeft()))
+        r = viewer.mapToGlobal(viewer.mapFromScene(rect.topRight()))
         # width is the node width in screen
         width = r.x() - l.x()
 
@@ -780,8 +808,13 @@ class NodeItem(AbstractNodeItem):
             if port.display_name:
                 text.setVisible(port_text_visible)
 
-        self._text_item.setVisible(visible)
-        self._icon_item.setVisible(visible)
+        # LoOper: the card is icon-only, so the name text stays hidden (it
+        # lives in the tooltip) even when proxy mode toggles back on.
+        self._text_item.setVisible(False)
+        # ...and the glyph must stay visible at EVERY zoom level: stock proxy
+        # mode hid the icon once the node got small on screen, which left a
+        # blank square and read as "the icons disappear when zooming out".
+        self._icon_item.setVisible(True)
 
     @property
     def icon(self):
@@ -815,16 +848,12 @@ class NodeItem(AbstractNodeItem):
 
     @AbstractNodeItem.width.setter
     def width(self, width=0.0):
-        w, h = self.calc_size()
-        width = width if width > w else w
-        AbstractNodeItem.width.fset(self, width)
+        # LoOper: keep the node a perfect square.
+        AbstractNodeItem.width.fset(self, SQUARE_NODE_SIZE)
 
     @AbstractNodeItem.height.setter
     def height(self, height=0.0):
-        w, h = self.calc_size()
-        h = 70 if h < 70 else h
-        height = height if height > h else h
-        AbstractNodeItem.height.fset(self, height)
+        AbstractNodeItem.height.fset(self, SQUARE_NODE_SIZE)
 
     @AbstractNodeItem.disabled.setter
     def disabled(self, state=False):
@@ -997,6 +1026,14 @@ class NodeItem(AbstractNodeItem):
         self.scene().removeItem(text)
         del port
         del text
+        # LoOper: removing a port must re-run the layout, otherwise the ports
+        # that remain keep their old positions and float off the card edge
+        # (seen when the orchestrator switch removes 'tools'/'trace'/'route').
+        try:
+            if self.scene():
+                self.draw_node()
+        except Exception:
+            pass
 
     def delete_input(self, port):
         """

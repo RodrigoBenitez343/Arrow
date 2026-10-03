@@ -128,7 +128,7 @@ class BottomActionsToolbar(QWidget):
             self._clear_memory_btn.setFixedSize(42, 22)
             self._clear_memory_btn.setStyleSheet(
                 f"QPushButton {{ background-color: transparent; color: {LIGHT_GREY}; border: 1px solid {LIGHT_GREY}; border-radius: 6px; font-size: 10px; padding: 0px 6px; }}"
-                f"QPushButton:hover {{ color: #ff6b6b; border-color: #ff6b6b; }}"
+                f"QPushButton:hover {{ color: #ef4444; border-color: #ef4444; }}"
             )
             self._clear_memory_btn.clicked.connect(self._clear_memory)
             header.addWidget(self._clear_memory_btn, 0, Qt.AlignRight)

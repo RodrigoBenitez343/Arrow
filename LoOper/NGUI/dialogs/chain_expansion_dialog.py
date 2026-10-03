@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from ..i18n import _
 from ..graph_elements.config_manager import ConfigManager
-from ..constants import TEXT_COLOR
+from ..constants import TEXT_COLOR, BLOCK_COLOR, HAIRLINE, RADIUS_SM
 
 # Import cache invalidation function
 try:
@@ -162,8 +162,9 @@ class ChainExpansionDialog(ModernDialog):
         self.info_display.setStyleSheet(f"""
             QTextEdit {{
                 color: {TEXT_COLOR};
-                background-color: #2b2b2b;
-                border: 1px solid #555;
+                background-color: {BLOCK_COLOR};
+                border: 1px solid {HAIRLINE};
+                border-radius: {RADIUS_SM}px;
                 padding: 10px;
                 font-family: 'Consolas', monospace;
                 font-size: 11px;

@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QRect, pyqtSignal, QTimer
 from PyQt5.QtGui import QGuiApplication, QPainter, QColor, QCursor, QPen
-from ..constants import TEXT_COLOR
+from ..constants import TEXT_COLOR, PICKER_ACCENT
 from ..i18n import _
 
 logger = logging.getLogger(__name__)
@@ -1063,8 +1063,8 @@ class ElementPickOverlay(QDialog):
             self._dpr = 1.0
         self._label = QLabel(self)
         self._label.setStyleSheet(
-            "background:#00e0b8; color:#00201a; padding:1px 6px;"
-            "border-radius:3px; font:11px monospace;"
+            f"background:{PICKER_ACCENT}; color:#00201a; padding:1px 6px;"
+            f"border-radius:3px; font:11px monospace;"
         )
         self._label.hide()
         self._timer = QTimer(self)

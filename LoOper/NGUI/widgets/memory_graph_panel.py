@@ -49,12 +49,12 @@ _RUN_COLORS = {'ok': _COL_RUN_OK, 'failed': _COL_RUN_FAILED,
                'stopped': _COL_RUN_STOPPED}
 _COL_CHAIN = QColor("#4DB6FF")
 _COL_CHAT_USER = QColor(255, 255, 255, 120)
-_COL_CHAT_AGENT = QColor(0, 224, 184, 150)
+_COL_CHAT_AGENT = QColor(34, 211, 238, 150)
 _COL_LABEL = QColor(TEXT_COLOR)
 _COL_LABEL_DIM = QColor(255, 255, 255, 130)
 _EDGE_DAY = QColor(255, 255, 255, 60)      # date -> its runs (dashed)
 _EDGE_DAY_CHAT = QColor(255, 255, 255, 32)  # date -> its chats (dotted)
-_EDGE_CHAT_RUN = QColor(0, 224, 184, 110)   # chat turn -> the run it produced
+_EDGE_CHAT_RUN = QColor(34, 211, 238, 110)   # chat turn -> the run it produced
 
 # ── layout constants ──
 # Left->right columns (default): time reads down-scrolling per day block,
@@ -343,7 +343,7 @@ class MemoryGraphPanel(QFrame):
             f"<span style='color:#FFA726'>\u25cf</span> run stopped&nbsp;&nbsp;"
             f"<span style='color:#4DB6FF'>\u25cf</span> chain&nbsp;&nbsp;"
             f"<span style='color:rgba(255,255,255,0.55)'>\u25cb</span> chat&nbsp;&nbsp;"
-            f"<span style='color:rgba(0,224,184,0.6)'>\u2014 \u2192</span> chat turn "
+            f"<span style='color:rgba(34,211,238,0.6)'>\u2014 \u2192</span> chat turn "
             f"\u2192 the run it produced&nbsp;&nbsp;"
             f"<span style='color:{ACCENT_COLOR}'>\u2014 \u2192</span> run \u2192 chain "
             f"used (label = how much of that chain ran)&nbsp;&nbsp;"

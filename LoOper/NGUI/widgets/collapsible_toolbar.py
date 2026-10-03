@@ -197,6 +197,18 @@ def _fallback_node_icon(node_type: str, size: int, pad: int = 3) -> QIcon:
         p.drawEllipse(ox + int(0.12*s), oy + int(0.12*s), int(0.76*s), int(0.76*s))
         p.drawEllipse(ox + int(0.30*s), oy + int(0.12*s), int(0.40*s), int(0.76*s))
         p.drawLine(ox + int(0.12*s), oy + int(0.5*s), ox + int(0.88*s), oy + int(0.5*s))
+    elif node_type == 'sequence':
+        # Ordered steps: a playlist-style list (bullets + lines)
+        for i in range(3):
+            ry = oy + int((0.22 + i * 0.28) * s)
+            p.drawEllipse(ox + int(0.16*s), ry, int(0.1*s), int(0.1*s))
+            p.drawLine(ox + int(0.36*s), ry + int(0.05*s),
+                       ox + int(0.84*s), ry + int(0.05*s))
+    elif node_type == 'action':
+        # A click: an arrow pointer + a target ring (what a step acts on)
+        p.drawEllipse(ox + int(0.30*s), oy + int(0.30*s), int(0.40*s), int(0.40*s))
+        p.drawLine(ox + int(0.5*s), oy + int(0.5*s), ox + int(0.86*s), oy + int(0.86*s))
+        p.drawLine(ox + int(0.62*s), oy + int(0.72*s), ox + int(0.72*s), oy + int(0.62*s))
     p.end()
     try:
         pix.setDevicePixelRatio(dpr)
@@ -757,6 +769,8 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
                 'form_filler': ['CLIPBOARD_TEXT', 'LIST_DETAILS', 'FORMS', 'CHECKBOX'],
                 'mcp': ['PLUG_CONNECTED', 'API_APP', 'PLUG'],
                 'output': ['ARROW_BACK', 'ARROW_BACK_UP', 'CIRCLE_DOT', 'INPUT'],
+                'sequence': ['PLAYLIST', 'LIST_NUMBERS', 'LIST_CHECK'],
+                'action': ['HAND_CLICK', 'POINTER', 'CURSOR_TEXT'],
                 'web_sequence': ['GLOBE', 'WORLD', 'BROWSER', 'WORLD_WWW'],
             }
             names = icon_map.get(node_type)
@@ -797,6 +811,7 @@ class DraggableButton(QPushButton):
         self.node_type = node_type
         self._drag_start_pos = None
         self._click_handler = click_handler
+        self._icon_pm = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumHeight(30)
@@ -811,7 +826,7 @@ class DraggableButton(QPushButton):
                 padding: 4px 10px;
                 border-radius: 12px;
                 min-width: 96px;
-                min-height: 30px;
+                min-height: 40px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -824,7 +839,29 @@ class DraggableButton(QPushButton):
             """
         )
 
-    # compound rendering removed; rely on QPushButton icon+text to avoid layered backgrounds
+    # The icon is drawn oversized, pinned to the card's left edge, while the text
+    # stays centred across the whole card. QPushButton's default icon+text
+    # grouping centres the pair together, so the glyph is held as a pixmap and
+    # painted separately, after the styled button (bg + centred text) is drawn.
+    ICON_PX = 30
+    ICON_LEFT = 12
+
+    def set_node_icon(self, icon):
+        """Store the node glyph as a pixmap (drawn manually in paintEvent)."""
+        try:
+            self._icon_pm = icon.pixmap(self.ICON_PX, self.ICON_PX)
+        except Exception:
+            self._icon_pm = None
+
+    def paintEvent(self, event):
+        super().paintEvent(event)  # styled background + centred text
+        pm = getattr(self, "_icon_pm", None)
+        if pm is not None and not pm.isNull():
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.drawPixmap(self.ICON_LEFT,
+                               (self.height() - pm.height()) // 2, pm)
+            painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -945,7 +982,7 @@ class DraggableSequenceButton(QPushButton):
         
         # Use a soft red for the icon to match the theme
         pen = p.pen()
-        pen.setColor(QColor("#FF6B6B"))
+        pen.setColor(QColor("#ef4444"))
         pen.setWidth(3)
         p.setPen(pen)
         
@@ -997,7 +1034,14 @@ class ModernDeleteDialog(ModernDialog):
     """A custom modern dialog for delete confirmation."""
     def __init__(self, parent, filename):
         super().__init__(parent, title=_("Delete"))
-        self.resize(400, 250)  # Increased height to fit content without scrollbar
+        # A confirmation is small: use a compact width/minimum instead of the
+        # standard dialog width, so the box fits its content instead of sitting
+        # in a mostly-empty 720px frame.
+        self._std_w = 420
+        self._min_w = 380
+        self._min_h = 200
+        self.setMinimumWidth(self._min_w)
+        self.resize(self._std_w, self._min_h)
         
         # Hide the default title bar close button if desired, but base_dialog has it.
         # We can just use the content layout.
@@ -1108,7 +1152,7 @@ class ModernDeleteDialog(ModernDialog):
         
         # Use a soft red for the icon to match the theme
         pen = p.pen()
-        pen.setColor(QColor("#FF6B6B"))
+        pen.setColor(QColor("#ef4444"))
         pen.setWidth(3)
         p.setPen(pen)
         
@@ -1125,163 +1169,6 @@ class ModernDeleteDialog(ModernDialog):
         p.drawLine(int(14*s), int(6*s), int(16*s), int(9*s))
         p.end()
         return pix
-
-
-class TrashBinWidget(QPushButton):
-    """A drop target for deleting saved files and shared library nodes."""
-
-    # Drag mime types accepted by the bin; these mirror the formats set by the
-    # sequence/chain/web-sequence library cards when a drag starts.
-    _DROP_FORMATS = (
-        'application/x-looper-sequence-file',
-        'application/x-looper-chain-file',
-        'application/x-looper-web-session-file',
-    )
-
-    # LLM/Code/Context library cards drag a JSON config referencing a node
-    # entry inside a chain file; those drops are delegated to the registered
-    # node drop handler instead of a plain file removal.
-    _NODE_CONFIG_FORMATS = (
-        'application/x-looper-llm-config',
-        'application/x-looper-context-config',
-        'application/x-looper-code-config',
-    )
-    _NODE_CONFIG_KIND = {
-        'application/x-looper-llm-config': 'llm',
-        'application/x-looper-context-config': 'context',
-        'application/x-looper-code-config': 'code',
-    }
-    _NODE_CONFIG_KEY = {
-        'application/x-looper-llm-config': 'llm_node_data',
-        'application/x-looper-context-config': 'context_node_data',
-        'application/x-looper-code-config': 'code_node_data',
-    }
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setText(_("🗑 Drop to Delete"))
-        self.setToolTip(_("Drag sequence/chain/web session files here to delete them"))
-        # Optional callback used for LLM/Code/Context library node drops.
-        self._node_drop_handler = None
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 2px dashed {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 8px;
-                font-weight: bold;
-                min-height: 36px;
-            }}
-            QPushButton:hover {{
-                border-color: #FF6B6B;
-                background-color: rgba(255, 107, 107, 0.1);
-                color: #FF6B6B;
-            }}
-            """
-        )
-
-    def set_node_drop_handler(self, handler):
-        """Register a handler for deleting shared library nodes."""
-        self._node_drop_handler = handler
-
-    def dragEnterEvent(self, event):
-        mime = event.mimeData()
-        if any(mime.hasFormat(fmt) for fmt in self._DROP_FORMATS) or any(
-            mime.hasFormat(fmt) for fmt in self._NODE_CONFIG_FORMATS
-        ):
-            event.accept()
-            self.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background-color: rgba(255, 107, 107, 0.2);
-                    color: #FF6B6B;
-                    border: 2px dashed #FF6B6B;
-                    border-radius: 10px;
-                    padding: 8px;
-                    font-weight: bold;
-                    min-height: 36px;
-                }}
-                """
-            )
-        else:
-            event.ignore()
-
-    def dragLeaveEvent(self, event):
-        self.setStyleSheet(
-            f"""
-            QPushButton {{
-                background-color: {BLOCK_COLOR};
-                color: {TEXT_COLOR};
-                border: 2px dashed {LIGHT_GREY};
-                border-radius: 10px;
-                padding: 8px;
-                font-weight: bold;
-                min-height: 36px;
-            }}
-            QPushButton:hover {{
-                border-color: #FF6B6B;
-                background-color: rgba(255, 107, 107, 0.1);
-                color: #FF6B6B;
-            }}
-            """
-        )
-        super().dragLeaveEvent(event)
-
-    def dropEvent(self, event):
-        mime = event.mimeData()
-        cfg_format = next(
-            (fmt for fmt in self._NODE_CONFIG_FORMATS if mime.hasFormat(fmt)), None
-        )
-        if cfg_format:
-            if self._node_drop_handler:
-                try:
-                    payload = json.loads(str(mime.data(cfg_format), 'utf-8'))
-                    handled = self._node_drop_handler(
-                        self._NODE_CONFIG_KIND[cfg_format],
-                        payload.get('chain_file', ''),
-                        payload.get(self._NODE_CONFIG_KEY[cfg_format], {}) or {},
-                    )
-                    if handled:
-                        event.accept()
-                except Exception as e:
-                    logger.error(f"Error processing library node drop in trash bin: {e}")
-            else:
-                event.ignore()
-            # Restore style
-            self.dragLeaveEvent(None)
-            return
-
-        file_format = next(
-            (fmt for fmt in self._DROP_FORMATS if mime.hasFormat(fmt)), None
-        )
-        if file_format:
-            try:
-                file_path_bytes = mime.data(file_format)
-                file_path = str(file_path_bytes, 'utf-8')
-
-                if not os.path.exists(file_path):
-                    return
-
-                filename = os.path.basename(file_path)
-
-                dialog = ModernDeleteDialog(self, filename)
-                if dialog.exec_() == QDialog.Accepted:
-                    try:
-                        os.remove(file_path)
-                        event.accept()
-                    except Exception as e:
-                        QMessageBox.critical(self, _("Error"), _("Failed to delete file: {error}").format(error=e))
-            except Exception as e:
-                logger.error(f"Error processing drop in trash bin: {e}")
-            finally:
-                # Restore style
-                self.dragLeaveEvent(None)
-        else:
-            event.ignore()
 
 
 class CollapsibleToolbar(QWidget):
@@ -1338,56 +1225,12 @@ class CollapsibleToolbar(QWidget):
         ]:
             btn = self._make_node_button(label, ntype, color, handler, tooltip=tip)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            btn.setMinimumHeight(30)
+            btn.setMinimumHeight(40)
             content_layout.addWidget(btn, 1)
 
-        # Bottom action buttons in a vertical column
-        bottom_row = QVBoxLayout()
-        bottom_row.setSpacing(6)
-        bottom_row.setContentsMargins(0, 0, 0, 0)
-
-        btn_specs = [
-            (_("Scheduler"), OutlineIcon.CALENDAR, self.scheduler_requested),
-            (_("Agent Mode"), OutlineIcon.USER, self.agent_mode_requested),
-            (_("AI Settings"), OutlineIcon.SETTINGS, self.ai_settings_requested),
-        ]
-        for label, icon_enum, signal in btn_specs:
-            btn = QPushButton(label)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            try:
-                if TablerIcons and icon_enum is not None:
-                    ico = TablerIcons.load(icon_enum, size=16, color='#00E0B8').toqpixmap()
-                    btn.setIcon(QIcon(ico))
-                    btn.setIconSize(QSize(16, 16))
-            except Exception:
-                pass
-            btn.setStyleSheet(
-                f"""
-                QPushButton {{
-                    background-color: {BLOCK_COLOR};
-                    color: {TEXT_COLOR};
-                    border: 1px solid #1AFFFFFF;
-                    border-radius: 8px;
-                    font-weight: bold;
-                    font-size: 11px;
-                    padding: 2px 4px;
-                }}
-                QPushButton:hover {{
-                    background-color: {BLOCK_HOVER};
-                    border: 1px solid {ACCENT_COLOR};
-                }}
-                QPushButton:pressed {{
-                    background-color: {ACCENT_COLOR};
-                    color: {DARK_GREY};
-                }}
-                """
-            )
-            btn.clicked.connect(signal.emit)
-            bottom_row.addWidget(btn)
-
-        content_layout.addLayout(bottom_row)
-
+        # The Scheduler / Agent Mode / AI Settings buttons used to sit here; they
+        # now live in the window's top bar, which keeps this bar focused on node
+        # creation.
         main_layout.addWidget(self._content_frame)
 
         # Floating toggle button (solid triangle), parented to graph_view to float outside
@@ -1513,10 +1356,8 @@ class CollapsibleToolbar(QWidget):
 
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
         btn = DraggableButton(label, node_type, color, click_handler, self)
-        icon = get_node_icon(node_type, 22)
         try:
-            btn.setIcon(icon)
-            btn.setIconSize(QSize(22, 22))
+            btn.set_node_icon(get_node_icon(node_type, DraggableButton.ICON_PX))
         except Exception:
             pass
         if tooltip:

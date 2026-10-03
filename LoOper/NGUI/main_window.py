@@ -52,7 +52,7 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
 
 from datetime import datetime
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QFileDialog, QInputDialog, QMessageBox, QLineEdit
-from PyQt5.QtCore import QObject, pyqtSignal, QTimer, Qt
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer, Qt, QEvent
 from PyQt5.QtGui import QIcon, QKeySequence, QCursor
 from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR, GRAPH_PLANE
 from .i18n import _
@@ -65,12 +65,18 @@ from .dialogs import AISettingsDialog
 from .dialogs.base_dialog import UserGuideDialog
 from .widgets.agent_overlay import AgentOverlay
 from .widgets.agent_dot import AgentDot
+from .widgets.agent_notch import AgentNotch
 from .widgets.code_node_panel import CodeNodePanel
 
 # Unified telemetry (see logging_setup.py): records propagate to the root
 # dispatch — colorized console + logs/automation.log + per-session md log.
 logger = logging.getLogger('LoOper.NGUI')
 logger.setLevel(logging.DEBUG)
+
+
+# Tabler outline icon -> QIcon (shared helper; PyQt5-safe conversion).
+from .icons import tabler_qicon as _tabler_qicon
+
 
 # ── Dialog helper: marshals QInputDialog to the main thread from a bg thread ──
 # QTimer.singleShot(0, ...) from a background thread creates the timer in that
@@ -129,6 +135,11 @@ class MainWindow(QMainWindow):
             super().__init__()
             self.setWindowTitle(_("Arrow"))
             self.setGeometry(100, 100, 1200, 800)
+            # Frameless "standalone" window: no native title bar. The menu bar
+            # doubles as the draggable top bar and hosts our own window controls.
+            self.setWindowFlag(Qt.FramelessWindowHint, True)
+            self.setMinimumSize(860, 560)
+            self._drag_offset = None
             
             # Set window icon — search exe dir first in frozen builds
             if getattr(sys, 'frozen', False):
@@ -192,16 +203,30 @@ class MainWindow(QMainWindow):
             self.graph_view = GraphViewWidget(self)
             self.layout.addWidget(self.graph_view, 1)
 
-            # Agent overlay (semi-transparent floating widget, hidden by default)
+            # Corner grip so the frameless window can still be resized.
+            try:
+                from PyQt5.QtWidgets import QSizeGrip
+                self._size_grip = QSizeGrip(self.central_widget)
+                self._size_grip.setFixedSize(16, 16)
+                self._size_grip.raise_()
+            except Exception:
+                self._size_grip = None
+
+            # Agent overlay — the system-chain-driven agent UI. Embedded in the
+            # window as a switch: it REPLACES the builder (the graph is hidden)
+            # while agent mode is active; its GUI/back button returns.
             self._agent_overlay = AgentOverlay()
-            self._agent_overlay.hide()
+            self._agent_overlay.embed(self.central_widget)
             self._agent_overlay.closed.connect(self._on_overlay_closed)
             self._agent_overlay.collapsed.connect(self._on_overlay_collapsed)
             self._agent_overlay.set_window_manager(
                 minimize_cb=self.showMinimized,
                 restore_cb=self.showNormal,
             )
-            logger.debug("AgentOverlay created")
+            self.layout.addWidget(self._agent_overlay, 1)
+            self._agent_overlay.hide()
+            self._agent_inwindow = True
+            logger.debug("AgentOverlay embedded (in-window agent mode)")
 
             # Agent dot (minimal floating indicator, hidden by default)
             self._agent_dot = AgentDot()
@@ -210,9 +235,31 @@ class MainWindow(QMainWindow):
             self._agent_overlay.execution_state_changed.connect(self._on_execution_state)
             logger.debug("AgentDot created")
 
+            # Agent notch — the summonable compact agent state: a small
+            # semi-transparent tab at the top-center of the screen. The agent
+            # hotkey raises it (instead of forcing the fullscreen panel);
+            # clicking it opens the in-window agent panel.
+            self._agent_notch = AgentNotch()
+            self._agent_notch.hide()
+            self._agent_notch.clicked.connect(self._on_notch_clicked)
+            self._agent_notch.submitted.connect(self._on_notch_submitted)
+            self._agent_notch.voice_submitted.connect(self._on_notch_submitted)
+            # The notch stays on screen while a chain runs, so it must leave the
+            # screen for EVERY screen read - the agent only ever sees captures.
+            # Register it on the same hook the execution overlay uses.
+            try:
+                from player.execution_overlay_bus import bus as _exec_bus
+                _exec_bus.extra_capture_hooks.append(
+                    self._agent_notch.hide_for_capture)
+            except Exception:
+                logger.exception("Could not register the notch capture hook")
+            logger.debug("AgentNotch created")
+
             self._agent_mode_active = False
+            self._notch_active = False   # the compact notch is the active agent UI
             self._overlay_was_visible = False
             self._dot_was_visible = False
+            self._notch_was_visible = False
             self._toggle_throttle = 0.0  # debounce toggle_agent_mode calls
 
             # Connect toolbar scheduler button to open manager
@@ -259,7 +306,8 @@ class MainWindow(QMainWindow):
         """Create the application menu bar"""
         menu_bar = self.menuBar()
         try:
-            from .constants import DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, BLOCK_HOVER
+            from .constants import (DARK_GREY, MEDIUM_GREY, TEXT_COLOR, BLOCK_HOVER,
+                                    HAIRLINE, ACCENT_SOFT, RADIUS_SM, RADIUS_MD)
             menu_bar.setStyleSheet(f"""
                 QMenuBar {{
                     background-color: {DARK_GREY};
@@ -267,8 +315,8 @@ class MainWindow(QMainWindow):
                 }}
                 QMenuBar::item {{
                     background: transparent;
-                    padding: 4px 10px;
-                    border-radius: 8px;
+                    padding: 5px 12px;
+                    border-radius: {RADIUS_SM}px;
                 }}
                 QMenuBar::item:selected {{
                     background: {BLOCK_HOVER};
@@ -279,61 +327,224 @@ class MainWindow(QMainWindow):
                 QMenu {{
                     background-color: {MEDIUM_GREY};
                     color: {TEXT_COLOR};
-                    border: 1px solid #14FFFFFF;
-                    border-radius: 8px;
+                    border: 1px solid {HAIRLINE};
+                    border-radius: {RADIUS_MD}px;
                 }}
                 QMenu::item {{
-                    padding: 4px 10px;
-                    border-radius: 6px;
+                    padding: 6px 14px;
+                    border-radius: {RADIUS_SM}px;
                 }}
                 QMenu::item:selected {{
-                    background-color: {BLOCK_HOVER};
+                    background-color: {ACCENT_SOFT};
                 }}
             """)
         except Exception:
             pass
         
-        # Exit button directly on menu bar (no dropdown for a single action)
-        exit_action = QAction(_("Exit"), self)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            exit_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.SQUARE_X, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
-        exit_action.triggered.connect(self.close)
-        menu_bar.addAction(exit_action)
-
-        # Docs menu
-        docs_menu = menu_bar.addMenu(_("&Documentation"))
-        user_guide_action = QAction(_("&User Guide"), self)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            user_guide_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.BOOK, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
-        user_guide_action.triggered.connect(self.open_user_guide)
-        docs_menu.addAction(user_guide_action)
-        
-        # View menu
-        view_menu = menu_bar.addMenu(_("&View"))
+        # The Exit / Documentation / View menu items are gone — their space now
+        # hosts the agent-mode controls and the graph's auxiliary controls (the
+        # top-bar clusters built below). The two QActions are kept, attached to
+        # the window, so the Ctrl+Shift+A shortcut and the Code Node Studio
+        # toggle keep working.
         toggle_agent_action = QAction(_("&Agent Mode"), self)
-        try:
-            from pytablericons import TablerIcons, OutlineIcon
-            toggle_agent_action.setIcon(QIcon(TablerIcons.load(OutlineIcon.MESSAGE_2, size=16, color=TEXT_COLOR).toqpixmap()))
-        except Exception:
-            pass
+        toggle_agent_action.setIcon(_tabler_qicon("MESSAGE_2", 16))
         toggle_agent_action.setShortcut(QKeySequence("Ctrl+Shift+A"))
         toggle_agent_action.setShortcutContext(Qt.ApplicationShortcut)
         toggle_agent_action.setCheckable(True)
         toggle_agent_action.triggered.connect(self.toggle_agent_mode)
-        view_menu.addAction(toggle_agent_action)
+        self.addAction(toggle_agent_action)
         self._toggle_agent_action = toggle_agent_action
 
         code_studio_action = QAction(_("Code Node Studio"), self)
         code_studio_action.setCheckable(True)
         code_studio_action.triggered.connect(self._toggle_code_studio)
-        view_menu.addAction(code_studio_action)
+        self.addAction(code_studio_action)
         self._code_studio_action = code_studio_action
+
+        # Modern top bar: our own controls at both ends (the native title bar is
+        # gone): mode switch + graph/agent controls on the left, window controls
+        # on the right.
+        try:
+            menu_bar.setFixedHeight(40)
+            menu_bar.setCornerWidget(self._build_top_bar_left(), Qt.TopLeftCorner)
+            menu_bar.setCornerWidget(self._build_window_controls(), Qt.TopRightCorner)
+            menu_bar.installEventFilter(self)
+        except Exception:
+            pass
+
+    def _make_top_button(self, parent, icon_name, tip, slot, danger=False):
+        """One icon button for the window's top bar (same scheme everywhere)."""
+        from PyQt5.QtWidgets import QToolButton
+        from PyQt5.QtCore import QSize
+        from .constants import RADIUS_SM, DANGER_COLOR
+
+        btn = QToolButton(parent)
+        btn.setToolTip(tip)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(30, 24)
+        try:
+            btn.setIcon(_tabler_qicon(icon_name, 16))
+            btn.setIconSize(QSize(16, 16))
+        except Exception:
+            pass
+        hover = DANGER_COLOR if danger else "rgba(255,255,255,0.10)"
+        btn.setStyleSheet(
+            f"QToolButton {{ background: transparent; border: none;"
+            f" border-radius: {RADIUS_SM}px; }}"
+            f"QToolButton:hover {{ background-color: {hover}; }}"
+        )
+        btn.clicked.connect(slot)
+        return btn
+
+    def _build_window_controls(self):
+        """Minimize / maximize-restore / close (top-right corner)."""
+        from PyQt5.QtWidgets import QHBoxLayout, QWidget
+
+        bar = QWidget()
+        lay = QHBoxLayout(bar)
+        # A little padding from the top so the buttons never hug the window /
+        # screen top border when the window is maximized.
+        lay.setContentsMargins(2, 5, 8, 5)
+        lay.setSpacing(2)
+        lay.addWidget(self._make_top_button(
+            bar, "MINUS", _("Minimize"), self.showMinimized))
+        lay.addWidget(self._make_top_button(
+            bar, "SQUARE", _("Maximize / Restore"), self._toggle_maximize))
+        lay.addWidget(self._make_top_button(
+            bar, "X", _("Close"), self.close, danger=True))
+        return bar
+
+    def _build_top_bar_left(self):
+        """Top-bar cluster on the LEFT — where the menus used to be.
+
+        Holds the mode switch, the graph's auxiliary controls (scheduler, AI
+        settings) and the agent-mode controls (collapse-to-notch plus the panel's
+        own action buttons, lifted out of the panel header).
+        """
+        from PyQt5.QtWidgets import QHBoxLayout, QWidget
+
+        bar = QWidget()
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(8, 5, 2, 5)
+        lay.setSpacing(2)
+
+        # Mode switch — always visible; icon and action flip with the mode.
+        self._agent_mode_btn = self._make_top_button(
+            bar, "MESSAGE_2", _("Agent mode"), self._on_agent_mode_btn)
+        lay.addWidget(self._agent_mode_btn)
+
+        # Graph auxiliary controls (shown only in build/graph mode).
+        self._graph_aux = QWidget(bar)
+        gal = QHBoxLayout(self._graph_aux)
+        gal.setContentsMargins(0, 0, 0, 0)
+        gal.setSpacing(2)
+        gal.addWidget(self._make_top_button(
+            self._graph_aux, "CALENDAR", _("Scheduler"),
+            self.open_scheduler_manager))
+        gal.addWidget(self._make_top_button(
+            self._graph_aux, "SETTINGS", _("AI Settings"), self.open_ai_settings))
+        gal.addWidget(self._make_top_button(
+            self._graph_aux, "FILE_TEXT", _("Logs"), self.open_logs))
+        lay.addWidget(self._graph_aux)
+
+        # Agent-mode controls (shown only while the panel is open).
+        self._agent_nav = QWidget(bar)
+        nav_lay = QHBoxLayout(self._agent_nav)
+        nav_lay.setContentsMargins(0, 0, 0, 0)
+        nav_lay.setSpacing(2)
+        self._agent_notch_btn = self._make_top_button(
+            self._agent_nav, "CHEVRON_UP", _("Collapse to the agent notch"),
+            self.collapse_agent_to_notch)
+        nav_lay.addWidget(self._agent_notch_btn)
+        try:
+            overlay = getattr(self, '_agent_overlay', None)
+            actions = overlay.detach_header_actions() if overlay else None
+            if actions is not None:
+                nav_lay.addWidget(actions)
+        except Exception:
+            logger.exception("Relocating agent header actions failed")
+        self._agent_nav.hide()
+        lay.addWidget(self._agent_nav)
+        return bar
+
+    def _relayout_top_bar(self):
+        """Re-run the top bar's corner layouts after toggling agent controls.
+
+        A corner widget's size hint changes with the agent controls, which the
+        menu bar does not pick up by itself — so a cluster would otherwise be
+        squeezed into the old (hidden) width.
+        """
+        try:
+            menu = self.menuBar()
+            for corner in (Qt.TopLeftCorner, Qt.TopRightCorner):
+                bar = menu.cornerWidget(corner)
+                if bar is not None:
+                    bar.adjustSize()
+                    bar.updateGeometry()
+        except Exception:
+            pass
+
+    def _on_agent_mode_btn(self):
+        """Top-bar mode switch: graph <-> agent."""
+        if self._agent_mode_active:
+            self.exit_agent_mode()
+        else:
+            self.enter_agent_mode()
+
+    def _sync_agent_mode_button(self):
+        """Reflect the current mode in the mode switch and the top-bar clusters."""
+        aux = getattr(self, '_graph_aux', None)
+        if aux is not None:
+            aux.setVisible(not self._agent_mode_active)
+        btn = getattr(self, '_agent_mode_btn', None)
+        if btn is not None:
+            if self._agent_mode_active:
+                btn.setIcon(_tabler_qicon("LAYOUT_GRID", 16))
+                btn.setToolTip(_("Back to build mode"))
+            else:
+                btn.setIcon(_tabler_qicon("MESSAGE_2", 16))
+                btn.setToolTip(_("Agent mode"))
+        self._relayout_top_bar()
+
+    def open_logs(self):
+        """Open the session-log browser (search + level filters)."""
+        try:
+            from .dialogs.logs_dialog import LogsDialog
+            self._logs_dialog = LogsDialog(self)
+            self._logs_dialog.show()
+        except Exception:
+            logger.exception("Failed to open the logs dialog")
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def eventFilter(self, obj, event):
+        """Drag the frameless window by its top bar; double-click to maximize."""
+        try:
+            if obj is self.menuBar():
+                et = event.type()
+                if et == QEvent.MouseButtonDblClick and event.button() == Qt.LeftButton:
+                    if self.menuBar().actionAt(event.pos()) is None:
+                        self._toggle_maximize()
+                        return True
+                elif et == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                    if self.menuBar().actionAt(event.pos()) is None:
+                        handle = self.windowHandle()
+                        if handle is not None and hasattr(handle, "startSystemMove"):
+                            handle.startSystemMove()
+                        else:
+                            self._drag_offset = event.globalPos() - self.frameGeometry().topLeft()
+                elif et == QEvent.MouseMove and self._drag_offset is not None:
+                    if event.buttons() & Qt.LeftButton:
+                        self.move(event.globalPos() - self._drag_offset)
+                elif et == QEvent.MouseButtonRelease:
+                    self._drag_offset = None
+        except Exception:
+            pass
+        return super().eventFilter(obj, event)
     
     def _on_code_node_selected(self, node):
         """Load the selected Code node into the Code Node Studio."""
@@ -392,6 +603,12 @@ class MainWindow(QMainWindow):
             panel.setMaximumHeight(16777215)  # no 55% cap — reach the top
         except Exception:
             pass
+        # Collapse the floating bars while the studio owns the canvas: they
+        # otherwise float over it and cover the studio's own header buttons.
+        try:
+            self.graph_view.ui_components.set_floating_bars_visible(False)
+        except Exception:
+            pass
         panel.show()
         panel.raise_()
         try:
@@ -434,14 +651,100 @@ class MainWindow(QMainWindow):
                     gw.show()
         except Exception:
             pass
+        # Bring the floating bars back now that the canvas is visible again.
+        try:
+            self.graph_view.ui_components.set_floating_bars_visible(True)
+        except Exception:
+            pass
         action = getattr(self, '_code_studio_action', None)
         if action is not None:
             action.setChecked(False)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        # Keep the frameless window's corner grip pinned to the bottom-right.
+        grip = getattr(self, '_size_grip', None)
+        if grip is not None:
+            try:
+                grip.move(self.central_widget.width() - grip.width() - 2,
+                          self.central_widget.height() - grip.height() - 2)
+                grip.raise_()
+            except Exception:
+                pass
         # The Code Node Studio takes over the whole canvas — no height cap
         # needed (it spans top to bottom while open).
+
+    def enter_agent_mode(self):
+        """Show the system-chain agent overlay in place of the builder (one window)."""
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is None:
+            return
+        # Opening the panel replaces the compact notch.
+        notch = getattr(self, '_agent_notch', None)
+        if notch is not None:
+            notch.hide()
+        # The base frame's top bar carries agent navigation while the panel is
+        # open (the overlay no longer draws its own nav buttons).
+        nav = getattr(self, '_agent_nav', None)
+        if nav is not None:
+            nav.show()
+            self._relayout_top_bar()
+        if overlay._chat_controller is None:
+            self._init_overlay_chat_controller()
+        try:
+            self.graph_view.hide()
+        except Exception:
+            pass
+        overlay._set_compact_mode(False)
+        overlay.show()
+        overlay.raise_()
+        self._notch_active = False   # the maximized panel is the agent UI now
+        try:
+            overlay._input_field.setFocus()
+        except Exception:
+            pass
+        self._agent_mode_active = True
+        self._sync_agent_mode_button()
+        self._overlay_was_visible = False
+        self._dot_was_visible = False
+        dot = getattr(self, '_agent_dot', None)
+        if dot is not None:
+            dot.hide()
+        if hasattr(self, '_toggle_agent_action'):
+            self._toggle_agent_action.setChecked(True)
+        logger.info("Agent mode entered (in-window overlay)")
+
+    def exit_agent_mode(self):
+        """Hide the agent overlay/notch and show the builder again."""
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is not None:
+            overlay._was_visible_for_automation = False
+            overlay._keep_web_server = False
+            overlay.hide()
+        # The graph UI and the agent UI are never shown at the same time.
+        notch = getattr(self, '_agent_notch', None)
+        if notch is not None:
+            notch.hide()
+        nav = getattr(self, '_agent_nav', None)
+        if nav is not None:
+            nav.hide()
+            self._relayout_top_bar()
+        try:
+            self.graph_view.show()
+        except Exception:
+            pass
+        try:
+            if self.isMinimized():
+                self.showNormal()
+            self.raise_()
+        except Exception:
+            pass
+        self._agent_mode_active = False
+        self._notch_active = False
+        self._sync_agent_mode_button()
+        if hasattr(self, '_toggle_agent_action'):
+            self._toggle_agent_action.setChecked(False)
+        logger.info("Agent mode exited (back to builder)")
 
     def toggle_agent_mode(self, checked=None):
         """Toggle agent mode (Ctrl+Shift+A).
@@ -455,6 +758,16 @@ class MainWindow(QMainWindow):
         if now - self._toggle_throttle < 0.3:
             return
         self._toggle_throttle = now
+
+        # In-window switch: summoning agent mode raises the compact notch (the
+        # quick call does not force the fullscreen panel); clicking the notch
+        # opens the panel, and the panel's left chevron returns to the builder.
+        if getattr(self, '_agent_inwindow', False):
+            if self._agent_mode_active:
+                self.exit_agent_mode()
+            else:
+                self.toggle_agent_notch()
+            return
 
         try:
             overlay = getattr(self, '_agent_overlay', None)
@@ -579,7 +892,11 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to init overlay chat controller: {e}")
 
     def _on_overlay_closed(self):
-        """Overlay was fully closed (Ctrl+Shift+A from overlay) — exit agent mode."""
+        """Overlay closed — in-window that means 'back to the builder'."""
+        if getattr(self, '_agent_inwindow', False):
+            self.exit_agent_mode()
+            return
+        # Legacy floating-overlay close: exit agent mode and restore the window.
         self._agent_mode_active = False
         if hasattr(self, '_toggle_agent_action'):
             self._toggle_agent_action.setChecked(False)
@@ -606,13 +923,139 @@ class MainWindow(QMainWindow):
         except Exception:
             logger.exception("_on_dot_clicked: error")
 
+    def toggle_agent_notch(self):
+        """Summon/hide the compact agent notch at the top-center of the screen.
+
+        This is the quick agent call from the hotkey. The builder (graph) is
+        hidden while the notch is up: the graph UI and the agent UI are never
+        shown at the same time.
+        """
+        notch = getattr(self, '_agent_notch', None)
+        if notch is None:
+            return
+        if notch.isVisible():
+            self.exit_agent_mode()
+            return
+        # An open panel gives way to the notch (stay in agent mode).
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is not None and overlay.isVisible():
+            overlay._keep_web_server = True
+            overlay.hide()
+        self._show_agent_notch()
+
+    def _show_agent_notch(self):
+        """Show the compact agent notch: graph hidden, app tucked away."""
+        notch = getattr(self, '_agent_notch', None)
+        if notch is None:
+            return
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is not None and overlay._chat_controller is None:
+            self._init_overlay_chat_controller()
+        # The base frame's agent nav belongs to the maximized panel only.
+        nav = getattr(self, '_agent_nav', None)
+        if nav is not None:
+            nav.hide()
+            self._relayout_top_bar()
+        try:
+            self.graph_view.hide()
+        except Exception:
+            pass
+        # Only the notch stays on screen: the builder is tucked away so the
+        # graph UI and the agent UI are never visible together.
+        try:
+            self.showMinimized()
+        except Exception:
+            pass
+        # Left slot of the notch: the selected system chain's vector avatar, so
+        # the user can see who they are talking to.
+        try:
+            name = overlay.current_chain_avatar() if overlay is not None else ""
+            notch.set_chain_avatar(name)
+        except Exception:
+            pass
+        notch.reposition()
+        notch.show()
+        notch.raise_()
+        self._agent_mode_active = True
+        self._notch_active = True
+        self._sync_agent_mode_button()
+        if hasattr(self, '_toggle_agent_action'):
+            self._toggle_agent_action.setChecked(True)
+        logger.info("Agent notch shown (compact agent mode)")
+
+    def collapse_agent_to_notch(self):
+        """Collapse the maximized agent panel back to the compact notch.
+
+        One-click counterpart to the hotkey workaround: takes the panel down
+        to the notch (still agent mode; the web server is kept alive).
+        """
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is not None:
+            overlay._was_visible_for_automation = False
+            overlay._keep_web_server = True
+            overlay.hide()
+        self._show_agent_notch()
+
+    def _on_notch_clicked(self):
+        """Notch clicked — open the full in-window agent panel."""
+        notch = getattr(self, '_agent_notch', None)
+        if notch is not None:
+            notch.hide()
+        # The in-window panel needs the main window on screen (the notch floats
+        # even while the app is minimized), so restore it first.
+        try:
+            if self.isMinimized():
+                self.showNormal()
+            else:
+                self.show()
+            self.raise_()
+            self.activateWindow()
+        except Exception:
+            logger.exception("_on_notch_clicked: window restore failed")
+        self.enter_agent_mode()
+
+    def _on_notch_submitted(self, text):
+        """Enter in the notch input — dispatch the request and KEEP the notch.
+
+        The compact notch is the agent UI in use, so it stays on screen while the
+        run processes (it turns red, and only leaves for each screen read). It is
+        NOT swapped for the maximized panel here — clicking the notch opens that,
+        to read the reply.
+        """
+        overlay = getattr(self, '_agent_overlay', None)
+        if overlay is None:
+            return
+        if overlay._chat_controller is None:
+            self._init_overlay_chat_controller()
+        if text:
+            try:
+                overlay._submit_text(text)
+            except Exception:
+                logger.exception("_on_notch_submitted: dispatch failed")
+
     def _on_execution_state(self, executing: bool):
-        """Toggle dot appearance between idle (teal) and executing (red)."""
+        """Toggle dot/notch appearance between idle (cyan) and executing (red)."""
+        notch = getattr(self, '_agent_notch', None)
+        if notch is not None:
+            notch.set_execute(executing)
         dot = getattr(self, '_agent_dot', None)
         if not dot:
             return
         dot.set_execute_mode(executing)
         if executing:
+            # The compact notch is the agent UI in use: keep IT on screen during
+            # the run instead of replacing it with the cursor dot.  _notch_active
+            # is set while the notch is the active agent UI (it survives the
+            # per-capture hide); _notch_was_visible covers a graph run started
+            # while the notch was up.
+            if notch is not None and (self._notch_active or self._notch_was_visible):
+                if not notch.isVisible():
+                    notch.reposition()
+                    notch.show()
+                notch.raise_()
+                if dot.isVisible():
+                    dot.hide()
+                return
             # Show red dot during chain execution (overlay hides for automation)
             if self._agent_mode_active and not dot.isVisible():
                 dot.show()
@@ -622,7 +1065,12 @@ class MainWindow(QMainWindow):
                 dot.hide()
 
     def _on_overlay_collapsed(self):
-        """Overlay was collapsed back to the minimal dot state."""
+        """Overlay collapsed by its header button."""
+        if getattr(self, '_agent_inwindow', False):
+            # In-window: collapse to the compact notch (one clear state) instead
+            # of leaving the maximized window open but empty.
+            self.collapse_agent_to_notch()
+            return
         if self._agent_mode_active:
             dot = getattr(self, '_agent_dot', None)
             if dot:
@@ -633,8 +1081,13 @@ class MainWindow(QMainWindow):
         """Hide overlay/dot before chain execution (record what was visible)."""
         overlay = getattr(self, '_agent_overlay', None)
         dot = getattr(self, '_agent_dot', None)
+        notch = getattr(self, '_agent_notch', None)
         self._overlay_was_visible = False
         self._dot_was_visible = False
+        # The COMPACT NOTCH is deliberate user-only UI and stays on screen while
+        # a run processes (it is hidden for each screen read instead, so the
+        # agent never sees it).  Taking it down only hid who the user talks to.
+        self._notch_was_visible = bool(notch is not None and notch.isVisible())
         if overlay and overlay.isVisible():
             self._overlay_was_visible = True
             overlay.hide()
@@ -1125,13 +1578,19 @@ class MainWindow(QMainWindow):
             rec_mouse_down = threading.Event()
 
             element_provider = None
+            overlay = None
             try:
-                from .widgets.recording_overlay import RecordingOverlay, element_descriptor_at
-                # Hit-test at the exact click/drag point (not the last hovered
-                # element) so a drag's FROM row is captured correctly.
-                element_provider = element_descriptor_at
+                from .widgets.recording_overlay import RecordingOverlay
                 overlay = RecordingOverlay(rec_stop, rec_mouse_down)
                 overlay.start()
+                # Hit-test at the exact click/drag point (not the last hovered
+                # element) so a drag's FROM row is captured correctly.  It MUST
+                # go through the overlay: the recorder calls this from pynput's
+                # low-level mouse-hook thread, where a direct UIA/COM call is
+                # illegal (RPC_E_CANTCALLOUT_ININPUTSYNCCALL) and hard-killed the
+                # app mid-recording.  The overlay answers on its own UIA-owning
+                # worker thread (see RecordingOverlay.element_descriptor).
+                element_provider = overlay.element_descriptor
             except Exception as overlay_err:
                 logger.warning(f"Recording overlay unavailable: {overlay_err}")
                 overlay = None
@@ -1423,6 +1882,21 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
             self._exec_stop = None
+        if self._notch_was_visible:
+            # Compact agent mode was on screen (kept up through the run): keep the
+            # notch on top instead of restoring the builder or the cursor dot.
+            self._notch_was_visible = False
+            notch = getattr(self, '_agent_notch', None)
+            if notch is not None:
+                if not notch.isVisible():
+                    notch.reposition()
+                    notch.show()
+                notch.raise_()
+            dot = getattr(self, '_agent_dot', None)
+            if dot is not None and dot.isVisible():
+                dot.hide()
+            return
+
         if self._overlay_was_visible:
             # Agent overlay was active — restore overlay, keep main window minimized
             self._overlay_was_visible = False
@@ -1474,21 +1948,25 @@ class MainWindow(QMainWindow):
         """
         if not content or not isinstance(content, str) or not content.strip():
             return
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
-        dlg = QDialog(self)
-        dlg.setWindowTitle(label or "Chain Output")
-        dlg.resize(600, 400)
-        layout = QVBoxLayout(dlg)
+        from .dialogs.base_dialog import ModernDialog
+        from PyQt5.QtWidgets import QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QGroupBox
+        dlg = ModernDialog(self, title=label or "Chain Output", show_help_button=False)
+        dlg.resize(640, 440)
+        card = QGroupBox(_("Chain Output"))
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 0)
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setPlainText(content)
         layout.addWidget(text_edit)
+        dlg.content_layout.addWidget(card)
         btn_layout = QHBoxLayout()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(_("Close"))
+        close_btn.setProperty("class", "primary")
         close_btn.clicked.connect(dlg.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(close_btn)
-        layout.addLayout(btn_layout)
+        dlg.content_layout.addLayout(btn_layout)
         dlg.exec_()
     
     def _highlight_failed_node(self, node_id, node_type):

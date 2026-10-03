@@ -1,6 +1,6 @@
 
 from PyQt5.QtWidgets import QCheckBox, QSizePolicy
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty, QRectF, QSize
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, pyqtProperty, QRect, QRectF, QSize
 from PyQt5.QtGui import QPainter, QColor, QBrush, QPen
 
 from ..constants import ACCENT_COLOR, LIGHT_GREY, DARK_GREY, TEXT_COLOR
@@ -91,13 +91,53 @@ class ModernToggle(QCheckBox):
             
             text_rect = self.contentsRect()
             text_rect.setLeft(int(track_rect.right() + 10))
-            painter.drawText(text_rect, Qt.AlignLeft | Qt.AlignVCenter, self.text())
+            # Word-wrap: the label must stay readable when the dialog gives the
+            # toggle a narrow column instead of a single stretched line.
+            painter.drawText(text_rect,
+                             int(Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap),
+                             self.text())
             
+    # Max preferred label width: a longer label wraps instead of stretching the
+    # row (Qt reserves sizeHint for height-for-width widgets, so an uncapped
+    # sizeHint is what forced every long option to widen the whole dialog).
+    _TEXT_BUDGET = 420
+
     def sizeHint(self):
         s = super().sizeHint()
         w = self._width + 10  # Toggle width + spacing
         h = max(self._height, s.height())
         if self.text():
             font_metrics = self.fontMetrics()
-            w += font_metrics.horizontalAdvance(self.text()) + 5
+            w += min(font_metrics.horizontalAdvance(self.text()) + 5,
+                     self._TEXT_BUDGET)
+            h = max(h, self.heightForWidth(w))
         return QSize(int(w), int(h))
+
+    def minimumSizeHint(self):
+        # Only the track is mandatory; the label wraps to whatever width the
+        # layout gives it, so a long option never forces the dialog wider than
+        # its frame (which used to need a horizontal scrollbar).
+        s = super().minimumSizeHint()
+        return QSize(self._width + 10, max(self._height, s.height()))
+
+    def hasHeightForWidth(self):
+        return bool(self.text())
+
+    def heightForWidth(self, width):
+        """Height the wrapped label needs at *width* (keeps text unclipped)."""
+        if not self.text():
+            return self._height
+        text_w = max(1, width - (self._width + 10))
+        flags = Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap
+        rect = self.fontMetrics().boundingRect(QRect(0, 0, text_w, 10000), flags,
+                                               self.text())
+        return max(self._height, rect.height())
+
+    def resizeEvent(self, event):
+        # Guarantee the wrapped label's height matches the width actually given
+        # (QGridLayout does not always honour heightForWidth for spanned items).
+        super().resizeEvent(event)
+        if self.text():
+            need = self.heightForWidth(self.width())
+            if self.minimumHeight() != need:
+                self.setMinimumHeight(need)

@@ -483,6 +483,8 @@ Exposes results outside the chain: chat bubble in agent mode, popup, or a named 
 
 A parked goal additionally sets the `blocked` port value / `node_<id>_blocked` variable. **Full behaviour — the ladder, worker-naming rules, propagation packet, learned-chain freezing and routing shadows — is §10.**
 
+**Observation surface (LLM node in Orchestrator mode)** — the loop observes ONE surface, chosen by the LLM node's **Web Mode** toggle: `web_mode=true` gives a **web-exclusive** orchestrator whose state digest and per-step verdict read the chain's live browser page (when the chain owns no session, it reads the SHARED browser the dispatched web chains opened); `web_mode=false` gives a **desktop-exclusive** orchestrator whose digest reads the focused window **on the monitor under the cursor** (multi-monitor aware; the topmost window on that monitor is the fallback). A web orchestrator can additionally be **headless** — `orch_headless=true` (the "Headless web" toggle, shown only while Web Mode is ON) makes its dispatched web chains launch an invisible browser and never attach to the visible workbench.
+
 ### 4.14 Form Filler Node
 
 Document-grounded multi-field completion: field discovery on live pages/apps, knowledge-file lookups (including learned ask-user answers), dropdown/multiple-choice rails, per-field validation, page-rejected field repair, and a review gate before submission.

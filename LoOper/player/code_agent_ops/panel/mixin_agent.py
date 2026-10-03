@@ -23,7 +23,16 @@ import logging
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QColor, QTextCharFormat, QTextCursor
 
-from NGUI.constants import ACCENT_COLOR
+from NGUI.constants import (
+    ACCENT_COLOR,
+    CARD_BG,
+    CODE_NODE_COLOR,
+    DANGER_COLOR,
+    TEXT_COLOR,
+    TEXT_MUTED,
+    TEXT_SECONDARY,
+    WELL_BG,
+)
 from NGUI.i18n import _
 from player.code_agent_ops.chat_stream import (
     _ChatStreamWorker,
@@ -248,7 +257,7 @@ class AgentMixin(object):
             self._stream_timer = QTimer(self)
             self._stream_timer.setInterval(350)
             self._stream_timer.timeout.connect(self._on_stream_tick)
-        self._live_write(_('Working') + ' ', '#8A97A5')
+        self._live_write(_('Working') + ' ', TEXT_MUTED)
         self._stream_timer.start()
 
     def _on_stream_tick(self):
@@ -257,9 +266,9 @@ class AgentMixin(object):
             return
         self._live_clear()
         self._live_write(_('Working') + ' ' + '.' * (1 + self._tick % 4),
-                         '#8A97A5')
+                         TEXT_MUTED)
 
-    def _live_write(self, text, color='#FFD9A3'):
+    def _live_write(self, text, color=TEXT_SECONDARY):
         c = self._chat_view.textCursor()
         c.movePosition(QTextCursor.End)
         fmt = QTextCharFormat()
@@ -550,10 +559,10 @@ class AgentMixin(object):
 
     def _append_chat(self, role, text):
         theme = {
-            'user':       ('#0E2B28', '#BDF0E7', ACCENT_COLOR, _('You')),
-            'error':      ('#2A1010', '#FFB4B4', '#EF4444', _('Error')),
-            'execution':  ('#0F1A22', '#9FB3C0', '#5E81AC', _('Execution')),
-            'info':       ('#101B22', '#8AA0B5', '#3B82F6', _('Info')),
+            'user':       ('#0d2a30', TEXT_COLOR, ACCENT_COLOR, _('You')),
+            'error':      ('#2A1010', '#fca5a5', DANGER_COLOR, _('Error')),
+            'execution':  (WELL_BG, TEXT_SECONDARY, TEXT_MUTED, _('Execution')),
+            'info':       (WELL_BG, TEXT_SECONDARY, TEXT_MUTED, _('Info')),
         }
         bg, fg, accent, label = theme.get(role, theme['info'])
         safe = (str(text).replace('&', '&amp;').replace('<', '&lt;')
@@ -577,17 +586,19 @@ class AgentMixin(object):
                 .replace('>', '&gt;').replace('\n', '<br>'))
         note_html = ''
         if note:
-            note_html = ('<span style="color:#9A8270; font-size:9px; '
+            note_html = (f'<span style="color:{TEXT_MUTED}; font-size:9px; '
                          'font-style:italic;">'
                          + note.replace('&', '&amp;').replace('<', '&lt;')
                                .replace('>', '&gt;') + '</span><br>')
         bubble = (
-            f'<div style="background:#2A1C0B; border-left:3px solid #FFB347; '
-            f'border-radius:6px; padding:6px 8px; margin:6px 2px;">'
-            f'<span style="color:#FFD9A3; font-size:10px; font-weight:600;">'
+            f'<div style="background:{CARD_BG}; border-left:3px solid '
+            f'{CODE_NODE_COLOR}; border-radius:6px; padding:6px 8px; '
+            f'margin:6px 2px;">'
+            f'<span style="color:{CODE_NODE_COLOR}; font-size:10px; '
+            f'font-weight:600;">'
             f'{_("Assistant")}</span><br>'
             + note_html +
-            f'<span style="color:#FFD9A3;">{safe}</span></div>'
+            f'<span style="color:{TEXT_COLOR};">{safe}</span></div>'
         )
         self._chat_view.append(bubble)
         sb = self._chat_view.verticalScrollBar()

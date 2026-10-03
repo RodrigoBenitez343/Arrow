@@ -82,6 +82,20 @@ _ENGINE_TO_RUNTIME = {"Ollama": "ollama", "llama.cpp": "llamacpp"}
 _ENGINE_FROM_RUNTIME = {"ollama": "Ollama", "llamacpp": "llama.cpp"}
 
 
+def _wrap_label(text):
+    """A label that wraps, so a long sentence never widens the dialog."""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    return label
+
+
+def _constrain_combo(combo):
+    """Keep long model names from setting the dialog's width: the combo sizes
+    to a fixed character budget instead of the widest item it holds."""
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(16)
+
+
 class FormFillerDialog(ModernDialog):
     """Configuration dialog for the Form Filling node."""
 
@@ -142,6 +156,7 @@ class FormFillerDialog(ModernDialog):
         model_layout.addWidget(QLabel(_("Ollama Model:")), 1, 0)
         self.ollama_model_combo = QComboBox()
         self.ollama_model_combo.setEditable(True)
+        _constrain_combo(self.ollama_model_combo)
         try:
             self.ollama_model_combo.addItems(
                 get_real_cached_models(timeout=5.0) or []
@@ -153,6 +168,7 @@ class FormFillerDialog(ModernDialog):
         model_layout.addWidget(QLabel(_("GGUF Model:")), 2, 0)
         self.gguf_model_combo = QComboBox()
         self.gguf_model_combo.setEditable(True)
+        _constrain_combo(self.gguf_model_combo)
         try:
             from .llm_dialogs import get_llamacpp_models
             gguf_models = get_llamacpp_models()
@@ -199,7 +215,7 @@ class FormFillerDialog(ModernDialog):
         layout.addWidget(model_group)
 
         # ── Task & field selection ──
-        task_group = QGroupBox(_("Task & Fields"))
+        task_group = QGroupBox(_("Task && Fields"))
         task_layout = QVBoxLayout(task_group)
         task_layout.setContentsMargins(8, 12, 8, 8)
         task_layout.setSpacing(6)
@@ -211,12 +227,12 @@ class FormFillerDialog(ModernDialog):
         )
         task_layout.addWidget(self.instruction_edit)
 
-        task_layout.addWidget(QLabel(_("Only these fields (comma-separated, blank = all):")))
+        task_layout.addWidget(_wrap_label(_("Only these fields (comma-separated, blank = all):")))
         self.fields_include_edit = QLineEdit()
         self.fields_include_edit.setPlaceholderText(_("e.g. Email, Full name"))
         task_layout.addWidget(self.fields_include_edit)
 
-        task_layout.addWidget(QLabel(_("Skip these fields (comma-separated):")))
+        task_layout.addWidget(_wrap_label(_("Skip these fields (comma-separated):")))
         self.fields_skip_edit = QLineEdit()
         self.fields_skip_edit.setPlaceholderText(_("e.g. Password, CAPTCHA"))
         task_layout.addWidget(self.fields_skip_edit)
@@ -293,7 +309,7 @@ class FormFillerDialog(ModernDialog):
         scope_layout = QVBoxLayout(scope_group)
         scope_layout.setContentsMargins(8, 12, 8, 8)
         scope_layout.setSpacing(6)
-        scope_layout.addWidget(QLabel(
+        scope_layout.addWidget(_wrap_label(
             _("Limit field detection to one container "
               "(a form, a modal dialog, or an iframe):")
         ))

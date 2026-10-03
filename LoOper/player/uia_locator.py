@@ -186,9 +186,16 @@ def _find_window_root(uia, root, desc):
     if windows is None or windows.Length == 0:
         return root
     want = _window_name_of(desc)
-    first = windows.GetElement(0)
     if not want:
-        return first
+        # No recorded Window ancestor - desktop icons, the desktop list and
+        # taskbar/notification-area elements have none, so there is no window to
+        # scope by. Picking an arbitrary same-process window is WRONG: for
+        # explorer.exe the first one is usually a folder window, not "Program
+        # Manager", so scoping to it made every desktop icon AND the desktop
+        # list unresolvable and element-based drags fell back to absolute
+        # coordinates. Widen to the desktop root; the identity tiers plus the
+        # size/visibility guards still decide.
+        return root
     for index in range(windows.Length):
         window = windows.GetElement(index)
         try:
@@ -196,7 +203,9 @@ def _find_window_root(uia, root, desc):
                 return window
         except Exception:
             continue
-    return first
+    # Recorded title not found (e.g. the page/window renamed itself): widening
+    # beats an arbitrary window of the process, which can exclude the real one.
+    return root
 
 
 def _visible_at(uia, point, element_rect):
@@ -239,34 +248,51 @@ def _resolve(desc):
 
     for pairs, label in element_tiers(desc):
         try:
-            element = scope_root.FindFirst(_SCOPE_DESCENDANTS, _and_condition(uia, pairs))
+            matches = scope_root.FindAll(_SCOPE_DESCENDANTS,
+                                         _and_condition(uia, pairs))
         except Exception:
-            element = None
-        if element is None:
+            matches = None
+        if matches is None or not matches.Length:
             continue
-        try:
-            r = element.CurrentBoundingRectangle
-            live = (int(r.left), int(r.top), int(r.right), int(r.bottom))
-        except Exception:
-            continue
-        if live[2] - live[0] < 2 or live[3] - live[1] < 2:
-            continue
-        if recorded_control_type:
+        # A weak tier ("ControlType+ClassName" = "any Edit") matches several
+        # lookalikes in the app, and FindFirst returns the WRONG one - that is
+        # how "any text input" got clicked instead of the recorded one. Collect
+        # every candidate that passes the guards and prefer the one whose box
+        # sits where the element was recorded: the recorded box disambiguates
+        # between same-kind controls.
+        candidates = []
+        for index in range(matches.Length):
+            element = matches.GetElement(index)
             try:
-                if int(element.CurrentControlType) != int(recorded_control_type):
-                    continue
+                r = element.CurrentBoundingRectangle
+                live = (int(r.left), int(r.top), int(r.right), int(r.bottom))
             except Exception:
-                pass
-        if recorded_rect and not rect_size_plausible(recorded_rect, live):
-            logger.debug("UIA %s match rejected by size check: %s", label, live)
+                continue
+            if live[2] - live[0] < 2 or live[3] - live[1] < 2:
+                continue
+            if recorded_control_type:
+                try:
+                    if int(element.CurrentControlType) != int(recorded_control_type):
+                        continue
+                except Exception:
+                    pass
+            if recorded_rect and not rect_size_plausible(recorded_rect, live):
+                logger.debug("UIA %s match rejected by size check: %s", label, live)
+                continue
+            score = _rect_distance(recorded_rect, live) if recorded_rect else 0.0
+            candidates.append((score, live))
+        if not candidates:
             continue
-        point = click_point_from_rect(live, rel_x, rel_y)
-        if not _visible_at(uia, point, live):
-            logger.debug("UIA %s match not visible at click point %s; skipping",
-                         label, point)
-            continue
-        logger.info("Resolved element via %s at %s", label, live)
-        return point
+        candidates.sort(key=lambda item: item[0])
+        for score, live in candidates:
+            point = click_point_from_rect(live, rel_x, rel_y)
+            if not _visible_at(uia, point, live):
+                logger.debug("UIA %s match not visible at click point %s; skipping",
+                             label, point)
+                continue
+            logger.info("Resolved element via %s at %s (rect dist %.0f)",
+                        label, live, score)
+            return point
     return None
 
 

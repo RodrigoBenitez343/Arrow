@@ -852,6 +852,50 @@ def ensure_workbench_session(chain_key: Optional[str] = None) -> "uc.Chrome":
     return driver
 
 
+def existing_workbench_driver(chain_key: Optional[str] = None):
+    """The live shared driver for a scope, or None - NEVER launches a browser.
+
+    Read-only counterpart of ``ensure_workbench_session``: state observation
+    (the orchestrator's web digest) may only look at a browser another node
+    already opened, never spawn one just to observe.  A dead wrapper is
+    dropped from the cache.
+    """
+    key = chain_key or ""
+    with _WORKBENCH_DRIVERS_LOCK:
+        cached = _WORKBENCH_DRIVERS.get(key)
+    if cached is None:
+        return None
+    try:
+        if _driver_alive(cached):
+            return cached
+    except Exception:
+        pass
+    with _WORKBENCH_DRIVERS_LOCK:
+        if _WORKBENCH_DRIVERS.get(key) is cached:
+            _WORKBENCH_DRIVERS.pop(key, None)
+    return None
+
+
+# Run-scoped headless override.  A web orchestrator with the Headless toggle
+# ON sets this before dispatching its child chains so the shared browser is
+# launched without a window, and clears it afterwards.  ponytail: process-
+# global; the shared web browser is app-global and web runs are effectively
+# serialized, so one run flag is enough (make it per-scope if parallel web
+# runs ever ship).
+_RUN_HEADLESS = False
+
+
+def set_run_headless(enabled: bool) -> None:
+    """Force web sessions headless for the current run (see _RUN_HEADLESS)."""
+    global _RUN_HEADLESS
+    _RUN_HEADLESS = bool(enabled)
+
+
+def run_headless() -> bool:
+    """True while the current run forces headless web sessions."""
+    return bool(_RUN_HEADLESS)
+
+
 def _launch_workbench_session(chain_key: Optional[str] = None) -> "uc.Chrome":
     """Return a persistent recording browser for a chain scope, reusing the
     live one if any.

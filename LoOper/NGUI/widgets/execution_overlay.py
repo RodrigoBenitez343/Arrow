@@ -32,6 +32,7 @@ this ever shows as CPU.
 from __future__ import annotations
 
 import logging
+import collections
 import threading
 import time
 
@@ -44,6 +45,7 @@ try:
 except Exception:  # keep the GUI importable if the player package is absent
     _bus = None
 
+from .log_bubbles import LogBubbleList
 from .recording_overlay import element_at  # reuse the UIA hit-test
 
 logger = logging.getLogger(__name__)
@@ -55,11 +57,53 @@ _TRAIL_TTL = 5.0       # seconds a trail segment / box / click stays drawable
 _ORANGE = (255, 140, 0)
 _HIDE_AFTER_READ_S = 0.3   # stay off-screen this long after a screen read
 
+# Shared "logging window" palette: the action banner uses the SAME colours as
+# the log panel so the two read as one surface.
+_PANEL_BG = "rgba(8,12,16,0.84)"
+_PANEL_TEXT = "#d5d9e2"
+_PANEL_BORDER = "rgba(255,255,255,0.10)"
+
 _BANNER_QSS = (
-    "background: rgba(40,20,0,0.82); color: #ffd9a0;"
-    "border: 1px solid rgba(255,140,0,0.60); border-radius: 6px;"
+    f"background: {_PANEL_BG}; color: {_PANEL_TEXT};"
+    f"border: 1px solid {_PANEL_BORDER}; border-radius: 6px;"
     "padding: 8px 12px; font: 12px monospace;"
 )
+
+# Top-left column of per-entry bubbles (the terminal renders every record as
+# its own boxed panel; the overlay mirrors that look). Drawn ON this overlay,
+# which the player hides before every screen read - so it is visible to the
+# USER but never to the agent (the agent only ever sees screen captures).
+_LOG_BUBBLES = 8       # how many recent entries the panel shows
+_LOG_TTL = 6.0         # seconds an entry keeps the panel on screen
+_LOG_WIDTH = 460       # FIXED width: the panel only grows vertically
+
+
+class _OverlayLogHandler(logging.Handler):
+    """Thread-safe ring buffer of recent log records for the overlay panel.
+
+    Purely a display sink: it never feeds the agent's context.
+    """
+
+    def __init__(self, capacity=400):
+        super().__init__(level=logging.INFO)
+        self._buf = collections.deque(maxlen=capacity)
+        self._lock = threading.Lock()
+
+    def emit(self, record):
+        try:
+            self._buf.append((time.time(), record.levelname,
+                              record.name.split(".")[-1],
+                              record.getMessage()))
+        except Exception:
+            pass
+
+    def recent(self, n, now=None, ttl=None):
+        now = time.time() if now is None else now
+        with self._lock:
+            items = list(self._buf)
+        if ttl is not None:
+            items = [it for it in items if now - it[0] <= ttl]
+        return items[-n:]
 
 
 class ExecutionOverlay(QWidget):
@@ -101,6 +145,11 @@ class ExecutionOverlay(QWidget):
         self._banner.setText("EXECUTING")
         self._banner.adjustSize()
 
+        # Top-left bubble column (user-only; see the palette note).
+        self._log_handler = _OverlayLogHandler()
+        self._log_panel = LogBubbleList(_LOG_WIDTH, _LOG_BUBBLES, self)
+        self._log_panel.hide()
+
         self._timer = QTimer(self)
         self._timer.setInterval(_DRAW_MS)
         self._timer.timeout.connect(self._tick)
@@ -118,6 +167,11 @@ class ExecutionOverlay(QWidget):
         self.setGeometry(self._virtual_geometry())
         self._banner.move(_MARGIN, _MARGIN)
         self._banner.show()
+        # Feed the log panel from the app's root logger (INFO and up).
+        try:
+            logging.getLogger().addHandler(self._log_handler)
+        except Exception:
+            pass
         self._worker.start()
         self._timer.start()
         # The window is NOT shown here: it appears only while the feed has
@@ -133,6 +187,10 @@ class ExecutionOverlay(QWidget):
             except Exception:
                 pass
         self._kill.set()
+        try:
+            logging.getLogger().removeHandler(self._log_handler)
+        except Exception:
+            pass
         self._timer.stop()
         self.hide()
 
@@ -210,6 +268,20 @@ class ExecutionOverlay(QWidget):
             self._banner.setText(text)
             self._banner.adjustSize()
         now = time.time()
+        # --- log bubbles: last few entries, top-left under the banner ---
+        entries = self._log_handler.recent(_LOG_BUBBLES, now, ttl=_LOG_TTL)
+        if entries:
+            self._log_panel.set_entries([
+                (time.strftime("%H:%M:%S", time.localtime(t)), lvl, comp, msg)
+                for (t, lvl, comp, msg) in entries])
+            top = _MARGIN
+            if not self._banner.isHidden():
+                top = _MARGIN + self._banner.height() + 6
+            self._log_panel.move(_MARGIN, top)
+            if self._log_panel.isHidden():
+                self._log_panel.show()
+        elif not self._log_panel.isHidden():
+            self._log_panel.hide()
         # Stay off-screen while the replay reads screens, and otherwise occupy
         # the screen ONLY while there is something to draw: a full-screen
         # always-on-top window on a web-only stretch is pure interference (it
@@ -228,6 +300,8 @@ class ExecutionOverlay(QWidget):
 
     def _has_content(self, now) -> bool:
         """True while any trail point, click ring or target box is fresh."""
+        if self._log_handler.recent(1, now, ttl=_LOG_TTL):
+            return True
         if any(now - t <= _TRAIL_TTL for (_, _, t) in (self._snap.get("trail") or [])):
             return True
         if any(now - t <= _TRAIL_TTL for (_, _, t) in (self._snap.get("clicks") or [])):
