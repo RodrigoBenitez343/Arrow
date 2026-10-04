@@ -641,8 +641,12 @@ exit /b 0
 
 
 :: ============================================================================
-::  :get_prebuilt_llama - download the latest ggml-org/llama.cpp Windows build
+::  :get_prebuilt_llama - download a recent ggml-org/llama.cpp Windows build
 ::  (Vulkan, else CPU) and stage it where the app looks.  Requires no compiler.
+::  NOTE: releases/latest now points at a source-only version tag (e.g. v0.5.0)
+::  with NO binary assets; the Windows zips (incl. llama-mtmd-cli.exe) live on
+::  the b#### nightly releases, which are pre-releases.  So we scan the release
+::  list for the first one that actually ships the asset we need.
 :: ============================================================================
 :get_prebuilt_llama
 echo [llama] Fetching a prebuilt llama.cpp release ^(no compiler needed^)...
@@ -651,11 +655,11 @@ if exist "%LLAMA_PRE_ZIP%" del /q "%LLAMA_PRE_ZIP%" >nul 2>&1
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "try {" ^
-  "  $rel=Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases/latest' -Headers @{ 'User-Agent'='arrow-setup' };" ^
-  "  $tag=$rel.tag_name;" ^
+  "  $rels=Invoke-RestMethod -Uri 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=40' -Headers @{ 'User-Agent'='arrow-setup' };" ^
   "  $names=@('vulkan-x64','cpu-x64'); if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { $names=@('cpu-arm64') };" ^
   "  foreach ($n in $names) {" ^
-  "    $asset=$rel.assets | Where-Object { $_.name -eq ('llama-' + $tag + '-bin-win-' + $n + '.zip') } | Select-Object -First 1;" ^
+  "    $asset=$null;" ^
+  "    foreach ($r in $rels) { $a=$r.assets | Where-Object { $_.name -like ('*-bin-win-' + $n + '.zip') } | Select-Object -First 1; if ($a) { $asset=$a; break } };" ^
   "    if ($asset) { Write-Host ('[llama] ' + $asset.name); Invoke-WebRequest -Uri $asset.browser_download_url -OutFile '%LLAMA_PRE_ZIP%' -UseBasicParsing; break }" ^
   "  }" ^
   "} catch { Write-Host ('[llama] release lookup failed: ' + $_.Exception.Message); exit 1 }"
