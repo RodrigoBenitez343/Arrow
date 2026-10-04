@@ -719,8 +719,22 @@ class HandleMixin:
             )
             candidates.append(
                 os.path.normpath(
+                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build-vulkan", "bin", "llama-mtmd-cli.exe")
+                )
+            )
+            candidates.append(
+                os.path.normpath(
                     os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "Release", "llama-mtmd-cli.exe")
                 )
+            )
+            candidates.append(
+                os.path.normpath(
+                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "llama-mtmd-cli.exe")
+                )
+            )
+            # Setup stages the engine binaries into LoOper\AI\bin (models_dir/../bin)
+            candidates.append(
+                os.path.normpath(os.path.join(md, "..", "bin", "llama-mtmd-cli.exe"))
             )
         except Exception:
             pass
