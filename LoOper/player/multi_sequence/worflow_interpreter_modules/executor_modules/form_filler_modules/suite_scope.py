@@ -256,3 +256,38 @@ def test_edit_operation_persists_web_scope(monkeypatch):
     node = _FakeNode()
     _Ops().edit_form_filler_node(node)
     assert json.loads(node.props["web_scope"])["locator"]["css"] == "#apply-form"
+
+
+def test_scope_is_identified_by_position_not_by_content():
+    """A pick means "this KIND of element at this PLACE".
+
+    The recorded id / hashed CSS-module class / the div's own text all differ
+    on the next form instance, so an identity built from them only ever
+    resolves on the recording's own instance - the automation breaks when the
+    same container is used on another form.  The structural path (tag plus
+    nth-of-type at every level) is the same on any form with the same layout,
+    so it LEADS the ladder; the content rungs stay behind it as fallbacks.
+
+    Verified live: it resolved the LinkedIn Easy Apply container - a div with
+    no id and only hashed classes - and the enumerator returned exactly its 6
+    fields.
+    """
+    ff = _Harness()
+    picked = {"locator": {
+        "tag": "div", "id": None, "classes": ["dj9mgo", "dj9al5"],
+        "css": "div.dj9mgo",
+        "structural_xpath": "/html/body/dialog[1]/div[1]/div[2]/div[1]",
+    }}
+    sels = ff._ff_scope_selectors(picked)
+    assert sels[0] == ("dialog:nth-of-type(1) > div:nth-of-type(1) > "
+                       "div:nth-of-type(2) > div:nth-of-type(1)")
+    # No volatile content leads the ladder.
+    assert "dj9mgo" not in sels[0]
+    # The conversion itself: tag + place, nothing else.
+    assert ff._ff_scope_positional(
+        {"structural_xpath": "/html/body/form[1]/div[3]"}) == [
+            "form:nth-of-type(1) > div:nth-of-type(3)"]
+    # No / junk structural path -> no positional rung (falls back as before).
+    assert ff._ff_scope_positional({}) == []
+    assert ff._ff_scope_positional({"structural_xpath": "/html/nope[!"}) == []
+    assert ff._ff_scope_selectors({"locator": {"css": "form.x"}}) == ["form.x"]

@@ -1471,6 +1471,15 @@ class ConditionalMixin:
                 if not nid or nid in seen:
                     continue
                 seen.add(nid)
+                # Never expand THROUGH the gating conditional.  A branch whose
+                # tail loops back into the same decision node (e.g. the false
+                # leg feeding the very conditional being evaluated) would
+                # otherwise let this BFS re-enter it and leak into the OTHER
+                # branch.  That wrongly counts the other branch's nodes (like a
+                # submit -> popup chain_import) as reachable from the branch
+                # being swept, so they get skipped as "unchosen-branch".
+                if nid == conditional_id:
+                    continue
                 nd = self.workflow_graph.get(nid, {})
                 conns = nd.get('connections', {}) or {}
 
@@ -1577,7 +1586,8 @@ class ConditionalMixin:
         # still execute when explicitly selected.
         _extra_skip = set()
         for _nid in unchosen_reach:
-            if _nid in completed_nodes or _nid in exclusive or _nid in self.skipped_nodes:
+            if (_nid in completed_nodes or _nid in exclusive
+                    or _nid in self.skipped_nodes or _nid in chosen_reach):
                 continue
             _nd = self.workflow_graph.get(_nid, {})
             if _nd.get('type') not in ('chain_import', 'code', 'mcp'):

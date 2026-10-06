@@ -242,7 +242,14 @@ class FormFillerNodeMixin:
             return _ff_option_match(value, opts)
         try:
             from AI.laya_hooks import choose_option_by_source
-            _slice = self._ff_source_slice(evidence, value)
+            # A LEARNED answer arrives with NO evidence: the learned fast-path
+            # skips the probe (`if learned_value: evidence = ""`), so
+            # `_ff_source_slice("")` returns "" and the option scorer gets
+            # nothing to score against - it returns no pick, the raw learned
+            # text is typed into the typeahead and the dropdown never commits a
+            # selection (live: the location field).  When there is no evidence,
+            # the learned VALUE itself is the source of truth for its own field.
+            _slice = self._ff_source_slice(evidence, value) or str(value or "")
             _idx, _answered = choose_option_by_source(label, _slice, opts)
             if _idx is not None and 0 <= _idx < len(opts):
                 log_block(
@@ -686,6 +693,16 @@ class FormFillerNodeMixin:
                                                    [str(o) for o in options])
                     if _idx is not None and 0 <= _idx < len(options):
                         learned_value = str(options[_idx])
+            # A field that asks for a SELECTION besides free text (a typeahead /
+            # combo, or any list-backed control) can hold only one of the page's
+            # OWN options.  The learned record must still be USED - but as a
+            # SELECTION, not as free text the control cannot commit.  Read the
+            # list (typing the record opens a typeahead) and pin the record onto
+            # a real option before it is written.
+            if learned and not learned_value and (kind == "combo" or options):
+                learned_value = self._ff_resolve_combo_option(
+                    field, learned, "", label, stop_flag)
+
             # A field with a record is answered from it - never re-asked.
             self._ff_no_ask = bool(learned)
             if learned_value:
@@ -858,15 +875,29 @@ class FormFillerNodeMixin:
             # 3c-pre. A LIST-BACKED field the page ALREADY holds the SAME
             # answer for is left alone: re-writing an identical option costs a
             # write + a re-ask for nothing, and a big country select would churn.
+            # A COMBO/typeahead is the EXCEPTION: holding the option TEXT is not
+            # a COMMITTED selection - the widget validates against its own list -
+            # so the form can look filled and still refuse to advance (live: a
+            # learned city left in a typeahead, 'Next' did nothing).  Commit the
+            # selection (type -> click the option) FIRST; a control that will not
+            # commit falls through to the normal write instead of being skipped.
             if (current and kind in _FF_LIST_KINDS
                     and _ff_norm(value) == _ff_norm(current)):
-                results.append({"id": field.get("id"), "label": label,
-                                "value": current, "status": "skipped"})
-                self._ff_log_field(
-                    field, label, cfg, "skipped", value=current,
-                    options=options, note="already filled - left unchanged",
-                )
-                continue
+                _committed = True
+                if kind == "combo" and mode == "web":
+                    _picked = self._ff_commit_combo(field, current, stop_flag)
+                    if _picked:
+                        value = _picked
+                    else:
+                        _committed = False
+                if _committed:
+                    results.append({"id": field.get("id"), "label": label,
+                                    "value": current, "status": "skipped"})
+                    self._ff_log_field(
+                        field, label, cfg, "skipped", value=current,
+                        options=options, note="already filled - left unchanged",
+                    )
+                    continue
 
             # 3c. WRITE into the field's OWN target (runtime-owned binding)
             if mode == "desktop":

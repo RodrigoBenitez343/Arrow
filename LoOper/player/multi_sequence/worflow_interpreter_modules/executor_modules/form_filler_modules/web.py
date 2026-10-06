@@ -201,6 +201,7 @@ class FormFillerWebMixin:
         self._ff_apply_scope_context(driver)
         if driver is not None:
             self._ff_enable_overlay(driver)
+        self._ff_scope_alive(driver, "opening the session")
         return driver
 
     def _ff_apply_scope_context(self, driver):
@@ -311,6 +312,7 @@ class FormFillerWebMixin:
         driver = getattr(self, "_ff_web_driver", None)
         if driver is not None:
             self._ff_mark(driver, field, "form: %s" % (label or ""))
+            self._ff_scope_alive(driver, "starting field %r" % (label or ""))
 
     def _ff_write_web(self, field, value, stop_flag, driver=None):
         try:
@@ -340,6 +342,7 @@ class FormFillerWebMixin:
             if kind in ("choice", "switch"):
                 ok = driver.execute_script(
                     web_actions.JS_SET_CHOICE, selectors, want, value,
+                    self._ff_run_scope(),
                 )
             else:
                 ok = driver.execute_script(
@@ -362,9 +365,16 @@ class FormFillerWebMixin:
                     "selectors=%s, pre=%s, want=%s, src=%s)"
                     % (kind, selectors, field.get("selectors"), want, _src),
                 )
+            # A COMBO commits only through its LIST: the value set above is not
+            # a selection, and the widget's own trailing click fires in the SAME
+            # tick as the typing - before an async suggestion list has rendered.
+            # Do the option click as a SEPARATE, polled turn.
+            if ok and kind == "combo":
+                self._ff_commit_combo(field, value, stop_flag, driver=driver)
             # A write re-renders the form, and the tree's markers are node
             # ORDINALS: the next field must re-read the page, not reuse them.
             self._ff_forget_tree()
+            self._ff_scope_alive(driver, "writing %r" % (field.get("label") or ""))
             return bool(ok)
         except Exception as exc:
             log_block(
@@ -422,6 +432,31 @@ class FormFillerWebMixin:
         scope was picked, which resolves to the whole document as before.
         """
         return getattr(self, "_ff_run_scope_sel", None) or []
+
+    def _ff_scope_alive(self, driver, where):
+        """Log whether the picked container is STILL on the page (diagnostic).
+
+        The form can vanish mid-run (a dialog that closes itself).  Recording the
+        scope's liveness at each step names the step it followed, so the cause is
+        read out of the log instead of guessed at as a stray click.  No-op
+        without a pick or a browser.
+        """
+        sel = self._ff_run_scope()
+        if not sel or driver is None:
+            return
+        try:
+            from .....web import actions as web_actions
+            alive = driver.execute_script(
+                web_actions.JS_DEEP_SEARCH + web_actions.JS_FOREGROUND +
+                "return (function(s){for(var i=0;i<s.length;i++){try{"
+                "var m=__wvpDeepAll(s[i]);for(var j=0;j<m.length;j++){"
+                "if(__wvpVisible(m[j]))return true;}}catch(e){}}return false;})"
+                "(arguments[0]);", sel)
+        except Exception:
+            alive = None
+        log_block(logger, logging.INFO, "Form Scope",
+                  "picked container still on the page after %s: %s"
+                  % (where, alive))
 
     def _ff_read_web(self, field, stop_flag, driver=None):
         state = self._ff_field_state(field, stop_flag, driver)
@@ -506,7 +541,7 @@ class FormFillerWebMixin:
             try:
                 raw = driver.execute_script(
                     web_actions.JS_COMBO_OPTIONS, selectors, want, open_once,
-                    type_text or "",
+                    type_text or "", self._ff_run_scope(),
                 )
             except Exception as exc:
                 logger.debug("[FORM] Combo option read failed: %s", exc)
@@ -521,11 +556,12 @@ class FormFillerWebMixin:
             open_once = False
             time.sleep(0.15)
         # Close the popup this call may have opened - never leave it hanging
-        # over the form for the next field's write.
-        try:
-            driver.execute_script(web_actions.JS_KEY, "Escape", [])
-        except Exception:
-            pass
+        # over the form for the next field's write.  NEVER a global Escape: an
+        # Escape keydown is a DIALOG-DISMISS, so a form that lives in a <dialog>
+        # (LinkedIn Easy Apply) closed ITSELF the moment a combo's popup was
+        # closed this way - the dialog vanished right at re-entry and the page
+        # even raised its own 'Save this application?' prompt.  Blurring the
+        # control closes a typeahead's popup without touching the dialog.
         try:
             driver.execute_script(
                 "var a=document.activeElement; if(a&&a.blur)a.blur();"
@@ -533,3 +569,57 @@ class FormFillerWebMixin:
         except Exception:
             pass
         return opts
+
+    def _ff_commit_combo(self, field, value, stop_flag, driver=None):
+        """COMMIT a list-backed value by interacting with the control's LIST.
+
+        MULTI-TURN: TRIGGER the control (focus + clear + click - a typeahead
+        pops its list only when the text CHANGES), TYPE the value, then CLICK
+        the matching option - each in its own turn, POLLED so an async list has
+        time to appear.  Setting the input's ``value`` is not a selection - the
+        widget validates against its OWN list - so a form can look correctly
+        filled and still refuse to advance (live: a learned city pinned into a
+        typeahead left 'Next' doing nothing while the field read back correct,
+        because re-typing the value it already held opened no list at all).
+
+        Returns the option text it selected, or "" when the control has no list
+        / no option matched; the caller then keeps its own path unchanged.
+        """
+        try:
+            from .....web import actions as web_actions
+        except Exception:
+            return ""
+        driver = driver or self._ff_shared_driver()
+        if driver is None or not str(value or "").strip():
+            return ""
+        if self._ff_halt(stop_flag):
+            return ""
+        selectors = self._ff_field_selectors(field)
+        want = int(field.get("type_index") or 0)
+        timeout = float(getattr(self, "_FF_COMBO_OPTIONS_TIMEOUT", 3.0) or 3.0)
+        deadline = time.time() + timeout
+        # TURNS, so the list has time to appear: 0 TRIGGERS (focus + clear +
+        # click - a typeahead only pops its list when the text CHANGES, so
+        # re-typing the value it already holds never opened it), 1 types the
+        # query, 2+ clicks the matching option.
+        turn = 0
+        while True:
+            try:
+                raw = driver.execute_script(
+                    web_actions.JS_COMBO_PICK, selectors, want, str(value),
+                    turn, self._ff_run_scope(),
+                )
+            except Exception as exc:
+                logger.debug("[FORM] Combo commit failed: %s", exc)
+                return ""
+            picked = raw if isinstance(raw, str) else ""
+            if picked:
+                log_block(
+                    logger, logging.INFO, "Form Field: %s" % field.get("label"),
+                    "committed the list selection by clicking %r" % picked,
+                )
+                return picked
+            if self._ff_halt(stop_flag) or time.time() >= deadline:
+                return ""
+            turn = min(turn + 1, 2)
+            time.sleep(0.15)

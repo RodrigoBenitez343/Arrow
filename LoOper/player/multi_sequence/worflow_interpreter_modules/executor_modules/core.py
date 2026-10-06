@@ -65,6 +65,10 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         # need to loop back to the conditional after their branch completes.
         # Keys are conditional node IDs, values track iteration state.
         self._graph_loop_state = {}
+        # Node ids executed since the last graph loop-back.  A loop pass that
+        # ran NO work node (only outputs/conditionals passed through) cannot
+        # make progress - it is a dead end, not a loop, and must not re-iterate.
+        self._loop_pass_exec = set()
         # Track how many times each node has been executed (used by Input node
         # loop-awareness: a re-executed Input during loop must show dialog
         # even in agent mode).
@@ -726,6 +730,9 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
 
                 # Track execution count for loop-aware Input node behavior
                 self._node_execution_count[current_node_id] = self._node_execution_count.get(current_node_id, 0) + 1
+                # Remember this node for the graph loop dead-end guard (see the
+                # generalized loop-back block below).
+                self._loop_pass_exec.add(current_node_id)
                 logger.info(f"Node {current_node_id} completed successfully")
                 chain_logger.info(f"Node {current_node_id} COMPLETED successfully")
                 self._apply_extra_delay(node, stop_flag)
@@ -949,6 +956,26 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                             )
                         except Exception:
                             pass
+                        # ── Dead-end loop guard ──
+                        # Only re-iterate a loop-back when the pass that just
+                        # finished actually DID something (a work node ran).  A
+                        # decision-only pass (every branch false) is a dead end:
+                        # keeping the back-edge as a "loop" here is what made the
+                        # engine re-arm the review/next/submit legs and keep
+                        # spinning with nothing to fill.  Settle the loop target
+                        # and let the chain finish.
+                        if self._loop_pass_is_dead_end(target_id):
+                            logger.info(
+                                "[LOOP] Loop-back %s → %s ran no work node "
+                                "(decision-only pass) — dead end, ending the "
+                                "chain instead of re-iterating",
+                                current_node_id, target_id,
+                            )
+                            self.skipped_nodes.add(target_id)
+                            next_nodes.remove(target_id)
+                            self._loop_pass_exec = set()
+                            continue
+
                         # ── Selection memory survives this loop-back ──
                         # It now holds the repeating-element cursor (rows already
                         # clicked); clearing it would restart the cursor on the
@@ -959,6 +986,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                             ready_nodes[target_id] = None
                         # Remove from next_nodes since loop-back handles re-queueing
                         next_nodes.remove(target_id)
+                        # This pass is consumed — start a fresh pass window.
+                        self._loop_pass_exec = set()
                 
                 # Standard output connection readiness (remaining non-loopback targets)
                 for next_node_id in next_nodes:
@@ -1282,6 +1311,28 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 sleep_time = min(0.1, delay - elapsed)
                 time.sleep(sleep_time)
                 elapsed += sleep_time
+
+    # Node types that DO work when executed.  A graph loop pass that runs none
+    # of these only walked outputs/conditionals - it has nothing to repeat.
+    _WORK_NODE_TYPES = frozenset({
+        'sequence', 'web_sequence', 'form_filler', 'llm', 'code', 'mcp',
+        'handle', 'input', 'chain_import', 'orchestrator', 'container',
+    })
+
+    def _loop_pass_is_dead_end(self, target_id):
+        """True when a just-finished loop pass is a dead end, not a loop.
+
+        A back-edge whose pass executed only outputs/conditionals (no work
+        node) can never make progress, so re-iterating it just spins - e.g. a
+        decision ladder whose every branch evaluates false.  Such a pass must
+        end the chain instead of being treated as a repeatable loop.
+        """
+        if self.workflow_graph.get(target_id, {}).get('type') != 'conditional':
+            return False
+        return not any(
+            (self.workflow_graph.get(_p, {}) or {}).get('type') in self._WORK_NODE_TYPES
+            for _p in self._loop_pass_exec
+        )
 
     def _collect_branch_nodes(self, conditional_id):
         """
