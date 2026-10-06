@@ -917,9 +917,6 @@ class ConfigManager:
                 "rag_top_k": llm_config.get("rag_top_k", 3),
                 "rag_include_raw_input": llm_config.get("rag_include_raw_input", False),
                 "rag_max_chars": llm_config.get("rag_max_chars", 1500),
-                "rag_documents": llm_config.get("rag_documents", []),
-                "skills": llm_config.get("skills", []),
-                "use_skill_routing": llm_config.get("use_skill_routing", True),
                 "semantic_description": llm_config.get("semantic_description", ""),
                 # Context consolidation (opt-in — disabled by default)
                 "use_context_consolidation": llm_config.get(
@@ -1051,7 +1048,6 @@ class ConfigManager:
                 "context_size": config.get("context_size", 0),
                 "typing_batch_size": config.get("typing_batch_size", 20),
                 "typing_batch_delay": config.get("typing_batch_delay", 0.05),
-                "rag_documents": config.get("rag_documents", []),
                 "web_scope": config.get("web_scope", ""),
                 "node_id": node.id,
                 "position": node.pos(),
@@ -1131,12 +1127,14 @@ class ConfigManager:
             context_data = {
                 "type": "context",
                 "label": config.get("label", ""),
-                "max_history": config.get("max_history", 10),
+                "max_history": config.get("max_history", 0),
                 "persistent": config.get("persistent", True),
                 "clear_on_finish": config.get("clear_on_finish", False),
                 "scope": config.get("scope", "local"),
                 "shared_context_chain_file": config.get("shared_context_chain_file", ""),
                 "shared_context_node_id": config.get("shared_context_node_id", ""),
+                "documents": config.get("documents", "[]"),
+                "skills": config.get("skills", "[]"),
                 "node_id": node.get_property('_config_node_id') or node.id,
                 "position": node.pos(),
                 "connections": self._get_node_connections(node),
@@ -1913,32 +1911,11 @@ class ConfigManager:
                         import json as _json
 
                         node.set_property(
-                            "rag_documents",
-                            _json.dumps(llm_data.get("rag_documents", [])),
-                        )
-                    except Exception:
-                        node.set_property("rag_documents", "[]")
-                    try:
-                        import json as _json
-
-                        node.set_property(
                             "tool_descriptions",
                             _json.dumps(llm_data.get("tool_descriptions", {})),
                         )
                     except Exception:
                         node.set_property("tool_descriptions", "{}")
-                    try:
-                        import json as _json
-
-                        node.set_property(
-                            "skills", _json.dumps(llm_data.get("skills", []))
-                        )
-                    except Exception:
-                        node.set_property("skills", "[]")
-                    node.set_property(
-                        "use_skill_routing",
-                        str(llm_data.get("use_skill_routing", True)).lower(),
-                    )
                     node.set_property(
                         "semantic_description", llm_data.get("semantic_description", "")
                     )
@@ -2169,7 +2146,6 @@ class ConfigManager:
                     node.set_property("context_size", str(ff_data.get("context_size", 0)))
                     node.set_property("typing_batch_size", str(ff_data.get("typing_batch_size", 20)))
                     node.set_property("typing_batch_delay", str(ff_data.get("typing_batch_delay", 0.05)))
-                    node.set_property("rag_documents", json.dumps(ff_data.get("rag_documents", []) or []))
                     node.set_property("web_scope", ff_data.get("web_scope", "") or "")
 
                     # Set position
@@ -2329,7 +2305,7 @@ class ConfigManager:
                     # Set simplified properties
                     node.set_property("label", context_data.get("label", ""))
                     node.set_property(
-                        "max_history", int(context_data.get("max_history", 10))
+                        "max_history", int(context_data.get("max_history", 0))
                     )
                     # "Persist across chain runs" and "clear when the chain
                     # finishes" are opposite modes of the same choice.  Legacy
@@ -2351,6 +2327,8 @@ class ConfigManager:
                     node.set_property("scope", str(context_data.get("scope", "local")))
                     node.set_property("shared_context_chain_file", str(context_data.get("shared_context_chain_file", "")))
                     node.set_property("shared_context_node_id", str(context_data.get("shared_context_node_id", "")))
+                    node.set_property("documents", str(context_data.get("documents", "[]")))
+                    node.set_property("skills", str(context_data.get("skills", "[]")))
 
                     # Update name if label is provided
                     label = context_data.get("label", "")

@@ -3004,10 +3004,16 @@ class AgentOverlay(QFrame):
             self._web_send_json({"type": "notice", "text": "Chain runner unavailable."})
             return
 
-        def _finished():
+        def _finished(result=None):
             self._executing = False
             self._post_ui(self._update_stop_btn)
             self._post_ui(lambda: self.execution_state_changed.emit(False))
+            # Mirror the chain's final result to the phone, so a run the web
+            # client started shows its Output-node content too (fixed text).
+            _text = str(result or "").strip()
+            if _text:
+                self._post_ui(lambda r=_text: self._add_bubble(r, False))
+                self._web_send_text(_text)
             self._web_send_json({"type": "agent_done"})
 
         try:
@@ -3028,6 +3034,8 @@ class AgentOverlay(QFrame):
             svc.run_chain_now(
                 path,
                 ask_user_callback=self._make_ask_user_callback(),
+                ask_user_v2_callback=self._make_ask_user_v2_callback(),
+                on_output_ready=self._make_output_display_callback(),
                 stop_flag=lambda: self._stop_event.is_set(),
                 on_complete=_finished,
             )

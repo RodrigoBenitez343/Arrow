@@ -197,10 +197,9 @@ class LLMNode(BaseNode):
         self.create_property("rag_top_k", "3")
         self.create_property("rag_include_raw_input", "false")
         self.create_property("rag_max_chars", "1500")
-        self.create_property("rag_documents", "[]")
+        # NOTE: documents are NOT attached to the node anymore.  Source material
+        # lives on a Context node and is wired in via the 'context' port.
         self.create_property("tool_descriptions", "{}")
-        self.create_property("skills", "[]")
-        self.create_property("use_skill_routing", "true")
         self.create_property("semantic_description", "")
         # Context consolidation (ComoRAG-inspired)
         self.create_property("use_context_consolidation", "false")
@@ -294,23 +293,6 @@ class LLMNode(BaseNode):
             str(config.get("rag_include_raw_input", False)).lower(),
         )
         self.set_property("rag_max_chars", str(config.get("rag_max_chars", 1500)))
-        try:
-            import json as _json
-
-            self.set_property(
-                "rag_documents", _json.dumps(config.get("rag_documents", []))
-            )
-        except Exception:
-            self.set_property("rag_documents", "[]")
-        if "skills" in config:
-            val = config["skills"]
-            self.set_property(
-                "skills", _json.dumps(val) if isinstance(val, list) else val
-            )
-        if "use_skill_routing" in config:
-            self.set_property(
-                "use_skill_routing", str(config["use_skill_routing"]).lower()
-            )
         if "semantic_description" in config:
             self.set_property("semantic_description", config["semantic_description"])
         # Context consolidation properties
@@ -502,17 +484,6 @@ class LLMNode(BaseNode):
             "yes",
             "on",
         )
-        docs_raw = self.get_property("rag_documents") or "[]"
-        try:
-            import json as _json
-
-            rag_documents = (
-                _json.loads(docs_raw) if isinstance(docs_raw, str) else (docs_raw or [])
-            )
-            if isinstance(rag_documents, str):
-                rag_documents = [rag_documents]
-        except Exception:
-            rag_documents = []
         tool_desc_raw = self.get_property("tool_descriptions") or "{}"
         try:
             import json as _json
@@ -562,13 +533,7 @@ class LLMNode(BaseNode):
             "rag_top_k": int(self.get_property("rag_top_k") or 3),
             "rag_include_raw_input": rag_include_raw_input,
             "rag_max_chars": int(self.get_property("rag_max_chars") or 1500),
-            "rag_documents": rag_documents,
             "tool_descriptions": tool_descriptions,
-            "skills": _json.loads(self.get_property("skills") or "[]"),
-            "use_skill_routing": str(
-                self.get_property("use_skill_routing") or "true"
-            ).lower()
-            in ("true", "1"),
             "semantic_description": self.get_property("semantic_description") or "",
             # Context consolidation (opt-in — disabled by default)
             "use_context_consolidation": str(

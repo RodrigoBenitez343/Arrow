@@ -8,13 +8,18 @@ import time
 
 from .common import (
     _FF_LIST_KINDS,
+    _FFEmbedClient,
     _as_int,
+    _ff_cos,
+    _ff_dense,
     _ff_na_value,
     _ff_norm,
     _ff_option_exact,
     _ff_option_match,
     _ff_parse_learned_answers,
-    _ff_source_sig,
+    _ff_pool_corrections,
+    _ff_render_corrections,
+    _ff_ungrounded_identifier,
     log_block,
     log_table,
     logger,
@@ -74,39 +79,183 @@ class FormFillerNodeMixin:
             return True
         return bool(_ff_option_match(text, [value]))
 
-    # ── Ask the user / learn the answer (opt-in) ────────────────────────────
+    @staticmethod
+    def _ff_prior_from_pool(text):
+        """Per-field outcomes from a PRIOR pass, carried by the context pool.
 
-    def _ff_knowledge_text(self, path):
-        """Read the corrections file (the node's learned answers); '' if unreadable."""
-        if not path:
-            return ""
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                return fh.read().strip()
-        except Exception:
-            return ""
-
-    def _ff_corrections_path(self, node_id):
-        """The corrections document this node OWNS - always derived, never set.
-
-        Stored beside the chain it belongs to (the same place a Code node keeps
-        its own file); when no chain directory is available, under the app's
-        durable runtime directory.  There is no user-set path and no override:
-        a node that learns an answer always owns somewhere to keep it, and ''
-        only if even the runtime directory cannot be resolved.
+        The node's own output is a JSON summary ``{"mode": ..., "fields":
+        [{"label": ..., "status": ...}, ...]}``; when the chain wires
+        ``ctx_out`` back through a Context node, that summary arrives inside the
+        upstream text on the next entry.  Find the first such summary and map
+        ``label -> status`` so an already-handled field is not re-processed.
+        Returns ``{}`` when the pool carries none.
         """
-        stem = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(node_id or "form")) or "form"
-        try:
-            base = getattr(self.sequence_executor, "chain_file_dir", "") or ""
-        except Exception:
-            base = ""
-        if not base:
+        s = str(text or "")
+        if '"fields"' not in s:
+            return {}
+        import json as _json
+        for m in re.finditer(r"\{", s):
+            i = m.start()
+            if '"fields"' not in s[i:i + 300]:
+                continue
+            depth = 0
+            for j in range(i, len(s)):
+                c = s[j]
+                if c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            obj = _json.loads(s[i:j + 1])
+                        except Exception:
+                            obj = None
+                        if isinstance(obj, dict) and isinstance(
+                                obj.get("fields"), list):
+                            out = {}
+                            for f in obj["fields"]:
+                                if isinstance(f, dict) and f.get("label"):
+                                    out[str(f["label"])] = str(
+                                        f.get("status") or "")
+                            return out
+                        break
+        return {}
+
+    # Cosine floor for the SEMANTIC learned-fact gate (see _ff_learned_match):
+    # a stored fact whose LABEL embedding is this close to the field's counts
+    # as the same question.  Tuned conservatively - raise it if the gate ever
+    # reuses a subtly-different question's answer.
+    _FF_FACT_GATE = 0.82
+
+    def _ff_fact_index(self, learned_answers, cfg):
+        """The pool's learned facts as ``[{label, value, vec}]``.
+
+        Built ONCE per pass so the stored labels are embedded a single time,
+        not once per field.  Empty when embeddings are unavailable, in which
+        case only the EXACT label match applies.
+        """
+        cached = getattr(self, "_ff_fact_index_cache", None)
+        if cached is not None:
+            return cached
+        idx = []
+        items = [(k, str(v)) for k, v in (learned_answers or {}).items()
+                 if str(v).strip()]
+        if items:
             try:
-                from AI.runtime_paths import get_runtime_dir
-                base = os.path.join(get_runtime_dir(), "corrections")
-            except Exception:
-                base = ""
-        return os.path.join(base, "%s_corrections.md" % stem) if base else ""
+                emb = _FFEmbedClient(cfg.get("engine"), cfg.get("model"))
+                vecs = emb.embeddings(cfg.get("model") or "",
+                                      [k for k, _ in items])
+                if vecs and len(vecs) == len(items):
+                    idx = [{"label": k, "value": v, "vec": vec}
+                           for (k, v), vec in zip(items, vecs)]
+            except Exception as exc:
+                logger.debug("[FORM] learned-fact index unavailable: %s", exc)
+        self._ff_fact_index_cache = idx
+        return idx
+
+    def _ff_learned_match(self, label, learned_answers, cfg):
+        """The pool's cached value for *label*: EXACT label, else SEMANTIC gate.
+
+        The context pool is a knowledge base of questions the system already
+        tagged factually-correct (or the user answered).  A field whose question
+        matches a stored one is filled MECHANICALLY from the cache - no probe,
+        no ComoRAG - so a correct answer is reused across pages and runs.
+        Exact normalized-label match first (free); otherwise the stored label
+        whose EMBEDDING is closest to the field's (>= ``_FF_FACT_GATE``).
+        Returns ``(value, matched_label)`` or ``("", "")``.
+        """
+        if not label or not learned_answers:
+            return "", ""
+        exact = _ff_norm(label).strip("*? .:")
+        if exact in learned_answers:
+            return learned_answers[exact], exact
+        idx = self._ff_fact_index(learned_answers, cfg)
+        if not idx:
+            return "", ""
+        try:
+            emb = _FFEmbedClient(cfg.get("engine"), cfg.get("model"))
+            vecs = emb.embeddings(cfg.get("model") or "", [label])
+            if not vecs:
+                return "", ""
+            base = vecs[0]
+            best, best_s = None, 0.0
+            for item in idx:
+                s = _ff_cos(base, item["vec"])
+                if s > best_s:
+                    best, best_s = item, s
+            if best is not None and best_s >= self._FF_FACT_GATE:
+                return best["value"], best["label"]
+        except Exception as exc:
+            logger.debug("[FORM] learned-fact gate unavailable: %s", exc)
+        return "", ""
+
+    def _ff_value_accurate(self, label, value, evidence):
+        """Is the value ALREADY on the page the RIGHT one for this field?
+
+        Judged against the node's TRUSTED SOURCE - the document set on the node
+        dialog (swappable), the root truth:
+
+        True  -> the source supports the value -> skip the field.
+        False -> the value is wrong / unrelated (stale, or a read that resolved
+                 a SIBLING control) -> refill it.
+        None  -> no source / no engine -> caller keeps its existing skip rule.
+
+        A value the source LITERALLY contains is accepted at once (identifiers
+        such as a URL / email by identity, plain text at a word boundary) with
+        no engine needed; otherwise Laya judges it against the source.
+        """
+        if not label or not value:
+            return None
+        ev = str(evidence or "").strip()
+        try:
+            if ev and not _ff_ungrounded_identifier(value, ev):
+                _dv = _ff_dense(value)
+                if len(_dv) >= 3 and _dv in _ff_dense(ev):
+                    return True
+        except Exception:
+            pass
+        try:
+            from AI.laya_hooks import value_accuracy_or
+            return value_accuracy_or(label, value, ev)
+        except Exception as exc:
+            logger.debug("[FORM] Laya accuracy verdict unavailable: %s", exc)
+            return None
+
+    def _ff_resolve_combo_option(self, field, value, evidence, label, stop_flag):
+        """Pin a combo's PARTIAL answer onto one of its REAL options ('' if none).
+
+        A typeahead renders its options ONLY once text is typed, so the scan (and
+        the first option peek) saw none, the model answered partial free text, and
+        the page never committed it - the field read back 'not an option' on every
+        later pass and the chain looped on the SAME field (live: 'Location (city)'
+        answered 'Buenos Aires' for the full 'Buenos Aires, Buenos Aires Province,
+        Argentina').  This TYPES the answer to reveal the list, reads it, then pins
+        the answer to a real option.  Rails, in order: the answer IS an option
+        verbatim; the SOURCE picks the most accurate option (the full entry over
+        the partial one); the deterministic short-label rail; else '' (the harness
+        leaves the field alone rather than write a wrong pick).
+        """
+        opts = self._ff_combo_options(field, stop_flag, type_text=value)
+        if not opts:
+            return ""
+        if _ff_option_exact(value, opts):
+            return _ff_option_match(value, opts)
+        try:
+            from AI.laya_hooks import choose_option_by_source
+            _slice = self._ff_source_slice(evidence, value)
+            _idx, _answered = choose_option_by_source(label, _slice, opts)
+            if _idx is not None and 0 <= _idx < len(opts):
+                log_block(
+                    logger, logging.INFO, "Form Resolve: %s" % label,
+                    "the source %r picks the option %r"
+                    % (_slice[:80], str(opts[_idx])),
+                )
+                return str(opts[_idx])
+        except Exception as exc:
+            logger.debug("[FORM] Combo source pick failed: %s", exc)
+        return _ff_option_match(value, opts)
+
+    # ── Ask the user / learn the answer (opt-in) ────────────────────────────
 
     @staticmethod
     def _ff_ask_request(label, options, format_spec, kind):
@@ -246,32 +395,22 @@ class FormFillerNodeMixin:
                   answer or "(no answer - left to the default rule)")
         return answer
 
-    def _ff_learn(self, label, answer, path, source_text):
-        """Learn an answered field into the corrections file and the sources.
+    def _ff_learn(self, label, answer, source_text):
+        """Learn an answered field and return the source text with it folded in.
 
-        The entry is appended to the corrections document (persistent: read
-        back on the next run) and returned inside the run's ``source_text``, so
-        the fields AFTER this one can already retrieve it.
+        The answer is (a) returned inside ``source_text`` so the fields AFTER
+        this one can retrieve it THIS run, and (b) collected in
+        ``self._ff_new_learned`` so the caller publishes it into the CONTEXT
+        POOL on this pass's output.  The node owns NO file: the pool (a Context
+        node the user wired) is the store.
         """
         entry = "## %s\n%s\n" % (label, answer)
-        if not path:
-            log_block(logger, logging.INFO, "Form Filler Knowledge",
-                      "no corrections file could be located - '%s' was used "
-                      "for this run only" % label)
-        else:
-            try:
-                _dir = os.path.dirname(path)
-                if _dir:
-                    os.makedirs(_dir, exist_ok=True)
-                with open(path, "a", encoding="utf-8") as fh:
-                    fh.write("\n" + entry)
-                log_block(logger, logging.INFO, "Form Filler Knowledge",
-                          "learned '%s' into the node-owned corrections file: %s"
-                          % (label, path))
-            except Exception as exc:
-                log_block(logger, logging.WARNING, "Form Filler Knowledge",
-                          "could not write the corrections file %s: %s"
-                          % (path, exc))
+        try:
+            self._ff_new_learned.append((label, answer))
+        except Exception:
+            pass
+        log_block(logger, logging.INFO, "Form Filler Knowledge",
+                  "learned '%s' - published to the context pool" % label)
         return ("%s\n\n%s" % (source_text, entry)).strip() if source_text else entry
 
     def _execute_form_filling_node(self, node, stop_flag):
@@ -370,69 +509,57 @@ class FormFillerNodeMixin:
         # re-entered ONCE, before the first web op (see _ff_apply_scope_context).
         self._ff_scope_applied = False
         self._ff_scope_in_frame = False
+        # The picked page-scope's selector ladder - the SAME confinement the
+        # enumeration used is applied to every field WRITE / READ-BACK, so the
+        # repair pass resolves from the user's container instead of the whole
+        # page.  [] when no scope was picked (whole document, as before).
+        self._ff_run_scope_sel = self._ff_scope_selectors(cfg.get("web_scope"))
 
-        # Source context: attached documents (ComoRAG) + upstream node outputs.
-        documents = data.get("rag_documents") or []
-        if isinstance(documents, str):
-            try:
-                documents = json.loads(documents)
-            except Exception:
-                documents = []
+        # Source context: the UPSTREAM knowledge pool (a Context node wired to
+        # ctx_in, holding the documents + history) plus upstream node outputs.
+        # The node no longer attaches documents to itself.
+        documents = []
         source_text = self._ff_gather_source_text(node)
-        # The corrections document this node OWNS - always derived, there is no
-        # user-set path: the answers the user gives for fields nothing could
-        # ground are read back as a source so a field already answered is never
-        # asked again (see _ff_corrections_path).
-        corrections_path = self._ff_corrections_path(node_id)
-        knowledge_text = self._ff_knowledge_text(corrections_path)
-        if knowledge_text:
-            source_text = ("%s\n\n%s" % (knowledge_text, source_text)).strip()
-        # The learned answers keyed by field LABEL: a field the user already
-        # answered once is resolved from here, so it is never asked again.
-        learned_answers = _ff_parse_learned_answers(knowledge_text)
+        # LEARNED ANSWERS ride the CONTEXT POOL too: the answers the user gives
+        # for fields nothing could ground are written into the pool on this
+        # pass's output and read back from it on the next (the node owns NO
+        # file).  They are carried inside a sentinel block so the pool's source
+        # documents can never be mistaken for learned Q&A.
+        _corr_text = _ff_pool_corrections(source_text)
+        learned_answers = _ff_parse_learned_answers(_corr_text)
+        # This pass's NEW answers, published into the pool on the output below.
+        self._ff_new_learned = []
+        # The pool's learned facts (label -> value), embedded ONCE for the
+        # semantic gate below (see _ff_fact_index).
+        self._ff_fact_index_cache = None
         log_table(
             logger, logging.INFO, "Form Filler Sources",
             [("Document", str(_d)) for _d in documents]
-            + [("Corrections file", ("%s (%d chars)"
-                % (corrections_path, len(knowledge_text)))
-                if corrections_path else "(none)")]
+            + [("Learned answers (pool)", "%d" % len(learned_answers))]
             + [("Upstream context", "%d chars" % len(source_text or ""))],
         )
 
         aborted = False
 
-        # Idempotence across re-entries: the chain loops back into this node
-        # whenever a field does not land, and each pass used to re-run the FULL
-        # ComoRAG sweep for every field — one field burned 512s, the same
-        # 4-field page was handled four identical times, and the user's ESC
-        # then discarded the whole sweep.  Outcomes are remembered per SOURCE
-        # STATE: a field that already returned no evidence is not swept again
-        # while the sources are unchanged, and whenever the sources change (a
-        # learned answer lands in the knowledge file) the memory is dropped so
-        # the field IS retried.
-        # ponytail: keyed on the SOURCES, not the page — a DIFFERENT page with
-        # the same sources and an unfilled field degrades to ask/skip (never to
-        # a wrong value).  Add a page/field signature to the key if that is ever
-        # observed.
-        _state_key = f"node_{node_id}_form_state" if node_id else ""
-        _sig = _ff_source_sig(documents, source_text)
-        _prior = {}
-        try:
-            _mem = (self.llm_executor.get_variable(_state_key)
-                    if _state_key else None)
-            if isinstance(_mem, dict) and _mem.get("sig") == _sig:
-                _prior = dict(_mem.get("attempted") or {})
-        except Exception:
-            _prior = {}
+        # Idempotence across re-entries, carried by the CONTEXT POOL: this
+        # node's own prior output (a JSON summary with `fields`) is wired back
+        # through a Context node, so on the next entry it arrives inside the
+        # upstream text.  Fields already VALIDATED on a previous pass are
+        # skipped below instead of being re-read / re-probed / re-written.  No
+        # node-local shortcut: the memory lives in the pool the user wired.
+        _prior = self._ff_prior_from_pool(source_text)
         if _prior:
             log_block(
                 logger, logging.INFO, "Form Filler Memory",
-                "%d field(s) already attempted against unchanged sources — "
-                "re-using the outcome instead of re-sweeping:\n%s"
+                "%d field(s) already handled on a previous pass (pool):\n%s"
                 % (len(_prior),
                    "\n".join("- %s: %s" % (k, v)
                              for k, v in _prior.items())),
             )
+
+        # The TRUSTED SOURCE for the "already filled?" check: the knowledge
+        # pool the node was wired to (documents + history) - the root truth.
+        _ground = str(source_text or "")
 
         for field in fields:
             if self._ff_halt(stop_flag):
@@ -465,6 +592,21 @@ class FormFillerNodeMixin:
             if mode != "desktop":
                 self._ff_mark_processing(field, label)
 
+            # 2-pre. POOL MEMORY: a field the previous pass already VALIDATED
+            # (filled / skipped / repaired) is left untouched - no resolve, no
+            # probe, no write.  This is what stops the chain loop from
+            # re-processing correct fields forever; the memory rides the Context
+            # node the user wired, not the node itself.
+            if _prior.get(label) in ("filled", "skipped", "repaired"):
+                results.append({"id": field.get("id"), "label": label,
+                                "value": "", "status": "skipped"})
+                self._ff_log_field(
+                    field, label, cfg, "skipped", options=options,
+                    note="validated on a previous pass (pool memory) - "
+                         "left unchanged",
+                )
+                continue
+
             # 2a. WHERE this field lives.  The Laya-navigated page tree resolves
             # the target element BEFORE anything touches it, and the winning
             # marker becomes the field's FIRST selector rung - so the skip read,
@@ -488,14 +630,31 @@ class FormFillerNodeMixin:
             if mode != "desktop":
                 current = self._ff_current_value(field, stop_flag, cfg=cfg)
                 if current and kind not in _FF_LIST_KINDS:
-                    results.append({"id": field.get("id"), "label": label,
-                                    "value": current, "status": "skipped"})
-                    self._ff_log_field(
-                        field, label, cfg, "skipped", value=current,
-                        options=options,
-                        note="already filled - left unchanged",
-                    )
-                    continue
+                    # The field already holds a value - but is it the RIGHT one?
+                    # A read can resolve a SIBLING control (bringing back an
+                    # unrelated value) and the page can hold a stale answer.
+                    # Ask Laya SEMANTICALLY whether the value actually answers
+                    # THIS field: accurate -> skip (no probe, no model call);
+                    # not accurate -> fall through and refill; no engine ->
+                    # keep the existing skip.
+                    _verdict = self._ff_value_accurate(label, current, _ground)
+                    if _verdict is False:
+                        log_block(
+                            logger, logging.INFO, "Form Field: %s" % label,
+                            "the page holds %r, which does not answer this "
+                            "field - refilling it" % current,
+                        )
+                    else:
+                        results.append({"id": field.get("id"), "label": label,
+                                        "value": current, "status": "skipped"})
+                        self._ff_log_field(
+                            field, label, cfg, "skipped", value=current,
+                            options=options,
+                            note=("already filled - verified by Laya"
+                                  if _verdict else
+                                  "already filled - left unchanged"),
+                        )
+                        continue
 
             # 2c. ALREADY LEARNED: a field the user answered ONCE is stored in
             # this node's own corrections file, keyed by its LABEL, and is
@@ -510,7 +669,11 @@ class FormFillerNodeMixin:
             # A record that pins NO option is not discarded: the field passes
             # through the usual pipeline with the record as its context - and
             # is still NEVER asked again, the record decides.
-            learned = learned_answers.get(_ff_norm(label).strip("*? .:"), "")
+            # A CACHE HIT (exact label or the semantic embedding gate) answers
+            # the field MECHANICALLY - the probe below is skipped, so ComoRAG
+            # never runs for a question the pool already tagged correct.
+            learned, _learned_key = self._ff_learned_match(
+                label, learned_answers, cfg)
             learned_value = ""
             if learned:
                 if not options:
@@ -526,7 +689,8 @@ class FormFillerNodeMixin:
             # A field with a record is answered from it - never re-asked.
             self._ff_no_ask = bool(learned)
             if learned_value:
-                self._ff_last_route = "learned: answered for this field before"
+                self._ff_last_route = (
+                    "learned fact: reused a correct answer (no ComoRAG)")
 
             # 3a. PROBE (only the relevant slice).  A field whose PREVIOUS pass
             # found no evidence in UNCHANGED sources is not swept again: the
@@ -570,8 +734,7 @@ class FormFillerNodeMixin:
                                           stop_flag, kind=kind)
                 if value:
                     note = "no context - answered by the user"
-                    source_text = self._ff_learn(label, value, corrections_path,
-                                                 source_text)
+                    source_text = self._ff_learn(label, value, source_text)
                 # Nothing grounded the field: the MODEL reads the control (its
                 # own options are handed to it) and returns the answer that
                 # means none / no when the control has one.  The harness never
@@ -638,8 +801,7 @@ class FormFillerNodeMixin:
                         value = _asked
                         note = ("the model could not answer - answered by the "
                                 "user")
-                        source_text = self._ff_learn(label, value,
-                                                     corrections_path, source_text)
+                        source_text = self._ff_learn(label, value, source_text)
                 if value and _ff_na_value(options) == value:
                     note = "the field could not be answered - wrote %r" % value
                 if not value:
@@ -649,8 +811,7 @@ class FormFillerNodeMixin:
                                               stop_flag, kind=kind)
                     if value:
                         note = "nothing grounded - answered by the user"
-                        source_text = self._ff_learn(label, value,
-                                                     corrections_path, source_text)
+                        source_text = self._ff_learn(label, value, source_text)
                 if not value and cfg["answer_na"] and _ff_na_value(options):
                     value = _ff_na_value(options)
                     note = ("the model grounded nothing and the field cannot "
@@ -674,6 +835,25 @@ class FormFillerNodeMixin:
                         note="no value could be grounded - left unchanged",
                     )
                     continue
+
+            # 3c-0. TYPEAHEAD RESOLUTION: a combo whose popup was closed at scan
+            # time (options empty) renders its list only once text is typed, so
+            # the model answered PARTIAL free text.  Type it to reveal the list,
+            # read it, and pin the answer onto a REAL option (the source picks
+            # the full 'City, Province, Country' over the partial 'City').  A
+            # partial value the page never commits is what made the SAME field
+            # loop forever (read back 'not an option' every pass).
+            if (mode == "web" and kind == "combo" and value
+                    and not _ff_option_exact(value, options)):
+                _full = self._ff_resolve_combo_option(
+                    field, value, evidence, label, stop_flag)
+                if _full:
+                    log_block(
+                        logger, logging.INFO, "Form Field: %s" % label,
+                        "the partial answer %r was pinned to the option %r"
+                        % (value, _full),
+                    )
+                    value = _full
 
             # 3c-pre. A LIST-BACKED field the page ALREADY holds the SAME
             # answer for is left alone: re-writing an identical option costs a
@@ -749,25 +929,9 @@ class FormFillerNodeMixin:
                 read_back=read_back, note=note,
             )
 
-        # Remember this pass's per-field outcomes for the next entry into this
-        # node (the chain loops back whenever a field does not land).
-        try:
-            _attempted = dict(_prior)
-            for _r in results:
-                _st = _r.get("status")
-                if _st == "skipped" and not (_r.get("value") or ""):
-                    _attempted[_r.get("label")] = "no_evidence"
-                elif _r.get("na_from_empty"):
-                    _attempted[_r.get("label")] = "no_evidence"
-                elif _st in ("filled", "failed", "repaired"):
-                    _attempted[_r.get("label")] = _st
-            if _state_key:
-                self.llm_executor.set_variable(
-                    _state_key, {"sig": _sig, "attempted": _attempted},
-                )
-        except Exception as exc:
-            log_block(logger, logging.DEBUG, "Form Filler Memory",
-                      "could not store the per-field outcomes: %s" % exc)
+        # The per-field state is NOT kept node-locally: it rides the node's own
+        # output (the `fields` summary above), which a Context node wired to
+        # ctx_out stores and serves back on the next entry.
 
         # 4. REPAIR: re-check every written field's NATIVE validity and correct
         # the rejects with the same ComoRAG probe - a date answered '2017' is
@@ -806,11 +970,61 @@ class FormFillerNodeMixin:
             "aborted": aborted,
             "fields": results,
         }
+        # FACTS the system RESOLVED CORRECTLY this pass become POOL KNOWLEDGE:
+        # a later page/run with the same question is filled MECHANICALLY from the
+        # cache (no probe, no ComoRAG).  A field we WROTE (filled/repaired) counts,
+        # and so does one the PAGE already held and Laya verified (skipped) -
+        # otherwise a run where every field was pre-filled (the common re-entry
+        # case) learns NOTHING.  Only non-empty, non-N/A values are tagged;
+        # failures are never cached, and the user can prune any entry in the
+        # Context node's audit dialog.
+        try:
+            _known = {_ff_norm(_l).strip("*? .:")
+                      for _l, _ in getattr(self, "_ff_new_learned", [])}
+            for _r in results:
+                _st = _r.get("status")
+                _lab = str(_r.get("label") or "")
+                _val = str(_r.get("value") or "").strip()
+                if (_st not in ("filled", "repaired", "skipped") or not _val
+                        or _lab.startswith("field_")
+                        or _val.upper() == "N/A"):
+                    continue
+                _k = _ff_norm(_lab).strip("*? .:")
+                if _k and _k not in _known:
+                    self._ff_new_learned.append((_lab, _val))
+                    _known.add(_k)
+        except Exception:
+            pass
+
         payload = json.dumps(summary, ensure_ascii=False)
         try:
             if node_id:
                 self.llm_executor.set_variable(f"node_{node_id}_output", payload)
                 self.llm_executor.set_variable(f"node_{node_id}_context", payload)
+                # Publish on the context output port so a Context node wired to
+                # ctx_out stores this pass's per-field state - the memory the
+                # NEXT entry reads back through the pool.
+                try:
+                    _cid = (getattr(self, 'chain_id', None)
+                            or getattr(self, 'chain_file', ''))
+                    _corr = _ff_render_corrections(
+                        getattr(self, '_ff_new_learned', []))
+                    _ctx_out = (payload + "\n\n" + _corr) if _corr else payload
+                    self.port_store.set_output(_cid, node_id, 'ctx_out', _ctx_out)
+                except Exception:
+                    pass
+                # PASSIVE push: a Context node never runs (its edges are
+                # data-only), so persist this pass's material into the pool it
+                # is wired to RIGHT NOW - otherwise the learned answers never
+                # reach the store (the audit dialog then shows no Learned
+                # entries even though the node recalls them within the run).
+                try:
+                    for _c in ((node.get("connections", {}) or {}).get("ctx_out") or []):
+                        _tgt = _c.get("node_id") or _c.get("target_node_id")
+                        if _tgt:
+                            self._ctx_serve(_tgt)
+                except Exception:
+                    pass
         except Exception as exc:
             log_block(logger, logging.WARNING, "Form Filler",
                       "failed to store the node output: %s" % exc)
@@ -863,4 +1077,43 @@ class FormFillerNodeMixin:
         # same at the end of a replay run).
         if mode != "desktop":
             self._ff_disable_overlay()
+
+        # STALL CAP: the chain re-enters this node whenever a field does not
+        # land (typically a required field the page keeps rejecting), and with
+        # no bound that loop runs for HOURS (live: 51 identical re-entries on
+        # one LinkedIn modal burned ~10.7h).  When the per-field OUTCOME is
+        # identical pass after pass the node is making NO progress and the
+        # wizard will never advance - so end the chain instead of looping.  The
+        # signature is (label -> status): stable across passes even when the
+        # page's generated ids rotate, yet DIFFERENT for a genuine next wizard
+        # step (which shows different fields), so a real multi-step wizard is
+        # never cut short.
+        _stall_limit = _as_int(cfg.get("max_stall_passes"), 6)
+        if _stall_limit > 0 and node_id and results:
+            _out_sig = "|".join(sorted(
+                "%s=%s" % (r.get("label"), r.get("status")) for r in results))
+            _stall_key = f"node_{node_id}_form_stall"
+            try:
+                _prev_stall = self.llm_executor.get_variable(_stall_key) or {}
+            except Exception:
+                _prev_stall = {}
+            _streak = ((_prev_stall.get("streak", 0) + 1)
+                       if _prev_stall.get("sig") == _out_sig else 1)
+            try:
+                self.llm_executor.set_variable(
+                    _stall_key, {"sig": _out_sig, "streak": _streak})
+            except Exception:
+                pass
+            if _streak >= _stall_limit:
+                log_block(
+                    logger, logging.ERROR, "Form Filler",
+                    "STALLED: the same %d field(s) produced an IDENTICAL "
+                    "outcome on %d consecutive passes (no progress) - ending "
+                    "the chain to stop an unbounded re-entry loop.  A required "
+                    "field that never lands cannot advance the wizard; check "
+                    "its target resolution in the 'Form Resolve' / 'Form "
+                    "Write' entries above." % (len(results), _streak),
+                )
+                return "__done__"
+
         return self._ff_next_node(node)

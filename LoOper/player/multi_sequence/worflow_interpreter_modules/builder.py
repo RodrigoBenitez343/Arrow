@@ -472,20 +472,31 @@ class WorkflowGraphBuilder:
         # Add Form Filling nodes to graph
         for _ff_idx, ff_node in enumerate(self.form_filler_nodes):
             node_id = self._resolve_node_id(ff_node, 'form_filler', _ff_idx)
+            # Separate execution ('output') from data ('ctx_out') connections:
+            # the ctx_out edge carries this pass's learned answers + per-field
+            # state to a Context node.  Dropping it here is why the pool never
+            # stored the learned answers ("[CTX] node ... has NO connected
+            # upstream data") even though the chain file wires it.
             output_connections = []
+            ctx_out_connections = []
             for conn in ff_node.get('connections', []):
                 target = {
                     'node_id': str(conn['target_node_id']),
                     'input_port': conn.get('input_port')
                 }
-                if conn.get('output_port') == 'output':
+                op = conn.get('output_port')
+                if op == 'ctx_out':
+                    ctx_out_connections.append(target)
+                else:
+                    # 'output' (and any legacy port) drives execution order.
                     output_connections.append(target)
+            conns = {'output': output_connections}
+            if ctx_out_connections:
+                conns['ctx_out'] = ctx_out_connections
             graph[node_id] = {
                 'type': 'form_filler',
                 'data': ff_node,
-                'connections': {
-                    'output': output_connections
-                }
+                'connections': conns
             }
         
         # Add MCP nodes to graph

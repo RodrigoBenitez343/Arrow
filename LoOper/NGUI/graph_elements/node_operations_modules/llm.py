@@ -95,10 +95,7 @@ class LLMOperationsMixin:
                 node.set_property("rag_top_k", str(llm_node_data.get("rag_top_k", 3)))
                 node.set_property("rag_include_raw_input", str(llm_node_data.get("rag_include_raw_input", False)).lower())
                 node.set_property("rag_max_chars", str(llm_node_data.get("rag_max_chars", 1500)))
-                node.set_property("rag_documents", llm_node_data.get("rag_documents", "[]"))
                 node.set_property("tool_descriptions", llm_node_data.get("tool_descriptions", "{}"))
-                node.set_property("skills", llm_node_data.get("skills", "[]"))
-                node.set_property("use_skill_routing", str(llm_node_data.get("use_skill_routing", True)).lower())
                 node.set_property("semantic_description", llm_node_data.get("semantic_description", ""))
                 node.set_property("use_llamacpp", str(llm_node_data.get("use_llamacpp", False)).lower())
                 node.set_property("llamacpp_model_path", llm_node_data.get("llamacpp_model_path", ""))
@@ -338,15 +335,6 @@ class LLMOperationsMixin:
             dialog.rag_max_chars_spin.setValue(
                 int(node.get_property("rag_max_chars") or 1500)
             )
-            try:
-                import json as _json
-
-                docs = node.get_property("rag_documents") or "[]"
-                docs_list = _json.loads(docs) if isinstance(docs, str) else []
-            except Exception:
-                docs_list = []
-            for p in docs_list:
-                dialog.rag_documents_list.addItem(p)
 
             # Context consolidation config (load)
             _use_cons = str(
@@ -367,29 +355,6 @@ class LLMOperationsMixin:
             dialog.consolidation_max_tokens_spin.setValue(
                 int(node.get_property("consolidation_max_tokens") or 64)
             )
-
-            # Skills configuration
-            try:
-                import json as _json
-
-                skills_raw = node.get_property("skills") or "[]"
-                skills_list = (
-                    _json.loads(skills_raw)
-                    if isinstance(skills_raw, str)
-                    else (skills_raw or [])
-                )
-                dialog._populate_skills_table(skills_list)
-            except Exception:
-                pass
-
-            use_skill_routing_str = node.get_property("use_skill_routing") or "true"
-            use_skill_routing = use_skill_routing_str.lower() in (
-                "true",
-                "1",
-                "yes",
-                "on",
-            )
-            dialog.skill_routing_check.setChecked(use_skill_routing)
 
             # ----- llama.cpp config (load) -----
             use_llamacpp_str = node.get_property("use_llamacpp") or "false"
@@ -513,38 +478,7 @@ class LLMOperationsMixin:
                     "consolidation_max_tokens",
                     str(dialog.consolidation_max_tokens_spin.value()),
                 )
-                try:
-                    import json as _json
-
-                    docs = [
-                        dialog.rag_documents_list.item(i).text()
-                        for i in range(dialog.rag_documents_list.count())
-                    ]
-                    node.set_property("rag_documents", _json.dumps(docs))
-                except Exception:
-                    node.set_property("rag_documents", "[]")
                 node.set_property("tool_descriptions", "{}")
-
-                # Skills configuration
-                try:
-                    cfg = dialog.get_config()
-                    skills = cfg.get("skills", [])
-                    import json as _json
-
-                    node.set_property(
-                        "skills",
-                        _json.dumps(skills) if isinstance(skills, list) else skills,
-                    )
-                except Exception:
-                    node.set_property("skills", "[]")
-                try:
-                    cfg = dialog.get_config()
-                    use_skill_routing = cfg.get("use_skill_routing", True)
-                    node.set_property(
-                        "use_skill_routing", str(use_skill_routing).lower()
-                    )
-                except Exception:
-                    node.set_property("use_skill_routing", "true")
 
                 # Orchestrator switch (ON = orchestrator; OFF = vanilla LLM).
                 try:

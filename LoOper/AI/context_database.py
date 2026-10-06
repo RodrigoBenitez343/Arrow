@@ -43,13 +43,14 @@ class ContextDatabase:
         raw = str(chain_id)
         return os.path.splitext(os.path.basename(raw))[0]
 
-    def __init__(self, db_path: Optional[str] = None, row_cap: int = 200):
+    def __init__(self, db_path: Optional[str] = None, row_cap: int = 0):
         """Initialize the context database.
 
         Args:
             db_path: SQLite file path (defaults to the project data dir).
             row_cap: Maximum rows kept per (chain_id, node_id) when pushing.
-                0 disables the cap.
+                0 disables the cap (UNLIMITED - the pool keeps its whole
+                history so nothing a node wrote is silently evicted).
         """
         if db_path is None:
             if getattr(sys, 'frozen', False):
@@ -335,6 +336,86 @@ class ContextDatabase:
             logger.info(f"Deleted {cursor.rowcount} entries from chain={chain_id} node={node_id}")
         except sqlite3.Error as e:
             logger.error(f"Error in delete: {e}")
+
+    def pull_rows(self, chain_id: Optional[str] = None,
+                  node_id: Optional[str] = None,
+                  limit: int = 0) -> List[dict]:
+        """Row-level pull: the newest entries FIRST, each WITH its row id.
+
+        ``pull()`` returns ``{key: [values]}`` with no ids, so it can only be
+        shown read-only.  The audit dialog needs the row id to edit a value or
+        delete a single entry, so this returns one dict per row.  ``limit`` 0
+        (default) means UNLIMITED - the whole stored history.
+
+        When *node_id* is given without *chain_id*, rows are pulled across ALL
+        chains (node ids are unique; GUI runs use a temp chain namespace).
+        """
+        try:
+            conn = self._get_conn()
+            cursor = conn.cursor()
+            wheres, params = [], []
+            if chain_id:
+                wheres.append("chain_id = ?")
+                params.append(self.normalize_chain_id(chain_id))
+            if node_id:
+                wheres.append("node_id = ?")
+                params.append(str(node_id))
+            if not wheres:
+                return []
+            sql = ("SELECT id, chain_id, node_id, key, value, source_node_id, "
+                   "source_type, created_at FROM context_entries WHERE "
+                   + " AND ".join(wheres)
+                   + " ORDER BY created_at DESC, id DESC")
+            if int(limit) > 0:
+                sql += " LIMIT ?"
+                params.append(int(limit))
+            cursor.execute(sql, params)
+            rows = []
+            for (rid, ch, nid, key, v_json, src, stype, created) in cursor.fetchall():
+                try:
+                    value = json.loads(v_json) if v_json else ""
+                except (json.JSONDecodeError, TypeError):
+                    value = v_json
+                rows.append({
+                    "id": rid, "chain_id": ch, "node_id": nid, "key": key,
+                    "value": value, "source_node_id": src,
+                    "source_type": stype, "created_at": created,
+                })
+            return rows
+        except sqlite3.Error as e:
+            logger.error(f"Error in pull_rows: {e}")
+            return []
+
+    def update_entry(self, row_id: int, value: Any) -> bool:
+        """Correct ONE stored entry IN PLACE (the audit dialog's 'edit')."""
+        try:
+            conn = self._get_conn()
+            value_json = json.dumps(value) if not isinstance(value, str) else value
+            with self._write_lock:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE context_entries SET value = ? WHERE id = ?",
+                    (value_json, int(row_id)),
+                )
+                conn.commit()
+                return bool(cursor.rowcount)
+        except sqlite3.Error as e:
+            logger.error(f"Error in update_entry: {e}")
+            return False
+
+    def delete_entry(self, row_id: int) -> bool:
+        """Delete ONE stored entry by row id (the audit dialog's 'delete')."""
+        try:
+            conn = self._get_conn()
+            with self._write_lock:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "DELETE FROM context_entries WHERE id = ?", (int(row_id),))
+                conn.commit()
+                return bool(cursor.rowcount)
+        except sqlite3.Error as e:
+            logger.error(f"Error in delete_entry: {e}")
+            return False
 
     def clear(self, chain_id: str, node_id: Optional[str] = None) -> int:
         """Clear entries for a chain, optionally filtered by node.

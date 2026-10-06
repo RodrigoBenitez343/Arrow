@@ -239,3 +239,53 @@ def test_only_the_engine_slots_are_offered_and_the_keys_stay_unique(monkeypatch)
     assert len(seen["criteria"]) == h._FF_TREE_OPTIONS
     assert len(set(seen["criteria"])) == len(seen["criteria"])
     assert "Contact info (2)" in seen["criteria"]
+
+
+def test_a_pick_that_shares_no_term_with_the_field_keeps_the_ladder(monkeypatch):
+    """The tree spans the WHOLE page when unscoped, so a field the ladder cannot
+    resolve could be "matched" to page chrome.  Live: the required 'Linkedin
+    Profile Url' was resolved to the site's global 'Search' box behind the modal
+    and the marker then led the ladder to another question's control (the field
+    read back the EMAIL and was skipped as 'already filled').  A pick whose own
+    label shares NO term with the field is not this field: keep the ladder."""
+    h = _Harness()
+    h._ff_web_driver = _FakeDriver(_payload(_flat((0, -1, True, "Search"))))
+    _stub_laya(monkeypatch, pick=lambda *a: "Search")
+    field = {"id": "f", "label": "Linkedin Profile Url*", "kind": "text"}
+
+    assert h._ff_resolve_target(field, h._ff_cfg({}), None) == "ladder"
+    assert "_ff_tree_sel" not in field
+
+
+def test_a_branch_label_names_the_control_the_question_means(monkeypatch):
+    """A label-less branch carrying more controls than the label can hold must
+    STILL name the one this field means: live, a LinkedIn form branch listed its
+    first four controls and cut 'Location (city)*' off, so Laya was offered no
+    option naming the field and fell to the page's 'Search' box.  The controls
+    whose own label matches the question are listed FIRST."""
+    h = _Harness()
+    rows = [
+        (0, -1, False, "Form"),
+        (1, 0, False, ""),               # label-less: described by its controls
+        (2, 1, True, "First name*"),
+        (3, 1, True, "Last name*"),
+        (4, 1, True, "Email address*"),
+        (5, 1, True, "Phone country code*"),
+        (6, 1, True, "Location (city)*"),  # the 5th control: the old label cut it
+        (7, 0, True, "Search"),            # page chrome in the SAME level
+    ]
+    h._ff_web_driver = _FakeDriver(_payload(_flat(*rows)))
+    calls = []
+
+    def _pick(state, instructions, criteria):
+        calls.append(list(criteria))
+        return next((c for c in criteria if "Location" in c), criteria[0])
+
+    _stub_laya(monkeypatch, pick=_pick)
+    field = {"id": "f", "label": "Location (city)*", "kind": "combo"}
+
+    assert h._ff_resolve_target(field, h._ff_cfg({}), None) == "laya-tree"
+    # The branch NAMES the field it holds (not just its first four controls).
+    assert any("Location (city)*" in c for c in calls[0])
+    # ...so the pick lands on the field, not the page's 'Search' box.
+    assert field["_ff_tree_sel"] == '[data-wvp-ff="6"]'

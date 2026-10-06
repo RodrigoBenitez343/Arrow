@@ -6,10 +6,6 @@ each value through probe-based retrieval.  The runtime owns the field->value
 binding; the model only ever returns one value for one field.
 """
 
-import json
-import os
-import re
-
 from PyQt5.QtWidgets import QDialog, QMessageBox
 
 from .utils import get_logger
@@ -46,36 +42,8 @@ class FormFillerOperationsMixin:
             from ...dialogs.form_filler_dialog import FormFillerDialog
 
             current = dict(node.get_form_filler_config())
-            raw_docs = node.get_property('rag_documents') or '[]'
-            try:
-                current['rag_documents'] = (
-                    json.loads(raw_docs) if isinstance(raw_docs, str)
-                    else (raw_docs or [])
-                )
-            except Exception:
-                current['rag_documents'] = []
 
-            # The corrections document this node OWNS (the runtime's
-            # _ff_corrections_path): resolved here from the chain directory so
-            # the dialog can SHOW it instead of asking the user to point at a
-            # file.
-            owned_corrections = ''
-            try:
-                cfg_mgr = getattr(self.parent_widget, 'config_manager', None)
-                chain_file = (getattr(cfg_mgr, '_current_chain_file', '') or ''
-                              if cfg_mgr else '')
-                if chain_file:
-                    stem = re.sub(r"[^A-Za-z0-9_.-]+", "_",
-                                  str(node.id or "form")) or "form"
-                    owned_corrections = os.path.join(
-                        os.path.dirname(str(chain_file)),
-                        "%s_corrections.md" % stem,
-                    )
-            except Exception:
-                owned_corrections = ''
-
-            dialog = FormFillerDialog(self.parent_widget, current,
-                                      corrections_path=owned_corrections)
+            dialog = FormFillerDialog(self.parent_widget, current)
             if dialog.exec_() != QDialog.Accepted:
                 logger.debug("Form Filling dialog cancelled")
                 return
@@ -101,14 +69,12 @@ class FormFillerOperationsMixin:
             node.set_property('temperature', str(cfg['temperature']))
             node.set_property('max_tokens', str(cfg['max_tokens']))
             node.set_property('context_size', str(cfg.get('context_size', 0)))
-            node.set_property('rag_documents', json.dumps(cfg.get('rag_documents', [])))
             node.set_property('web_scope', cfg.get('web_scope', '') or '')
 
             node.set_name(f"Form Filling: {cfg['mode']}")
             logger.info(
                 f"Successfully edited Form Filling node {node.id}: "
-                f"mode={cfg['mode']}, engine={cfg['engine']}, "
-                f"documents={len(cfg.get('rag_documents', []))}"
+                f"mode={cfg['mode']}, engine={cfg['engine']}"
             )
         except Exception as e:
             logger.error(f"Error editing Form Filling node: {e}")

@@ -59,9 +59,19 @@ class ContextNode(BaseNode):
 
         # Properties — minimal config
         self.create_property('label', '')         # Human-readable description
-        self.create_property('max_history', 10)   # Recent entries to keep/serve
+        # 0 = UNLIMITED: the pool serves its WHOLE history (no entry cap).
+        self.create_property('max_history', 0)    # Recent entries to keep/serve (0=all)
         self.create_property('persistent', True)  # Keep context across runs
         self.create_property('clear_on_finish', False)  # Task 13: Clear all stored data after chain finishes
+        # Documents stream: a JSON list of file paths (a resume / knowledge
+        # document) held ALONGSIDE the chat history, as a separate stream.  The
+        # pool reads them to text and serves them, so a node wired to ctx_out
+        # gets the source material WITHOUT attaching a document to itself.
+        self.create_property('documents', '[]')
+        # Skills stream: a JSON list of free-text notes AND/OR skill file paths
+        # (dropped from the desktop), held alongside the history and served as
+        # its own stream - the pool's shareable "how to" knowledge.
+        self.create_property('skills', '[]')
         # Internal property to preserve the original config node_id across graph save/load.
         # Must be registered here (not set dynamically at load time) because PyInstaller
         # compiled builds cannot create NodeGraphQt properties on-the-fly.
@@ -74,10 +84,12 @@ class ContextNode(BaseNode):
         """Return the minimal configuration for this node."""
         return {
             'label': self.get_property('label') or '',
-            'max_history': int(self.get_property('max_history') or 10),
+            'max_history': int(self.get_property('max_history') or 0),
             'persistent': bool(self.get_property('persistent')),
             'clear_on_finish': bool(self.get_property('clear_on_finish')),
             'scope': str(self.get_property('scope') or 'local'),
             'shared_context_chain_file': str(self.get_property('shared_context_chain_file') or ''),
             'shared_context_node_id': str(self.get_property('shared_context_node_id') or ''),
+            'documents': str(self.get_property('documents') or '[]'),
+            'skills': str(self.get_property('skills') or '[]'),
         }

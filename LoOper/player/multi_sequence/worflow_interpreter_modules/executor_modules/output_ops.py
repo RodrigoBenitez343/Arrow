@@ -270,38 +270,40 @@ class OutputMixin:
             node_id, len(collected_parts), len(output_value),
         )
 
-        # ── Fire mid-execution popup callback ──
-        # In agent mode this enables per-output rating in the overlay.
-        # The response is also returned via _build_context_response, so we
-        # set a flag to suppress duplicate display there.
-        if popup_on_finish and output_value:
-            logger.info(
-                "[OUTPUT] popup_on_finish triggered for node %s: label=%s, output_value=%d chars, agent_visible=%s, show_rating=%s",
-                node_id, label, len(output_value), agent_visible, show_rating,
-            )
+        # ── Fire mid-execution popup / agent-chat callback ──
+        # Agent mode: post the output into the agent chat (desktop overlay +
+        # every connected web client) and enable per-output rating.  Manual
+        # mode: drive the finish popup.  A branch/dead-end Output node may
+        # carry only its predefined static text (tts_text) with no upstream
+        # data — surface that text too, so a fixed-text output still posts
+        # (it used to reach only the activity memory).
+        _display_text = str(output_value or '').strip()
+        if not _display_text and render_mode == 'text':
+            _display_text = str(tts_text or '').strip()
+
+        # Agent mode is active when _ask_user_callback is set (chat overlay).
+        _agent_active = False
+        try:
+            _agent_active = self.llm_executor.get_variable("_ask_user_callback") is not None
+        except Exception:
+            _agent_active = False
+
+        # The agent-facing toggles (agent_visible + overlay_visible) govern
+        # agent mode; the manual popup toggle governs manual mode.  Posting
+        # used to be gated by popup_on_finish in BOTH modes, so a manual-only
+        # flag also silenced the agent chat.
+        _post_here = (
+            (bool(agent_visible) and bool(overlay_visible))
+            if _agent_active else bool(popup_on_finish)
+        )
+        logger.info(
+            "[OUTPUT] node %s: agent_active=%s, agent_visible=%s, "
+            "overlay_visible=%s, popup_on_finish=%s, %d display char(s), post=%s",
+            node_id, _agent_active, agent_visible, overlay_visible,
+            popup_on_finish, len(_display_text), _post_here,
+        )
+        if _display_text and _post_here:
             try:
-                # Agent mode is active when _ask_user_callback is set (chat overlay)
-                _agent_active = False
-                try:
-                    _agent_active = self.llm_executor.get_variable("_ask_user_callback") is not None
-                except Exception:
-                    _agent_active = False
-                logger.info(
-                    "[OUTPUT] Agent mode detection for output node %s: _ask_user_callback=%s",
-                    node_id, _agent_active,
-                )
-                if _agent_active and not overlay_visible:
-                    # Per-node toggle: keep this output silent in the agent
-                    # chat overlay — it must not post mid-execution NOR
-                    # resurface as the final reply (chain_executor skips it
-                    # via output_meta).  The linear activity memory still
-                    # records this node's output (run_memory core hook).
-                    logger.info(
-                        "[OUTPUT] Node %s silent in agent overlay "
-                        "(overlay_visible=False) — not posting; memory still "
-                        "records it", node_id,
-                    )
-                    return self._get_output_next_node(node, 'output')
                 cb = getattr(self, '_on_output_ready', None)
                 if cb:
                     logger.info("[OUTPUT] Calling on_output_ready callback for node %s", node_id)
@@ -346,12 +348,12 @@ class OutputMixin:
                             "calling callback with show_rating=%s, tool_path=%s, tool_alias=%s",
                             show_rating, _tool_path, _tool_alias,
                         )
-                        cb(label or 'Chain Output', output_value,
+                        cb(label or 'Chain Output', _display_text,
                            tool_chain_path=_tool_path, tool_alias=_tool_alias,
                            show_rating=show_rating, mode=render_mode, asset=asset)
                     else:
                         logger.info("[OUTPUT] Manual mode: calling callback without rating")
-                        cb(label or 'Chain Output', output_value,
+                        cb(label or 'Chain Output', _display_text,
                            mode=render_mode, asset=asset)
                     logger.info("[OUTPUT] on_output_ready callback completed for node %s", node_id)
                 else:
@@ -362,6 +364,16 @@ class OutputMixin:
                     )
             except Exception as _ocb_err:
                 logger.warning('[OUTPUT] on_output_ready callback failed: %s', _ocb_err)
+        elif _agent_active and not overlay_visible:
+            # Per-node toggle: keep this output silent in the agent chat
+            # overlay — it must not post mid-execution NOR resurface as the
+            # final reply (chain_executor skips it via output_meta).  The
+            # linear activity memory still records this node's output.
+            logger.info(
+                "[OUTPUT] Node %s silent in agent overlay "
+                "(overlay_visible=False) — not posting; memory still records it",
+                node_id,
+            )
 
         return self._get_output_next_node(node, 'output')
 

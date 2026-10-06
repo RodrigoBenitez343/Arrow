@@ -97,6 +97,43 @@ def test_manual_mode_popup_unaffected_by_overlay_toggle():
     assert h.get_variable('_agent_mid_execution_outputs_shown') is None
 
 
+def _static_node(overlay_visible=True):
+    """A dead-end Output node carrying only its predefined static text."""
+    return {
+        'id': '0xout', 'type': 'output',
+        'data': {
+            'label': 'Start', 'overlay_visible': overlay_visible,
+            'popup_on_finish': False, 'render_mode': 'text',
+            'show_rating': True, 'tts_text': 'starting page filling',
+        },
+        'inputs': [{
+            'from_node': '0xup', 'input_port': 'input', 'output_type': 'data',
+        }],
+        'connections': {},
+    }
+
+
+def test_static_text_output_posts_to_agent_chat():
+    # A branch/dead-end Output node has no collected data (nothing upstream):
+    # only its predefined static text.  It must still post to the agent chat
+    # (desktop overlay + every web client) instead of reaching only memory.
+    # popup_on_finish is False on purpose: agent posting must not depend on a
+    # manual-mode toggle.
+    h = _Harness(agent_mode=True)
+    h._execute_output_node(_static_node(), None)
+
+    assert len(h.calls) == 1
+    assert h.calls[0]['label'] == 'Start'
+    assert h.calls[0]['content'] == 'starting page filling'
+    assert h.get_variable('_agent_mid_execution_outputs_shown') is True
+
+
+def test_static_text_output_respects_overlay_silence():
+    h = _Harness(agent_mode=True)
+    h._execute_output_node(_static_node(overlay_visible=False), None)
+    assert h.calls == []
+
+
 class _FakeExec:
     """Minimal executor for _build_context_response (final-reply builder)."""
 

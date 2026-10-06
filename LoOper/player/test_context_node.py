@@ -916,6 +916,38 @@ class TestWorkflowGraphBuilder(unittest.TestCase):
         
         print("\n✓ test_workflow_graph_builder_context_nodes PASSED\n")
 
+    def test_form_filler_ctx_out_edge_is_wired_into_the_context_inputs(self):
+        """The learned answers + per-field state ride the form filler's ctx_out
+        into a Context node's ctx_in.  The builder must KEEP that ctx_out edge:
+        dropping it left the Context node with 'NO connected upstream data', so
+        the pool never stored the learned answers and the audit dialog showed
+        none - even though the chain file wires it."""
+        ff = {
+            'id': 'ff_1', 'node_id': 'ff_1', 'type': 'form_filler',
+            'connections': [
+                {'target_node_id': 'ctx_1', 'output_port': 'ctx_out',
+                 'input_port': 'ctx_in'},
+                {'target_node_id': 'out_1', 'output_port': 'output',
+                 'input_port': 'input'},
+            ],
+        }
+        ctx = {'id': 'ctx_1', 'node_id': 'ctx_1', 'type': 'context',
+               'connections': []}
+        graph = WorkflowGraphBuilder(
+            form_filler_nodes=[ff], context_nodes=[ctx]
+        ).build_workflow_graph()
+
+        ins = graph['ctx_1'].get('inputs') or []
+        self.assertTrue(
+            any(i.get('from_node') == 'ff_1'
+                and (i.get('output_type') or i.get('output_port')) == 'ctx_out'
+                for i in ins),
+            'form filler ctx_out edge must be built into the context inputs',
+        )
+        # The execution edge must still be present too.
+        self.assertIn('output', graph['ff_1']['connections'])
+        self.assertIn('ctx_out', graph['ff_1']['connections'])
+
 
 class TestFullPipeline(unittest.TestCase):
     """Test cases for full workflow pipeline with context nodes."""

@@ -36,6 +36,9 @@ class SchedulerService:
         self._thread: Optional[threading.Thread] = None
         self._schedules: Dict[str, Dict] = {}
         self._running_schedules: set = set()  # Track currently executing schedules
+        # Agent UI (overlay + web clients) used as the fallback ask/output
+        # surface for runs with no caller callbacks (scheduled runs).
+        self._agent_surface = None
         self._load()
 
     # ------------------------- Public API -------------------------
@@ -116,21 +119,34 @@ class SchedulerService:
             schedule['next_run'] = self._compute_next_run(schedule, from_time=datetime.now())
             self._save()
 
+    def set_agent_surface(self, surface) -> None:
+        """Attach the agent UI (desktop overlay + web/mobile clients).
+
+        Used as the fallback ask/output surface for runs with no caller
+        callbacks (scheduled runs), so their questions and Output-node content
+        still reach the user instead of a desktop dialog nobody sees.
+        """
+        self._agent_surface = surface
+
     def run_chain_now(self, chain_path: str, ask_user_callback=None,
+                      ask_user_v2_callback=None, on_output_ready=None,
                       stop_flag=None, on_complete=None):
         """Execute *chain_path* immediately, in-process (manual / web playback).
 
         Reuses the schedule launcher so sandbox overrides, stop handling and
         background threading behave identically to a scheduled run.  The
-        caller may override three things on the schedule dict:
+        caller may override these on the schedule dict:
 
-        ``ask_user_callback`` — where an Input node's question goes.  Without
-        it the node falls back to a desktop dialog, which is wrong for a run
-        the user started from the phone.
+        ``ask_user_callback`` / ``ask_user_v2_callback`` — where an Input or
+        form-filler node's question goes.  Without them the node falls back to
+        a desktop dialog, which is wrong for a run the user started from the
+        phone; the v2 channel carries the choice/select options.
+        ``on_output_ready`` — displays Output-node content in the agent chat
+        (overlay + every web client), exactly as an agent-mode chat run does.
         ``stop_flag`` — the caller's own abort flag (the phone's Stop button),
         instead of the global ESC monitor alone.
-        ``on_complete`` — fired once when execution ends, success or failure,
-        so the caller can clear its "running" state.
+        ``on_complete`` — fired once when execution ends (with the chain
+        result), so the caller can clear its "running" state and show it.
         """
         if not chain_path:
             raise ValueError('chain_path required')
@@ -138,6 +154,8 @@ class SchedulerService:
             'chain_path': chain_path,
             'id': f'manual-{uuid.uuid4().hex[:8]}',
             'ask_user_callback': ask_user_callback,
+            'ask_user_v2_callback': ask_user_v2_callback,
+            'on_output_ready': on_output_ready,
             'stop_flag': stop_flag,
             'on_complete': on_complete,
         })
@@ -279,6 +297,7 @@ class SchedulerService:
 
         def _execute():
             """Run the chain in a background thread, matching manual playback flow."""
+            result = None
             try:
                 logger.info(f"[Scheduler] Starting in-process chain execution: {chain_path}")
                 try:
@@ -323,7 +342,23 @@ class SchedulerService:
                 # is the only abort source; a caller-run chain supplies its
                 # own stop_flag and/or ask surface instead).
                 start_global_monitoring()
+                _surface = getattr(self, '_agent_surface', None)
                 _ask_cb = schedule.get('ask_user_callback')
+                _ask_v2_cb = schedule.get('ask_user_v2_callback')
+                _out_cb = schedule.get('on_output_ready')
+                # Scheduled runs carry no caller callbacks: fall back to the
+                # attached agent UI so questions and Output-node content still
+                # reach the desktop overlay and every web/mobile client.
+                if _surface is not None:
+                    if _ask_cb is None:
+                        _ask_cb = _surface._make_ask_user_callback()
+                    if _ask_v2_cb is None:
+                        try:
+                            _ask_v2_cb = _surface._make_ask_user_v2_callback()
+                        except Exception:
+                            _ask_v2_cb = None
+                    if _out_cb is None:
+                        _out_cb = _surface._make_output_display_callback()
                 stop_flag = schedule.get('stop_flag') or create_stop_flag()
                 if _ask_cb is None:
                     # No caller surface: Input nodes fall back to the desktop
@@ -338,6 +373,8 @@ class SchedulerService:
                     result, _player = play_chain_with_tailcalls(
                         chain_path, stop_flag=stop_flag,
                         ask_user_callback=_ask_cb,
+                        ask_user_v2_callback=_ask_v2_cb,
+                        on_output_ready=_out_cb,
                         player_setup_callback=_apply_sandbox,
                         run_source="schedule",
                     )
@@ -361,7 +398,7 @@ class SchedulerService:
                 _done = schedule.get('on_complete')
                 if _done is not None:
                     try:
-                        _done()
+                        _done(result)
                     except Exception:
                         logger.exception("[Scheduler] on_complete callback failed")
 

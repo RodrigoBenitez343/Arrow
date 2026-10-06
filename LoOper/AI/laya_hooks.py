@@ -33,6 +33,15 @@ _RELEVANCE_STATEMENT = "This text is relevant to: {topic}"
 _SUFFICIENCY_STATEMENT = "This text fully answers: {task}"
 # The STATE is the composed claim; the instruction names the premise.
 _GROUNDING_STATEMENT = "This text is supported by the source excerpts: {evidence}"
+# The STATE is the value ALREADY on a form field; the instruction names the
+# field's own question AND the trusted source.  The source (the node's own
+# document, which the user can swap/edit) is the ROOT TRUTH the verdict is
+# judged against: a pre-filled field counts as correct only when that source
+# supports it.
+_ACCURACY_STATEMENT = (
+    "This text is the correct answer to the form field: {field} "
+    "according to: {evidence}"
+)
 # The STATE is the model's approximate answer; the instruction names the form
 # question and the option under test.  Each option is scored independently so
 # the pick carries a CONFIDENCE (argmax + margin), not just a single choice.
@@ -158,6 +167,43 @@ def grounding_or(claim: str, evidence: str) -> Optional[bool]:
         return None
 
 
+def value_accuracy_verdict(field: str, value: str,
+                           evidence: str) -> Optional[bool]:
+    """Does *value* (already on a form field) match the TRUSTED SOURCE?
+
+    A pre-filled field is not automatically correct: the page can hold a stale
+    answer, and a read can resolve a SIBLING control (bringing back a value that
+    belongs to another question).  ``evidence`` is the node's OWN source - the
+    document set on the node dialog, which the user can swap/edit - i.e. the
+    root truth.  ``True`` -> the source supports the value (skip the field),
+    ``False`` -> wrong / unrelated (refill it), ``None`` when the engine OR the
+    source is unavailable (the caller then keeps its existing skip rule).
+    """
+    v = str(value or "").strip()
+    f = str(field or "").strip()
+    ev = str(evidence or "").strip()
+    if not v or not f or not ev:
+        return None
+    p = _noul(v[:220], _ACCURACY_STATEMENT.format(field=f[:200], evidence=ev[:1200]))
+    if p is None:
+        return None
+    logger.info("Laya accuracy verdict for %r: p=%.3f", f[:50], p)
+    return bool(p > _NOUL_THRESHOLD)
+
+
+def value_accuracy_or(field: str, value: str, evidence: str,
+                      fallback: Optional[Callable[[], object]] = None):
+    """Laya accuracy verdict, else *fallback()*, else None.  Never raises."""
+    try:
+        verdict = value_accuracy_verdict(field, value, evidence)
+    except Exception as exc:  # noqa: BLE001 - never break a pipeline
+        logger.warning("Laya accuracy verdict failed: %s", exc)
+        verdict = None
+    if verdict is not None:
+        return verdict
+    return fallback() if callable(fallback) else None
+
+
 def choose_option(question: str, answer: str,
                   options: Sequence[str]) -> Tuple[Optional[int], bool]:
     """Option pick for *answer*, plus whether the engine could ANSWER at all.
@@ -209,6 +255,50 @@ def choose_option(question: str, answer: str,
         return best, True
     except Exception as exc:  # noqa: BLE001 - never break a pipeline
         logger.warning("Laya choice verdict failed: %s", exc)
+        return None, False
+
+
+def choose_option_by_source(question: str, source: str,
+                            options: Sequence[str]) -> Tuple[Optional[int], bool]:
+    """The option the TRUSTED SOURCE best supports (argmax, no margin).
+
+    The model's ANSWER can be a lossy paraphrase of the source ("Buenos Aires"
+    for "Buenos Aires, Buenos Aires Province, Argentina"), so scoring THAT
+    cannot separate two close options.  Scoring the SOURCE text instead asks
+    "which option does the source itself describe?" and returns the HIGHEST
+    scoring option above the threshold - the most accurate one - which is how a
+    human picks the city over the province when the source spells out both.
+
+    Returns ``(index, engine_answered)``: ``(i, True)`` a pick; ``(None, True)``
+    nothing cleared the threshold; ``(None, False)`` the engine was unavailable.
+    Never raises.
+    """
+    try:
+        opts = [str(o) for o in (options or []) if str(o).strip()]
+        src = str(source or "").strip()
+        if not src or not opts:
+            return None, False
+        q = str(question or "")[:200]
+        scores: List[Optional[float]] = [
+            _noul(src[:220], _CHOICE_STATEMENT.format(question=q, option=o))
+            for o in opts[:_MAX_CHOICE_OPTIONS]
+        ]
+        if any(s is None for s in scores):
+            return None, False
+        best = max(range(len(scores)), key=lambda i: scores[i])
+        if scores[best] <= _NOUL_THRESHOLD:
+            logger.info(
+                "Laya source pick: no option cleared the threshold (best %.2f, %r)",
+                scores[best], opts[best][:60],
+            )
+            return None, True
+        logger.info(
+            "Laya source pick: %r (p=%.2f) for %r",
+            opts[best][:60], scores[best], q[:40],
+        )
+        return best, True
+    except Exception as exc:  # noqa: BLE001 - never break a pipeline
+        logger.warning("Laya source pick failed: %s", exc)
         return None, False
 
 

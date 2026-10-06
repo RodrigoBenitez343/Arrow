@@ -150,6 +150,11 @@ class ContextOperationsMixin:
                 node.set_property('persistent', config['persistent'])
                 node.set_property('clear_on_finish', config['clear_on_finish'])
                 node.set_property('scope', config['scope'])
+                # Documents / skills streams (JSON lists of paths / notes).
+                if 'documents' in config:
+                    node.set_property('documents', config['documents'])
+                if 'skills' in config:
+                    node.set_property('skills', config['skills'])
                 
                 if config['label']:
                     node.set_name(f"Context: {config['label']}")

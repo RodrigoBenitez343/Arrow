@@ -99,17 +99,13 @@ def _constrain_combo(combo):
 class FormFillerDialog(ModernDialog):
     """Configuration dialog for the Form Filling node."""
 
-    def __init__(self, parent, current_config=None, corrections_path=""):
+    def __init__(self, parent, current_config=None):
         super().__init__(
             parent,
             title=_("Form Filling Configuration"),
             help_topic="form-filler-node",
         )
         self.current_config = current_config or {}
-        # WHERE the node-owned corrections document lands (resolved by the
-        # caller from the chain directory); shown READ-ONLY - the user never
-        # points this node at a file.
-        self._corrections_path = corrections_path or ""
         self.setModal(True)
         self.resize(560, 720)
         self.setup_ui()
@@ -223,7 +219,7 @@ class FormFillerDialog(ModernDialog):
         self.instruction_edit = QTextEdit()
         self.instruction_edit.setMaximumHeight(80)
         self.instruction_edit.setPlaceholderText(
-            _("e.g. fill the job application using my resume and the documents below")
+            _("e.g. fill the job application using my resume and the wired-in context")
         )
         task_layout.addWidget(self.instruction_edit)
 
@@ -279,29 +275,12 @@ class FormFillerDialog(ModernDialog):
         retr_layout.addWidget(self.consolidate_checkbox, 4, 0, 1, 2)
         retr_help = QLabel(
             _("Each field's label is the probe; only the most relevant slices "
-              "of the documents below reach the model (keeps the window small).")
+              "of the wired-in context reach the model (keeps the window small).")
         )
         retr_help.setWordWrap(True)
         retr_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
         retr_layout.addWidget(retr_help, 5, 0, 1, 2)
         layout.addWidget(retr_group)
-
-        # ── Documents (the context probed per field) ──
-        docs_group = QGroupBox(_("Documents"))
-        docs_layout = QVBoxLayout(docs_group)
-        docs_layout.setContentsMargins(8, 12, 8, 8)
-        self.rag_documents_list = QListWidget()
-        self.rag_documents_list.setMinimumHeight(110)
-        docs_layout.addWidget(self.rag_documents_list)
-        btns = QHBoxLayout()
-        add_btn = QPushButton(_("Add Document"))
-        rem_btn = QPushButton(_("Remove Selected"))
-        add_btn.clicked.connect(self.add_document)
-        rem_btn.clicked.connect(self.remove_selected_document)
-        btns.addWidget(add_btn)
-        btns.addWidget(rem_btn)
-        docs_layout.addLayout(btns)
-        layout.addWidget(docs_group)
 
         # ── Page scope (web): confine field detection to a picked container ──
         self._web_scope = ""
@@ -359,8 +338,8 @@ class FormFillerDialog(ModernDialog):
         self.ask_user_checkbox.setToolTip(
             _("When nothing grounds a field, ask the question here and WAIT for "
               "the answer (the fill pauses). The answer fills the field and is "
-              "appended to this node's own corrections file, so a later run "
-              "retrieves it instead of asking again.")
+              "written into the wired-in Context node, so a later run retrieves "
+              "it instead of asking again.")
         )
         beh_layout.addWidget(self.ask_user_checkbox, 4, 0, 1, 2)
         self.answer_na_checkbox = ModernToggle(
@@ -377,19 +356,6 @@ class FormFillerDialog(ModernDialog):
               "option; a field with none is left alone.")
         )
         beh_layout.addWidget(self.answer_na_checkbox, 3, 0, 1, 2)
-        beh_layout.addWidget(QLabel(_("Corrections:")), 5, 0)
-        self.corrections_label = QLabel()
-        self.corrections_label.setWordWrap(True)
-        self.corrections_label.setStyleSheet("color: #888; font-size: 10px;")
-        self.corrections_label.setToolTip(
-            _("The corrections document this node OWNS - never a file you have "
-              "to point at. When a field's answer cannot be grounded, the "
-              "question is asked here and the answer is appended to this file "
-              "and read back as a source on every run, so the field is never "
-              "asked again.")
-        )
-        beh_layout.addWidget(self.corrections_label, 5, 1)
-        self._update_corrections_label()
         self.repair_checkbox = ModernToggle(
             text=_("Repair values the page rejects (re-check validity after filling)")
         )
@@ -428,27 +394,6 @@ class FormFillerDialog(ModernDialog):
         self.ollama_model_label.setVisible(not use_llamacpp)
         self.gguf_model_combo.setVisible(use_llamacpp)
         self.gguf_model_label.setVisible(use_llamacpp)
-
-    def add_document(self):
-        path, _filter = QFileDialog.getOpenFileName(
-            self,
-            _("Select Document"),
-            os.path.expanduser("~"),
-            "All Files (*.*);;Text Files (*.txt *.md *.csv *.json);;"
-            "Word Documents (*.docx);;PDF Files (*.pdf)",
-        )
-        if path:
-            self.rag_documents_list.addItem(path)
-
-    def remove_selected_document(self):
-        for it in self.rag_documents_list.selectedItems():
-            self.rag_documents_list.takeItem(self.rag_documents_list.row(it))
-
-    def _update_corrections_label(self):
-        """Show where this node keeps the answers it learns (never editable)."""
-        self.corrections_label.setText(
-            self._corrections_path
-            or _("a file this node owns beside the chain"))
 
     # ── Page scope picker ──────────────────────────────────────────────
 
@@ -564,10 +509,6 @@ class FormFillerDialog(ModernDialog):
             'temperature': self.temperature_spin.value(),
             'max_tokens': self.max_tokens_spin.value(),
             'context_size': self.context_size_spin.value(),
-            'rag_documents': [
-                self.rag_documents_list.item(i).text()
-                for i in range(self.rag_documents_list.count())
-            ],
             'web_scope': self._web_scope,
         }
 
@@ -636,10 +577,6 @@ class FormFillerDialog(ModernDialog):
             repair if isinstance(repair, bool) else str(repair).lower() in ('true', '1', 'yes', 'on')
         )
         self.repair_attempts_spin.setValue(_int('repair_attempts', 2))
-
-        for doc in (cfg.get('rag_documents') or []):
-            if doc:
-                self.rag_documents_list.addItem(str(doc))
 
         self._web_scope = cfg.get('web_scope', '') or ''
         self._update_scope_label()
