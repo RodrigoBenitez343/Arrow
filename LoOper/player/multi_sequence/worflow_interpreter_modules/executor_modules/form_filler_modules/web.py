@@ -344,6 +344,7 @@ class FormFillerWebMixin:
             else:
                 ok = driver.execute_script(
                     web_actions.JS_SET_FIELD, selectors, want, value, kind,
+                    self._ff_run_scope(),
                 )
             if not ok:
                 # PROVENANCE: name the module file that actually served this call
@@ -400,6 +401,7 @@ class FormFillerWebMixin:
                 self._ff_field_selectors(field),
                 int(field.get("type_index") or 0),
                 (field.get("kind") or "text").lower(),
+                self._ff_run_scope(),
             )
         except Exception as exc:
             logger.debug("[FORM] Field state failed for '%s': %s", field.get("label"), exc)
@@ -409,6 +411,17 @@ class FormFillerWebMixin:
         except Exception:
             return None
         return data if isinstance(data, dict) else None
+
+    def _ff_run_scope(self):
+        """The selector ladder of the picked page scope for THIS run ('[]' = none).
+
+        The scope confines the field WRITE and READ-BACK the same way it confines
+        the enumeration, so the repair pass resolves from the user's container
+        instead of falling back to the whole page (the site chrome behind a
+        modal).  Set once per run in ``_execute_form_filling_node``; empty when no
+        scope was picked, which resolves to the whole document as before.
+        """
+        return getattr(self, "_ff_run_scope_sel", None) or []
 
     def _ff_read_web(self, field, stop_flag, driver=None):
         state = self._ff_field_state(field, stop_flag, driver)
@@ -465,13 +478,15 @@ class FormFillerWebMixin:
             return ""
         return text
 
-    def _ff_combo_options(self, field, stop_flag, driver=None):
+    def _ff_combo_options(self, field, stop_flag, driver=None, type_text=None):
         """Read a combobox's OPTION LIST, OPENING the popup when not rendered.
 
         A typeahead renders its options only once OPEN, so enumeration saw none
         (the field table read ``Options: (free text)``) and the model answered
         free text the page refused to submit.  This asks the page to peek, polls
-        until the list renders, then closes the popup again.  Best-effort: no
+        until the list renders, then closes the popup again.  When ``type_text``
+        is given it is TYPED into the control first - the query that reveals a
+        typeahead's list, which a bare open never shows.  Best-effort: no
         browser, no popup or an unreadable list returns [] (nothing changes).
         """
         try:
@@ -491,6 +506,7 @@ class FormFillerWebMixin:
             try:
                 raw = driver.execute_script(
                     web_actions.JS_COMBO_OPTIONS, selectors, want, open_once,
+                    type_text or "",
                 )
             except Exception as exc:
                 logger.debug("[FORM] Combo option read failed: %s", exc)

@@ -529,6 +529,61 @@ function __wvpFieldLabel(el) {
   // adopted as the field's LABEL (live: "Invalid input 418/20 418 of 20
   // characters" became the question, so the repair re-asked nonsense and the
   // field stayed rejected).  \\s / \\d survive as written; \\b does NOT.
+  // The field's OWN validation / error text is NOT part of its question.  A
+  // nearby block can hold BOTH the question and the page's rejection
+  // ("Linkedin Profile Url* This field is required"), which made the LABEL
+  // depend on the field's validity: it changed between passes, so the per-field
+  // memory and the learned-answers key never matched and EVERY pass re-ran the
+  // whole retrieval sweep.  The error text is read STRUCTURALLY (the field
+  // names it, or the page marks a nearby node invalid) - never a list of error
+  // WORDS, which is a language, not a rule.
+  function ownErrorTexts() {
+    var out = [];
+    function addErr(node) {
+      try {
+        if (!node || (node.contains && node.contains(el))) return;
+        var t = clean(node);
+        if (t && t.length <= 120 && out.indexOf(t) < 0) out.push(t);
+      } catch (e) {}
+    }
+    try {
+      var root = (el.getRootNode && el.getRootNode()) || el.ownerDocument || document;
+      var ids = String(el.getAttribute('aria-errormessage') || '').trim().split(' ')
+                .concat(String(el.getAttribute('aria-describedby') || '').trim().split(' '));
+      for (var i = 0; i < ids.length && i < 6; i++) {
+        if (!ids[i]) continue;
+        var n = null;
+        try { n = root.getElementById ? root.getElementById(ids[i]) : null; } catch (e) {}
+        if (!n) continue;
+        var cls = String(n.className || '');
+        if ((n.getAttribute && n.getAttribute('aria-invalid') === 'true')
+            || /error|invalid|feedback/i.test(cls)) addErr(n);
+      }
+    } catch (e) {}
+    try {
+      var up = el;
+      for (var d = 0; d < 4 && up; d++) {
+        var bad = (up.querySelectorAll ? up.querySelectorAll(
+          '[aria-invalid="true"], [class*="error" i], [class*="invalid" i], ' +
+          '[class*="feedback" i]') : []);
+        for (var k = 0; k < bad.length && k < 6; k++) addErr(bad[k]);
+        up = up.parentElement;
+      }
+    } catch (e) {}
+    return out;
+  }
+  var _ownErr = ownErrorTexts();
+  function stripOwnError(t) {
+    t = String(t || '');
+    for (var i = 0; i < _ownErr.length; i++) {
+      var e2 = _ownErr[i];
+      if (!e2) continue;
+      var idx = t.indexOf(e2);
+      if (idx > 0) t = t.slice(0, idx).trim();
+    }
+    return t;
+  }
+
   function isNoise(t) {
     if (!t) return false;
     return /^\s*\d+\s*\/\s*\d+/.test(t)              // "0/20", "133/20"
@@ -557,22 +612,48 @@ function __wvpFieldLabel(el) {
     var p = el.closest ? el.closest('label') : null;
     if (p) { var t2 = clean(p); if (t2) return t2; }
   } catch (e) {}
+  // A block that holds ANOTHER control is a SIBLING field's row: any text in
+  // it is that field's question, never this one's.  The ancestor walk used to
+  // climb into the shared form container, where the FIRST label it found
+  // belonged to a DIFFERENT field, so EVERY unresolved field adopted the same
+  // label (live: a free-text textarea question - "Please share links to 3-5
+  // vibe-coded... apps" - was labelled 'Linkedin Profile Url*'; the enumerator
+  // then listed THREE 'Linkedin Profile Url*' controls, and the real question
+  // was answered as the URL and skipped).  We therefore STOP climbing the
+  // moment the container holds another control, and reject a candidate
+  // <label for=...> that names a DIFFERENT control.
+  function ownsOtherControl(node) {
+    try {
+      if (!node || !node.querySelectorAll) return false;
+      var c = node.querySelectorAll(
+        'input, select, textarea, [contenteditable="true"]');
+      for (var i = 0; i < c.length; i++) {
+        if (c[i] !== el && !c[i].contains(el) && !el.contains(c[i])) return true;
+      }
+    } catch (e) {}
+    return false;
+  }
   try {
     var node = el;
     for (var d = 0; d < 6 && node && node.parentElement; d++) {
       node = node.parentElement;
+      if (ownsOtherControl(node)) break;
       var cand = node.querySelector(
         ':scope > label, :scope > legend, :scope > [class*="label" i], ' +
         ':scope > div > [class*="label" i], :scope > [data-test*="label" i]');
       if (cand) {
-        var ct = clean(cand);
-        if (ct && ct.length <= 200 && !isNoise(ct)) return ct;
+        var ct = stripOwnError(clean(cand));
+        var candIsLabel = (cand.tagName || '').toLowerCase() === 'label';
+        var forId = candIsLabel ? String(cand.getAttribute('for') || '') : '';
+        if (ct && ct.length <= 200 && !isNoise(ct)
+            && !(forId && forId !== el.id)) return ct;
       }
       var kids = node.children;
       for (var k = 0; k < kids.length; k++) {
         var kid = kids[k];
         if (kid === el || kid.contains(el)) continue;
-        var kt = clean(kid);
+        if (ownsOtherControl(kid)) continue;
+        var kt = stripOwnError(clean(kid));
         if (kt && kt.length >= 2 && kt.length <= 120
             && !isNoise(kt) && !/^(required|\\*|optional)$/i.test(kt)) return kt;
       }
@@ -691,6 +772,75 @@ function __wvpOptionLabel(el) {
     }
   } catch (e) {}
   return clean(el.getAttribute('value'));
+}
+/**
+ * The SCOPE roots the field resolution is confined to: the user's picked
+ * container(s) when set, else the page's TOP LAYERS (an open modal / popup).
+ *
+ * Resolution is TOP-DOWN: with no explicit pick it confines itself to the
+ * layer(s) actually on screen, so the base page's chrome behind a modal (a
+ * header 'Search' box) is never matched as a form field.  These are the SAME
+ * layers the enumeration already uses, so the sweep and the repair resolve from
+ * the SAME place.  [] -> no confinement (whole document, exactly as before).
+ */
+function __wvpScopeRoots(scopeSel) {
+  var list = (typeof scopeSel === 'string') ? [scopeSel]
+           : (scopeSel && scopeSel.length ? scopeSel : []);
+  var roots = [];
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i]) continue;
+    var ms = __wvpDeepAll(list[i]);
+    if (ms.length) roots.push(ms[0]);
+  }
+  if (roots.length) return roots;            // explicit pick wins
+  return __wvpModalLayers();                 // else confine to a REAL popup only
+}
+/**
+ * The page's OPEN MODAL / popup layer(s) - the explicit markers only.
+ *
+ * Confining resolution to these keeps the base page's chrome behind a modal (a
+ * header 'Search' box) from being matched as a form field, WITHOUT over-
+ * confining a page that merely has a large content column (no popup marker ->
+ * no scope, the whole document exactly as before).
+ */
+function __wvpModalLayers() {
+  var out = [], m;
+  m = __wvpLastVisible('[aria-modal="true"]'); if (m) out.push(m);
+  m = __wvpLastVisible('dialog[open]'); if (m) out.push(m);
+  m = __wvpLastVisible('[role="dialog"]'); if (m) out.push(m);
+  return out;
+}
+function __wvpLastVisible(sel) {
+  var found = null;
+  try {
+    var ms = __wvpDeepFindAll([sel]);
+    for (var i = 0; i < ms.length; i++) {
+      if (__wvpVisible(ms[i])) found = ms[i];   // a portal appends its popup last
+    }
+  } catch (e) {}
+  return found;
+}
+/**
+ * True when *el* lives inside ANY scope root (or there is no scope at all).
+ * The climb crosses shadow and same-origin iframe boundaries (``contains`` does
+ * NOT).  No scope root -> everything is in scope.
+ */
+function __wvpInScope(el, roots) {
+  if (!roots || !roots.length) return true;
+  for (var r = 0; r < roots.length; r++) {
+    var n = el;
+    for (var i = 0; i < 200 && n; i++) {
+      if (n === roots[r]) return true;
+      if (n.assignedSlot) { n = n.assignedSlot; continue; }
+      if (n.parentNode) { n = n.parentNode; continue; }
+      if (n.host) { n = n.host; continue; }
+      if (n.defaultView && n.defaultView.frameElement) {
+        n = n.defaultView.frameElement; continue;
+      }
+      break;
+    }
+  }
+  return false;
 }
 /**
  * The page's current TOP LAYER (an open popup's root), or null.
@@ -1891,7 +2041,7 @@ JS_ENUMERATE_FORM_FIELDS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function 
 # NATIVE setter plus input/change dispatch is required for React/Vue controlled
 # inputs.  Selects match the value against option text/value; checkboxes/radios
 # treat a truthy value as "checked".  The model never supplies a selector.
-JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, value, kind) {
+JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, value, kind, scope) {
   function isEditable(el) {
     if (!el || el.nodeType !== 1) return false;
     var tag = (el.tagName || '').toLowerCase();
@@ -1913,27 +2063,39 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
   // it is SKIPPED rather than resolved to its first match.  That first match IS
   // the form's first field, and taking it is exactly how a value meant for one
   // question was typed over the already-correct 'First name'.
+  // The picked SCOPE (a form / modal / iframe) confines resolution: a control
+  // OUTSIDE it - the page's global 'Search' box behind the modal - is never a
+  // match.  No scope -> the whole document, exactly as before.
+  var scopeRoots = __wvpScopeRoots(scope);
   function onlyOne(sel) {
     var m = __wvpDeepAll(sel), hit = null, n = 0;
     for (var i = 0; i < m.length; i++) {
       if (!(__wvpVisible(m[i]) && __wvpTopmost(m[i]))) continue;
+      if (!__wvpInScope(m[i], scopeRoots)) continue;
       if (n === 0) hit = m[i];
       if (++n > 1) return null;
     }
     return n === 1 ? hit : null;
   }
-  function bareTag(sel) { return /^[a-z][a-z0-9]*$/i.test(String(sel).trim()); }
   var el = null;
   for (var _s = 0; selectors && _s < selectors.length && !el; _s++) {
     el = onlyOne(selectors[_s]);
   }
   if (!el) {
-    // The want-indexed fallback is only safe for a SPECIFIC candidate: applied
-    // to a bare tag it would take the Nth control of the WHOLE page.
+    // Ambiguous ladder: resolve by the field's OWN ordinal WITHIN the scope -
+    // the SAME ordinal the enumeration assigned inside this layer - so an
+    // already-filled field is still recognised instead of being refilled every
+    // pass.  Bare tags stay excluded (they match the whole page), and the scope
+    // keeps the pick off the page's chrome behind a modal.
     for (var _f = 0; selectors && _f < selectors.length && !el; _f++) {
-      if (bareTag(selectors[_f])) continue;
-      var _fb = __wvpDeepFind(selectors[_f], want);
-      if (_fb && __wvpVisible(_fb) && __wvpTopmost(_fb)) el = _fb;
+      if (/^[a-z][a-z0-9]*$/i.test(String(selectors[_f]).trim())) continue;
+      var _cands = __wvpDeepAll(selectors[_f]), _ok = [];
+      for (var _c = 0; _c < _cands.length; _c++) {
+        if (!(__wvpVisible(_cands[_c]) && __wvpTopmost(_cands[_c]))) continue;
+        if (!__wvpInScope(_cands[_c], scopeRoots)) continue;
+        _ok.push(_cands[_c]);
+      }
+      if (_ok.length) el = _ok[(want || 0) % _ok.length];
     }
   }
   if (!el || !isEditable(el)) return false;
@@ -2059,7 +2221,7 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
     if (String(value) !== '' && el.value === '') return false;
   } catch (e) {}
   return true;
-})(arguments[0], arguments[1], arguments[2], arguments[3]);
+})(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]);
 """
 
 # Read a COMBOBOX's option list, OPENING the control when its popup is not
@@ -2072,7 +2234,7 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
 # renders.  Read-only: nothing is ever selected.  The resolved control must
 # actually BE a list-backed control, so a generic ladder candidate can never
 # read an unrelated input's options.
-JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, open) {
+JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, open, typeText) {
   function norm(s) { return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); }
   function isCombo(el) {
     var role = (el.getAttribute('role') || '').toLowerCase();
@@ -2116,14 +2278,30 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
         }
       }
       var cbox = el.closest ? el.closest('[role="combobox"]') : null;
-      if (cbox) nodes.push(cbox);
+      // Read the COMBO's OWN popup first; only if it yields NOTHING fall back
+      // to its nearest combobox, then (last resort) ANY page listbox.  The old
+      // code UNIONED every listbox on the page, so a stale / unrelated open
+      // listbox mixed foreign options into this combo's list (observed: a
+      // 'Location (city)' combo offered Alberta / Czechia entities, and none
+      // of them matched the answer, so the combo never landed).
+      var owned = nodes.length;
+      for (var m = 0; m < owned; m++) {
+        var lb0 = (nodes[m].getAttribute && nodes[m].getAttribute('role') === 'listbox')
+                ? nodes[m]
+                : (nodes[m].querySelector ? nodes[m].querySelector('[role="listbox"]') : null);
+        if (lb0 && (allowHidden || __wvpVisible(lb0))) collect(lb0);
+      }
+      if (out.length) return out;
+      if (cbox) {
+        var lbc = (cbox.getAttribute && cbox.getAttribute('role') === 'listbox')
+                ? cbox
+                : (cbox.querySelector ? cbox.querySelector('[role="listbox"]') : null);
+        if (lbc && (allowHidden || __wvpVisible(lbc))) collect(lbc);
+      }
+      if (out.length) return out;
       var all = document.querySelectorAll('[role="listbox"]');
-      for (var j = 0; j < all.length; j++) nodes.push(all[j]);
-      for (var m = 0; m < nodes.length; m++) {
-        var lb = (nodes[m].getAttribute && nodes[m].getAttribute('role') === 'listbox')
-               ? nodes[m]
-               : (nodes[m].querySelector ? nodes[m].querySelector('[role="listbox"]') : null);
-        if (lb && (allowHidden || __wvpVisible(lb))) collect(lb);
+      for (var j = 0; j < all.length; j++) {
+        if (allowHidden || __wvpVisible(all[j])) collect(all[j]);
       }
     } catch (e) {}
     return out;
@@ -2138,6 +2316,22 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
     }
   }
   if (!el) return '[]';
+  // A typeahead renders its options ONLY once text is typed: typing the
+  // (partial) answer here is what reveals the list, so a combo whose popup was
+  // closed at scan time can still be read back.  The native setter + input
+  // event is the same path JS_SET_FIELD uses; nothing is ever selected.
+  if (typeText) {
+    try {
+      var W2 = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      var t2 = (el.tagName || '').toLowerCase();
+      var proto2 = (t2 === 'textarea')
+          ? ((W2.HTMLTextAreaElement || HTMLTextAreaElement).prototype)
+          : ((W2.HTMLInputElement || HTMLInputElement).prototype);
+      var setter2 = Object.getOwnPropertyDescriptor(proto2, 'value').set;
+      setter2.call(el, String(typeText));
+      el.dispatchEvent(new Event('input', {bubbles: true}));
+    } catch (e) {}
+  }
   var opts = fromDatalist(el);
   if (!opts.length) opts = fromPopup(el, false);
   if (!opts.length && open) {
@@ -2152,7 +2346,7 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
     opts = fromPopup(el, true);
   }
   return JSON.stringify(opts);
-})(arguments[0], arguments[1], arguments[2]);
+})(arguments[0], arguments[1], arguments[2], arguments[3]);
 """
 
 # Write ONE choice answer (radio / checkbox group / ARIA switch): resolve the
@@ -2260,7 +2454,7 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
 # field's NATIVE constraint state (type=email/date/number, pattern, min/max/step,
 # required) and ``message`` the browser's validationMessage.  A value the page
 # REJECTS this way is corrected by the repair pass instead of being left wrong.
-JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, kind) {
+JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, kind, scope) {
   function findAll(sel) {
     var out = [];
     (function collect(root, depth) {
@@ -2402,12 +2596,22 @@ JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors
   var controls = [];
   var _seen = [];
   var _choice = (kind === 'choice' || kind === 'switch');
+  // A picked SCOPE confines the read-back to the same container the fields were
+  // enumerated in: the repair pass must resolve from THAT div, never the page.
+  var scopeRoots = __wvpScopeRoots(scope);
   for (var s = 0; selectors && s < selectors.length; s++) {
     var _all = findAll(selectors[s]);
     var _hits = [];
     for (var _v = 0; _v < _all.length; _v++) {
       if (_seen.indexOf(_all[_v]) >= 0) continue;
       if (__wvpClickTarget(_all[_v])) _hits.push(_all[_v]);
+    }
+    if (scopeRoots.length) {
+      var _inscope = [];
+      for (var _si = 0; _si < _hits.length; _si++) {
+        if (__wvpInScope(_hits[_si], scopeRoots)) _inscope.push(_hits[_si]);
+      }
+      _hits = _inscope;
     }
     if (_choice) {
       for (var _h = 0; _h < _hits.length; _h++) {
@@ -2420,12 +2624,20 @@ JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors
     if (_hits.length === 1) { _seen.push(_hits[0]); controls = [_hits[0]]; break; }
   }
   if (!controls.length) {
+    // Ambiguous ladder: fall back to the field's OWN ordinal WITHIN the scope,
+    // so a field the page already filled is READ (and skipped) instead of being
+    // seen as empty and refilled on every pass.  Scoping it means the ordinal
+    // never lands on the page's chrome (the old whole-page fallback read the
+    // required 'Linkedin Profile Url' as the EMAIL).  Bare tags are excluded.
     for (var _q = 0; selectors && _q < selectors.length && !controls.length; _q++) {
-      // The want-indexed fallback is only safe for a SPECIFIC candidate:
-      // applied to a bare tag it would take the Nth control of the page.
       if (/^[a-z][a-z0-9]*$/i.test(String(selectors[_q]).trim())) continue;
-      var one = __wvpDeepFind(selectors[_q], want);
-      if (one) controls = [one];
+      var _mc = findAll(selectors[_q]), _mo = [];
+      for (var _mi = 0; _mi < _mc.length; _mi++) {
+        if (!__wvpClickTarget(_mc[_mi])) continue;
+        if (!__wvpInScope(_mc[_mi], scopeRoots)) continue;
+        _mo.push(_mc[_mi]);
+      }
+      if (_mo.length) controls = [_mo[(want || 0) % _mo.length]];
     }
   }
   if (!controls.length) {
@@ -2477,7 +2689,7 @@ JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors
   }
   if (el.isContentEditable) return state(el, el.textContent || '');
   return state(el, el.value != null ? el.value : '');
-})(arguments[0], arguments[1], arguments[2]);
+})(arguments[0], arguments[1], arguments[2], arguments[3]);
 """
 
 # Shadow-piercing focus fallback: tries every recorded CSS candidate across

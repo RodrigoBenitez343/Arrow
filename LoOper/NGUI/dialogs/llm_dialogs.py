@@ -87,54 +87,6 @@ def get_llamacpp_models():
         return []
 
 
-class SkillGeneratorThread(QThread):
-    """Thread for generating skill definitions via AI"""
-
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, model, prompt, api_url=None):
-        super().__init__()
-        self.model = model
-        self.prompt = prompt
-        self.api_url = api_url
-
-    def run(self):
-        try:
-            api_url = self.api_url or get_default_api_url()
-            client = OllamaClient(base_url=api_url)
-
-            system_prompt = (
-                "You are an expert at defining AI skills. "
-                "Given a description of what a skill should do, "
-                "generate a structured skill definition. "
-                "Return ONLY a JSON object with these fields: "
-                "name (short skill name), description (one-line summary), "
-                "trigger_keywords (comma-separated keywords), instructions (detailed instructions). "
-                "No markdown, no explanations, just the JSON."
-            )
-
-            response = client.generate(
-                model=self.model, prompt=self.prompt, system=system_prompt
-            )
-
-            result_text = response.get("response", "")
-            # Try to extract JSON
-            try:
-                # Strip markdown if present
-                if "```json" in result_text:
-                    result_text = result_text.split("```json")[1].split("```")[0]
-                elif "```" in result_text:
-                    result_text = result_text.split("```")[1].split("```")[0]
-
-                skill_data = json.loads(result_text.strip())
-                self.finished.emit(skill_data)
-            except json.JSONDecodeError as e:
-                self.error.emit(f"Failed to parse skill JSON: {str(e)}")
-        except Exception as e:
-            self.error.emit(str(e))
-
-
 class _WebPickThread(QThread):
     """Runs the blocking browser element picker off the GUI thread.
 
@@ -1279,16 +1231,8 @@ class LLMPropertiesDialog(ModernDialog):
             self.rag_max_chars_spin.setValue(
                 self.current_config.get("rag_max_chars", 1500)
             )
-            docs = self.current_config.get("rag_documents", []) or []
-            try:
-                import json as _json
-
-                if isinstance(docs, str):
-                    docs = _json.loads(docs)
-            except Exception:
-                docs = []
-            for p in docs:
-                self.rag_documents_list.addItem(p)
+            # NOTE: documents are no longer attached to the node.  The source
+            # material lives on a Context node and is wired in via its ports.
 
             # Context Consolidation config (opt-in — disabled by default)
             self.use_consolidation_checkbox.setChecked(
@@ -1320,13 +1264,6 @@ class LLMPropertiesDialog(ModernDialog):
             index = self.template_combo.findText(template_applied)
             if index >= 0:
                 self.template_combo.setCurrentIndex(index)
-
-            # Skills tab settings
-            skills = self.current_config.get("skills", [])
-            self._populate_skills_table(skills)
-            self.skill_routing_check.setChecked(
-                self.current_config.get("use_skill_routing", True)
-            )
 
             # Update visibility based on input source
         self.update_input_source_visibility()
@@ -1430,10 +1367,6 @@ class LLMPropertiesDialog(ModernDialog):
                 "rag_top_k": self.rag_top_k_spin.value(),
                 "rag_include_raw_input": self.rag_include_raw_input_checkbox.isChecked(),
                 "rag_max_chars": self.rag_max_chars_spin.value(),
-                "rag_documents": [
-                    self.rag_documents_list.item(i).text()
-                    for i in range(self.rag_documents_list.count())
-                ],
                 # Context Consolidation config
                 "use_context_consolidation": self.use_consolidation_checkbox.isChecked(),
                 "consolidation_chunk_size": self.consolidation_chunk_size_spin.value(),
@@ -1454,10 +1387,6 @@ class LLMPropertiesDialog(ModernDialog):
         except Exception:
             td = {}
         config["tool_descriptions"] = td
-
-        # Skills configuration
-        config["skills"] = self._get_skills_list()
-        config["use_skill_routing"] = self.skill_routing_check.isChecked()
 
         return config
 
@@ -1573,24 +1502,11 @@ class LLMPropertiesDialog(ModernDialog):
 
         layout.addWidget(cons_group)
 
-        docs_group = QGroupBox("Documents")
-        docs_layout = QVBoxLayout(docs_group)
-        self.rag_documents_list = QListWidget()
-        docs_layout.addWidget(self.rag_documents_list)
-        btns = QHBoxLayout()
-        add_btn = QPushButton("Add Document")
-        rem_btn = QPushButton("Remove Selected")
-        add_btn.clicked.connect(self.add_document)
-        rem_btn.clicked.connect(self.remove_selected_document)
-        btns.addWidget(add_btn)
-        btns.addWidget(rem_btn)
-        docs_layout.addLayout(btns)
-        layout.addWidget(docs_group)
         layout.addStretch()
         self.tab_widget.addTab(rag_tab, _("Knowledge"))
 
     def create_tools_skills_tab(self):
-        """Tools & Skills tab: connected tools and the skills library."""
+        """Tools tab: the node's connected tools."""
         tab = QWidget()
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(10, 10, 10, 10)
@@ -1697,148 +1613,8 @@ class LLMPropertiesDialog(ModernDialog):
         self.tools_list.itemSelectionChanged.connect(on_select)
         self.tools_list.itemDoubleClicked.connect(on_double_click)
 
-        # ── Skills list ──
-        skills_list_group = QGroupBox(_("Skills List"))
-        skills_list_layout = QVBoxLayout(skills_list_group)
-        skills_list_layout.setContentsMargins(8, 12, 8, 8)
-        skills_list_layout.setSpacing(6)
-
-        self.skills_table = QTableWidget()
-        self.skills_table.setColumnCount(5)
-        self.skills_table.setHorizontalHeaderLabels(
-            [_("Enable"), _("Name"), _("Description"), _("Priority"), _("ID")]
-        )
-        self.skills_table.setColumnHidden(4, True)  # Hide ID column
-        self.skills_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.skills_table.setSelectionMode(QTableWidget.SingleSelection)
-        self.skills_table.horizontalHeader().setStretchLastSection(True)
-        self.skills_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.Stretch
-        )
-        self.skills_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.Stretch
-        )
-        self.skills_table.setMaximumHeight(150)
-        self.skills_table.itemSelectionChanged.connect(self.on_skill_selected)
-        skills_list_layout.addWidget(self.skills_table)
-
-        skill_btn_layout = QHBoxLayout()
-        add_skill_btn = QPushButton(_("Add Skill"))
-        remove_skill_btn = QPushButton(_("Remove Skill"))
-        add_skill_btn.clicked.connect(self.add_new_skill)
-        remove_skill_btn.clicked.connect(self.remove_selected_skill)
-        skill_btn_layout.addWidget(add_skill_btn)
-        skill_btn_layout.addWidget(remove_skill_btn)
-        skill_btn_layout.addStretch()
-        skills_list_layout.addLayout(skill_btn_layout)
-        layout.addWidget(skills_list_group)
-
-        # ── Skill editor ──
-        editor_group = QGroupBox(_("Skill Editor"))
-        editor_grid = QGridLayout(editor_group)
-        editor_grid.setContentsMargins(8, 12, 8, 8)
-        editor_grid.setSpacing(6)
-
-        editor_grid.addWidget(QLabel(_("Skill Name:")), 0, 0)
-        self.skill_name_edit = QLineEdit()
-        self.skill_name_edit.setPlaceholderText(_("e.g., Data Extraction"))
-        editor_grid.addWidget(self.skill_name_edit, 0, 1)
-
-        editor_grid.addWidget(QLabel(_("Description:")), 1, 0)
-        self.skill_desc_edit = QLineEdit()
-        self.skill_desc_edit.setPlaceholderText(
-            _("One-line summary for context-aware routing")
-        )
-        editor_grid.addWidget(self.skill_desc_edit, 1, 1)
-
-        editor_grid.addWidget(QLabel(_("Trigger Keywords:")), 2, 0)
-        self.skill_keywords_edit = QLineEdit()
-        self.skill_keywords_edit.setPlaceholderText(
-            _("comma-separated, e.g., extract,parse,structure")
-        )
-        editor_grid.addWidget(self.skill_keywords_edit, 2, 1)
-
-        editor_grid.addWidget(QLabel(_("Instructions:")), 3, 0)
-        self.skill_instructions_edit = QTextEdit()
-        self.skill_instructions_edit.setPlaceholderText(
-            _("Detailed instructions for the LLM when this skill is active")
-        )
-        self.skill_instructions_edit.setMaximumHeight(80)
-        editor_grid.addWidget(self.skill_instructions_edit, 3, 1)
-
-        editor_grid.addWidget(QLabel(_("Priority:")), 4, 0)
-        self.skill_priority_spin = QSpinBox()
-        self.skill_priority_spin.setRange(1, 10)
-        self.skill_priority_spin.setValue(5)
-        editor_grid.addWidget(self.skill_priority_spin, 4, 1)
-
-        save_skill_btn = QPushButton(_("Save Skill"))
-        save_skill_btn.clicked.connect(self.save_current_skill)
-        editor_grid.addWidget(save_skill_btn, 5, 0, 1, 2)
-        layout.addWidget(editor_group)
-
-        # ── AI skill generator ──
-        ai_group = QGroupBox(_("AI Skill Generator"))
-        ai_layout = QGridLayout(ai_group)
-        ai_layout.setContentsMargins(8, 12, 8, 8)
-        ai_layout.setSpacing(6)
-
-        ai_layout.addWidget(QLabel(_("Model:")), 0, 0)
-        model_layout = QHBoxLayout()
-        self.skill_gen_model_combo = QComboBox()
-        self.skill_gen_model_combo.setEditable(True)
-        try:
-            models = get_real_cached_models(timeout=2.0)
-            if models:
-                self.skill_gen_model_combo.addItems(models)
-            else:
-                self.skill_gen_model_combo.addItem("llama3.2:latest")
-        except Exception:
-            self.skill_gen_model_combo.addItem("llama3.2:latest")
-        model_layout.addWidget(self.skill_gen_model_combo)
-        refresh_btn = QPushButton(_("Refresh"))
-        refresh_btn.clicked.connect(self.refresh_skill_gen_models)
-        model_layout.addWidget(refresh_btn)
-        ai_layout.addLayout(model_layout, 0, 1)
-
-        ai_layout.addWidget(QLabel(_("What should this skill do?")), 1, 0)
-        self.skill_gen_prompt_edit = QTextEdit()
-        self.skill_gen_prompt_edit.setPlaceholderText(
-            _("Describe what this skill should accomplish...")
-        )
-        self.skill_gen_prompt_edit.setMaximumHeight(60)
-        ai_layout.addWidget(self.skill_gen_prompt_edit, 1, 1)
-
-        gen_skill_btn = QPushButton(_("Generate Skill"))
-        gen_skill_btn.clicked.connect(self.generate_skill)
-        ai_layout.addWidget(gen_skill_btn, 2, 0, 1, 2)
-
-        self.skill_gen_status = QLabel("")
-        self.skill_gen_status.setStyleSheet("color: #888; font-style: italic;")
-        self.skill_gen_status.setAlignment(Qt.AlignCenter)
-        ai_layout.addWidget(self.skill_gen_status, 3, 0, 1, 2)
-        layout.addWidget(ai_group)
-
-        # ── Skill routing ──
-        routing_group = QGroupBox(_("Skill Routing"))
-        routing_layout = QVBoxLayout(routing_group)
-        routing_layout.setContentsMargins(8, 12, 8, 8)
-        routing_layout.setSpacing(6)
-        self.skill_routing_check = QCheckBox(_("Enable context-aware skill routing"))
-        self.skill_routing_check.setChecked(True)
-        routing_layout.addWidget(self.skill_routing_check)
-        routing_info = QLabel(
-            _(
-                "When enabled, skills are selected based on context from connected Context nodes. When disabled, all enabled skills are injected."
-            )
-        )
-        routing_info.setWordWrap(True)
-        routing_info.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        routing_layout.addWidget(routing_info)
-        layout.addWidget(routing_group)
-
         layout.addStretch()
-        self.tab_widget.addTab(tab, _("Tools & Skills"))
+        self.tab_widget.addTab(tab, _("Tools"))
 
     def load_tool_descriptions(self, mapping):
         try:
@@ -1848,240 +1624,6 @@ class LLMPropertiesDialog(ModernDialog):
                     self.tools_list.addItem(f"{k}: {v}")
         except Exception:
             pass
-
-    def refresh_skill_gen_models(self):
-        """Refresh models for skill generator"""
-        try:
-            api_url = self.api_url_entry.text() or get_default_api_url()
-            current_model = self.skill_gen_model_combo.currentText()
-            cache = get_model_cache()
-            if cache:
-                cache.refresh_models(api_url)
-            models = get_real_cached_models(timeout=5.0)
-            if models:
-                self.skill_gen_model_combo.clear()
-                self.skill_gen_model_combo.addItems(models)
-                if current_model in models:
-                    self.skill_gen_model_combo.setCurrentText(current_model)
-        except Exception as e:
-            QMessageBox.warning(self, _("Refresh Failed"), str(e))
-
-    def generate_skill(self):
-        """Generate a skill using AI"""
-        prompt = self.skill_gen_prompt_edit.toPlainText().strip()
-        if not prompt:
-            QMessageBox.warning(
-                self,
-                _("Missing Prompt"),
-                _("Please describe what the skill should do."),
-            )
-            return
-
-        model = self.skill_gen_model_combo.currentText()
-        api_url = self.api_url_entry.text() or get_default_api_url()
-
-        self.skill_gen_status.setText(_("Generating skill..."))
-
-        self.skill_gen_thread = SkillGeneratorThread(model, prompt, api_url)
-        self.skill_gen_thread.finished.connect(self.on_skill_generation_finished)
-        self.skill_gen_thread.error.connect(self.on_skill_generation_error)
-        self.skill_gen_thread.start()
-
-    def on_skill_generation_finished(self, skill_data):
-        """Handle successful skill generation"""
-        self.skill_name_edit.setText(skill_data.get("name", ""))
-        self.skill_desc_edit.setText(skill_data.get("description", ""))
-        self.skill_keywords_edit.setText(skill_data.get("trigger_keywords", ""))
-        self.skill_instructions_edit.setPlainText(skill_data.get("instructions", ""))
-        self.skill_gen_status.setText(_("Skill generated successfully!"))
-
-    def on_skill_generation_error(self, error_msg):
-        """Handle skill generation error"""
-        self.skill_gen_status.setText(_("Generation failed."))
-        QMessageBox.critical(self, _("Generation Error"), error_msg)
-
-    def add_new_skill(self):
-        """Add a new empty skill to the table"""
-        row = self.skills_table.rowCount()
-        self.skills_table.insertRow(row)
-
-        # Create checkbox for enabled
-        checkbox = QCheckBox()
-        checkbox.setChecked(True)
-        checkbox_widget = QWidget()
-        checkbox_layout = QHBoxLayout(checkbox_widget)
-        checkbox_layout.addWidget(checkbox)
-        checkbox_layout.setAlignment(Qt.AlignCenter)
-        checkbox_layout.setContentsMargins(0, 0, 0, 0)
-
-        skill_id = str(uuid.uuid4())
-        self.skills_table.setCellWidget(row, 0, checkbox_widget)
-        self.skills_table.setItem(row, 1, QTableWidgetItem(_("New Skill")))
-        self.skills_table.setItem(row, 2, QTableWidgetItem(_("")))
-        self.skills_table.setItem(row, 3, QTableWidgetItem("5"))
-        self.skills_table.setItem(row, 4, QTableWidgetItem(skill_id))
-
-        # Select the new row
-        self.skills_table.selectRow(row)
-        self.on_skill_selected()
-
-    def remove_selected_skill(self):
-        """Remove the selected skill from the table"""
-        row = self.skills_table.currentRow()
-        if row >= 0:
-            self.skills_table.removeRow(row)
-            # Clear editor
-            self.skill_name_edit.clear()
-            self.skill_desc_edit.clear()
-            self.skill_keywords_edit.clear()
-            self.skill_instructions_edit.clear()
-            self.skill_priority_spin.setValue(5)
-
-    def on_skill_selected(self):
-        """Populate editor when a skill row is selected"""
-        row = self.skills_table.currentRow()
-        if row < 0:
-            return
-
-        name_item = self.skills_table.item(row, 1)
-        desc_item = self.skills_table.item(row, 2)
-        priority_item = self.skills_table.item(row, 3)
-
-        # Get full skill data from the cell's stored data
-        skill_data = self._get_skill_data_from_row(row)
-
-        self.skill_name_edit.setText(name_item.text() if name_item else "")
-        self.skill_desc_edit.setText(desc_item.text() if desc_item else "")
-        self.skill_keywords_edit.setText(skill_data.get("trigger_keywords", ""))
-        self.skill_instructions_edit.setPlainText(skill_data.get("instructions", ""))
-
-        try:
-            priority = int(priority_item.text()) if priority_item else 5
-        except ValueError:
-            priority = 5
-        self.skill_priority_spin.setValue(priority)
-
-    def _get_skill_data_from_row(self, row):
-        """Get full skill data from a table row"""
-        # Store full skill data in the Name item's data role
-        name_item = self.skills_table.item(row, 1)
-        if name_item:
-            data = name_item.data(Qt.UserRole)
-            if data:
-                return data
-        return {}
-
-    def _set_skill_data_to_row(self, row, skill_data):
-        """Store full skill data in a table row"""
-        name_item = self.skills_table.item(row, 1)
-        if name_item:
-            name_item.setData(Qt.UserRole, skill_data)
-
-    def save_current_skill(self):
-        """Save the current skill editor values to the selected table row"""
-        row = self.skills_table.currentRow()
-        if row < 0:
-            # No row selected, add new
-            self.add_new_skill()
-            row = self.skills_table.currentRow()
-
-        if row >= 0:
-            # Update the table
-            self.skills_table.item(row, 1).setText(self.skill_name_edit.text())
-            self.skills_table.item(row, 2).setText(self.skill_desc_edit.text())
-            self.skills_table.item(row, 3).setText(
-                str(self.skill_priority_spin.value())
-            )
-
-            # Store full data
-            skill_data = {
-                "trigger_keywords": self.skill_keywords_edit.text(),
-                "instructions": self.skill_instructions_edit.toPlainText(),
-            }
-            self._set_skill_data_to_row(row, skill_data)
-
-    def _get_skills_list(self):
-        """Get the list of skills from the table"""
-        skills = []
-        for row in range(self.skills_table.rowCount()):
-            checkbox_widget = self.skills_table.cellWidget(row, 0)
-            checkbox = checkbox_widget.findChild(QCheckBox) if checkbox_widget else None
-            enabled = checkbox.isChecked() if checkbox else True
-
-            name_item = self.skills_table.item(row, 1)
-            desc_item = self.skills_table.item(row, 2)
-            priority_item = self.skills_table.item(row, 3)
-            id_item = self.skills_table.item(row, 4)
-
-            skill_data = self._get_skill_data_from_row(row)
-
-            try:
-                priority = int(priority_item.text()) if priority_item else 5
-            except ValueError:
-                priority = 5
-
-            skill = {
-                "id": id_item.text() if id_item else str(uuid.uuid4()),
-                "name": name_item.text() if name_item else "",
-                "description": desc_item.text() if desc_item else "",
-                "instructions": skill_data.get("instructions", ""),
-                "trigger_keywords": skill_data.get("trigger_keywords", ""),
-                "priority": priority,
-                "enabled": enabled,
-            }
-            skills.append(skill)
-        return skills
-
-    def _populate_skills_table(self, skills):
-        """Populate the skills table with a list of skill dicts"""
-        self.skills_table.setRowCount(0)
-        for skill in skills:
-            row = self.skills_table.rowCount()
-            self.skills_table.insertRow(row)
-
-            # Checkbox for enabled
-            checkbox = QCheckBox()
-            checkbox.setChecked(skill.get("enabled", True))
-            checkbox_widget = QWidget()
-            checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.addWidget(checkbox)
-            checkbox_layout.setAlignment(Qt.AlignCenter)
-            checkbox_layout.setContentsMargins(0, 0, 0, 0)
-
-            self.skills_table.setCellWidget(row, 0, checkbox_widget)
-            self.skills_table.setItem(row, 1, QTableWidgetItem(skill.get("name", "")))
-            self.skills_table.setItem(
-                row, 2, QTableWidgetItem(skill.get("description", ""))
-            )
-            self.skills_table.setItem(
-                row, 3, QTableWidgetItem(str(skill.get("priority", 5)))
-            )
-            self.skills_table.setItem(
-                row, 4, QTableWidgetItem(skill.get("id", str(uuid.uuid4())))
-            )
-
-            # Store full data
-            skill_data = {
-                "trigger_keywords": skill.get("trigger_keywords", ""),
-                "instructions": skill.get("instructions", ""),
-            }
-            self._set_skill_data_to_row(row, skill_data)
-
-    def add_document(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Document",
-            os.path.expanduser("~"),
-            "All Files (*.*);;Text Files (*.txt *.md *.csv *.json);;Word Documents (*.docx);;PDF Files (*.pdf)",
-        )
-        if path:
-            self.rag_documents_list.addItem(path)
-
-    def remove_selected_document(self):
-        items = self.rag_documents_list.selectedItems()
-        for it in items:
-            row = self.rag_documents_list.row(it)
-            self.rag_documents_list.takeItem(row)
 
     def apply_template(self, template_name):
         """Apply a predefined template to configure the LLM node"""

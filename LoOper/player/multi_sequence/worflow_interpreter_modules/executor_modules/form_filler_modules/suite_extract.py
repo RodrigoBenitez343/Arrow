@@ -362,6 +362,32 @@ def test_a_refused_laya_pick_is_not_second_guessed(monkeypatch):
     assert len(calls) == 1                  # no pinned re-ask was spent
 
 
+def test_the_source_truth_picks_the_option_when_the_answer_cannot(monkeypatch):
+    """The model's answer can be a LOSSY paraphrase ('Buenos Aires') while the
+    SOURCE the node was configured with holds the COMPLETE location.  When the
+    model-answer rail refuses, every option is scored against the SOURCE and the
+    most accurate wins - the city over the sibling province.  Live: the
+    'Location (city)*' combo never landed (the model-answer rail refused on
+    every pass) and the exact-only combo rule then refilled it forever."""
+    import AI.laya_hooks as hooks
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    opts = ["Buenos Aires Province, Argentina",
+            "Buenos Aires, Buenos Aires Province, Argentina"]
+    monkeypatch.setattr(hooks, "choose_option", lambda q, a, o: (None, True))
+    seen = {}
+    monkeypatch.setattr(
+        hooks, "choose_option_by_source",
+        lambda q, s, o: seen.update(source=s) or (1, True))
+    h._ff_llm_call = lambda *a, **k: "Buenos Aires"
+    evidence = "Location: Buenos Aires, Buenos Aires Province, Argentina."
+    got = h._ff_extract("Location (city)*", evidence, cfg, None,
+                        options=opts, kind="combo")
+    assert got == "Buenos Aires, Buenos Aires Province, Argentina"
+    # The scorer was handed the SOURCE's own complete phrasing, not the answer.
+    assert "Buenos Aires, Buenos Aires Province, Argentina" in seen["source"]
+
+
 def test_a_choice_keeps_the_whole_reply_not_just_the_first_line(monkeypatch):
     """A small model often puts the QUESTION on its first line and the answer
     below; keeping only the first line handed the choice rail a question echo

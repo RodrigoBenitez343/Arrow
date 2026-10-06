@@ -29,8 +29,9 @@ class ContextMixin:
     """
 
     # Maximum number of turns retained for clear_on_finish nodes.
-    # Keeps context predictable for small models (SmolLM3 ~4096 tokens).
-    _MAX_TURNS = 10
+    # 0 = UNLIMITED: the pool keeps its WHOLE history (no entry cap).  A node
+    # can still bound what it SERVES by setting its own max_history.
+    _MAX_TURNS = 0
 
     # Namespace for propagated context copies shared between chains
     # (keyed by "<source_node_id>:<clone_node_id>" — chain-id independent
@@ -367,7 +368,13 @@ class ContextMixin:
 
         # -- Config --
         label = node_data.get('label', '') or ''
-        max_history = int(node_data.get('max_history', self._MAX_TURNS) or self._MAX_TURNS)
+        # 0 = UNLIMITED (no entry cap).  add_turn/get_turns already treat 0 as
+        # "no trim / return all"; the SQLite pulls need a real numeric bound.
+        try:
+            max_history = int(node_data.get('max_history', self._MAX_TURNS) or 0)
+        except (TypeError, ValueError):
+            max_history = 0
+        _pull_limit = max_history if max_history > 0 else 1000000
         scope = str(node_data.get('scope', 'local')).lower()
         if scope not in ("global", "local"):
             scope = "local"
@@ -450,7 +457,7 @@ class ContextMixin:
                 _pulled = context_db.pull(
                     chain_id=self._SHARED_COPY_NS,
                     node_id=f"{_ref_node_id}:{node_id}",
-                    limit=max_history,
+                    limit=_pull_limit,
                 )
                 _copy_parts = []
                 for _k, _vals in (_pulled or {}).items():
@@ -481,6 +488,19 @@ class ContextMixin:
         else:
             logger.debug("[CTX] node %s has NO connected upstream data", node_id)
 
+        # Learned-answer entries already stored (key 'learned/<label>'): a
+        # repeated push of the SAME answer is NOT duplicated (the pool is
+        # append-only otherwise).
+        _existing_learned = {}
+        try:
+            _priorrows = context_db.pull(chain_id=chain_id, node_id=node_id,
+                                         limit=_pull_limit)
+            for _k, _vs in (_priorrows or {}).items():
+                if _k.startswith("learned/") and _vs:
+                    _existing_learned[_k] = str(_vs[0])
+        except Exception:
+            _existing_learned = {}
+
         # -- Also store each upstream value into SQLite (for queryable history) --
         for from_id, input_port, val in upstream_data:
             if val is None or (isinstance(val, str) and not val.strip()):
@@ -496,15 +516,40 @@ class ContextMixin:
                              or upstream_data_node.get('description', '') or '')
             key = f"{source_type}/{semantic_desc}" if semantic_desc else source_type
             value_str = str(val) if val else ""
-            context_db.push(
-                chain_id=chain_id,
-                node_id=node_id,
-                key=key,
-                value=value_str,
-                source_node_id=from_id,
-                source_type=source_type,
-            )
+            # A value carrying a learned-answers block is SPLIT: each answer is
+            # stored as its OWN 'learned/<label>' entry (so the audit dialog
+            # edits ONE answer at a time) and stripped from the row served as
+            # the upstream value.  The block is re-rendered on serve, so a
+            # consumer (the form filler) still reads its own format.
+            try:
+                from .form_filler_modules.common import _ff_split_corrections
+                value_str, _learned = _ff_split_corrections(value_str)
+            except Exception:
+                _learned = {}
+            if value_str.strip():
+                context_db.push(
+                    chain_id=chain_id,
+                    node_id=node_id,
+                    key=key,
+                    value=value_str,
+                    source_node_id=from_id,
+                    source_type=source_type,
+                )
+            for _lab, _ans in (_learned or {}).items():
+                _lk = "learned/%s" % _lab
+                _av = str(_ans)
+                if not _av.strip() or _existing_learned.get(_lk) == _av:
+                    continue
+                context_db.push(
+                    chain_id=chain_id, node_id=node_id, key=_lk, value=_av,
+                    source_node_id=from_id, source_type='learned',
+                )
+                _existing_learned[_lk] = _av
             logger.debug("[CTX] Stored [%s] key='%s' from %s (%s)", scope, key, from_id, source_type)
+
+        # Learned entries (key 'learned/<label>') are collected below for the
+        # re-render; they never appear as raw rows in the plain output.
+        _learned_pairs = {}
 
         # -- Output --
         clear_on_finish = bool(node_data.get('clear_on_finish', False))
@@ -775,11 +820,18 @@ class ContextMixin:
             pulled = context_db.pull(
                 chain_id=chain_id,
                 node_id=node_id,
-                limit=max_history,
+                limit=_pull_limit,
             )
             output_parts = []
             if pulled:
                 for key, values in pulled.items():
+                    if key.startswith("learned/"):
+                        # Learned entries are re-rendered as ONE sentinel block
+                        # below, never as raw rows.
+                        for v in values:
+                            if v and str(v).strip():
+                                _learned_pairs[key[len("learned/"):]] = str(v).strip()
+                        continue
                     for v in values:
                         if v and str(v).strip():
                             # Full value — no per-entry truncation so shared
@@ -817,7 +869,41 @@ class ContextMixin:
                 "Context feed merge failed for %s: %s", node_id, _feed_err,
             )
 
+        # -- Learned stream: re-render the per-answer rows as ONE sentinel block
+        # so a consumer (the form filler) reads them in the format it wrote.
+        if _learned_pairs:
+            try:
+                from .form_filler_modules.common import _ff_render_corrections
+                _lb = _ff_render_corrections(list(_learned_pairs.items()))
+            except Exception:
+                _lb = ""
+            if _lb:
+                output_value = (f"{output_value}\n\n{_lb}"
+                                if output_value and str(output_value).strip()
+                                else _lb)
+
+        # -- Documents / Skills streams: file-backed knowledge (or literal notes)
+        # held ALONGSIDE history and served as their OWN streams, so a downstream
+        # node gets the material over ctx_out WITHOUT attaching anything itself.
+        _docs_text = self._ctx_list_text(node_data.get('documents'))
+        if _docs_text:
+            _docs_block = "## Documents\n" + _docs_text
+            output_value = (f"{_docs_block}\n\n{output_value}"
+                            if output_value and str(output_value).strip()
+                            else _docs_block)
+        _skills_text = self._ctx_list_text(node_data.get('skills'))
+        if _skills_text:
+            _skills_block = "## Skills\n" + _skills_text
+            output_value = (f"{_skills_block}\n\n{output_value}"
+                            if output_value and str(output_value).strip()
+                            else _skills_block)
+
         # -- Store output (both port_store + legacy for migration) --
+        # 'ctx_out' is the node's REAL output port: a consumer wired
+        # ctx_out -> ctx_in resolves THIS key, so the pool's material
+        # (documents + history + learned facts) must be published here.  The
+        # legacy 'context' / 'output' keys stay for older readers.
+        self.port_store.set_output(chain_id, node_id, 'ctx_out', output_value)
         self.port_store.set_output(chain_id, node_id, 'context', output_value)
         self.port_store.set_output(chain_id, node_id, 'output', output_value)
         # Legacy fallback for code that still reads from llm_executor.variables
@@ -873,6 +959,39 @@ class ContextMixin:
                 )
 
         return self._get_context_next_node(node, 'output')
+
+    def _ctx_serve(self, node_id, stop_flag=None):
+        """PASSIVE serve: materialize a Context node's output on demand.
+
+        A Context node never runs as an execution node - it is wired only via
+        data ports (ctx_out/ctx_in), so the main loop neither schedules it nor
+        waits on it.  Instead it is materialized HERE, when a consumer wired to
+        its ctx_out actually reads it: the pool first ingests whatever its
+        upstream producers last wrote (persisting learned answers / facts it
+        would otherwise never store, since it never executes), then serves its
+        whole material (documents + skills + stored rows + the learned block).
+        Nothing here gates or blocks the chain.
+
+        Returns the served text ('' when unknown / not a context node).
+        """
+        if not node_id:
+            return ""
+        try:
+            node = (getattr(self, 'workflow_graph', {}) or {}).get(node_id)
+        except Exception:
+            node = None
+        if not node or node.get('type') != 'context':
+            return ""
+        try:
+            self._execute_context_node(node, stop_flag or (lambda: False))
+        except Exception as exc:  # noqa: BLE001 - passive serve never breaks a run
+            logger.debug("[CTX] passive serve of %s failed: %s", node_id, exc)
+        try:
+            _cid = (getattr(self, 'chain_id', None)
+                    or getattr(self, 'chain_file', ''))
+            return str(self.port_store.get_output(_cid, node_id, 'ctx_out') or "")
+        except Exception:
+            return ""
 
     # ------------------------------------------------------------------
     # Semantic query API — exposed to LLM, code, and conditional nodes
@@ -1011,6 +1130,56 @@ class ContextMixin:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _ctx_list_text(self, raw):
+        """Read a JSON list where each entry is a FILE PATH (read to text) or a
+        LITERAL note (used verbatim).  Cached per list so a looping chain does
+        not re-read the files every iteration.
+
+        Backs the Documents and Skills streams: a resume file, a skill file, or
+        a plain typed note all live in ONE list and are served as their stream.
+        """
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = [raw] if raw.strip() else []
+        items = [str(p) for p in (raw or []) if str(p).strip()]
+        if not items:
+            return ""
+        key = tuple(items)
+        cache = getattr(self, '_ctx_list_text_cache', None)
+        if not isinstance(cache, dict):
+            cache = {}
+            try:
+                self._ctx_list_text_cache = cache
+            except Exception:
+                pass
+        if key in cache:
+            return cache[key]
+        texts = []
+        for it in items:
+            if not os.path.exists(it):
+                texts.append(it)          # a literal note, used verbatim
+                continue
+            try:
+                from ...llm_executor_resources import rag_utils as _rag
+                ext = os.path.splitext(it)[1].lower()
+                if ext in ('.txt', '.md', '.csv', '.json', '.log'):
+                    t = _rag._read_text_file(it)
+                elif ext == '.docx':
+                    t = _rag._extract_docx_text(it)
+                elif ext == '.pdf':
+                    t = _rag._extract_pdf_text(it)
+                else:
+                    t = ""
+                if t:
+                    texts.append(t)
+            except Exception as exc:
+                logger.debug("[CTX] list text unavailable: %s", exc)
+        out = "\n\n".join(texts).strip()
+        cache[key] = out
+        return out
 
     def _get_context_next_node(self, node, port):
         connections = node.get('connections', {})

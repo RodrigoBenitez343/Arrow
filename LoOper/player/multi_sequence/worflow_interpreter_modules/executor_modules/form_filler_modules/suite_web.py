@@ -135,21 +135,30 @@ def test_the_label_noise_filter_reaches_the_browser_as_real_word_boundaries():
     assert r"/\binvalid (input|value|format)\b/i" in fg
 
 
-def test_field_resolution_never_takes_an_ambiguous_candidates_first_match():
-    """A candidate that matches SEVERAL visible controls is NOT this field's
-    identity: a bare 'input' matches every input on the page and its FIRST match
-    IS the form's first field - the way a value meant for another question was
-    read from / typed over the already-correct 'First name'."""
+def test_ambiguous_ladders_resolve_by_ordinal_inside_the_scope():
+    """A candidate matching SEVERAL controls is not this field's identity, so
+    resolution prefers a UNIQUE match.  Only when no rung is unique does it fall
+    back to the field's OWN ordinal (``want``) - and ONLY among matches INSIDE
+    the resolved scope, never the whole page.
+    Dropping the fallback made a field the page had already filled read as EMPTY
+    and be refilled on every pass (the 'too slow on every form' regression);
+    leaving the fallback UNSCOPED read the required 'Linkedin Profile Url' as
+    the EMAIL."""
     from player.web import actions as web_actions
     set_js = web_actions.JS_SET_FIELD
-    assert "function onlyOne(" in set_js
-    assert "function bareTag(" in set_js
-    # The want-indexed fallback never runs on a bare tag.
-    assert "if (bareTag(selectors[_f])) continue;" in set_js
+    assert "function onlyOne(" in set_js                       # uniqueness first
+    assert "__wvpInScope(_cands[_c], scopeRoots)" in set_js    # ordinal is scoped
+    assert "el = _ok[(want || 0) % _ok.length];" in set_js
+    assert "function bareTag(" not in set_js                   # bare tags excluded
     state_js = web_actions.JS_FIELD_STATE
     assert "var _choice = (kind === 'choice' || kind === 'switch');" in state_js
     assert ("if (_hits.length === 1) { _seen.push(_hits[0]); "
             "controls = [_hits[0]]; break; }" in state_js)
+    assert "__wvpInScope(_mc[_mi], scopeRoots)" in state_js
+    assert "controls = [_mo[(want || 0) % _mo.length]];" in state_js
+    # The fallback never indexes the WHOLE page (the original bug).
+    assert "__wvpDeepFind(selectors[_f], want)" not in set_js
+    assert "__wvpDeepFind(selectors[_q], want)" not in state_js
 
 
 def test_write_resolves_an_spa_option_label_from_a_sibling_block(tmp_path):
@@ -213,6 +222,65 @@ def test_write_resolves_an_spa_option_label_from_a_sibling_block(tmp_path):
         js = getattr(web_actions, name)
         assert "__wvpOptionLabel(" in js, name
         assert "function optLabel(" not in js, name   # no local duplicate
+
+
+def test_a_field_never_adopts_a_sibling_controls_label(tmp_path):
+    """The ancestor-walk fallback climbed into the shared form container, where
+    the FIRST label it found belonged to a DIFFERENT field - so EVERY unresolved
+    field adopted that same label.  Live: a free-text textarea question ("Please
+    share links to 3-5 vibe-coded... apps") was labelled 'Linkedin Profile
+    Url*', the enumerator listed three 'Linkedin Profile Url*' controls, and the
+    real question was answered as the URL and then skipped.  A container that
+    holds ANOTHER control must therefore yield NO label from its text."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    from player.web import actions as web_actions
+
+    fg = web_actions.JS_FOREGROUND
+    start = fg.index("function __wvpFieldLabel(el) {")
+    end = fg.index("/**\n * The page's current TOP LAYER")
+    fn = fg[start:end]
+
+    harness = """
+    global.window = {CSS: {escape: function (s) { return String(s); }}};
+    global.document = {querySelector: function () { return null; },
+                       getElementById: function () { return null; }};
+    function __wvpCssEsc(s) { return String(s); }
+    function nd(tag, text) {
+      return {tagName: tag.toUpperCase(), innerText: text || '',
+              textContent: text || '', children: [], parentElement: null,
+              getAttribute: function () { return ''; },
+              closest: function () { return null; },
+              querySelector: function () { return null; },
+              querySelectorAll: function () { return []; },
+              contains: function () { return false; }};
+    }
+    var ta = nd('textarea', '');            // our field: NO label of its own
+    var sibQ = nd('div', 'Linkedin Profile Url*');   // another control's question
+    var other = nd('input', '');
+    var row = nd('div', '');
+    row.children = [sibQ, other];
+    row.contains = function (n) { return n === other; };
+    row.querySelectorAll = function () { return [other]; };  // a DIFFERENT control
+    ta.parentElement = row;
+    other.parentElement = row;
+    process.stdout.write(__wvpFieldLabel(ta));
+    """
+    p = tmp_path / "sibling_label.js"
+    p.write_text(fn + "\n" + harness, encoding="utf-8")
+    proc = subprocess.run([node, str(p)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "", proc.stdout     # never the sibling's label
+
+    # Contract: the guard is present and wired into the ancestor walk.
+    assert "function ownsOtherControl(" in fg
+    assert "if (ownsOtherControl(node)) break;" in fg
+    assert "if (ownsOtherControl(kid)) continue;" in fg
+    assert "forId !== el.id" in fg
 
 
 def test_foreground_helpers_are_form_filler_only():
@@ -569,6 +637,26 @@ def test_readback_of_a_hidden_radio_uses_the_shared_click_target():
             "_hits.push(_all[_v]);") not in state_js
 
 
+def test_field_resolution_is_confined_to_the_page_top_layers():
+    """Resolution must be TOP-DOWN like the enumeration: with no explicit pick
+    it confines itself to the page's TOP LAYERS (an open modal/popup), so the
+    base page's chrome behind a modal (the global 'Search' box) is never matched
+    as a form field.  Live: an unscoped read-back resolved the required
+    'Linkedin Profile Url' to another control and skipped it as 'already
+    filled'.  A picked container still overrides; no layers -> whole document."""
+    from player.web import actions as web_actions
+    fg = web_actions.JS_FOREGROUND
+    assert "function __wvpScopeRoots(" in fg
+    assert "function __wvpInScope(" in fg
+    assert "return __wvpModalLayers();" in fg           # real-popup default
+    assert "function __wvpModalLayers(" in fg
+    assert "__wvpInScope(m[i], scopeRoots)" in web_actions.JS_SET_FIELD
+    assert "__wvpInScope(_hits[_si], scopeRoots)" in web_actions.JS_FIELD_STATE
+    assert "_hits = _inscope;" in web_actions.JS_FIELD_STATE
+    # No scope -> whole document, exactly as before.
+    assert "if (!roots || !roots.length) return true;" in fg
+
+
 def test_select_prompt_and_combo_options_are_handled():
     """A dropdown's PROMPT entry is not an option, and a NON-NATIVE dropdown
     keeps its options outside the control - both were dropped, so the model
@@ -656,6 +744,16 @@ def test_combo_options_reader_opens_the_popup_and_only_reads_a_combo():
     assert "fromDatalist" in js and "fromPopup" in js
     assert "ArrowDown" in js                # opens a typeahead's popup
     assert "JSON.stringify" in js
+
+
+def test_combo_options_reader_can_type_a_query_to_reveal_a_typeahead():
+    """A typeahead renders options only once TEXT is typed, so the reader must
+    accept a query to type into the control before reading its popup."""
+    from player.web import actions as web_actions
+    js = web_actions.JS_COMBO_OPTIONS
+    assert "typeText" in js
+    assert "if (typeText)" in js
+    assert "arguments[3]" in js
 
 
 def test_combo_free_text_is_not_treated_as_already_filled():

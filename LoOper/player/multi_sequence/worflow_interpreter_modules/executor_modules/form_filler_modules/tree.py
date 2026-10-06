@@ -169,21 +169,35 @@ class FormFillerTreeMixin:
                 score += 1
         return score
 
-    def _ff_tree_control_labels(self, node, limit=4):
-        """The labels of the controls a branch CONTAINS (bounded)."""
+    def _ff_tree_control_labels(self, node, question="", limit=4):
+        """The labels of the controls a branch CONTAINS (bounded).
+
+        A branch that holds more controls than the label can carry would HIDE
+        the one this field means: live, a LinkedIn form branch listed its first
+        four controls ('First name* / Last name* / Email address* / Phone
+        country code*') and cut 'Location (city)*' off, so the option naming the
+        field was never offered and Laya fell to the page's 'Search' box.  The
+        controls whose OWN label matches the QUESTION are therefore listed
+        FIRST, so the branch that holds the answer always shows it regardless of
+        where the control sits in the DOM.
+        """
         found = []
+        seen = set()
         queue = list(node.get("children") or [])
-        while queue and len(found) < limit:
+        while queue:
             cur = queue.pop(0)
             if cur.get("control"):
                 text = str(cur.get("label") or "").strip()
-                if text and text not in found:
+                if text and text not in seen:
+                    seen.add(text)
                     found.append(text)
                 continue
             queue.extend(cur.get("children") or [])
-        return found
+        if question and len(found) > 1:
+            found.sort(key=lambda t: -self._ff_tree_score(question, t))
+        return found[:limit]
 
-    def _ff_tree_option_label(self, node):
+    def _ff_tree_option_label(self, node, question=""):
         """What this node is CALLED in the Laya option list.
 
         A branch carries no name of its own on most pages (the page names the
@@ -193,7 +207,7 @@ class FormFillerTreeMixin:
         label = str(node.get("label") or "").strip()
         if label:
             return label[:self._FF_TREE_LABEL_MAX]
-        summary = " / ".join(self._ff_tree_control_labels(node))
+        summary = " / ".join(self._ff_tree_control_labels(node, question))
         if summary:
             return summary[:self._FF_TREE_LABEL_MAX]
         return "%s #%s" % (node.get("tag") or "node", node.get("i", 0))
@@ -210,14 +224,14 @@ class FormFillerTreeMixin:
         if not nodes:
             return None
         ranked = sorted(
-            ((self._ff_tree_score(question, self._ff_tree_option_label(n)), n)
+            ((self._ff_tree_score(question, self._ff_tree_option_label(n, question)), n)
              for n in nodes),
             key=lambda row: -row[0],
         )
         offered = []
         used = {}
         for _score, node in ranked[:self._FF_TREE_OPTIONS]:
-            label = self._ff_tree_option_label(node)
+            label = self._ff_tree_option_label(node, question)
             if label in used:
                 used[label] += 1
                 label = "%s (%d)" % (label, used[label])
@@ -339,6 +353,25 @@ class FormFillerTreeMixin:
                 logger, logging.INFO, "Form Resolve: %s" % (label or "?"),
                 "Laya resolved no node for this field - keeping the selector "
                 "ladder",
+            )
+            return "ladder"
+        # The pick must actually BE this field's control.  The tree spans the
+        # WHOLE page when unscoped, so a field the ladder cannot resolve could
+        # be "matched" to page chrome - live: the required 'Linkedin Profile
+        # Url' resolved to the site's global 'Search' box behind the modal, and
+        # the marker then led the ladder to another question's control (the
+        # field read back the EMAIL and was skipped as 'already filled').  A
+        # pick whose own label shares NO term with the field is not this field:
+        # keep the ladder.  An empty label still passes, so the resolver is only
+        # ever subtracted here, never widened.
+        picked = str(node.get("label") or "").strip()
+        if picked and self._ff_tree_score(label, picked) <= 0:
+            log_block(
+                logger, logging.WARNING, "Form Resolve: %s" % (label or "?"),
+                "Laya picked the %s %r (node %s), which shares no term with "
+                "this field - keeping the selector ladder instead of aiming at "
+                "page chrome"
+                % (node.get("tag") or "control", picked[:80], node.get("i")),
             )
             return "ladder"
         try:

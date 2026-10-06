@@ -130,6 +130,88 @@ def _ff_parse_learned_answers(text):
     return {k: " ".join(v).strip() for k, v in out.items()}
 
 
+# Sentinels wrapping the learned answers INSIDE the context pool text.
+# A form-filler node owns NO corrections file: the answers it learns live in the
+# Context node the user wired.  The block is unambiguous even when the pool also
+# carries the source documents (a resume's own '##' headings can never be read
+# as learned Q&A).
+_FF_CORR_START = "[[FORM_CORRECTIONS]]"
+_FF_CORR_END = "[[/FORM_CORRECTIONS]]"
+
+
+def _ff_pool_corrections(text):
+    """The learned-answer text carried inside the context pool.
+
+    Concatenates the inner text of every sentinel block found in *text* (the
+    blocks accumulate in the append-only pool, so every answer ever learned is
+    returned).  '' when the pool carries none.
+    """
+    s = str(text or "")
+    if _FF_CORR_START not in s:
+        return ""
+    parts, idx = [], 0
+    while True:
+        a = s.find(_FF_CORR_START, idx)
+        if a < 0:
+            break
+        b = s.find(_FF_CORR_END, a + len(_FF_CORR_START))
+        if b < 0:
+            parts.append(s[a + len(_FF_CORR_START):])
+            break
+        parts.append(s[a + len(_FF_CORR_START):b])
+        idx = b + len(_FF_CORR_END)
+    return "\n".join(p.strip() for p in parts if p.strip()).strip()
+
+
+def _ff_render_corrections(pairs):
+    """Wrap this pass's NEW ``(label, answer)`` pairs in the pool sentinel block.
+
+    '' when there is nothing to publish (so an unchanged pass adds no block).
+    """
+    body = "\n".join("## %s\n%s" % (lab, ans) for lab, ans in (pairs or [])
+                     if str(ans or "").strip())
+    if not body.strip():
+        return ""
+    return "%s\n%s\n%s" % (_FF_CORR_START, body, _FF_CORR_END)
+
+
+def _ff_split_corrections(text):
+    """Split a pool value into (text WITHOUT the sentinel blocks, {label: answer}).
+
+    The CONTEXT node stores each learned answer as its OWN entry (so the audit
+    dialog edits ONE answer at a time), so the block must be lifted OUT of the
+    stored value; the parsed map comes back for that.  ``(<text>, {})`` when no
+    block is present.
+    """
+    s = str(text or "")
+    if _FF_CORR_START not in s:
+        return s, {}
+    pairs, clean = {}, s
+    while _FF_CORR_START in clean:
+        a = clean.find(_FF_CORR_START)
+        b = clean.find(_FF_CORR_END, a + len(_FF_CORR_START))
+        if b < 0:
+            inner = clean[a + len(_FF_CORR_START):]
+            clean = clean[:a]
+        else:
+            inner = clean[a + len(_FF_CORR_START):b]
+            clean = clean[:a] + clean[b + len(_FF_CORR_END):]
+        pairs.update(_ff_parse_learned_answers(inner))
+    return clean.strip(), pairs
+
+
+def _ff_cos(a, b):
+    """Cosine similarity of two vectors (0.0 when either is empty/zero)."""
+    try:
+        import math
+        dot = sum(x * y for x, y in zip(a, b))
+        na = math.sqrt(sum(x * x for x in a))
+        nb = math.sqrt(sum(y * y for y in b))
+        return dot / (na * nb) if na and nb else 0.0
+    except Exception:
+        return 0.0
+
+
 def _ff_finding_lines(entries):
     """Composed findings with their Support quotes stripped and repeats dropped.
 

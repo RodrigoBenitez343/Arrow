@@ -41,6 +41,13 @@ class FormFillerConfigMixin:
             "repair": _as_bool(data.get("repair"), True),
             "repair_attempts": _as_int(data.get("repair_attempts"), 2),
             "max_fields": _as_int(data.get("max_fields"), 40),
+            # Loop guard: the chain re-enters this node whenever a field does not
+            # land, so a required field that can NEVER land loops the wizard
+            # unboundedly (live: 51 identical passes burned ~10.7h on one page).
+            # When the per-field OUTCOME is identical this many consecutive
+            # times the node ends the chain instead of re-entering again.
+            # 0 disables the cap.
+            "max_stall_passes": _as_int(data.get("max_stall_passes"), 6),
             # ComoRAG consolidation (iterative multi-cycle probing) is ON by
             # default; turn it OFF to rely on one single-pass retrieval per
             # field (lighter - for a bigger model that needs less scaffolding).
@@ -80,17 +87,49 @@ class FormFillerConfigMixin:
         return "__done__"
 
     def _ff_gather_source_text(self, node):
-        """Concatenate the upstream inputs' outputs/context (the source docs)."""
+        """Concatenate the upstream inputs' outputs/context (the source docs).
+
+        Prefers the ``ctx_in`` DATA PORT - the Context pool's ``ctx_out`` the
+        node was wired to - so the source travels over the CONTEXT ports rather
+        than the exec-edge variables.  A Context node is PASSIVE (it serves, it
+        never runs in the exec graph), so it is PULLED here on demand via
+        ``_ctx_serve`` instead of waiting for an execution that never happens.
+        ``node_{fid}_output`` / ``node_{fid}_context`` stay as the fallback for
+        an upstream that only publishes those.
+        """
         parts = []
+        _cid = (getattr(self, 'chain_id', None)
+                or getattr(self, 'chain_file', '') or '')
+        _graph = getattr(self, 'workflow_graph', {}) or {}
         for inp in node.get("inputs", []) or []:
             fid = inp.get("from_node")
             if not fid:
                 continue
+            val = None
+            if str(inp.get("input_port") or "") in ("ctx_in", "context"):
+                _src_type = (_graph.get(fid, {}) or {}).get('type')
+                if _src_type == 'context':
+                    # Passive pull: materialize the pool (documents + stored
+                    # rows + learned facts) on demand - no execution needed.
+                    try:
+                        val = self._ctx_serve(fid)
+                    except Exception:
+                        val = None
+                else:
+                    try:
+                        _oport = (inp.get("output_type")
+                                  or inp.get("output_port") or "ctx_out")
+                        val = self.port_store.get_output(_cid, fid, _oport)
+                    except Exception:
+                        val = None
+            if val:
+                parts.append(str(val))
+                continue
             for key in (f"node_{fid}_output", f"node_{fid}_context"):
                 try:
-                    val = self.llm_executor.get_variable(key)
+                    v = self.llm_executor.get_variable(key)
                 except Exception:
-                    val = None
-                if val:
-                    parts.append(str(val))
+                    v = None
+                if v:
+                    parts.append(str(v))
         return "\n\n".join(parts).strip()

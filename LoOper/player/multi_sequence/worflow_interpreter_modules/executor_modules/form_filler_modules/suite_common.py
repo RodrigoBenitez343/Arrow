@@ -7,13 +7,40 @@ from .common import (
     _ff_na_value,
     _ff_option_exact,
     _ff_option_match,
+    _ff_parse_learned_answers,
     _ff_placeholder_value,
+    _ff_pool_corrections,
+    _ff_render_corrections,
+    _ff_split_corrections,
     _split_list,
     _strip_think,
 )
 from ._test_support import (
     _Harness,
 )
+
+
+def test_learned_answers_round_trip_through_the_pool_block():
+    """The pool carries learned answers inside a sentinel block; render ->
+    extract -> parse must return the same label -> answer map, and a pool with
+    only source documents (no block) must yield nothing."""
+    pairs = [("Email", "a@b.com"), ("Current city*", "Riverside")]
+    block = _ff_render_corrections(pairs)
+    assert block.startswith("[[FORM_CORRECTIONS]]")
+    # A pool that ALSO carries the resume text still isolates the block.
+    pool = "Resume: John Doe\n\n" + block + "\n\nsome trailing note"
+    parsed = _ff_parse_learned_answers(_ff_pool_corrections(pool))
+    assert parsed.get("email") == "a@b.com"
+    assert parsed.get("current city") == "Riverside"
+    assert _ff_pool_corrections("just a resume, no block") == ""
+    assert _ff_render_corrections([]) == ""
+    # The context node SPLITS the block OUT of a stored value so each answer
+    # becomes its own `learned/<label>` entry (audit dialog edits one at a time).
+    clean, pairs = _ff_split_corrections(pool)
+    assert "[[FORM_CORRECTIONS]]" not in clean
+    assert "Resume: John Doe" in clean
+    assert pairs.get("email") == "a@b.com"
+    assert pairs.get("current city") == "Riverside"
 
 
 def test_na_value_only_writes_a_literal_a_free_text_field_can_hold():

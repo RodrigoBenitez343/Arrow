@@ -53,10 +53,17 @@ class FormFillerNode(BaseNode):
         in_rgb = tuple(int(INPUT_PORT_COLOR.strip('#')[i:i + 2], 16) for i in (0, 2, 4))
         out_rgb = tuple(int(OUTPUT_PORT_COLOR.strip('#')[i:i + 2], 16) for i in (0, 2, 4))
 
-        # Input is optional (context sources / upstream trigger); output flows on.
+        # Input is optional (upstream trigger); output flows on.
         input_port = _add_multi_input(self, 'input', in_rgb, True, data_type=UNIVERSAL_PORT_TYPE)
         output_port = self.add_output('output', color=out_rgb, display_name=True, multi_output=True)
-        for p in (input_port, output_port):
+        # Context pool ports: 'ctx_in' reads the knowledge pool (a Context node
+        # holding the source documents / prior state), 'ctx_out' publishes this
+        # node's result so it can be stored back into the pool (mirrors the
+        # Context node's own ctx_in/ctx_out).  The node NO LONGER attaches
+        # documents to itself — the source is wired in from a Context node.
+        ctx_in_port = _add_multi_input(self, 'ctx_in', in_rgb, True, data_type=UNIVERSAL_PORT_TYPE)
+        ctx_out_port = self.add_output('ctx_out', color=out_rgb, display_name=True, multi_output=True)
+        for p in (input_port, output_port, ctx_in_port, ctx_out_port):
             try:
                 if hasattr(p, 'set_multi_connection'):
                     p.set_multi_connection(True)
@@ -119,9 +126,6 @@ class FormFillerNode(BaseNode):
         # Typing pacing (desktop write path reuses these).
         self.create_property('typing_batch_size', '20')
         self.create_property('typing_batch_delay', '0.05')
-        # Attached source documents (JSON list of paths) — the context probed
-        # per field via ComoRAG (mirrors the LLM node's rag_documents).
-        self.create_property('rag_documents', '[]')
         # Optional picked page-scope container (web): a JSON picker result
         # ({"locator": {...}, ...}) that confines field enumeration to that
         # element (a form / modal / iframe) so page chrome behind the current
@@ -130,14 +134,8 @@ class FormFillerNode(BaseNode):
 
     def get_form_filler_config(self):
         """Return the serialisable configuration for this node."""
-        import json
         mode = (self.get_property('mode') or 'web')
         mode = mode if mode in VALID_MODES else 'web'
-        raw_docs = self.get_property('rag_documents') or '[]'
-        try:
-            docs = json.loads(raw_docs) if isinstance(raw_docs, str) else (raw_docs or [])
-        except Exception:
-            docs = []
         return {
             'mode': mode,
             'instruction': self.get_property('instruction') or '',
@@ -162,6 +160,5 @@ class FormFillerNode(BaseNode):
             'context_size': int(self.get_property('context_size') or 0),
             'typing_batch_size': int(self.get_property('typing_batch_size') or 20),
             'typing_batch_delay': float(self.get_property('typing_batch_delay') or 0.05),
-            'rag_documents': docs,
             'web_scope': self.get_property('web_scope') or '',
         }
