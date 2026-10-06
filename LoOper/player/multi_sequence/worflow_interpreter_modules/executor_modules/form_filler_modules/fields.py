@@ -60,6 +60,38 @@ class FormFillerFieldsMixin:
         return sels
 
     @staticmethod
+    def _ff_scope_positional(loc):
+        """The picked container's POSITIONAL rung(s) - its KIND and its PLACE.
+
+        A pick means "this kind of element at this spot", so its identity must
+        be structural: ``structural_xpath`` records the tag plus nth-of-type at
+        every level (``/html/body/div[2]/dialog[1]``), which is the same on any
+        form with the same layout.  Converted to the CSS ``body >
+        div:nth-of-type(2) > dialog:nth-of-type(1)`` so the deep search can
+        resolve it.  Nothing CONTENT is used: no id, no hashed class, no text -
+        those are precisely the parts that rotate to a different value on the
+        next form instance and break the automation.
+        """
+        xp = str((loc or {}).get("structural_xpath") or "").strip()
+        if not xp:
+            return []
+        parts = [seg for seg in xp.split("/") if seg]
+        # Drop the leading html/body: the search root IS the document.
+        while parts and parts[0].split("[", 1)[0].lower() in ("html", "body"):
+            parts.pop(0)
+        if not parts:
+            return []
+        sels = []
+        for seg in parts:
+            m = re.match(r"^([a-zA-Z][a-zA-Z0-9-]*)(?:\[(\d+)\])?$", seg)
+            if not m:
+                return []
+            tag = m.group(1).lower()
+            n = m.group(2)
+            sels.append("%s:nth-of-type(%s)" % (tag, n) if n else tag)
+        return [" > ".join(sels)]
+
+    @staticmethod
     def _ff_scope_selectors(scope):
         """Stable-first selector ladder for a picked scope container.
 
@@ -90,6 +122,15 @@ class FormFillerFieldsMixin:
             s = str(s or "").strip()
             if s and s not in sels:
                 sels.append(s)
+
+        # POSITION FIRST.  The pick names WHERE the form is (its kind and its
+        # place), not what the page happens to call it: the recorded id / hashed
+        # CSS-module class / text all differ on the next form instance, so an
+        # identity built from them only resolves on the recording's own
+        # instance.  The structural rung re-resolves on any form with the same
+        # layout; the content rungs below stay as fallbacks.
+        for _pos in FormFillerFieldsMixin._ff_scope_positional(loc):
+            add(_pos)
 
         tag = str(loc.get("tag") or "").strip()
         classes = [str(c) for c in (loc.get("classes") or []) if c]
