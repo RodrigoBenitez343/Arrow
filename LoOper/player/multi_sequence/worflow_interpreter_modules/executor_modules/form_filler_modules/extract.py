@@ -1,12 +1,14 @@
 """One value for one field: the extraction prompt and the engine calls."""
 
 import logging
+import re
 
 from .common import (
     _FF_NA_VALUE,
     _as_int,
     _ff_fit_length,
     _ff_na_value,
+    _ff_norm,
     _ff_option_exact,
     _ff_option_match,
     _ff_value_rejection,
@@ -213,6 +215,7 @@ class FormFillerExtractMixin:
                 # which option WORD means "none".
                 return self._ff_choice_answer(
                     label, value, evidence, cfg, stop_flag, opts, _build, system,
+                    kind=kind,
                 )
             # The model must not reach for N/A while it holds evidence: the
             # field is then usually answerable, and N/A is the one answer the
@@ -247,6 +250,7 @@ class FormFillerExtractMixin:
         if opts:
             return self._ff_choice_answer(
                 label, value, evidence, cfg, stop_flag, opts, _build, system,
+                kind=kind,
             )
         if max_chars and len(value) > max_chars:
             # The page can never accept an over-long value, so fit it here
@@ -304,8 +308,24 @@ class FormFillerExtractMixin:
             )
         return value
 
+    @staticmethod
+    def _ff_source_slice(evidence, value, limit=220):
+        """The SOURCE's OWN phrasing of the answer - the line / sentence that
+        carries it - so the option scorer reads the COMPLETE value the source
+        states (the full 'City, Province, Country'), not the model's lossy
+        paraphrase.  Falls back to the head of the evidence, then ''."""
+        txt = str(evidence or "")
+        if not txt:
+            return ""
+        key = _ff_norm(str(value or "").split(",")[0]).strip()
+        if key:
+            for seg in re.split(r"\r?\n|(?<=[.!?])\s+", txt):
+                if key in _ff_norm(seg):
+                    return seg.strip()[:limit]
+        return txt.strip()[:limit]
+
     def _ff_choice_answer(self, label, value, evidence, cfg, stop_flag,
-                          opts, build, system):
+                          opts, build, system, kind=""):
         """Force a choice answer onto one of the field's options ('' if none).
 
         A choice field can only HOLD one of the page's OWN options, and the
@@ -344,10 +364,26 @@ class FormFillerExtractMixin:
             )
             return opts[_idx]
         if _engine_answered:
-            # Laya ANSWERED and no option won clearly.  Do NOT spend a second
-            # generation on a blind pick (observed: the pinned re-ask below
-            # picked the MOST SENIOR option for a field the sources did not
-            # support).  Leave it to the harness, which ASKS the user.
+            # Laya ANSWERED but the model's VALUE could not be placed.  That
+            # value is usually a LOSSY paraphrase ("Buenos Aires" for the
+            # source's complete "Buenos Aires, Buenos Aires Province,
+            # Argentina"), which cannot separate two close options.  So read the
+            # SOURCE the node was configured with and score EVERY option against
+            # it, taking the MOST ACCURATE - the city over the province when the
+            # source spells out both.  Only if the source places no option is the
+            # field left to the harness (live: the 'Location (city)*' combo never
+            # landed because the model-answer rail refused on every pass and the
+            # exact-only combo rule then refilled it forever).
+            from AI.laya_hooks import choose_option_by_source
+            _slice = self._ff_source_slice(evidence, value)
+            _sidx, _s_answered = choose_option_by_source(label, _slice, opts)
+            if _sidx is not None and 0 <= _sidx < len(opts):
+                log_block(
+                    logger, logging.INFO, "Form Extract: %s" % label,
+                    "the source %r picks the option %r"
+                    % (_slice[:80], opts[_sidx]),
+                )
+                return opts[_sidx]
             log_block(
                 logger, logging.INFO, "Form Extract: %s" % label,
                 "no option clearly matches %r - left to the user" % value,

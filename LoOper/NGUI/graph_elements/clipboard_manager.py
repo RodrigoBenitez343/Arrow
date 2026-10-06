@@ -59,7 +59,7 @@ class ClipboardManager:
                     "repair_attempts", "answer_no", "answer_na", "ask_user",
                     "max_fields", "engine", "model", "temperature",
                     "max_tokens", "context_size", "typing_batch_size",
-                    "typing_batch_delay", "rag_documents",
+                    "typing_batch_delay",
                     "web_scope"}
         if node_type in ("code", "code.CodeNode") or node_type.endswith("CodeNode"):
             return {"code", "file_path", "execute_on_input", "output_variable", "timeout"}
@@ -76,7 +76,8 @@ class ClipboardManager:
                     "tts_speaker_id"}
         if node_type in ("context", "context.ContextNode") or node_type.endswith("ContextNode"):
             return {"label", "max_history", "persistent", "clear_on_finish",
-                    "scope", "shared_context_chain_file", "shared_context_node_id"}
+                    "scope", "shared_context_chain_file", "shared_context_node_id",
+                    "documents", "skills"}
         if node_type in ("mcp", "mcp.MCPNode") or node_type.endswith("MCPNode"):
             return {"mcp_folder", "tool_name", "tool_args", "mcp_tools", "keep_alive"}
         if node_type in ("handle", "handle.HandleNode") or node_type.endswith("HandleNode"):

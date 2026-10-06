@@ -168,6 +168,13 @@ class MainWindow(QMainWindow):
                     self._agent_overlay.set_scheduler_service(self.scheduler_service)
                 except Exception as _se:
                     logger.warning(f"Could not attach scheduler to agent overlay: {_se}")
+                # Scheduled runs carry no caller callbacks: give the scheduler
+                # the agent surface so their questions and Output-node content
+                # reach the desktop overlay and every web/mobile client.
+                try:
+                    self.scheduler_service.set_agent_surface(self._agent_overlay)
+                except Exception as _se:
+                    logger.warning(f"Could not attach agent surface to scheduler: {_se}")
                 logger.info("SchedulerService started successfully")
             except Exception as se:
                 logger.error(f"Failed to start SchedulerService: {se}")
