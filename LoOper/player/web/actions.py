@@ -781,19 +781,31 @@ function __wvpOptionLabel(el) {
  * layer(s) actually on screen, so the base page's chrome behind a modal (a
  * header 'Search' box) is never matched as a form field.  These are the SAME
  * layers the enumeration already uses, so the sweep and the repair resolve from
- * the SAME place.  [] -> no confinement (whole document, exactly as before).
+ * the SAME place.  [] (no pick at all) -> no confinement (whole document,
+ * exactly as before).  A pick that is PRESENT but does not resolve FAILS
+ * CLOSED - see below.
  */
 function __wvpScopeRoots(scopeSel) {
   var list = (typeof scopeSel === 'string') ? [scopeSel]
            : (scopeSel && scopeSel.length ? scopeSel : []);
+  var picked = false;
   var roots = [];
   for (var i = 0; i < list.length; i++) {
     if (!list[i]) continue;
+    picked = true;
     var ms = __wvpDeepAll(list[i]);
     if (ms.length) roots.push(ms[0]);
   }
   if (roots.length) return roots;            // explicit pick wins
-  return __wvpModalLayers();                 // else confine to a REAL popup only
+  // A pick was GIVEN but resolved to nothing: the picked container is not on
+  // this page (a stale pick, or a form whose layout no longer matches).  FAIL
+  // CLOSED - never widen to the whole page, where the site's own chrome - a
+  // header 'Search' box that also DECLARES itself a combobox - would be
+  // matched and CLICKED (opening it), closing the very popup the form lives
+  // in.  The sentinel is not a DOM node, so __wvpInScope is false for every
+  // element: nothing outside the (unresolvable) pick is ever acted on.
+  if (picked) return [{__wvpNoScope: true}];
+  return __wvpModalLayers();                 // no pick -> confine to a REAL popup only
 }
 /**
  * The page's OPEN MODAL / popup layer(s) - the explicit markers only.
@@ -819,6 +831,21 @@ function __wvpLastVisible(sel) {
     }
   } catch (e) {}
   return found;
+}
+/**
+ * Form-filler activation CLICK: the ONE choke point every form-fill click goes
+ * through, so a click can never land OUTSIDE the picked scope.  A control on
+ * the page BEHIND the form (a header search box, a base-page radio, a label
+ * outside the dialog) must never be activated - a click outside the dialog
+ * closes it.  No/​unresolvable scope -> __wvpInScope is false -> no click.
+ */
+function __wvpFFClick(el, scope) {
+  try {
+    if (!el) return false;
+    if (!__wvpInScope(el, __wvpScopeRoots(scope))) return false;
+    el.click();
+    return true;
+  } catch (e) { return false; }
 }
 /**
  * True when *el* lives inside ANY scope root (or there is no scope at all).
@@ -1511,6 +1538,12 @@ JS_ENUMERATE_FORM_TREE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (s
                              reason: 'picked container not resolved'});
     }
   }
+  // Unscoped: the layers actually ON SCREEN (an open modal / popup), best-
+  // first - the SAME layers the field enumerator and the write/read scope use.
+  // The per-control on-top gate alone still admitted the page BEHIND the modal
+  // (its header 'Search' box stays visible beside the dialog), so the tree read
+  // the base page instead of the frame on focus.
+  var treeLayers = scoped ? [] : __wvpTopLayers();
   var out = [];
   function addNode(parent, el, depth, isControl) {
     var node = {
@@ -1571,6 +1604,19 @@ JS_ENUMERATE_FORM_TREE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (s
       }
     }
     candidates.push({el: el, chain: chain, form: onForm});
+  }
+  // Unscoped: read ONLY the on-screen layer when one holds a control (best-
+  // first); none holding one keeps the whole set exactly as before.
+  if (!scoped && treeLayers.length && candidates.length) {
+    for (var tl = 0; tl < treeLayers.length; tl++) {
+      var layered = [];
+      for (var lc = 0; lc < candidates.length; lc++) {
+        try {
+          if (__wvpOwns(candidates[lc].el, treeLayers[tl])) layered.push(candidates[lc]);
+        } catch (e) {}
+      }
+      if (layered.length) { candidates = layered; break; }
+    }
   }
   // Real form questions sit in a <form>; the site's navigation chrome does not.
   // When the page has any, the chrome is not part of THIS form's tree at all -
@@ -2197,6 +2243,9 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
           }
         }
       } catch (e) {}
+      // A FOREIGN list must never be used: its options live outside the picked
+      // scope, and clicking one is a click outside the form.
+      if (list && !__wvpInScope(list, scopeRoots)) list = null;
       var vc = norm(value), hit = null;
       if (list) {
         var els = list.querySelectorAll('[role="option"], li');
@@ -2234,7 +2283,7 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
 # renders.  Read-only: nothing is ever selected.  The resolved control must
 # actually BE a list-backed control, so a generic ladder candidate can never
 # read an unrelated input's options.
-JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, open, typeText) {
+JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, open, typeText, scope) {
   function norm(s) { return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); }
   function isCombo(el) {
     var role = (el.getAttribute('role') || '').toLowerCase();
@@ -2306,11 +2355,17 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
     } catch (e) {}
     return out;
   }
+  // Confined to the picked SCOPE, exactly like the write / read.  A stale or
+  // mismatched field ladder otherwise resolves the site's OWN chrome - a
+  // header 'Search' box that also declares itself a combobox - and OPENING it
+  // (below) clicks outside the form, closing the popup the form lives in.
+  var _sr = __wvpScopeRoots(scope);
   var el = null;
   for (var s = 0; selectors && s < selectors.length && !el; s++) {
     var ms = __wvpDeepAll(selectors[s]);
     for (var i2 = 0; i2 < ms.length; i2++) {
-      if (__wvpVisible(ms[i2]) && __wvpTopmost(ms[i2]) && isCombo(ms[i2])) {
+      if (__wvpVisible(ms[i2]) && __wvpTopmost(ms[i2])
+          && __wvpInScope(ms[i2], _sr) && isCombo(ms[i2])) {
         el = ms[i2]; break;
       }
     }
@@ -2346,7 +2401,135 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
     opts = fromPopup(el, true);
   }
   return JSON.stringify(opts);
-})(arguments[0], arguments[1], arguments[2], arguments[3]);
+})(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]);
+"""
+
+# COMMIT a list-backed value by CLICKING its option - the multi-turn half of a
+# typeahead.  Setting the input's ``value`` is not a selection: the widget only
+# records one when its own suggestion is ACCEPTED, so a form can look correctly
+# filled (the text reads back) and still refuse to advance.  It takes TURNS so
+# the list has time to appear: 0 = TRIGGER (focus + clear + click - a typeahead
+# pops its list only when the text CHANGES, so re-typing the SAME value, which a
+# framework ignores, never opened it), 1 = type the query, 2+ = click the
+# matching option.  The caller polls, so the click happens once the list has
+# rendered rather than in the same tick as the typing.  Returns the option text
+# it clicked, or '' when the control has no list / no option matched.
+JS_COMBO_PICK = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, value, turn, scope) {
+  function norm(s) { return String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); }
+  function isCombo(el) {
+    var role = (el.getAttribute('role') || '').toLowerCase();
+    return role === 'combobox' || el.getAttribute('list')
+        || el.getAttribute('aria-haspopup') || el.getAttribute('aria-autocomplete')
+        || (el.closest && el.closest('[role="combobox"]'));
+  }
+  // Confined to the picked SCOPE, exactly like the write / read.  Turn 0
+  // CLICKS the control (to trigger its list); without this a stale ladder
+  // clicks the site's own chrome - a header 'Search' box that declares itself
+  // a combobox - outside the form, closing the popup the form lives in.
+  var _sr = __wvpScopeRoots(scope);
+  var el = null;
+  for (var s = 0; selectors && s < selectors.length && !el; s++) {
+    var ms = __wvpDeepAll(selectors[s]);
+    for (var i = 0; i < ms.length; i++) {
+      if (__wvpVisible(ms[i]) && __wvpTopmost(ms[i])
+          && __wvpInScope(ms[i], _sr) && isCombo(ms[i])) {
+        el = ms[i]; break;
+      }
+    }
+  }
+  if (!el) return '';
+  // TURN 0 - TRIGGER.  A typeahead renders its list only once the control is
+  // focused AND its text CHANGES, so a field that already holds the answer was
+  // re-typed to the SAME value - which a controlled input ignores - and the
+  // list never popped at all (nothing to pick, nothing to click).  Clear it and
+  // click it, exactly as a user re-opens a suggestion list.
+  var W = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+  function typeIt(text) {
+    var tn = (el.tagName || '').toLowerCase();
+    var proto = tn === 'textarea'
+        ? ((W.HTMLTextAreaElement || HTMLTextAreaElement).prototype)
+        : ((W.HTMLInputElement || HTMLInputElement).prototype);
+    Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, String(text));
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+  }
+  if (turn === 0) {
+    try { el.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+    try { el.focus({preventScroll: true}); } catch (e) {}
+    try { typeIt(''); } catch (e) {}
+    try { el.click(); } catch (e) {}
+    try { el.dispatchEvent(new W.MouseEvent('mousedown', {bubbles: true})); } catch (e) {}
+    return '';
+  }
+  // TURN 1 - TYPE the query (a REAL change, so the list narrows to the answer).
+  if (turn === 1) {
+    try { typeIt(String(value)); } catch (e) {}
+    try {
+      el.dispatchEvent(new W.KeyboardEvent('keydown', {key: 'ArrowDown', bubbles: true}));
+    } catch (e) {}
+    return '';
+  }
+  // The control's OWN list first; a page-wide listbox only for a control that
+  // DECLARES itself a combobox (a generic ladder candidate must never click a
+  // foreign menu's option).
+  var lists = [];
+  try {
+    var owns = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    if (owns) {
+      var ids = owns.split(/\\s+/);
+      for (var k = 0; k < ids.length; k++) {
+        var n = document.getElementById(ids[k]);
+        if (!n) continue;
+        lists.push((n.getAttribute('role') || '') === 'listbox' ? n
+                   : (n.querySelector ? (n.querySelector('[role="listbox"]') || n) : n));
+      }
+    }
+    if (!lists.length && el.closest) {
+      var cbox = el.closest('[role="combobox"]');
+      if (cbox) {
+        var lbc = (cbox.getAttribute('role') || '') === 'listbox'
+                ? cbox : cbox.querySelector('[role="listbox"]');
+        if (lbc) lists.push(lbc);
+      }
+    }
+    if (!lists.length) {
+      var declared = (el.getAttribute('role') || '').toLowerCase() === 'combobox'
+          || el.getAttribute('aria-haspopup') || el.getAttribute('aria-autocomplete');
+      if (declared) {
+        var all = document.querySelectorAll('[role="listbox"], [role="menu"]');
+        for (var j = 0; j < all.length; j++) {
+          if (__wvpVisible(all[j])) lists.push(all[j]);
+        }
+      }
+    }
+  } catch (e) {}
+  // TURN 2+: click the option - an EXACT text match wins, then a containment
+  // match, so a sibling sharing a prefix is never preferred over the answer.
+  var want = norm(value).toLowerCase();
+  for (var pass = 0; pass < 2; pass++) {
+    for (var L = 0; L < lists.length; L++) {
+      var os = [];
+      try { os = lists[L].querySelectorAll('[role="option"], [role="menuitem"], li, option'); }
+      catch (e) { os = []; }
+      for (var oi = 0; oi < os.length; oi++) {
+        var ot = norm(os[oi].textContent).toLowerCase();
+        if (!ot) continue;
+        var hit = pass === 0 ? (ot === want)
+                             : (ot.indexOf(want) >= 0 || want.indexOf(ot) >= 0);
+        if (!hit) continue;
+        if (!__wvpInScope(os[oi], _sr)) continue;   // never a foreign option
+        try { os[oi].scrollIntoView({block: 'nearest'}); } catch (e) {}
+        try {
+          var W2 = (os[oi].ownerDocument && os[oi].ownerDocument.defaultView) || window;
+          os[oi].dispatchEvent(new W2.MouseEvent('mousedown', {bubbles: true}));
+          os[oi].dispatchEvent(new W2.MouseEvent('mouseup', {bubbles: true}));
+        } catch (e) {}
+        try { os[oi].click(); } catch (e) {}
+        return norm(os[oi].textContent);
+      }
+    }
+  }
+  return '';
+})(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]);
 """
 
 # Write ONE choice answer (radio / checkbox group / ARIA switch): resolve the
@@ -2354,7 +2537,7 @@ JS_COMBO_OPTIONS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selecto
 # whose OPTION LABEL matches the answer.  A negation leaves a lone checkbox
 # unchecked - the field IS answered, just negatively.  The model never supplies
 # a selector.
-JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, value) {
+JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, want, value, scope) {
   function findAll(sel) {
     var out = [];
     (function collect(root, depth) {
@@ -2394,12 +2577,12 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
     var t = c.hit || c.el;
     try { t.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
     try { t.focus({preventScroll: true}); } catch (e) {}
-    try { t.click(); } catch (e) {}
+    try { __wvpFFClick(t, scope); } catch (e) {}
     // A wrapper may swallow the click: fall back to the control's REAL label
     // when the state did not move, so the option ends up actually selected.
     if (!isChecked(c.el)) {
       var lb = __wvpLabelOf(c.el);
-      if (lb && lb !== t) { try { lb.click(); } catch (e) {} }
+      if (lb && lb !== t) { try { __wvpFFClick(lb, scope); } catch (e) {} }
     }
     return true;
   }
@@ -2408,6 +2591,12 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
   // anchor per OPTION, so stopping at the first selector that matched anything
   // left the answer's own option OUT of the set and nothing could click it
   // (live: selectors=['input', ''] -> 'target unresolved or not editable').
+  //
+  // SCOPE: a choice field's ladder can match a control on the page BEHIND the
+  // form (a whole-page checkbox / radio).  activate() CLICKS it, and a click
+  // outside the dialog CLOSES the popup the form lives in - so every control
+  // must be INSIDE the picked scope, exactly like the write / read.
+  var scopeRoots = __wvpScopeRoots(scope);
   var controls = [];
   var _seen = [];
   for (var s = 0; selectors && s < selectors.length; s++) {
@@ -2415,12 +2604,15 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
     for (var _v = 0; _v < _all.length; _v++) {
       if (_seen.indexOf(_all[_v]) >= 0) continue;
       var _hit = __wvpClickTarget(_all[_v]);
-      if (_hit) { _seen.push(_all[_v]); controls.push({el: _all[_v], hit: _hit}); }
+      if (_hit && __wvpInScope(_all[_v], scopeRoots)) {
+        _seen.push(_all[_v]); controls.push({el: _all[_v], hit: _hit});
+      }
     }
     if (controls.length > 80) break;   // runaway guard, never a match
   }
   if (!controls.length) {
     var one = __wvpDeepFindAny(selectors, want);
+    if (one && !__wvpInScope(one, scopeRoots)) one = null;
     var _h = one ? __wvpClickTarget(one) : null;
     if (_h) controls = [{el: one, hit: _h}];
   }
@@ -2444,7 +2636,7 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
     }
   }
   return false;
-})(arguments[0], arguments[1], arguments[2]);
+})(arguments[0], arguments[1], arguments[2], arguments[3]);
 """
 
 # Read back ONE enumerated field's STATE (verify + repair pass).  Returns a JSON

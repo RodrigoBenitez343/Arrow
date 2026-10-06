@@ -329,7 +329,7 @@ def test_form_js_snippets_compile(tmp_path):
     from player.web import actions as web_actions
     for name in ("JS_ENUMERATE_FORM_FIELDS", "JS_SET_FIELD",
                  "JS_SET_CHOICE", "JS_FIELD_STATE",
-                 "JS_COMBO_OPTIONS",
+                 "JS_COMBO_OPTIONS", "JS_COMBO_PICK",
                  "JS_SETTLE_ARM", "JS_SETTLE_READ"):
         js = getattr(web_actions, name)
         # The snippets are function BODIES: wrap them so `node --check` can
@@ -754,6 +754,156 @@ def test_combo_options_reader_can_type_a_query_to_reveal_a_typeahead():
     assert "typeText" in js
     assert "if (typeText)" in js
     assert "arguments[3]" in js
+
+
+def test_combo_pick_clicks_the_option_and_never_a_foreign_list():
+    """Setting a typeahead's VALUE is not a selection - the widget records one
+    only when its own suggestion is ACCEPTED.  The pick snippet must click the
+    option (exact text first), and only ever inside a control that DECLARES
+    itself a combobox, so a generic ladder candidate cannot click a menu's
+    unrelated option."""
+    from player.web import actions as web_actions
+    js = web_actions.JS_COMBO_PICK
+    assert "function isCombo(" in js              # never a plain input
+    assert "if (turn === 0)" in js                 # turn 0 triggers the list
+    assert "if (turn === 1)" in js                 # turn 1 types the query
+    assert "arguments[3]" in js
+    assert ".click()" in js                       # turn 2+ commits
+    assert "pass === 0 ? (ot === want)" in js      # exact beats containment
+    assert '[role="listbox"], [role="menu"]' in js  # declared-combo fallback
+
+
+def test_combo_commit_triggers_types_then_polls_and_clicks():
+    """The commit needs THREE turns.  A typeahead pops its list only when the
+    text CHANGES, so a field that already holds the answer was re-typed to the
+    SAME value - which a controlled input ignores - and no list ever appeared
+    (nothing to pick, nothing to click).  Turn 0 therefore clears + clicks to
+    TRIGGER, turn 1 types the query, and the option CLICK must wait for a later
+    poll: in the same tick the list has not rendered.  A list that never
+    matches returns '' so the caller keeps its own path."""
+    h = _Harness()
+    h._FF_COMBO_OPTIONS_TIMEOUT = 0.3
+    turns = []
+    state = {"triggered": False, "typed": False}
+
+    class _Driver:
+        def execute_script(self, script, *args):
+            turns.append(args[3])
+            if args[3] == 0:
+                state["triggered"] = True
+                return ""
+            if args[3] == 1:
+                state["typed"] = True
+                return ""
+            return ("Ezeiza, Buenos Aires Province, Argentina"
+                    if (state["triggered"] and state["typed"]) else "")
+
+    field = {"id": "loc", "label": "Location (city)*", "kind": "combo"}
+    assert h._ff_commit_combo(
+        field, "Ezeiza, Buenos Aires Province, Argentina", None,
+        driver=_Driver()) == "Ezeiza, Buenos Aires Province, Argentina"
+    assert turns[:3] == [0, 1, 2]              # trigger, type, then click
+    assert turns.count(0) == 1 and turns.count(1) == 1   # never re-triggered
+    assert len(turns) >= 3                     # it POLLED for the option
+
+    class _Blind:
+        def execute_script(self, script, *args):
+            return ""
+
+    # No list / no matching option -> '' (the caller falls through unchanged).
+    assert h._ff_commit_combo(field, "Nope", None, driver=_Blind()) == ""
+
+
+def test_a_stale_pick_fails_closed_never_falls_back_to_the_whole_page():
+    """A pick that does not resolve must FAIL CLOSED, never widen to the page.
+
+    Live: the picked container was not on the re-entered page, so the scope
+    fell back to the whole page, where the site's own header 'Search' box -
+    which also DECLARES itself a combobox - was resolved and opened (clicked),
+    closing the form's own popup.  A present-but-unresolvable pick now yields a
+    sentinel root so __wvpInScope is false for EVERY element; a pick with NO
+    ladder still means the whole document, exactly as before.
+    """
+    from player.web import actions as web_actions
+    fg = web_actions.JS_FOREGROUND
+    assert "if (roots.length) return roots;" in fg          # a real pick wins
+    assert "if (picked) return [{__wvpNoScope: true}];" in fg  # stale -> closed
+    # The write, the read-back AND the two CLICKING combo snippets all confine
+    # to that scope - the pre-fix combo pick ignored it and clicked anywhere.
+    for js in (web_actions.JS_SET_FIELD, web_actions.JS_FIELD_STATE,
+               web_actions.JS_SET_CHOICE,
+               web_actions.JS_COMBO_OPTIONS, web_actions.JS_COMBO_PICK):
+        assert "__wvpScopeRoots(scope)" in js
+        assert "__wvpInScope(" in js
+    for js in (web_actions.JS_COMBO_OPTIONS, web_actions.JS_COMBO_PICK):
+        assert "arguments[4]" in js          # the scope is passed through
+    # Every form-fill CLICK goes through ONE choke point, so a click can never
+    # land outside the scope (a base-page label / option used to).
+    assert "function __wvpFFClick(" in fg
+    assert "__wvpFFClick(t, scope)" in web_actions.JS_SET_CHOICE
+    assert "__wvpFFClick(lb, scope)" in web_actions.JS_SET_CHOICE
+    assert "if (list && !__wvpInScope(list, scopeRoots)) list = null;" \
+        in web_actions.JS_SET_FIELD
+    assert "__wvpInScope(os[oi], _sr)" in web_actions.JS_COMBO_PICK
+
+
+def test_combo_reads_and_commit_pass_the_picked_scope_to_the_page():
+    """The combo read/commit CLICK must carry the picked scope.
+
+    Without it the snippet resolves the first ladder match ANYWHERE - the
+    site's own chrome behind the modal.
+    """
+    scope = ["div:nth-of-type(1) > dialog:nth-of-type(1)"]
+    h = _Harness()
+    h._ff_run_scope_sel = scope
+    seen = []
+
+    class _Drv:
+        def execute_script(self, script, *args):
+            seen.append((script, args))
+            return '["Ezeiza, Buenos Aires Province, Argentina"]'
+
+    from player.web import actions as web_actions
+    field = {"id": "loc", "label": "Location (city)*", "kind": "combo"}
+    h._ff_combo_options(field, None, driver=_Drv(), type_text="Ezeiza")
+    h._ff_commit_combo(field, "Ezeiza, Buenos Aires Province, Argentina", None,
+                       driver=_Drv())
+    combo_calls = [(s, a) for s, a in seen
+                   if s in (web_actions.JS_COMBO_OPTIONS,
+                            web_actions.JS_COMBO_PICK)]
+    assert len(combo_calls) == 2                    # read + commit both ran
+    assert all(a[-1] == scope for _, a in combo_calls)
+    # The CHOICE write is the OTHER clicking path: it must carry the scope too,
+    # or activating a whole-page control closes the dialog.
+    h._ff_write_web({"id": "c", "label": "Agree?", "kind": "choice"}, "Yes",
+                    None, driver=_Drv())
+    choice_calls = [a for s, a in seen if s == web_actions.JS_SET_CHOICE]
+    assert choice_calls and choice_calls[-1][-1] == scope
+
+
+def test_combo_option_read_closes_the_popup_without_escape():
+    """Closing a combo popup must NEVER send Escape.
+
+    An Escape keydown is a DIALOG-DISMISS: a form inside a <dialog> (LinkedIn
+    Easy Apply) closed ITSELF the moment a combo's popup was closed that way -
+    the dialog vanished right at re-entry and the page raised its own 'Save this
+    application?' prompt.  Blurring the control closes a typeahead's popup
+    without touching the dialog.
+    """
+    from player.web import actions as web_actions
+    h = _Harness()
+    h._FF_COMBO_OPTIONS_TIMEOUT = 0.2
+    scripts = []
+
+    class _Drv:
+        def execute_script(self, script, *args):
+            scripts.append(script)
+            return '["Ezeiza"]'
+
+    field = {"id": "loc", "label": "Location (city)*", "kind": "combo"}
+    h._ff_combo_options(field, None, driver=_Drv(), type_text="Ezeiza")
+    assert not any(s == web_actions.JS_KEY for s in scripts)   # no Escape sent
+    assert any("blur()" in s for s in scripts)                 # closed by blur
 
 
 def test_combo_free_text_is_not_treated_as_already_filled():

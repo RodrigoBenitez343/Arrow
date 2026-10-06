@@ -132,17 +132,23 @@
     return index;
   }
 
-  /** Short structural path like /html/body/div[2]/form/button - preferred over the full one. */
-  function structuralXPath(el, maxDepth) {
-    maxDepth = maxDepth || 6;
+  /**
+   * FULL structural path like /html/body/div[2]/form[1]/div[3] - the element's
+   * KIND and PLACE, with no id / class / text (those rotate between instances).
+   *
+   * Every ancestor up to <body> is recorded: a path CUT at an arbitrary depth
+   * is not a shorter position, it is a WRONG one - the innermost segments get
+   * re-rooted at /html/body and then match whatever now occupies that ordinal
+   * (or nothing at all), so the pick never re-resolves on another form.
+   */
+  function structuralXPath(el) {
     var parts = [];
     var node = el;
     var depth = 0;
-    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement && depth < maxDepth) {
+    while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement && depth++ < 64) {
       var seg = node.tagName.toLowerCase() + '[' + nthOfTypeIndex(node) + ']';
       parts.unshift(seg);
       node = node.parentElement;
-      depth++;
     }
     return parts.length ? '/html/body/' + parts.join('/') : null;
   }

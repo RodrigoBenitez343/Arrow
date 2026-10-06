@@ -112,6 +112,39 @@ def test_already_filled_field_is_skipped_by_the_harness():
     assert summary["fields"][0]["value"] == "+54 11 5494 0148"
 
 
+def test_a_combo_holding_the_answer_is_committed_not_skipped():
+    """Holding a typeahead's option TEXT is not a COMMITTED selection: the
+    widget validates against its OWN list, so the form can look filled and
+    still refuse to advance (live: a learned city left in a typeahead, 'Next'
+    did nothing and the chain looped).  The node COMMITS the pick (type ->
+    click the option) before it declares the field done; a control that will
+    not commit falls through to the normal write instead of being skipped."""
+    opts = ["Ezeiza, Buenos Aires Province, Argentina",
+            "Buenos Aires, Buenos Aires Province, Argentina"]
+    h = _Harness()
+    _wire(h, fields=[{"id": "loc", "label": "Location (city)*",
+                      "kind": "combo", "options": opts}],
+          current=opts[0], llm_value=opts[0], reads=[opts[0]])
+    commits = []
+    h._ff_commit_combo = lambda field, value, sf, driver=None: (
+        commits.append(value), opts[0])[1]
+    h._execute_form_filling_node(_node(), None)
+    summary = json.loads(h.get_variable("node_ff1_output"))
+    assert commits == [opts[0]]                       # the pick was committed
+    assert summary["skipped"] == 1 and h.writes == []  # ...and nothing churned
+    assert summary["fields"][0]["value"] == opts[0]
+
+    # A combo the page will NOT commit is no longer skipped - it falls through
+    # to the normal write (the old behaviour left the form stuck on 'Next').
+    h2 = _Harness()
+    _wire(h2, fields=[{"id": "loc", "label": "Location (city)*",
+                       "kind": "combo", "options": opts}],
+          current=opts[0], llm_value=opts[0], reads=[opts[0]])
+    h2._ff_commit_combo = lambda field, value, sf, driver=None: ""
+    h2._execute_form_filling_node(_node(), None)
+    assert h2.writes == [("loc", opts[0])]
+
+
 def test_a_prefilled_select_is_corrected_from_the_context():
     """A <select> shows its FIRST option until someone picks, so a pre-filled
     value there is usually the page's own DEFAULT.  It is re-resolved from the
@@ -562,4 +595,29 @@ def test_partial_combo_answer_falls_back_to_the_short_label_rail(monkeypatch):
     got = h._ff_resolve_combo_option(
         field, "Buenos Aires", "Location: Buenos Aires, Argentina",
         "Location (city)*", None)
+    assert got == "Buenos Aires, Buenos Aires Province, Argentina"
+
+
+def test_learned_combo_answer_without_evidence_is_still_pinned(monkeypatch):
+    """A LEARNED answer arrives with NO evidence (the learned fast-path skips
+    the probe, so `evidence` is '').  The field still asks for a SELECTION, so
+    the learned VALUE must act as its own source and be pinned onto a real
+    option - not written as free text the typeahead never commits."""
+    from AI import laya_hooks
+    h = _Harness()
+    field = {"id": "f0", "label": "Location (city)*", "kind": "combo",
+             "options": []}
+    opts = ["Buenos Aires Province, Argentina",
+            "Buenos Aires, Buenos Aires Province, Argentina"]
+    h._ff_combo_options = lambda f, sf, driver=None, type_text=None: list(opts)
+    seen = {}
+
+    def _pick(q, s, o):
+        seen["source"] = s
+        return 1, True
+
+    monkeypatch.setattr(laya_hooks, "choose_option_by_source", _pick)
+    got = h._ff_resolve_combo_option(
+        field, "Buenos Aires", "", "Location (city)*", None)
+    assert seen["source"] == "Buenos Aires"   # the record IS the source
     assert got == "Buenos Aires, Buenos Aires Province, Argentina"

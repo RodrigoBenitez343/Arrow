@@ -78,6 +78,12 @@ def test_the_tree_js_marks_nodes_and_pierces_shadow_iframes_and_popups():
     # Unscoped navigation climbs to the control's OWN <form>: the document
     # chain's first real choice would otherwise be the site's navigation.
     assert "chain.slice(q)" in js
+    # ...and it reads ONLY the layer actually ON SCREEN (an open modal), never
+    # the base page behind it - the SAME layers the enumerator and the
+    # write/read scope use.  Verified live: without this the tree also held the
+    # page's global 'Search' box beside the LinkedIn Easy Apply dialog.
+    assert "__wvpTopLayers()" in js
+    assert "__wvpOwns(candidates" in js
 
 
 def test_the_scan_rebuilds_the_tree_and_reports_what_it_rooted_at():
