@@ -2,6 +2,10 @@
 """
 
 import os
+import sys
+import types
+import zipfile
+import io
 
 import pytest
 
@@ -10,6 +14,7 @@ from AI.model_downloads import (
     ModelState,
     ModelDownloadTracker,
     _resolve_models_dir,
+    _download_asset,
 )
 
 
@@ -185,3 +190,79 @@ def test_missing_skips_complete_models(tracker):
 def test_singleton_get_instance():
     ModelDownloadTracker._instance = None
     assert ModelDownloadTracker.get_instance() is ModelDownloadTracker.get_instance()
+
+
+# ---------------------------------------------------------------------------
+# Full asset manifest / provisioner
+# ---------------------------------------------------------------------------
+
+
+def test_manifest_covers_models_and_utilities():
+    from AI.model_downloads import BASE_ASSETS, MODELS, UTILITIES
+    ids = {a["model_id"] for a in BASE_ASSETS}
+    for required in (
+        "smollm3", "lfm_vision", "lfm_mmproj",
+        "locateanything", "locateanything_mmproj",
+        "embeddinggemma", "laya_ud_q4_k_m", "laya_q8_0",
+        "laya_exe", "llama_engine", "chrome", "chromedriver",
+        "vosk_stt", "paddle_det", "paddle_rec", "paddle_cls",
+    ):
+        assert required in ids, required
+    # Every asset declares a destination root.
+    for a in BASE_ASSETS:
+        assert a.get("root") in ("models", "bin", "data", "paddle")
+
+
+def test_register_resolves_each_root(tracker, monkeypatch, tmp_path):
+    from AI import model_downloads as md
+    monkeypatch.setattr(md, "_resolve_models_dir", lambda: str(tmp_path / "m"))
+    monkeypatch.setattr(md, "_resolve_bin_dir", lambda: str(tmp_path / "b"))
+    monkeypatch.setattr(md, "_resolve_data_dir", lambda: str(tmp_path / "d"))
+    monkeypatch.setattr(md, "_resolve_paddle_dir", lambda: str(tmp_path / "p"))
+    tracker.register_base_models()
+    assert tracker.get_state("smollm3").save_path == os.path.join(
+        str(tmp_path / "m"), "SmolLM3-Q4_K_M.gguf")
+    assert tracker.get_state("laya_exe").save_path == os.path.join(
+        str(tmp_path / "b"), "laya.exe")
+    assert tracker.get_state("chrome").kind == "zip"
+    assert tracker.get_state("chrome").extract_to == os.path.join(
+        str(tmp_path / "b"), "chrome")
+    assert tracker.get_state("vosk_stt").save_path == os.path.join(
+        str(tmp_path / "d"), "vosk_models", "vosk-model-small-en-us-0.15")
+    # PaddleOCR models are frozen-only (source uses ~/.paddleocr/whl).
+    assert tracker.get_state("paddle_det") is None
+
+
+def test_missing_marks_existing_dir_complete(tracker, tmp_path):
+    d = tmp_path / "modeldir"
+    d.mkdir()
+    tracker._models["m1"] = ModelState(
+        model_id="m1", display_name="M1", save_path=str(d), url="u")
+    assert tracker.get_missing_models() == []
+    assert tracker.get_state("m1").status == DownloadStatus.COMPLETE
+
+
+def test_download_asset_extracts_zip_member(tmp_path, monkeypatch):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("payload/nested/laya.exe", b"binary")
+    data = buf.getvalue()
+
+    class _Resp:
+        headers = {"content-length": str(len(data))}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size=0):
+            yield data
+
+    monkeypatch.setitem(sys.modules, "requests",
+                        types.SimpleNamespace(get=lambda *a, **k: _Resp()))
+
+    st = ModelState(
+        model_id="laya_exe", display_name="L", url="http://x/laya.zip",
+        save_path=str(tmp_path / "laya.exe"), root="bin", kind="zip",
+        extract_member="laya.exe")
+    _download_asset(st, lambda done, total: None)
+    assert (tmp_path / "laya.exe").read_bytes() == b"binary"

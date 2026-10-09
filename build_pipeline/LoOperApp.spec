@@ -393,23 +393,23 @@ if os.path.isdir(_web_inject_dir):
     _add_data(_web_inject_dir, os.path.join('LoOper', 'player', 'web', 'inject'))
     _add_data(_web_inject_dir, os.path.join('player', 'web', 'inject'))
 
+# Bundle the isolated OCR worker as a loose file: paddle OCR runs in a
+# subprocess started from this .py, which must exist on disk.  player/*.py are
+# otherwise compiled into the PYZ (not shipped loose), so without this the
+# compiled build's OCR silently returns empty.  Dest covers both import styles
+# (top-level `player` and `LoOper.player`).
+_add_data(os.path.join(player_dir, 'ocr_worker.py'), 'player')
+_add_data(os.path.join(player_dir, 'ocr_worker.py'), os.path.join('LoOper', 'player'))
+
 # Ensure AI/models directory exists in the installer for llama.cpp GGUF models.
 # The directory ships with a README placeholder; users place .gguf files here.
 _add_data(os.path.join(ai_dir, 'models', 'README.txt'), 'AI/models')
 
-# Bundle mmproj for LocateAnything (main model >2GB — WiX limit, ship separately).
-# The mmproj is the one users routinely forget; bundling it saves the most common failure.
-_la_mmproj = os.path.join(ai_dir, 'models', 'mmproj-LocateAnything-3B-BF16.gguf')
-if os.path.exists(_la_mmproj):
-    _add_data(_la_mmproj, 'AI/models')
-
-# Bundle the llama.cpp embedding model (embeddinggemma GGUF).  RAG embeddings
-# (comorag, context DB, tool retriever) now default to this file via
-# AI/embedding_server; without it they silently fall back to lexical ranking.
-# ~313 MB — safely under the WiX 2GB cab limit, ship it like the mmproj.
-_emb_gemma = os.path.join(ai_dir, 'models', 'embeddinggemma-300M-Q8_0.gguf')
-if os.path.exists(_emb_gemma):
-    _add_data(_emb_gemma, 'AI/models')
+# NOTE: GGUF models are NOT bundled anymore.  They are provisioned on first
+# run by the lazy worker in AI/model_downloads.py (started at app launch and
+# by the MSI via `arrow.exe --install-deps`), which downloads every missing
+# model one at a time into the app's AI/models dir.  This keeps the MSI small
+# and avoids the WiX 2 GB single-file limit entirely.
 
 # Bundle the Needle 2 tool-calling engine (windows-x86_64 needle.exe, ~15 MB,
 # Apache-2.0, self-contained — model baked in).  The Code Node Studio uses it
@@ -424,21 +424,11 @@ else:
     print('NOTE: LoOper/AI/models/needle2/needle.exe not found — Code Node '
           'Studio dev-tool routing falls back to the text protocol')
 
-# Bundle the embedded Laya System-1 decision engine models.  The engine
-# binary itself (LoOper/AI/bin/laya.exe, ~1.7 MB self-contained CPU build)
-# rides the AI/bin loop above; these are the English GGUF quants the runtime
-# picks from (default ud_q4_k_m, fallbacks in AI/laya_client.py).  Each file
-# is <1 GB (WiX caps a single file at 2 GB; cabs auto-split at 1800 MB).
-_laya_models_dir = os.path.join(ai_dir, 'models', 'laya-GGUF')
-for _laya_name in ('laya_english_ud_q4_k_m.gguf', 'laya_english_q8_0.gguf',
-                   'laya_english_f16.gguf'):
-    _laya_path = os.path.join(_laya_models_dir, _laya_name)
-    if os.path.exists(_laya_path):
-        _add_data(_laya_path, 'AI/models/laya-GGUF')
-        print(f'Bundling Laya model: {_laya_name}')
-    else:
-        print(f'NOTE: LoOper/AI/models/laya-GGUF/{_laya_name} not found — '
-              'Laya decisions fall back to the LLM path')
+# Bundle the embedded Laya System-1 decision engine BINARY only
+# (LoOper/AI/bin/laya.exe, ~1.7 MB self-contained CPU build).  Its English
+# GGUF quants are NOT bundled - the lazy worker in AI/model_downloads.py
+# downloads them on first run (default ud_q4_k_m, fallbacks in
+# AI/laya_client.py).
 _laya_exe = os.path.join(ai_dir, 'bin', 'laya.exe')
 if os.path.exists(_laya_exe):
     print(f'Bundling Laya engine: {_laya_exe}')
@@ -518,10 +508,16 @@ if _torch_libiomp and os.path.exists(_torch_libiomp):
 _bin_dir = os.path.join(ai_dir, 'bin')
 if os.path.isdir(_bin_dir):
     for _f in sorted(os.listdir(_bin_dir)):
+        # The llama.cpp ENGINE (llama*, ggml*, mtmd*) is NOT bundled: it is built
+        # ON THE HOST by setup_llama_engine.ps1 at install time, so no CPU
+        # instruction set is baked at build time.  Only ship the non-engine
+        # binaries (e.g. laya.exe) here.
+        if _f.lower().startswith(('llama', 'ggml', 'mtmd')):
+            continue
         _src = os.path.join(_bin_dir, _f)
         if os.path.isfile(_src):
             binaries.append((_src, 'bin'))
-    print(f"Bundled {len([b for b in binaries if b[1] == 'bin'])} files from {_bin_dir}")
+    print(f"Bundled {len([b for b in binaries if b[1] == 'bin'])} files from {_bin_dir} (engine excluded)")
 else:
     print("NOTE: LoOper/AI/bin/ not found — local inference will require manual install")
 
@@ -553,9 +549,51 @@ for _dll in _vc_dlls:
     _src = os.path.join(_sys32, _dll)
     if os.path.exists(_src):
         binaries.append((_src, '.'))
+        # ALSO drop a copy beside the llama.cpp EXEs.  Those run as PLAIN child
+        # processes (subprocess.Popen), so PyInstaller's os.add_dll_directory()
+        # for the MAIN process does NOT apply to them: on a machine without the
+        # VC++ redistributable the child cannot find vcruntime140_1.dll and
+        # dies with 0xC0000135 (STATUS_DLL_NOT_FOUND).  The exe's own dir IS
+        # searched first, so "bin" makes llama-server/llama-mtmd-cli start.
+        binaries.append((_src, 'bin'))
         print(f"Bundling {_dll} from System32 ({os.path.getsize(_src):,} bytes)")
 
 block_cipher = None
+
+# --- Vulkan loader (only if a llama.cpp engine is actually bundled) --------
+# ggml-vulkan.dll STATICALLY imports the Vulkan loader vulkan-1.dll (reverify).
+# The engine is normally NOT bundled - it is built on the host at install time -
+# so this only matters if an engine happens to be present in the payload.
+_sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+if any(os.path.basename(b[0]).lower() == 'ggml-vulkan.dll' for b in binaries):
+    _vk_loader = os.path.join(_sys32, "vulkan-1.dll")
+    if os.path.exists(_vk_loader):
+        binaries.append((_vk_loader, 'bin'))
+        print(f"Bundling vulkan-1.dll from System32 ({os.path.getsize(_vk_loader):,} bytes)")
+    else:
+        binaries[:] = [b for b in binaries if os.path.basename(b[0]).lower() != 'ggml-vulkan.dll']
+        print("WARNING: vulkan-1.dll not found - dropped ggml-vulkan.dll (CPU-only)")
+else:
+    print("NOTE: llama.cpp engine not bundled - Vulkan loader not needed (built on host)")
+
+# --- Optional Windows-feature DLLs (stripped / N-edition images) ----------
+# cv2.pyd STATICALLY imports the Media Foundation stack (reverify: MF.dll +
+# MFReadWrite.dll) alongside dxgi/d3d11.  Stripped and "N"/KN Windows images
+# routinely REMOVE Media Foundation, so cv2.pyd cannot load and the whole vision
+# stack goes dark ("OpenCV not available").  MF.dll / MFReadWrite.dll /
+# mfplat.dll / mfcore.dll import ONLY msvcrt.dll + Windows API sets (reverify),
+# so they are self-contained and safe to ship beside the app and load from
+# there.  (dxgi.dll / d3d11.dll are DirectX core and intentionally NOT bundled
+# - they are present on any GUI-capable Windows and shadowing the system copy
+# could disturb Qt's rendering.)
+_mf_dlls = ["MF.dll", "MFReadWrite.dll", "mfplat.dll", "mfcore.dll"]
+for _dll in _mf_dlls:
+    _src = os.path.join(_sys32, _dll)
+    if os.path.exists(_src):
+        binaries.append((_src, '.'))
+        print(f"Bundling optional system DLL {_dll} ({os.path.getsize(_src):,} bytes)")
+    else:
+        print(f"NOTE: {_dll} not present in System32 - skipping")
 
 runtime_hooks = [
     os.path.join(pipeline_dir, 'dpi_aware_hook.py'),
@@ -602,7 +640,7 @@ for b in binaries:
 binaries = _normalized_binaries
 
 a = Analysis(
-    [os.path.join(base_dir, 'LoOper/main.py')],
+    [os.path.join(base_dir, 'LoOper.py')],
     pathex=pathex,
     binaries=binaries,
     datas=datas,

@@ -120,16 +120,11 @@ function Sync-LlamaBinaries {
     }
 }
 
-$LlamaSrcDir = Get-LlamaBinSourceDir -ProjectRoot $ProjectRoot
-if (-not $LlamaSrcDir) {
-    Write-Warning "llama.cpp binaries not found (build-vulkan, build, or WinGet) -- local inference will require manual install"
-} else {
-    Write-Host "  Using llama.cpp binaries from: $LlamaSrcDir" -ForegroundColor Gray
-    Sync-LlamaBinaries -SourceDir $LlamaSrcDir -DestDir $LlamaAiBinDir
-    $staged = Get-ChildItem $LlamaAiBinDir -File | Where-Object { $_.Name -match '^(llama|ggml|mtmd)' }
-    $totalMB = [math]::Round(((($staged | Measure-Object Length -Sum).Sum) / 1MB), 1)
-    Write-Host "  Staged $($staged.Count) llama.cpp files ($totalMB MB)" -ForegroundColor Gray
-}
+Write-Host "Preparing host-side llama.cpp engine build (engine is not bundled)..." -ForegroundColor Green
+# The engine (llama*/ggml*/mtmd*) is EXCLUDED from the bundle by LoOperApp.spec
+# and BUILT ON THE HOST at install time (see 2.6).  Nothing is baked here, so a
+# build made on this machine can never conflict with an end user's CPU, and the
+# developer's own LoOper\AI\bin engine is left untouched for source mode.
 
 # Stage the LOCAL Chrome (the same binary the source app drives) + its
 # matching chromedriver for PyInstaller bundling.  player/web/session.py
@@ -288,32 +283,37 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-# 2.6. Bundle llama.cpp binaries (root bin/ -- exes for direct CLI use; the
-#      _internal/bin full set incl. DLLs is produced by PyInstaller from
-#      LoOper/AI/bin via the spec).  Source priority: build-vulkan -> build -> WinGet.
-Write-Host "Bundling llama.cpp binaries..." -ForegroundColor Green
-$LlamaDestDir = Join-Path $DistDir "bin"
-$LlamaSrcDir2 = Get-LlamaBinSourceDir -ProjectRoot $ProjectRoot
-
-if ($LlamaSrcDir2) {
-    if (-not (Test-Path $LlamaDestDir)) {
-        New-Item -ItemType Directory -Path $LlamaDestDir -Force | Out-Null
-    }
-    foreach ($exe in @("llama-server.exe", "llama-mtmd-cli.exe")) {
-        $src = Join-Path $LlamaSrcDir2 $exe
-        if (Test-Path $src) {
-            $dst = Join-Path $LlamaDestDir $exe
-            Copy-Item $src $dst -Force
-            $size = [math]::Round((Get-Item $dst).Length / 1MB, 1)
-            Write-Host "  Bundled $exe ($size MB)" -ForegroundColor Gray
-        } else {
-            Write-Warning "llama.cpp binary not found: $src"
-            Write-Warning "Build llama.cpp first from utils\llama.cpp" 
-        }
+# 2.6. Ship the llama.cpp SOURCE + the host-side engine provisioner.  The engine
+#      itself is BUILT on the target machine at install time
+#      (install_dependencies.ps1 -> setup_llama_engine.ps1); nothing is baked
+#      here.  Exclude VCS/build outputs to keep the payload lean.
+Write-Host "Staging llama.cpp source for the on-host engine build..." -ForegroundColor Green
+# Ship the source as ONE zip, not ~38k loose files.  generate_wxs.py emits one
+# MSI Component per file and Windows Installer hard-caps an MSI at 65536
+# Components (WIX7502) - the external-cab mechanism only lifts the 2 GB SIZE
+# cap, not the component count.  One zip = one Component; install_dependencies
+# unpacks it next to the app before the on-host build.
+$LlamaSrcTree = Join-Path $ProjectRoot "utils\llama.cpp"
+$LlamaSrcZip = Join-Path $DistDir "_internal\llama.cpp.zip"
+$LlamaSrcDest = Join-Path $DistDir "_internal\llama.cpp"
+if (Test-Path $LlamaSrcTree) {
+    if (Test-Path $LlamaSrcDest) { Remove-Item $LlamaSrcDest -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $LlamaSrcZip) { Remove-Item $LlamaSrcZip -Force -ErrorAction SilentlyContinue }
+    # bsdtar ships with Windows 10+ and handles ~38k files far faster than
+    # Compress-Archive.  Same exclusions the robocopy staging used.
+    tar -a -c -f $LlamaSrcZip --exclude=.git --exclude=build --exclude=build-vulkan --exclude=build-local -C $LlamaSrcTree .
+    if (Test-Path $LlamaSrcZip) {
+        Write-Host "  Staged llama.cpp source -> $LlamaSrcZip ($([math]::Round((Get-Item $LlamaSrcZip).Length / 1MB, 0)) MB)" -ForegroundColor Gray
+    } else {
+        Write-Warning "llama.cpp source zip was not created - the installer cannot build the engine in place."
     }
 } else {
-    Write-Warning "llama.cpp binaries not found (build-vulkan, build, or WinGet)"
-    Write-Warning "Skipping llama.cpp binary bundling."
+    Write-Warning "llama.cpp source not found at $LlamaSrcTree - the installer cannot build the engine in place."
+}
+$EngineScriptSrc = Join-Path $PSScriptRoot "setup_llama_engine.ps1"
+if (Test-Path $EngineScriptSrc) {
+    Copy-Item $EngineScriptSrc $DistDir -Force
+    Write-Host "  Staged setup_llama_engine.ps1 -> $DistDir" -ForegroundColor Gray
 }
 
 # 3. Check for WiX Toolset

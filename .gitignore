@@ -59,8 +59,7 @@ cmake-build-*/
 *.wixpdb
 *.wixobj
 *.nupkg
-build_pipeline/arrow.wxs
-build_pipeline/chrome-cft/
+build_pipeline/
 .wix/
 *.spec.bak
 
