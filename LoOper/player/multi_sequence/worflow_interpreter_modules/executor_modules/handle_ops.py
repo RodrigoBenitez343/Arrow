@@ -739,9 +739,17 @@ class HandleMixin:
         except Exception:
             pass
 
-        # PyInstaller frozen: bundled alongside the exe
+        # PyInstaller frozen: prefer _MEIPASS (the _internal/ dir) where the
+        # engine's own DLLs (llama-common/llama/ggml*/mtmd) sit beside the EXE.
+        # The MSI ALSO stages a bare stub at INSTALLFOLDER/bin WITHOUT those
+        # DLLs; spawning it fails to resolve its imports, so grounding silently
+        # returns "".  The stub must therefore be tried LAST.
         import sys as _sys
         if getattr(_sys, 'frozen', False):
+            _meipass = getattr(_sys, '_MEIPASS', None)
+            if _meipass:
+                candidates.insert(0, os.path.join(_meipass, "LoOper", "AI", "bin", "llama-mtmd-cli.exe"))
+                candidates.insert(0, os.path.join(_meipass, "bin", "llama-mtmd-cli.exe"))
             _exe_dir = os.path.dirname(_sys.executable)
             candidates.append(os.path.join(_exe_dir, "bin", "llama-mtmd-cli.exe"))
             candidates.append(os.path.join(_exe_dir, "llama-mtmd-cli.exe"))

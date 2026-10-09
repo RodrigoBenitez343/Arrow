@@ -65,7 +65,8 @@ import time
 
 # Standard PyInstaller support for multiprocessing
 if __name__ == "__main__":
-    if sys.platform == "win32" and "--elevated" not in sys.argv:
+    if (sys.platform == "win32" and "--elevated" not in sys.argv
+            and "--install-deps" not in sys.argv):
         try:
             if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
                 params = subprocess.list2cmdline(
@@ -247,9 +248,15 @@ def start_api_server():
                 port = int(os.getenv("API_PORT", "8000"))
                 # Unified telemetry: uvicorn loggers propagate to the root
                 # dispatch (console + logs/automation.log + session md).
+                # log_config MUST be None: uvicorn's dictConfig calls
+                # logging._clearExistingHandlers(), which CLOSES the app's
+                # file/session handlers - every record after this point (chain
+                # runs, node failures, OCR) is silently dropped from disk and
+                # the Logs browser shows nothing.  None keeps uvicorn's default
+                # propagate=True, so its logs still reach the app handlers.
                 config = uvicorn.Config(
                     app, host=host, port=port, log_level="info",
-                    log_config=uvicorn_log_config(),
+                    log_config=None,
                 )
                 server = uvicorn.Server(config)
 
@@ -428,6 +435,77 @@ def _check_license() -> bool:
     return False
 
 
+def _log_native_deps() -> None:
+    """Log a health report for the native modules a fresh PC can lack.
+
+    Only ``numpy``/``cv2`` are actually IMPORTED: they are the ones that
+    degrade silently (missing CRT / Media Foundation on stripped Windows) and
+    are safe to load.  Every OTHER native module is probed with ``find_spec``
+    (presence only, NEVER executed), because importing them here can
+    HARD-CRASH the process on a CPU / OS image they don't support - e.g.
+    PaddlePaddle raises STATUS_ILLEGAL_INSTRUCTION (0xC000001D) and takes the
+    GUI down before it ever opens.  This function never raises.
+    """
+    import importlib
+    import importlib.util
+
+    for mod in ("numpy", "cv2"):
+        try:
+            importlib.import_module(mod)
+            logger.info("Native check OK: %s", mod)
+        except Exception as e:
+            logger.error("Native check FAILED: %s -> %s: %s",
+                         mod, type(e).__name__, e)
+
+    # Presence-only probe for crash-prone natives (never executes them).
+    for mod in ("torch", "onnxruntime", "vosk", "undetected_chromedriver",
+                "paddleocr", "piper"):
+        try:
+            present = importlib.util.find_spec(mod) is not None
+        except Exception:
+            present = False
+        logger.info("Native present: %-24s = %s", mod, present)
+    # Vulkan loader must sit beside the llama.cpp backend, else the GPU backend
+    # fails to load and llama-server exits 0xC0000135.
+    try:
+        _mp = getattr(sys, "_MEIPASS", None)
+        _bin = os.path.join(_mp, "bin") if _mp else None
+        if _bin and os.path.isdir(_bin):
+            if (os.path.exists(os.path.join(_bin, "ggml-vulkan.dll"))
+                    and not os.path.exists(os.path.join(_bin, "vulkan-1.dll"))):
+                logger.error("Native check FAILED: ggml-vulkan.dll is present "
+                             "without vulkan-1.dll - llama-server will exit "
+                             "0xC0000135 (rebuild with vulkan-1.dll bundled or "
+                             "the Vulkan backend removed)")
+            else:
+                logger.info("Native check OK: llama.cpp Vulkan backend deps")
+    except Exception:
+        pass
+
+
+def run_install_deps() -> int:
+    """`arrow.exe --install-deps`: provision every runtime asset, then exit.
+
+    Called by the MSI post-install step (install_dependencies.ps1) and usable
+    manually.  Runs the exact same lazy worker the app starts on launch:
+    missing models/utilities are fetched one at a time, present ones skipped.
+    """
+    _log_native_deps()
+    print("arrow: verifying runtime assets (models, engine utilities)...")
+    try:
+        from AI.model_downloads import ModelDownloadTracker, run_provisioning
+        ok = run_provisioning(block=True)
+        tracker = ModelDownloadTracker.get_instance()
+        for st in tracker.get_all_states():
+            print(f"  [{st.status.value:11}] {st.display_name}")
+        print("arrow: all assets present." if ok
+              else "arrow: some assets are still missing (see log above).")
+        return 0 if ok else 1
+    except Exception as e:
+        logger.error("--install-deps provisioning error: %s", e)
+        return 1
+
+
 def run_app():
     """Main function to start the application logic"""
     # Install the unified telemetry dispatch (console colors + logs/ + session md)
@@ -450,8 +528,20 @@ def run_app():
             "Auto-start API disabled - LLM API server will not be started automatically"
         )
 
+    # Report native-module health up front (background) so a broken bundle on
+    # an unusual PC is diagnosable instead of silently degrading.
+    threading.Thread(target=_log_native_deps, daemon=True).start()
+
     # Preload models asynchronously before starting the GUI
     load_models_at_startup()
+
+    # Lazily provision any missing runtime assets (models + engine utilities)
+    # in the background - a no-op when everything is already present.
+    try:
+        from AI.model_downloads import run_provisioning
+        run_provisioning(block=False)
+    except Exception as e:
+        logger.error("Startup provisioning error: %s", e)
 
     # Start the GUI application
     main()
@@ -471,6 +561,11 @@ def start_api_server_async():
 if __name__ == "__main__":
     # Standard PyInstaller support for multiprocessing
     multiprocessing.freeze_support()
+
+    # `--install-deps`: run the lazy asset provisioner and exit (no GUI).  The
+    # MSI post-install step calls this; also usable for manual repair.
+    if "--install-deps" in sys.argv:
+        sys.exit(run_install_deps())
 
     # CRITICAL: Check if we should run in "interpreter mode" for code nodes in frozen builds.
     # This prevents recursive LoOper launches by allowing LoOper.exe to act as a Python

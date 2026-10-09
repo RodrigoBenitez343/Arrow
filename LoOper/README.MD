@@ -661,6 +661,26 @@ flowchart TB
 
 `build_pipeline/` drives the product build: dependency staging (llama.cpp binaries, Chrome, model files), PyInstaller via `LoOperApp.spec`, runtime hooks for ONNX Runtime/torch, WiX source generation (`generate_wxs.py` → `arrow.wxs`), and `build_msi.ps1` producing the per-user MSI with custom UI and EULA.
 
+### 14.3 Packaged build: native DLLs & CPU compatibility
+
+The MSI does **not** ship the llama.cpp engine and does **not** bake any CPU instruction set. Instead the installer **builds the engine on the host machine** (`install_dependencies.ps1` → `setup_llama_engine.ps1`): it detects the host, installs the C++ toolchain (CMake + VS Build Tools) when a local build is required, compiles the vendored fork with `GGML_CPU_ALL_VARIANTS` (runtime ISA dispatch), verifies the result (`llama-server --version`), and falls back to the official portable prebuilt if the build cannot run. An engine built on a developer machine can therefore never conflict with the end user's CPU.
+
+Components a fresh, stripped, or "N"-edition Windows lacks are shipped beside the app:
+
+| Absent on the target | Bundled by the build | Symptom when missing |
+|---|---|---|
+| MSVC runtime (`vcruntime140_1`, `msvcp140`, …) | beside every native EXE (`_internal/bin/`, plus `_internal/`) | child EXEs die `0xC0000135` (`STATUS_DLL_NOT_FOUND`) |
+| Media Foundation (`MF.dll`, `MFReadWrite.dll`, `mfplat.dll`, `mfcore.dll`) | `_internal/` | `cv2.pyd` cannot load → "OpenCV not available" |
+
+llama.cpp's CMake defaults `GGML_AVX2/FMA/F16C=ON`, and on MSVC that bakes `/arch:AVX2` into the CPU backend, so any fixed-ISA `ggml-cpu.dll` runs **only** on AVX2-capable CPUs and aborts everywhere older. That is why the engine is built **on the target host** as all ISA variants behind a runtime dispatcher — AVX2/AVX512 where the CPU supports them, the SSE4.2 baseline otherwise.
+
+**CPU compatibility exception — `0xC000001D` (`STATUS_ILLEGAL_INSTRUCTION`).** The bundled **PaddlePaddle** runtime (PaddleOCR) executes AVX-class instructions, so on a CPU that does not support them importing `paddle` aborts the process with a native fault and **no Python traceback** (try/except cannot catch it). Two rules follow:
+
+- The **main process never imports `paddle`**. The startup native health check probes it with `importlib.util.find_spec` (presence only) and actually imports only `numpy`/`cv2`.
+- **Paddle OCR runs in an isolated subprocess** (`player/ocr_worker.py`): a native crash kills only that child and the caller falls back to an empty result.
+
+On an AVX-less CPU the app therefore opens and runs normally; OCR simply returns nothing.
+
 ---
 
 ## 15. Configuration, environment & data

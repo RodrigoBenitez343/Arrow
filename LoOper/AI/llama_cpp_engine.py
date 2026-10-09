@@ -712,6 +712,23 @@ class LlamaCppEngine:
         # Filter out empty values
         return {k: v for k, v in minimal.items() if v}
 
+    @staticmethod
+    def _child_process_env():
+        """Environment for spawning native children (llama-server / mtmd-cli).
+
+        Inherit the parent environment (a bare minimal env broke CRT init with
+        STATUS_ACCESS_VIOLATION) but PREPEND the directory of the already-loaded
+        vcruntime140.dll.  PyInstaller 6 exposes _internal/ to the MAIN process
+        via os.add_dll_directory(), which child processes do NOT inherit - so on
+        a machine without the VC++ redistributable the child cannot find
+        vcruntime140_1.dll and dies with 0xC0000135 (STATUS_DLL_NOT_FOUND).
+        """
+        env = os.environ.copy()
+        rt_dir = LlamaCppEngine._find_runtime_dll_dir()
+        if rt_dir:
+            env["PATH"] = rt_dir + os.pathsep + env.get("PATH", "")
+        return env
+
     def start_server(self, blocking: bool = False) -> bool:
         """
         Start llama.cpp server
@@ -982,6 +999,7 @@ class LlamaCppEngine:
                         capture_output=True,
                         text=True,
                         timeout=10,
+                        env=LlamaCppEngine._child_process_env(),
                     )
                     _pf_rc = _pf_result.returncode
                     _pf_out = (_pf_result.stdout or _pf_result.stderr).strip()
@@ -1023,11 +1041,14 @@ class LlamaCppEngine:
             _child_env = None
             _child_creationflags = 0
             if getattr(sys, 'frozen', False) and os.name == 'nt':
-                # Inherit the parent environment so the server can load bundled
-                # VC++ / OpenSSL DLLs from PyInstaller's _internal/ directory.
-                # A minimal env (only System32 + vcruntime140 directory) causes
-                # STATUS_ACCESS_VIOLATION (0xC0000005) on startup.
-                _child_env = None  # inherit — this is what works
+                # Inherit the parent env (a minimal env broke CRT init with
+                # 0xC0000005) BUT prepend the directory of the already-loaded
+                # CRT.  PyInstaller 6 on Windows exposes _internal/ to the MAIN
+                # process via os.add_dll_directory(), which child processes do
+                # NOT inherit; without this the child cannot find
+                # vcruntime140_1.dll on machines lacking the VC++ redist and
+                # dies with 0xC0000135 (STATUS_DLL_NOT_FOUND).
+                _child_env = LlamaCppEngine._child_process_env()
                 # NOTE: previously _child_creationflags was 0 here, which meant
                 # the subprocess_kwargs (CREATE_NEW_CONSOLE + STARTF_USESHOWWINDOW)
                 # assembled at lines 587-590 were NEVER passed to Popen.

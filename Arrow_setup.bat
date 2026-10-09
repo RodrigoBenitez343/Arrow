@@ -265,12 +265,22 @@ if defined VULKAN_SDK (
   echo [llama] No Vulkan SDK - building CPU-only ^(works everywhere^).
 )
 
+:: CPU instruction set: llama.cpp DEFAULTS GGML_AVX2/FMA/F16C=ON, and on MSVC
+:: that bakes /arch:AVX2 into ggml-cpu.dll.  Such a binary dies with
+:: STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on any CPU WITHOUT AVX2 (VMs, older
+:: or low-power CPUs) - the "llama-server cannot start" failure seen on fresh
+:: PCs.  Build ALL CPU variants instead, so a dispatcher picks the best ISA the
+:: target CPU actually supports (down to SSE4.2): runs everywhere, still fast
+:: where AVX2/AVX512 exist.  Fallback if variants are unavailable: an SSE4.2
+:: baseline via -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF
+set "CPU_FLAGS=-DGGML_NATIVE=OFF -DGGML_CPU_ALL_VARIANTS=ON"
+
 :: Architecture: x64 (default) or arm64.
 set "ARCH_FLAG="
 if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" set "ARCH_FLAG=-A arm64"
 
 echo [llama] Configuring...
-cmake -S "%LLAMA_SRC%" -B "%LLAMA_BUILD%" -DCMAKE_BUILD_TYPE=Release %BACKEND_FLAGS% %ARCH_FLAG% -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
+cmake -S "%LLAMA_SRC%" -B "%LLAMA_BUILD%" -DCMAKE_BUILD_TYPE=Release %BACKEND_FLAGS% %CPU_FLAGS% %ARCH_FLAG% -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF
 if errorlevel 1 (
   echo [llama] CMake configure failed - falling back to a prebuilt llama.cpp release.
   call :get_prebuilt_llama
