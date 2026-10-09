@@ -338,3 +338,35 @@ def test_api_subprocess_pipes_do_not_loop(tmp_path):
     assert "UnicodeEncodeError" not in out
     assert "Logging error" not in out
     assert "[looper-logging]" not in out  # no handler fallback was needed
+
+
+def test_uvicorn_dictconfig_closes_telemetry_handlers(telemetry):
+    """Pitfall guard: uvicorn's minimal dictConfig calls
+    logging._clearExistingHandlers(), which CLOSES the app's file/session
+    handlers.  Every record after the API server starts is then silently
+    dropped from disk and the Logs browser shows nothing.  The API server must
+    therefore NOT pass uvicorn_log_config() (see the two tests below)."""
+    import logging.config
+
+    logging_setup.setup_logging("uvicorn-bug-sess")
+    logging.getLogger("tests.uvicorn").info("BEFORE-MARKER")
+    logging.config.dictConfig(logging_setup.uvicorn_log_config())
+    logging.getLogger("tests.uvicorn").info("AFTER-DICTCONFIG-MARKER")
+
+    text = (telemetry / "automation.log").read_text(encoding="utf-8")
+    assert "BEFORE-MARKER" in text
+    assert "AFTER-DICTCONFIG-MARKER" not in text  # handler closed by dictConfig
+
+
+def test_uvicorn_log_config_none_keeps_file_logging(telemetry):
+    """Fix: log_config=None makes uvicorn's configure_logging a no-op, so its
+    loggers keep propagating to the root dispatch AND the telemetry file
+    handlers stay alive."""
+    import uvicorn
+
+    logging_setup.setup_logging("uvicorn-none-sess")
+    uvicorn.Config(app=None, log_config=None).configure_logging()
+    logging.getLogger("tests.uvicorn").info("AFTER-NONE-MARKER")
+
+    text = (telemetry / "automation.log").read_text(encoding="utf-8")
+    assert "AFTER-NONE-MARKER" in text

@@ -146,6 +146,62 @@ def _ensure_color_bgr(image_arr):
 _OCR_WORKER_TIMEOUT = 180  # seconds; a hung worker must not hang the app
 
 
+def _ocr_worker_script() -> Optional[str]:
+    """Locate ``ocr_worker.py`` on disk, or None when it is missing.
+
+    Source: the worker sits beside this file.  Frozen (PyInstaller): the module
+    lives in the PYZ, so ``__file__`` is a fictional path and the worker is
+    shipped as a loose data file (see LoOperApp.spec) - searched under
+    ``_MEIPASS`` and the exe dir.
+    """
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "ocr_worker.py")
+    ]
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates += [
+            os.path.join(meipass, "player", "ocr_worker.py"),
+            os.path.join(meipass, "LoOper", "player", "ocr_worker.py"),
+            os.path.join(meipass, "_internal", "player", "ocr_worker.py"),
+        ]
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        candidates += [
+            os.path.join(exe_dir, "player", "ocr_worker.py"),
+            os.path.join(exe_dir, "LoOper", "player", "ocr_worker.py"),
+        ]
+    for cand in candidates:
+        try:
+            if cand and os.path.isfile(cand):
+                return cand
+        except Exception:
+            continue
+    return None
+
+
+def _ocr_worker_python() -> str:
+    """Interpreter that runs the isolated OCR worker.
+
+    Frozen: the app exe itself - its interpreter mode execs a .py argument with
+    the bundled torch/paddle.  Source: the project venv python (paddle/torch
+    are only tested there; ``sys.executable`` may be a system python when the
+    app was launched outside the venv).
+    """
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    current = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(8):
+        for folder in (".venv", "venv", "virtualenv"):
+            cand = os.path.join(current, folder, "Scripts", "python.exe")
+            if os.path.isfile(cand):
+                return cand
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return sys.executable
+
+
 def _ocr_via_subprocess(image: Any, min_confidence: float, language: str) -> List[Dict[str, Any]]:
     """Run paddle OCR in an isolated worker process.
 
@@ -175,12 +231,18 @@ def _ocr_via_subprocess(image: Any, min_confidence: float, language: str) -> Lis
         fd, tmp_out = tempfile.mkstemp(suffix=".json")
         os.close(fd)
 
-        worker = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "ocr_worker.py"
-        )
+        worker = _ocr_worker_script()
+        if not worker:
+            logger.warning(
+                "OCR worker script (ocr_worker.py) not found — OCR disabled"
+            )
+            return []
         lang = _normalize_language_for_paddle(language)
         proc = subprocess.run(
-            [sys.executable, worker, tmp_img, str(float(min_confidence)), lang, tmp_out],
+            [
+                _ocr_worker_python(), worker, tmp_img,
+                str(float(min_confidence)), lang, tmp_out,
+            ],
             capture_output=True,
             timeout=_OCR_WORKER_TIMEOUT,
             creationflags=0x08000000 if os.name == "nt" else 0,  # CREATE_NO_WINDOW

@@ -12,9 +12,16 @@ try:
     import cv2                          # OpenCV library for computer vision and template matching.
     import numpy as np                  # Fundamental package for scientific computing with Python.
     CV2_AVAILABLE = True
-except ImportError:
+except ImportError as _cv_err:
+    # Do NOT hide the reason: on a fresh / compiled machine this is almost
+    # always a NATIVE dependency problem - the OpenCV wheel links the MSVC
+    # runtime and system DLLs (Media Foundation MF.dll/MFReadWrite.dll on
+    # Windows "N" editions, dxgi/d3d11 across the board), so a missing OS
+    # component surfaces here as a bare ImportError.  Log the real error so it
+    # is diagnosable instead of a generic "not available".
     CV2_AVAILABLE = False
-    print("Warning: OpenCV not available. Multi-scale template matching will be disabled.")
+    print(f"Warning: OpenCV not available ({type(_cv_err).__name__}: {_cv_err}). "
+          "Multi-scale template matching will be disabled.")
     print("Install with: pip install opencv-python numpy")
 
 # Import OCR libraries with fallback handling

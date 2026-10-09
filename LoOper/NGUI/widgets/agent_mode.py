@@ -204,20 +204,14 @@ class AgentModeWidget(QWidget):
 
         def _worker():
             try:
-                tracker = ModelDownloadTracker.get_instance()
-                tracker.register_base_models()
-                missing = tracker.get_missing_models()
-                if missing:
-                    logger.info(
-                        "AgentMode: %d model(s) need downloading, starting...",
-                        len(missing),
-                    )
-                    # Show the panel on next poll cycle
-                    tracker.start_all_missing()
-                    # Start the poll timer to track progress
+                from AI.model_downloads import run_provisioning
+                # Shared, lock-guarded entry point: no-op when the startup
+                # provisioner already owns a pass (avoids duplicate downloads).
+                if run_provisioning(block=False) is False:
+                    # Something is missing / a pass is in flight - poll progress.
                     self._download_poll_timer.start()
                 else:
-                    logger.info("AgentMode: all base models already present")
+                    logger.info("AgentMode: all runtime assets already present")
             except Exception as e:
                 logger.error("AgentMode: download tracking init error: %s", e)
 

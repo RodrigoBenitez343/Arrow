@@ -1,6 +1,8 @@
 # install_dependencies.ps1
-# This script verifies PaddleOCR models and downloads llama.cpp models,
-# installing or downloading them if missing.
+# Post-install step: delegates ALL asset provisioning (GGUF models + engine
+# utilities such as llama.cpp binaries, laya.exe, Chrome, Vosk, Piper,
+# PaddleOCR) to the app's own lazy worker via `arrow.exe --install-deps`.
+# That worker checks what is present and fetches the rest one at a time.
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName System.Windows.Forms
@@ -17,100 +19,52 @@ function Show-Notification($Title, $Text) {
 }
 
 # ---------------------------------------------------------------------------
-# 1. PaddleOCR model verification
+# 0. Build/verify the llama.cpp engine FOR THIS HOST.
+#    Nothing ISA-specific ships in the MSI: setup_llama_engine.ps1 detects the
+#    host, installs the C++ toolchain when a local build is required, and
+#    compiles the engine in place (falling back to a portable prebuilt).  This
+#    is what stops an engine built on a developer machine from conflicting with
+#    the end user's CPU.
+# ---------------------------------------------------------------------------
+# The llama.cpp source ships as ONE zip (a single MSI Component instead of
+# ~38k loose files, which would blow the 65536-Component WIX7502 cap).  Unpack
+# it beside the app so the engine script can build from source as before.
+$LlamaSrcZip = Join-Path $PSScriptRoot "_internal\llama.cpp.zip"
+$LlamaSrcDir = Join-Path $PSScriptRoot "_internal\llama.cpp"
+if ((Test-Path $LlamaSrcZip) -and -not (Test-Path (Join-Path $LlamaSrcDir "CMakeLists.txt"))) {
+    New-Item -ItemType Directory -Force -Path $LlamaSrcDir | Out-Null
+    tar -xf $LlamaSrcZip -C $LlamaSrcDir
+}
+
+$EngineScript = Join-Path $PSScriptRoot "setup_llama_engine.ps1"
+if (Test-Path $EngineScript) {
+    & $EngineScript -BinDest (Join-Path $PSScriptRoot "_internal\bin") `
+                    -SourceDir $LlamaSrcDir
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "llama.cpp engine provisioning did not complete; models will still be fetched."
+    }
+} else {
+    Write-Warning "setup_llama_engine.ps1 not found next to the app - skipping the engine build."
+}
+
+# ---------------------------------------------------------------------------
+# 1. Provision EVERY runtime asset (OCR models, GGUF models, engine utilities)
+#    via the app's own lazy worker.  `arrow.exe --install-deps` runs the SAME
+#    provisioner the app uses at startup - one asset at a time, skipping what
+#    is already present, then exits.  All download logic lives in ONE place
+#    (LoOper/AI/model_downloads.py) instead of being duplicated here.
 # ---------------------------------------------------------------------------
 $LoOperExe = Join-Path $PSScriptRoot "arrow.exe"
 if (-not (Test-Path $LoOperExe)) {
     $LoOperExe = Join-Path $PSScriptRoot "LoOper.exe"
 }
 if (Test-Path $LoOperExe) {
-    $balloon = Show-Notification "arrow Setup" "Verifying AI models (OCR)..."
+    $balloon = Show-Notification "arrow Setup" "Verifying AI models and utilities..."
     try {
         Start-Process -FilePath $LoOperExe -ArgumentList "--install-deps" -Wait -NoNewWindow
     } catch {
-        # Ignore errors
+        # Ignore errors - the app re-runs provisioning on next launch anyway.
     } finally {
         $balloon.Dispose()
     }
-}
-
-# ---------------------------------------------------------------------------
-# 2. llama.cpp model download
-# ---------------------------------------------------------------------------
-$LlamaBinDir = Join-Path $PSScriptRoot "bin"
-$MtmdCli = Join-Path $LlamaBinDir "llama-mtmd-cli.exe"
-$ModelsDir = Join-Path $PSScriptRoot "AI" "models"
-$LfmDir = Join-Path $ModelsDir "LFM2.5-VL-450M-GGUF"
-
-# Check if llama-mtmd-cli is available (bundled via MSI)
-$LlamaCppAvailable = Test-Path $MtmdCli
-if (-not $LlamaCppAvailable) {
-    # Also check PATH as fallback
-    $MtmdCli = (Get-Command "llama-mtmd-cli" -ErrorAction SilentlyContinue).Source
-    $LlamaCppAvailable = ($null -ne $MtmdCli)
-}
-
-if ($LlamaCppAvailable) {
-    # Determine which LFM quant to download
-    # Prefer Q8_0, fall back to Q4_0
-    $model_quant = "Q8_0"
-    $mmproj_quant = "Q8_0"
-    
-    # Check if models already exist
-    $model_file = Join-Path $LfmDir "LFM2.5-VL-450M-$model_quant.gguf"
-    $mmproj_file = Join-Path $LfmDir "mmproj-LFM2.5-VL-450m-$mmproj_quant.gguf"
-    
-    $need_model = -not (Test-Path $model_file)
-    $need_mmproj = -not (Test-Path $mmproj_file)
-    
-    if ($need_model -or $need_mmproj) {
-        $balloon = Show-Notification "arrow Setup" "Downloading AI models (LFM vision)..."
-        try {
-            if (-not (Test-Path $LfmDir)) {
-                New-Item -ItemType Directory -Path $LfmDir -Force | Out-Null
-            }
-            
-            Write-Host "Downloading LFM2.5-VL-450M-GGUF models (this may take a while)..."
-            
-            if ($need_model) {
-                Write-Host "  Downloading LFM2.5-VL-450M-$model_quant.gguf..."
-                & $MtmdCli -hf LiquidAI/LFM2.5-VL-450M-GGUF:$model_quant --models-dir $LfmDir
-            }
-            
-            if ($need_mmproj) {
-                Write-Host "  Downloading mmproj-LFM2.5-VL-450m-$mmproj_quant.gguf..."
-                & $MtmdCli -hf LiquidAI/LFM2.5-VL-450M-GGUF --mmproj $mmproj_quant --models-dir $LfmDir
-            }
-            
-            Write-Host "LFM vision model download complete." -ForegroundColor Green
-        } catch {
-            Write-Warning "Failed to download LFM models via mtmd-cli. Trying direct download..."
-            try {
-                # Fallback: direct Hugging Face download
-                $hf_base = "https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF/resolve/main"
-                if ($need_model) {
-                    $url = "$hf_base/LFM2.5-VL-450M-$model_quant.gguf"
-                    $out = Join-Path $LfmDir "LFM2.5-VL-450M-$model_quant.gguf"
-                    Write-Host "  Downloading $url..."
-                    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
-                }
-                if ($need_mmproj) {
-                    $url = "$hf_base/mmproj-LFM2.5-VL-450m-$mmproj_quant.gguf"
-                    $out = Join-Path $LfmDir "mmproj-LFM2.5-VL-450m-$mmproj_quant.gguf"
-                    Write-Host "  Downloading $url..."
-                    Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
-                }
-                Write-Host "Direct download complete." -ForegroundColor Green
-            } catch {
-                Write-Warning "Direct download also failed: $_"
-            }
-        } finally {
-            $balloon.Dispose()
-        }
-    } else {
-        Write-Host "LFM vision models already present." -ForegroundColor Gray
-    }
-} else {
-    Write-Warning "llama-mtmd-cli not found. Skipping LFM model download."
-    Write-Warning "LFM models can be downloaded later from: https://huggingface.co/LiquidAI/LFM2.5-VL-450M-GGUF"
 }

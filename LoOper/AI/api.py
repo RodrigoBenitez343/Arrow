@@ -2443,11 +2443,15 @@ if __name__ == "__main__":
 
     # Unified telemetry: let uvicorn loggers propagate to the root dispatch
     # (colorized console + logs/automation.log + session md).
+    # log_config MUST be None: uvicorn's dictConfig calls
+    # logging._clearExistingHandlers(), which CLOSES the app's file/session
+    # handlers and silently drops every later record from disk.  None keeps
+    # uvicorn's default propagate=True so its logs still reach the handlers.
     uvicorn.run(
         app,
         host=bind_host,
         port=port,
         reload=False,
         log_level="info",
-        log_config=uvicorn_log_config(),
+        log_config=None,
     )
