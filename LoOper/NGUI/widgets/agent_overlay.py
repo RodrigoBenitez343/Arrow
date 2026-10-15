@@ -70,6 +70,7 @@ COMPACT_HEIGHT = 96          # header(40) + input_bar(54) + tiny margin
 OVERLAY_MARGIN = 16          # pixels from screen edge
 CORNER_RADIUS = 16
 SERVER_PANEL_HEIGHT = 288    # enough room for IP row + status + button + QR + URL
+ARTIFACT_HEIGHT = 460        # embedded web view height for interactive HTML artifacts
 
 # Semi-transparent dark background (rgba with alpha ~232/255)
 BG_RGBA = "rgba(11, 14, 18, 232)"
@@ -102,6 +103,8 @@ def _avatar_name(seed: str) -> str:
 
 # ── Persistent agent-mode remote IP (Tailscale/LAN) ──────────────────────
 _AGENT_IP_KEY = "AGENT_TAILSCALE_IP"
+# Whether the phone-facing agent web server auto-starts (default: on).
+_AGENT_WEB_SERVER_KEY = "AGENT_WEB_SERVER_ENABLED"
 
 
 def _agent_config_file() -> str:
@@ -141,6 +144,36 @@ def _save_agent_ip(ip: str) -> None:
             json.dump(cfg, fh, indent=2, ensure_ascii=False)
     except Exception as exc:
         logger.warning("Agent mode: could not persist remote IP (%s)", exc)
+
+
+def _load_agent_web_enabled() -> bool:
+    """Whether the phone-facing agent web server should auto-start.
+
+    Defaults to True so the server is permanently on unless the user has
+    explicitly switched it off.
+    """
+    try:
+        with open(_agent_config_file(), encoding="utf-8") as fh:
+            cfg = json.load(fh)
+        return bool(cfg.get(_AGENT_WEB_SERVER_KEY, True))
+    except Exception:
+        return True
+
+
+def _save_agent_web_enabled(enabled: bool) -> None:
+    """Persist the auto-start choice, preserving the other config keys."""
+    try:
+        path = _agent_config_file()
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cfg = json.load(fh)
+        except Exception:
+            cfg = {}
+        cfg[_AGENT_WEB_SERVER_KEY] = bool(enabled)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.warning("Agent mode: could not persist web server flag (%s)", exc)
 
 
 class SpectrogramBar(QWidget):
@@ -249,6 +282,10 @@ class AgentOverlay(QFrame):
         self._stop_requested = False
         self._thinking_label = None
         self._placeholder = None
+        # One reusable QWebEngineView for HTML artifacts.  Creating a renderer
+        # per artifact kept ~150 MB alive forever and OOM'd the app across
+        # repeated runs; this single view is moved into the newest bubble.
+        self._artifact_view = None
 
         # ── Per-coworker conversations (one per System chain) ──
         # chain_id -> [{text, is_user, mode, asset}]; the sidebar switches
@@ -266,17 +303,22 @@ class AgentOverlay(QFrame):
         self._input_ask_event = threading.Event()
         self._input_ask_response = None
         self._input_ask_active = False
+        # Inline option buttons shown under a pending ask (choice / yes-no).
+        # Torn down as soon as the ask resolves on either surface.
+        self._ask_options_widget = None
 
         # ── Web server state ──
+        # The phone-facing server outlives the overlay: it is NEVER stopped by
+        # hiding/closing the overlay, only by an explicit user toggle.  It
+        # auto-starts on launch when the user left it enabled (persisted).
         self._web_server = AgentWebServer()
         self._web_server.set_handler(self._handle_web_message)
         self._web_server_started = False
-        # True while collapsing to the dot: agent mode stays active, so the
-        # web server must survive the hide (mobile clients keep working).
-        self._keep_web_server = False
         self._server_poll_timer = QTimer(self)
         self._server_poll_timer.setInterval(2000)
         self._server_poll_timer.timeout.connect(self._poll_server_status)
+        # Delay so the overlay's UI + chat controller are fully wired first.
+        QTimer.singleShot(500, self._autostart_web_server)
 
         # ── Drag state ──
         self._dragging = False
@@ -307,6 +349,9 @@ class AgentOverlay(QFrame):
         self._web_ask_response = None
         self._web_ask_active = False
         self._last_ask_question = ""  # re-announced to (re)connecting clients
+        # v2 shape (kind/choices) of the pending ask, re-announced on reconnect
+        # so a client that reloads rebuilds the same option buttons.
+        self._last_ask_meta = None
 
         # ── Voice mode (STT) state ──
         self._voice_mode = False
@@ -943,7 +988,6 @@ class AgentOverlay(QFrame):
         # User explicitly showing — clear automation flag so _automation_restore
         # doesn't pop it back later.
         self._was_visible_for_automation = False
-        self._keep_web_server = False
         # Always start in compact mode
         self._set_compact_mode(True)
         if x is not None and y is not None:
@@ -960,12 +1004,15 @@ class AgentOverlay(QFrame):
         )
 
     def hide_overlay(self):
-        """Hide the overlay, stop any running agent loop."""
+        """Hide the overlay, stop any running agent loop.
+
+        The phone-facing server is NOT stopped here: mobile clients keep
+        working after the desktop overlay is dismissed; only the explicit
+        server toggle turns it off.
+        """
         self._stop_event.set()
         self._release_pending_asks()
         self._stop_recording()
-        self._keep_web_server = False
-        self._stop_web_server()
         self._was_visible_for_automation = False
         self.hide()
         self.closed.emit()
@@ -1115,7 +1162,6 @@ class AgentOverlay(QFrame):
         """Switch back to main GUI mode — hide overlay, do NOT stop server."""
         self._stop_recording()
         self._was_visible_for_automation = False
-        self._keep_web_server = False
         self.hide()
         self.closed.emit()
 
@@ -1123,9 +1169,7 @@ class AgentOverlay(QFrame):
         """Collapse overlay back to minimal dot state (stay in agent mode)."""
         self._stop_recording()
         self._was_visible_for_automation = False
-        # Still in agent mode: keep the web server up so a phone client is
-        # not disconnected just because the desktop overlay got tucked away.
-        self._keep_web_server = True
+        # The phone-facing server keeps running regardless of overlay state.
         self.hide()
         self.collapsed.emit()
 
@@ -1270,10 +1314,7 @@ class AgentOverlay(QFrame):
             pass
 
     def hideEvent(self, event):
-        """Auto-stop the web server when hiding (unless for automation)."""
-        if (not self._was_visible_for_automation and not self._keep_web_server
-                and self._web_server_started):
-            self._stop_web_server()
+        """Hiding never stops the phone-facing server — it outlives the overlay."""
         super().hideEvent(event)
 
     # ── Event filter (Enter to send) ────────────────────────────────
@@ -1317,6 +1358,7 @@ class AgentOverlay(QFrame):
             self._input_ask_response = text
             self._input_ask_active = False
             self._add_bubble(text, is_user=True)
+            self._clear_ask_options()
             self._scroll_to_bottom()
             self._input_ask_event.set()
             return
@@ -1695,11 +1737,108 @@ class AgentOverlay(QFrame):
             return
         self._automation_hide()
 
+    # ── Inline ask options (click a choice instead of typing it) ────────
+
+    def _ask_option_list(self, meta):
+        """(label, value) pairs to offer as buttons for an ask; [] = text-only.
+
+        Mirrors the manual prompt's choices: a yes/no question offers Yes/No,
+        a choice question offers the node's own options in order.  Anything
+        else (free text) gets no buttons and stays typed.
+        """
+        kind = str((meta or {}).get('kind') or 'text')
+        if kind == 'yes_no':
+            return [('Yes', 'yes'), ('No', 'no')]
+        if kind == 'choice':
+            out = []
+            for c in (meta or {}).get('choices') or []:
+                if isinstance(c, dict):
+                    label = str(c.get('label') or c.get('value') or '')
+                    value = str(c.get('value') or c.get('label') or '')
+                else:
+                    label = value = str(c)
+                if label:
+                    out.append((label, value))
+            return out
+        return []
+
+    def _show_ask_options(self, meta):
+        """Render the pending ask's choices as buttons under its question.
+
+        GUI-thread only (posted via ``_post_ui``).  A button click answers the
+        waiting node directly with the option's value, so a list the node
+        already knows is never something the user has to type out.
+        """
+        self._clear_ask_options()
+        options = self._ask_option_list(meta)
+        if not options:
+            return
+        kind = str((meta or {}).get('kind') or 'text')
+        holder = QFrame(self._chat_container)
+        holder.setObjectName("askOptions")
+        holder.setStyleSheet(
+            "QFrame#askOptions { background: transparent; border: none; }"
+        )
+        holder.setMaximumWidth(self._bubble_max_width())
+        box = QHBoxLayout(holder) if kind == 'yes_no' else QVBoxLayout(holder)
+        box.setContentsMargins(2, 0, 2, 6)
+        box.setSpacing(4)
+        for label, value in options:
+            btn = QPushButton(label, holder)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setAutoDefault(False)
+            btn.setStyleSheet(
+                f"QPushButton {{ color: {TEXT_COLOR};"
+                f" background: rgba(0, 194, 160, 0.10);"
+                f" border: 1px solid {ACCENT_COLOR}; border-radius: 8px;"
+                f" padding: 5px 12px; font-size: 12px; }}"
+                f"QPushButton:hover {{ background: rgba(0, 194, 160, 0.22); }}"
+            )
+            btn.clicked.connect(
+                lambda _=False, v=value, l=label: self._answer_ask(v, l)
+            )
+            box.addWidget(btn)
+        self._chat_layout.addWidget(holder, 0, Qt.AlignLeft)
+        self._ask_options_widget = holder
+        self._scroll_to_bottom()
+
+    def _clear_ask_options(self):
+        """Drop the pending ask's option buttons (idempotent, UI thread)."""
+        holder = getattr(self, '_ask_options_widget', None)
+        self._ask_options_widget = None
+        if holder is not None:
+            try:
+                holder.setParent(None)
+                holder.deleteLater()
+            except Exception:
+                pass
+
+    def _answer_ask(self, value, label):
+        """Answer a pending ask from an option button (GUI thread)."""
+        if not self._input_ask_active:
+            return
+        self._input_ask_response = value
+        self._input_ask_active = False
+        self._add_bubble(label, True)
+        self._clear_ask_options()
+        self._scroll_to_bottom()
+        self._input_ask_event.set()
+
     # ── Chat bubbles ─────────────────────────────────────────────────
 
     def _add_bubble(self, text: str, is_user: bool, mode: str = 'text', asset=None):
         """Record the message in the running coworker's transcript, then show it."""
         chain_id = self._request_chain_id or self._active_chain_id
+        # An HTML artifact is saved to disk once and its path carried in the
+        # (otherwise image-only) ``asset`` slot, so switching coworkers — which
+        # rebuilds the whole transcript — reloads the same file rather than
+        # writing a fresh copy per re-render.
+        if mode == 'html' and not is_user and str(text or '').strip():
+            try:
+                from .artifacts import save_artifact
+                asset = save_artifact(text)
+            except Exception:
+                logger.exception("agent_overlay: artifact save failed")
         self._conversations.setdefault(chain_id, []).append({
             "text": text, "is_user": bool(is_user), "mode": mode, "asset": asset,
         })
@@ -1715,6 +1854,15 @@ class AgentOverlay(QFrame):
         ``_add_bubble``, so switching coworkers never loses the user's text.
         """
         try:
+            # Detach the reusable artifact view before the bubbles are dropped,
+            # so it is not destroyed with the widget it currently sits in.
+            view = getattr(self, "_artifact_view", None)
+            if view is not None:
+                holder = view.parentWidget()
+                if holder is not None and holder is not self._chat_container:
+                    if holder.layout() is not None:
+                        holder.layout().removeWidget(view)
+                    view.setParent(self._chat_container)
             for i in reversed(range(self._chat_layout.count())):
                 widget = self._chat_layout.itemAt(i).widget()
                 if widget is not None and widget is not self._placeholder:
@@ -1771,10 +1919,11 @@ class AgentOverlay(QFrame):
                 # No usable asset: fall back to a text bubble.
                 label = self._make_bubble_label(str(text or "(image unavailable)"), max_width)
                 bl.addWidget(label)
-        elif mode in ('html', 'markdown'):
-            from .rich_render import md_to_html, sanitize_html
-            html_text = md_to_html(text) if mode == 'markdown' else sanitize_html(text)
-            label = self._make_bubble_label(html_text, max_width, plain=text)
+        elif mode == 'html':
+            self._render_html_artifact(bubble, bl, text, asset, max_width)
+        elif mode == 'markdown':
+            from .rich_render import md_to_html
+            label = self._make_bubble_label(md_to_html(text), max_width, plain=text)
             label.setTextFormat(Qt.RichText)
             bl.addWidget(label)
         else:
@@ -1787,6 +1936,127 @@ class AgentOverlay(QFrame):
         bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         align = Qt.AlignRight if is_user else Qt.AlignLeft
         self._chat_layout.addWidget(bubble, 0, align)
+
+    def _render_html_artifact(self, bubble, layout, text, path, max_width):
+        """Render an interactive HTML artifact in a live web view.
+
+        ``path`` (from ``_add_bubble``) is the saved artifact; it is written on
+        the fly if a caller passed none.  Falls back to a sanitized static
+        label when QtWebEngine is not available (e.g. a trimmed build).
+        """
+        if not path or not os.path.isfile(str(path)):
+            try:
+                from .artifacts import save_artifact
+                path = save_artifact(text)
+            except Exception:
+                logger.exception("agent_overlay: artifact save failed")
+                path = None
+
+        view = self._acquire_artifact_view()
+        if view is None:
+            from .rich_render import sanitize_html
+            label = self._make_bubble_label(sanitize_html(text), max_width, plain=text)
+            label.setTextFormat(Qt.RichText)
+            layout.addWidget(label)
+        else:
+            try:
+                from PyQt5.QtCore import QUrl
+                # The single view is reused: leave a static preview in the
+                # bubble it previously occupied, then move it into this one.
+                self._degrade_current_artifact_bubble(view)
+                # Fill the visible chat height so the artifact reads as a full
+                # inline view rather than a small box.
+                height = ARTIFACT_HEIGHT
+                try:
+                    vp = self._chat_scroll.viewport()
+                    if vp is not None and vp.height() > 240:
+                        height = max(300, vp.height() - 24)
+                except Exception:
+                    pass
+                view.setFixedSize(max_width, height)
+                view.setProperty("artifactText", text)
+                layout.addWidget(view)
+                view.load(QUrl.fromLocalFile(path))
+            except Exception:
+                logger.exception("agent_overlay: artifact view failed")
+
+        if path:
+            btn = QPushButton(_("Open artifact"), bubble)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton {{ color: {ACCENT_COLOR}; background: transparent;"
+                f" border: 1px solid {ACCENT_COLOR}; border-radius: 6px;"
+                f" padding: 3px 10px; font-size: 11px; }}"
+                f"QPushButton:hover {{ background: rgba(0, 194, 160, 0.12); }}"
+            )
+            btn.clicked.connect(lambda _=False, p=path: self._open_artifact(p))
+            layout.addWidget(btn, 0, Qt.AlignLeft)
+
+    def _open_artifact(self, path):
+        """Open a saved HTML artifact in the system browser."""
+        try:
+            from PyQt5.QtCore import QUrl
+            from PyQt5.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        except Exception:
+            logger.exception("agent_overlay: failed to open artifact")
+
+    def _acquire_artifact_view(self):
+        """Return the single reusable artifact web view (created on first use).
+
+        One persistent QWebEngineView keeps exactly one Chromium renderer alive;
+        creating a view per artifact kept ~150 MB each and OOM'd the app over
+        repeated agent runs.
+        """
+        if self._artifact_view is not None:
+            return self._artifact_view
+        try:
+            from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings
+            view = QWebEngineView(self._chat_container)
+            try:
+                # The artifact is self-contained; forbid it from reading
+                # arbitrary local files (its own dir stays reachable).
+                view.settings().setAttribute(
+                    QWebEngineSettings.LocalContentCanAccessFileUrls, False)
+            except Exception:
+                pass
+            try:
+                # Opaque themed background: a translucent top-level window
+                # (this overlay) otherwise leaves the WebEngine surface blank.
+                view.page().setBackgroundColor(QColor("#0B0E12"))
+            except Exception:
+                pass
+            self._artifact_view = view
+            return view
+        except Exception:
+            logger.exception("agent_overlay: QWebEngineView unavailable — static fallback")
+            return None
+
+    def _degrade_current_artifact_bubble(self, view):
+        """Swap the reused view for a static preview in the bubble it sits in.
+
+        Called before the view is moved into a newer bubble, so the previous
+        artifact stays readable without keeping its renderer alive.
+        """
+        bubble = view.parentWidget()
+        if bubble is None or bubble is self._chat_container:
+            return
+        lay = bubble.layout()
+        if lay is None:
+            return
+        try:
+            from .rich_render import sanitize_html
+            text = view.property("artifactText") or ""
+            label = self._make_bubble_label(sanitize_html(text), view.width(), plain=text)
+            label.setTextFormat(Qt.RichText)
+            idx = lay.indexOf(view)
+            if idx >= 0:
+                lay.insertWidget(idx, label)
+            else:
+                lay.addWidget(label)
+            lay.removeWidget(view)
+        except Exception:
+            logger.exception("agent_overlay: degrade artifact bubble failed")
 
     def _pulse_output_spectro(self, text: str):
         """Animate the spectrogram while spoken output plays (estimated)."""
@@ -1901,7 +2171,11 @@ class AgentOverlay(QFrame):
                     lines.append(f"{i + 1}) {label}")
             if accepts.get('images') or accepts.get('documents'):
                 lines.append('(Attach a file by typing or pasting its path)')
-            reply = legacy('\n'.join(p for p in lines if p))
+            reply = legacy(
+                '\n'.join(p for p in lines if p),
+                {'kind': kind, 'choices': choices, 'accepts': accepts,
+                 'default': request.get('default', '')},
+            )
             value = str(reply or '').strip()
             attachments = []
             if value and os.path.isfile(value):
@@ -1927,8 +2201,13 @@ class AgentOverlay(QFrame):
         resumes with whichever reply arrives first.  A single dual-surface
         callback (instead of a per-request swap) is what keeps a run started
         from the desktop answerable from the phone.
+
+        ``meta`` (optional) carries the v2 shape of the question
+        (``kind``/``choices``); when it names options, both surfaces render
+        the choices as buttons and a click answers directly, so the user is
+        never forced to type a number for a list the node already knows.
         """
-        def ask_user(question):
+        def ask_user(question, meta=None):
             self._input_ask_event.clear()
             self._input_ask_response = None
             self._input_ask_active = True
@@ -1936,12 +2215,24 @@ class AgentOverlay(QFrame):
             self._web_ask_response = None
             self._web_ask_active = True
             self._last_ask_question = question
+            # None for a legacy text-only ask; a dict drives the inline option
+            # buttons on both surfaces and is replayed to a reconnecting client.
+            self._last_ask_meta = dict(meta) if meta else None
             self._post_ui(lambda q=question: self._add_bubble(q, False))
+            if self._last_ask_meta:
+                self._post_ui(
+                    lambda m=self._last_ask_meta: self._show_ask_options(m)
+                )
             self._post_ui(self._scroll_to_bottom)
             self._post_ui(self._show_for_input)
-            # Mobile clients: show the question and put the client in
-            # answer mode (its next message is the reply, not a new query).
-            self._web_send_json({"type": "ask", "question": question})
+            # Mobile clients: show the question — with its options when it has
+            # them — and put the client in answer mode (its next message is the
+            # reply, not a new query).  A click on an option answers directly.
+            frame = {"type": "ask", "question": question}
+            if self._last_ask_meta:
+                frame["kind"] = self._last_ask_meta.get("kind") or "text"
+                frame["choices"] = list(self._last_ask_meta.get("choices") or [])
+            self._web_send_json(frame)
             # Voice-first: with voice mode on, start listening immediately so
             # the user can answer by speaking (tap the mic to stop).
             if self._voice_mode:
@@ -1958,8 +2249,10 @@ class AgentOverlay(QFrame):
             self._web_ask_active = False
             if self._voice_mode:
                 self._post_ui(self._end_voice_ask)
-            # Post-stop the UI belongs to the user: keep the overlay visible.
+            # Post-stop the UI belongs to the user: keep the overlay visible,
+            # and drop the now-answered option buttons.
             self._post_ui(self._ask_completed_hide)
+            self._post_ui(self._clear_ask_options)
             return resp
         return ask_user
 
@@ -2740,10 +3033,20 @@ class AgentOverlay(QFrame):
         else:
             self.setFixedSize(OVERLAY_WIDTH, OVERLAY_HEIGHT)
 
+    def _autostart_web_server(self):
+        """Start the phone server on launch when the user left it enabled."""
+        try:
+            if not self._web_server_started and _load_agent_web_enabled():
+                self._start_web_server()
+        except Exception:
+            logger.exception("Agent web server autostart failed")
+
     def _toggle_web_server(self):
         if self._web_server_started:
+            _save_agent_web_enabled(False)
             self._stop_web_server()
         else:
+            _save_agent_web_enabled(True)
             self._start_web_server()
 
     def _start_web_server(self):
@@ -2936,10 +3239,13 @@ class AgentOverlay(QFrame):
         if self._executing:
             self._web_send_json({"type": "agent_busy"})
         if self._web_ask_active and self._last_ask_question:
-            # Puts the client back in answer mode for the question it missed.
-            self._web_send_json(
-                {"type": "ask", "question": self._last_ask_question}
-            )
+            # Puts the client back in answer mode for the question it missed,
+            # rebuilding its option buttons from the same v2 shape.
+            frame = {"type": "ask", "question": self._last_ask_question}
+            if self._last_ask_meta:
+                frame["kind"] = self._last_ask_meta.get("kind") or "text"
+                frame["choices"] = list(self._last_ask_meta.get("choices") or [])
+            self._web_send_json(frame)
 
     def _web_chains_dir(self) -> str:
         return str(getattr(self._chat_controller, "_chains_dir", "") or "")

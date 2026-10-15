@@ -30,7 +30,11 @@ function extractBody(name) {
     console.error(name + ' not found in ' + ACTIONS);
     process.exit(2);
   }
-  return m[1].trim();
+  // The file holds the PYTHON literal, so every escape is doubled there and
+  // node sees one backslash too many: /\\/ inside a regex literal would end the
+  // regex and its remainder parse as flags.  Unescape to what Python passes to
+  // execute_script.
+  return m[1].trim().replace(/\\\\/g, '\\');
 }
 
 const deep = extractBody('JS_DEEP_SEARCH');
@@ -175,7 +179,32 @@ const first = vm.runInThisContext(
 const firstIds = (JSON.parse(first(['form > div.ph5']) || '[]')).map((f) => f.id);
 const firstOk = firstIds.length === 1 && firstIds[0] === 'base-field';
 
-const ok = scopedOk && wholeOk && hostOk && firstOk;
+// ---- the scope pick must refuse to guess between lookalikes --------------
+// A site that styles EVERY popup with the same CSS-module classes makes a
+// content rung match several containers at once. Taking the first match is how
+// a control OUTSIDE the picked div (a header 'Search' dialog) got enumerated,
+// read back and fed to ComoRAG as if it belonged to the form: an ambiguous rung
+// now names NOTHING, and the ladder keeps walking to a rung that does resolve.
+const dupA = makeEl('DIV', { id: 'dup-a', class: 'dup' }, [], 'A', MODAL_RECT);
+const dupB = makeEl('DIV', { id: 'dup-b', class: 'dup' }, [], 'B', BASE_RECT);
+doc.children.push(dupA, dupB);
+dupA.parentElement = doc; dupB.parentElement = doc;
+dupA.ownerDocument = doc; dupB.ownerDocument = doc;
+
+const pickScope = vm.runInThisContext(
+  '(function () { ' + deep + '; ' + foreground + '; ' +
+  'return { pick: __wvpScopePick }; })()',
+  { filename: 'form_scope_pick.js' });
+const ambiguous = pickScope.pick(['div.dup'], true);
+const ambiguousOk = !ambiguous;
+// Ambiguous first rung, unambiguous second: the ladder still finds the pick.
+const fellThrough = pickScope.pick(['div.dup', 'form > div.ph5'], true);
+const fellThroughOk = !!fellThrough && fellThrough.id === 'modal-row';
+
+const ok = scopedOk && wholeOk && hostOk && firstOk && ambiguousOk && fellThroughOk;
 console.log(JSON.stringify({ scoped, whole, hostScope, firstIds, scopedOk, wholeOk,
-                             hostOk, firstOk, ok }));
+                             hostOk, firstOk,
+                             ambiguous: ambiguous && ambiguous.id, ambiguousOk,
+                             fellThrough: fellThrough && fellThrough.id,
+                             fellThroughOk, ok }));
 process.exit(ok ? 0 : 1);

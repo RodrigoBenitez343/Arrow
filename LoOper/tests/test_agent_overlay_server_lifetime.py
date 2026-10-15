@@ -75,11 +75,20 @@ def test_dot_collapse_keeps_web_server(overlay):
     assert overlay._web_server_started is True
 
 
-def test_full_close_stops_web_server(overlay):
+def test_full_close_keeps_web_server(overlay):
+    """Closing the overlay must NOT stop the phone-facing server."""
     overlay.show()
     overlay.hide_overlay()
-    assert overlay._web_server.stopped == 1
-    assert overlay._web_server_started is False
+    assert overlay._web_server.stopped == 0
+    assert overlay._web_server_started is True
+
+
+def test_hide_event_keeps_web_server(overlay):
+    """Hiding the overlay (hideEvent) must not stop the server either."""
+    overlay.show()
+    overlay.hide()
+    assert overlay._web_server.stopped == 0
+    assert overlay._web_server_started is True
 
 
 def test_bubbles_follow_running_chain_not_selected_coworker(overlay):
@@ -240,3 +249,27 @@ def test_desktop_run_mirrors_final_reply_to_phone(overlay):
     while time.time() < deadline and not mirrored:
         time.sleep(0.02)
     assert mirrored == ["done"]
+
+
+# ---------------------------------------------------------------------------
+# Server self-healing (supervisor loop)
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_restarts_after_crash(monkeypatch):
+    """A crashed serve loop must be retried, not left dead."""
+    import NGUI.widgets.agent_web_server as aws
+
+    srv = aws.AgentWebServer(port=0)
+    srv._restart_delay = 0.0
+    calls = {"n": 0}
+
+    async def fake_serve(self):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        self._stopping = True  # second attempt: let the loop exit
+
+    monkeypatch.setattr(aws.AgentWebServer, "_serve", fake_serve)
+    srv._run()
+    assert calls["n"] == 2

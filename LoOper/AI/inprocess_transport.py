@@ -110,6 +110,33 @@ def _resolve_model_path(model_name: str) -> str:
     return model_name
 
 
+def _pick_free_port(preferred: int = 0, start: int = 9090,
+                    attempts: int = 100) -> int:
+    """A free 127.0.0.1 TCP port.
+
+    ``preferred`` (the configured port) is honoured when it is free AND is
+    not the agent web server's port (8081) — that port is held by THIS
+    process, so a server on it can never bind (the cleanup refuses to kill
+    the app's own PID).  Otherwise the first free port >= ``start`` is used.
+    """
+    import socket
+
+    def _bindable(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(('127.0.0.1', port))
+                return True
+            except OSError:
+                return False
+
+    if preferred and preferred != 8081 and _bindable(preferred):
+        return preferred
+    for port in range(start, start + attempts):
+        if _bindable(port):
+            return port
+    return start
+
+
 def get_engine() -> Any:
     """Return the process-wide ``LlamaCppEngine``, created once from bundled
     ``AI/config.json`` (LLAMA_CPP section).  Thread-safe."""
@@ -129,13 +156,24 @@ def get_engine() -> Any:
         engine_config = {
             "model_path": _resolve_model_path(cfg.get("model_path", "") or ""),
             "mmproj_path": _resolve_model_path(mmproj) if mmproj else "",
-            "server_port": int(cfg.get("server_port", 8081) or 8081),
+            "server_port": _pick_free_port(
+                int(cfg.get("server_port", 0) or 0)),
             "gpu_layers": int(cfg.get("gpu_layers", 0) or 0),
             "threads": int(cfg.get("threads", -1) or -1),
             "context_size": int(cfg.get("context_size", 0) or 0),
             "batch_size": int(cfg.get("batch_size", 2048) or 2048),
         }
         from AI.llama_cpp_engine import LlamaCppEngine
+        # Reap llama.cpp binaries orphaned by a crashed previous run BEFORE we
+        # spawn ours: Windows children outlive the parent, so a killed agent
+        # leaves llama-server holding its model (and the old port), and the
+        # next run's server lands on a fresh port while the orphan keeps its
+        # RAM — on a long chain that OOMs the box.  Nothing of ours is up yet.
+        try:
+            from AI.llama_cpp_engine import reap_orphan_llama_servers
+            reap_orphan_llama_servers(logger)
+        except Exception as _reap_exc:
+            logger.debug("Orphan reap skipped: %s", _reap_exc)
         _engine = LlamaCppEngine(engine_config)
         return _engine
 
@@ -219,6 +257,26 @@ def shutdown() -> None:
             logger.error("Failed to stop direct engine: %s", exc)
         finally:
             _engine = None
+
+
+def stop() -> bool:
+    """Abort the in-flight generation and stop the engine (user ESC).
+
+    The exported agent has no HTTP gateway to stop, so the ESC path calls this
+    directly: terminating the server process aborts the generation request the
+    worker thread is blocked on.  The engine object is kept so the next call
+    restarts it lazily with the same configuration.
+    """
+    engine = _engine
+    if engine is None:
+        return False
+    try:
+        engine.stop_server()
+        logger.info("Direct engine stopped (user request)")
+        return True
+    except Exception as exc:
+        logger.warning("Failed to stop direct engine: %s", exc)
+        return False
 
 
 atexit.register(shutdown)

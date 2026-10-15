@@ -77,6 +77,55 @@ def test_scoped_scan_does_not_fall_back_to_the_whole_page():
     assert enum_scopes and all(s for s in enum_scopes)
 
 
+def test_positional_rung_outranks_a_lookalike_content_rung():
+    """A pinned position that resolves and holds no field ends the ladder.
+
+    The content rungs (hashed class / data attr / recorded css) say what the
+    element LOOKED like, and a site that styles every popup with the same
+    CSS-module classes re-resolves them to a DIFFERENT container - live:
+    'Resolved via div > dialog.dj9me5.dj9me4.dj9hyg' -> '[combo] Search', the
+    header search box, which then reached the read-back and the ComoRAG context
+    as if it were a form field. The position the user pinned outranks the
+    resemblance: the pass stays empty instead.
+    """
+    import json as _json
+
+    from .....web import actions as web_actions
+
+    ff = _Harness()
+    pos = "div:nth-of-type(2) > dialog:nth-of-type(1)"
+    lookalike = "div > dialog.dlgShared"
+    picked = {"locator": {
+        "css": "dialog#picked", "id": "picked", "tag": "dialog",
+        "classes": ["dlgShared"], "ancestor_css": "div > dialog",
+        "structural_xpath": "/html/body/div[2]/dialog[1]",
+    }}
+    assert ff._ff_scope_selectors(picked)[0] == pos
+    assert ff._ff_is_positional_rung(pos) is True
+    assert ff._ff_is_positional_rung(lookalike) is False
+
+    enum_scopes = []
+
+    class _Driver:
+        def execute_script(self, script, *args):
+            if script is web_actions.JS_ENUMERATE_FORM_FIELDS:
+                sel = (list(args[0] or []) or [None])[0]
+                enum_scopes.append(sel)
+                if sel == lookalike:          # the site chrome leaks in here
+                    return _json.dumps([{"label": "Search", "kind": "combo"}])
+                return "[]"
+            return -1      # JS_SETTLE_READ: a quiet page (and the liveness
+            #                probe reads this rung as PRESENT, so it is the rung
+            #                that must end the ladder)
+
+    h = _Harness()
+    h._ff_web_driver = _Driver()
+    fields = h._ff_enumerate_web(h._ff_cfg({"web_scope": _json.dumps(picked)}),
+                                 None)
+    assert fields == [], "a lookalike container's field must not be enumerated"
+    assert enum_scopes == [pos], enum_scopes   # the content rungs never scanned
+
+
 def test_scope_frame_reads_window_and_iframe_context():
     """A pick carries the WINDOW and IFRAME it was made in; both are needed to
     re-enter a popup before its container is resolved."""

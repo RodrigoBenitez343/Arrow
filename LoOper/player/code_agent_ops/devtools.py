@@ -14,10 +14,10 @@ Two layers:
 
 ``NeedleRouter`` drives a short investigation chain (query -> call ->
 execute -> result -> next query...) against the bundled ``needle.exe``
-(--serve on an ephemeral port, terminated afterwards) and returns the flat
-transcript the coding model consumes on its next turn.  Everything degrades
-gracefully when the engine binary is missing: callers fall back to the
-legacy text protocol.
+(one-shot ``--prompt`` per step, process terminated afterwards) and returns
+the flat transcript the coding model consumes on its next turn.  Everything
+degrades gracefully when the engine binary is missing: callers fall back to
+the legacy text protocol.
 
 App root = the LoOper/ directory (top-level packages NGUI/AI/player).
 """
@@ -25,7 +25,6 @@ import json
 import logging
 import os
 import re
-import socket
 import subprocess
 import sys
 import tempfile
@@ -246,18 +245,28 @@ def _execute_run_node(ctx):
 # ---------------------------------------------------------------------------
 
 class NeedleRouter:
-    """Run one bounded investigation chain through needle.exe --serve.
+    """Run one bounded investigation chain through needle.exe.
 
-    Every investigation spawns a fresh engine process on an ephemeral port
-    and terminates it at the end, so sessions never leak between
-    investigations (deterministic, no cross-talk).  The chain is:
+    Each turn spawns a fresh one-shot engine process (see ``_prompt_once``),
+    so sessions never leak between investigations (deterministic, no
+    cross-talk).  The chain is:
 
-        query -> complete() -> calls -> execute_call() each
-              -> results fed back -> complete() ...  (max ``max_steps``)
+        prompt -> calls -> execute_call() each
+               -> results carried into the next prompt ...  (max ``max_steps``)
 
-    ``route(query)`` returns ``{'ok', 'empty', 'text', 'steps', 'error'}``
-    where ``text`` is the flat tool transcript for the coding model and
-    ``empty`` marks a respond-with-no-calls outcome (nothing tool-able)."""
+    ``route(query, progress_cb=None)`` returns ``{'ok', 'empty', 'text',
+    'steps', 'error'}`` where ``text`` is the flat tool transcript for the
+    coding model and ``empty`` marks a respond-with-no-calls outcome (nothing
+    tool-able).  ``progress_cb`` (optional) receives short step events —
+    ``'thinking'`` before each engine turn and ``'tool:<name>'`` before each
+    call — so a UI can show live activity; it never affects the result.
+
+    Subclassable: ``schemas`` (tool catalogue), ``known_tools`` (name set)
+    and ``_execute_call`` (executor) are class-level hooks — the builder's
+    routers override them without touching the process plumbing."""
+
+    schemas = TOOL_SCHEMAS
+    known_tools = _KNOWN_TOOLS
 
     def __init__(self, ctx, exe_path=None, max_steps=3,
                  conf_threshold=NEEDLE_CONF_THRESHOLD):
@@ -266,10 +275,14 @@ class NeedleRouter:
         self._max_steps = max_steps
         self._conf_threshold = conf_threshold
 
+    def _execute_call(self, name, args):
+        """Execute ONE returned tool call (override for other catalogues)."""
+        return execute_call(name, args, self._ctx)
+
     def available(self):
         return bool(self._exe) and os.path.isfile(self._exe)
 
-    def route(self, query):
+    def route(self, query, progress_cb=None):
         if not self.available():
             return {'ok': False, 'empty': True, 'text': '', 'steps': 0,
                     'error': 'needle2 engine not found'}
@@ -281,126 +294,119 @@ class NeedleRouter:
             prefix='needle_tools_', suffix='.json')
         try:
             with os.fdopen(tools_fd, 'w', encoding='utf-8') as f:
-                json.dump(TOOL_SCHEMAS, f)
-            return self._run_session(tools_path, query)
+                json.dump(self.schemas, f)
+            return self._run_session(tools_path, query, progress_cb)
         finally:
             try:
                 os.remove(tools_path)
             except Exception:
                 pass
 
-    # -- process plumbing ------------------------------------------------
+    # -- one-shot engine call --------------------------------------------
 
-    def _spawn(self, tools_path):
-        port = self._free_port()
+    def _prompt_once(self, tools_path, prompt):
+        """Run one ``--prompt`` turn and return ``(obj, err)``.
+
+        The shipped engine's ``--serve`` path does not deliver the prompt to
+        the model (verified: every input returns the same empty/garbled call,
+        while the identical tools + query through ``--prompt`` answers
+        correctly), so each turn is a one-shot process run.
+        """
         flags = 0
         if os.name == 'nt':
             flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        proc = subprocess.Popen(
-            [self._exe, '--tools', tools_path, '--serve',
-             '--port', str(port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=flags,
-        )
-        return proc, port
+        try:
+            proc = subprocess.run(
+                [self._exe, '--tools', tools_path, '--prompt', str(prompt)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                creationflags=flags, timeout=180,
+            )
+        except Exception as e:
+            return None, 'needle run failed: %s' % e
+        return self._parse_response(proc.stdout or b'')
 
     @staticmethod
-    def _free_port():
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(('127.0.0.1', 0))
-            return s.getsockname()[1]
-
-    def _wait_ready(self, port, proc):
-        import requests as _req
-        url = 'http://127.0.0.1:%d/reset' % port
-        last = None
-        for _ in range(40):
-            if proc.poll() is not None:
-                return False, 'needle engine exited early (rc=%s)' % proc.returncode
-            try:
-                r = _req.post(url, timeout=0.5)
-                if r.status_code == 200:
-                    return True, None
-                last = r.status_code
-            except Exception as e:
-                last = e
-            import time
-            time.sleep(0.25)
-        return False, 'needle engine did not become ready: %s' % last
-
-    def _complete(self, port, input_text):
-        import requests as _req
-        r = _req.post(
-            'http://127.0.0.1:%d/complete' % port,
-            json={'input': str(input_text)},
-            timeout=90,
-        )
-        if r.status_code != 200:
-            return None, 'needle /complete HTTP %d: %s' % (
-                r.status_code, _clip(r.text, 400))
+    def _parse_response(raw):
+        """The engine prints one JSON object on stdout."""
         try:
-            obj = r.json()
-        except Exception as e:
-            return None, 'needle /complete bad JSON: %s' % e
-        if not isinstance(obj, dict):
-            return None, 'needle /complete unexpected payload'
-        return obj, None
+            text = raw.decode('utf-8', 'replace').strip()
+        except Exception:
+            return None, 'needle output undecodable'
+        if not text:
+            return None, 'needle produced no output'
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                return obj, None
+        except Exception:
+            pass
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if line.startswith('{') and line.endswith('}'):
+                try:
+                    obj = json.loads(line)
+                    if isinstance(obj, dict):
+                        return obj, None
+                except Exception:
+                    continue
+        return None, 'needle output was not JSON: %s' % _clip(text, 200)
 
     # -- the chain --------------------------------------------------------
 
-    def _run_session(self, tools_path, query):
-        import time
-        proc, port = self._spawn(tools_path)
-        transcript = []
-        steps = 0
-        try:
-            ok, err = self._wait_ready(port, proc)
-            if not ok:
-                return {'ok': False, 'empty': True, 'text': '',
-                        'steps': 0, 'error': err}
-            current = query
-            for step in range(self._max_steps):
-                steps = step + 1
-                obj, err = self._complete(port, current)
-                if err or obj is None:
-                    return {'ok': False, 'empty': True, 'text': '',
-                            'steps': steps, 'error': err}
-                calls = obj.get('function_calls') or []
-                conf = float(obj.get('confidence') or 0.0)
-                if not calls:
-                    # respond / nothing tool-able — end the chain.
-                    transcript.append(self._respond_line(obj))
-                    break
-                executed = []
-                for call in calls:
-                    name = str(call.get('name') or '?')
-                    args = call.get('arguments') or {}
-                    if name not in _KNOWN_TOOLS:
-                        executed.append('(unknown tool returned: %s)' % name)
-                        continue
-                    result = execute_call(name, args, self._ctx)
-                    low = ''
-                    if conf < self._conf_threshold:
-                        low = ' [low confidence %.2f]' % conf
-                    executed.append('[%s%s] %s' % (name, low, result))
-                if not executed:
-                    break
-                block = '\n\n'.join(executed)
-                transcript.append(block)
-                current = block           # feed results back to the engine
-                time.sleep(0.05)          # let the server breathe between turns
-        finally:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-            try:
-                proc.wait(timeout=5)
-            except Exception:
+    def _run_session(self, tools_path, query, progress_cb=None):
+        def _note(event):
+            """Best-effort progress ping for a watching UI (never raises)."""
+            if callable(progress_cb):
                 try:
-                    proc.kill()
+                    progress_cb(event)
                 except Exception:
                     pass
+
+        transcript = []
+        steps = 0
+        base = str(query or '')
+        current = base
+        last_sig = None
+        for step in range(self._max_steps):
+            steps = step + 1
+            _note('thinking')
+            obj, err = self._prompt_once(tools_path, current)
+            if err or obj is None:
+                return {'ok': False, 'empty': True, 'text': '',
+                        'steps': steps, 'error': err}
+            calls = obj.get('function_calls') or []
+            conf = float(obj.get('confidence') or 0.0)
+            if not calls:
+                # respond / nothing tool-able — end the chain.
+                transcript.append(self._respond_line(obj))
+                break
+            # A one-shot run has no notion of "this is a tool result", so the
+            # engine can re-emit the same call; stop when it does (no progress).
+            sig = json.dumps([[c.get('name'), c.get('arguments')] for c in calls],
+                             sort_keys=True, default=str)
+            if sig == last_sig:
+                break
+            last_sig = sig
+            executed = []
+            for call in calls:
+                name = str(call.get('name') or '?')
+                args = call.get('arguments') or {}
+                if name not in self.known_tools:
+                    executed.append('(unknown tool returned: %s)' % name)
+                    continue
+                _note('tool:' + name)
+                result = self._execute_call(name, args)
+                low = ''
+                if conf < self._conf_threshold:
+                    low = ' [low confidence %.2f]' % conf
+                executed.append('[%s%s] %s' % (name, low, result))
+            if not executed:
+                break
+            block = '\n\n'.join(executed)
+            transcript.append(block)
+            # One-shot runs keep no conversation state: carry the original
+            # request plus what happened so far into the next prompt.
+            current = base + '\n\nResult so far:\n' + block
         text = '\n\n'.join(t for t in transcript if t)
         empty = not any(t for t in transcript)
         return {'ok': True, 'empty': empty, 'text': text,

@@ -750,6 +750,28 @@ class ContextMixin:
                 "summary": "",
             }
 
+            # Chat-mode write_context: a bound note the router wrote for the
+            # next turn rides into THIS turn's record (one-shot, consumed
+            # here so it never repeats on later turns).
+            try:
+                _bound_ctx = (
+                    self.llm_executor.get_variable(
+                        "_chain_bound_context_text") or ""
+                )
+            except Exception:
+                _bound_ctx = ""
+            if _bound_ctx and str(_bound_ctx).strip():
+                _prev = str(turn_record.get("result") or "").strip()
+                turn_record["result"] = (
+                    str(_bound_ctx).strip()
+                    + ("\n" + _prev if _prev else "")
+                )
+                try:
+                    self.llm_executor.set_variable(
+                        "_chain_bound_context_text", "")
+                except Exception:
+                    pass
+
             # Collect tool execution output if available.  A recorded-action
             # tool publishes nothing on named ports, and that empty result is
             # what let the summariser recite tool DESCRIPTIONS as if they were
@@ -791,9 +813,20 @@ class ContextMixin:
                     except Exception:
                         pass
 
-            # Output: last N turns as structured text
+            # Output: last N turns as structured text, named as its OWN stream
+            # so a consumer reads it as part of the pool (history), never as
+            # unnamed prose it cannot tell apart from the documents.
             history = self.port_store.get_turns(chain_id, node_id=node_id, limit=max_history)
-            output_value = self._format_turns_for_llm(history)
+            _hist_text = self._format_turns_for_llm(history)
+            try:
+                from .form_filler_modules.common import _FF_HISTORY_HEADER
+                _hh = _FF_HISTORY_HEADER
+            except Exception:
+                _hh = "## History"
+            output_value = (
+                (f"{_hh}\n{_hist_text}")
+                if _hist_text and str(_hist_text).strip() else _hist_text
+            )
 
             # Prepend the inherited context copy when present
             if _inherited_copy:
@@ -885,15 +918,22 @@ class ContextMixin:
         # -- Documents / Skills streams: file-backed knowledge (or literal notes)
         # held ALONGSIDE history and served as their OWN streams, so a downstream
         # node gets the material over ctx_out WITHOUT attaching anything itself.
+        # They are part of the SAME pool as the rows / learned / history above.
+        try:
+            from .form_filler_modules.common import (
+                _FF_DOCS_HEADER as _dh, _FF_SKILLS_HEADER as _sh,
+            )
+        except Exception:
+            _dh, _sh = "## Documents", "## Skills"
         _docs_text = self._ctx_list_text(node_data.get('documents'))
         if _docs_text:
-            _docs_block = "## Documents\n" + _docs_text
+            _docs_block = _dh + "\n" + _docs_text
             output_value = (f"{_docs_block}\n\n{output_value}"
                             if output_value and str(output_value).strip()
                             else _docs_block)
         _skills_text = self._ctx_list_text(node_data.get('skills'))
         if _skills_text:
-            _skills_block = "## Skills\n" + _skills_text
+            _skills_block = _sh + "\n" + _skills_text
             output_value = (f"{_skills_block}\n\n{output_value}"
                             if output_value and str(output_value).strip()
                             else _skills_block)

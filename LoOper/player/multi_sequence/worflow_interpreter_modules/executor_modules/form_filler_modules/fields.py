@@ -92,6 +92,24 @@ class FormFillerFieldsMixin:
         return [" > ".join(sels)]
 
     @staticmethod
+    def _ff_is_positional_rung(sel):
+        """True for the ladder's POSITIONAL rung(s), False for CONTENT rungs.
+
+        ``_ff_scope_positional`` emits them FIRST ('div:nth-of-type(1) >
+        dialog:nth-of-type(1)': a bare tag, or a tag plus its nth-of-type). Every
+        later rung is CONTENT - a hashed class, a data attr, the recorded css -
+        and on a site that styles every popup with the same CSS-module classes
+        those re-resolve to a DIFFERENT, lookalike container. The pinned position
+        is the identity the user actually picked, so when it resolves it is
+        authoritative (see ``_ff_wait_and_scan``).
+        """
+        parts = [p.strip() for p in str(sel or "").split(">") if p.strip()]
+        return bool(parts) and all(
+            re.fullmatch(r"[a-zA-Z][a-zA-Z0-9-]*(:nth-of-type\(\d+\))?", p)
+            for p in parts
+        )
+
+    @staticmethod
     def _ff_scope_selectors(scope):
         """Stable-first selector ladder for a picked scope container.
 

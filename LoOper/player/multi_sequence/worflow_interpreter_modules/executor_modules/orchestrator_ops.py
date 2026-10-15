@@ -727,9 +727,13 @@ class OrchestratorMixin:
     def _orchestrator_from_llm_node(self, node):
         """A synthetic orchestrator node for an LLM node in orchestrator mode.
 
-        The LLM node's wired tools (its candidate chains) are re-tagged as the
-        loop's ``chains`` input — one candidate set, treated as plain chains.
-        Nothing else about the node changes; the loop is reused unchanged.
+        Port pass-through (the orchestrator switch exposes BOTH ports):
+        ``brains`` entries stay brains (sub-brains), ``tools`` entries become
+        the loop's ``chains`` candidate set.  The legacy ``chains`` name is
+        merged in for pre-split files — everything wired to the old fused
+        port lands in the chains set, and the presence gate in
+        ``_orchestrator_collect_chains`` skips anything that needs inference
+        with a wire-it-to-brains warning.
         """
         data = node.get('data', {}) or {}
         cfg = dict(data.get('llm_configuration') or {})
@@ -739,8 +743,12 @@ class OrchestratorMixin:
         for inp in (node.get('inputs') or []):
             if not isinstance(inp, dict):
                 continue
-            if str(inp.get('input_port') or '') in ('tools', 'chains', 'brains'):
-                merged = dict(inp)
+            _port = str(inp.get('input_port') or '')
+            merged = dict(inp)
+            if _port == 'brains':
+                merged['input_port'] = 'brains'
+                inputs.append(merged)
+            elif _port in ('tools', 'chains'):
                 merged['input_port'] = 'chains'
                 inputs.append(merged)
         orch_data = {
@@ -4847,11 +4855,41 @@ class OrchestratorMixin:
 
     def _orchestrator_model_config(self, node_data):
         """(engine, model) — node props, else the chain's first LLM node,
-        else the app default from AI/config.json (mirrors llm_ops)."""
+        else the app default from AI/config.json (mirrors llm_ops).
+
+        A provider-prefixed model (``openai:gpt-4o-mini``) self-routes: the
+        engine follows the prefix so the gateway leg serves it.
+        """
         engine = str(node_data.get('engine') or 'llamacpp').strip().lower()
         model = str(node_data.get('model') or '').strip()
+        try:
+            from AI import byok
+            engine, model = byok.normalize_engine_model(engine, model)
+        except Exception:
+            pass
         if model:
             return engine, model
+        # A node in LOCAL mode is local: its GGUF (or the app default)
+        # wins over the chat-role fallback — measured 2026-10-09, a brain
+        # set to the built-in engine ran deepseek because the role filled
+        # the empty model.
+        try:
+            _local_on = str(node_data.get('use_llamacpp', '')).strip().lower() \
+                in ('true', '1', 'yes', 'on')
+        except Exception:
+            _local_on = False
+        _local_path = str(node_data.get('llamacpp_model_path') or '').strip()
+        if _local_on or _local_path:
+            path = _local_path
+            if not path:
+                try:
+                    from AI.config_loader import get_llamacpp_config
+                    path = str(get_llamacpp_config().get('model_path')
+                               or '').strip()
+                except Exception:
+                    path = ''
+            if path:
+                return 'llamacpp', path
         try:
             for wnode in (self.workflow_graph or {}).values():
                 if wnode.get('type') != 'llm':
@@ -4865,6 +4903,11 @@ class OrchestratorMixin:
                 else:
                     m = str(merged.get('model') or '').strip()
                 if m:
+                    try:
+                        from AI import byok
+                        engine, m = byok.normalize_engine_model(engine, m)
+                    except Exception:
+                        pass
                     return engine, m
         except Exception:
             pass
@@ -4880,6 +4923,15 @@ class OrchestratorMixin:
                         "[ORCH] No node/chain model configured — using the app default model %s",
                         model,
                     )
+                    # Same self-routing rule as the borrow path above: a
+                    # provider-prefixed default (byok chat role) moves the
+                    # engine off llama.cpp so the gateway leg serves it.
+                    try:
+                        from AI import byok
+                        engine, model = byok.normalize_engine_model(
+                            engine, model)
+                    except Exception:
+                        pass
             except Exception:
                 model = ''
         return engine, model

@@ -81,6 +81,69 @@ def pid_image_name(pid: int) -> str:
     return _name_parts[1].lower() if len(_name_parts) >= 2 else ""
 
 
+def reap_orphan_llama_servers(logger=None) -> int:
+    """Kill llama.cpp binaries left over from a PREVIOUS run (Windows).
+
+    Windows lets a child outlive its parent: a crashed/killed app (or a
+    gateway restart) leaves ``llama-server.exe`` holding its model in RAM.
+    The next run's engine cannot reuse the old port — the orphan still holds
+    it — so ``_find_free_port`` lands on a FRESH port and the orphan keeps
+    its memory.  Two crashed runs therefore mean two resident servers (~GBs
+    each) and the next long multi-LLM chain OOMs while loading yet another.
+
+    At gateway startup THIS process has spawned nothing yet, so every
+    llama.cpp binary (``LLAMA_BIN_NAMES``) is by definition an orphan.  The
+    sweep is scoped by image name — the same bar ``_is_safe_port_owner``
+    already trusts mid-run — and never touches this process.  Never raises.
+    Returns the number of processes killed.
+    """
+    if os.name != "nt":
+        return 0
+    _log = logger or _eng_logger
+    try:
+        _out = subprocess.run(
+            ["tasklist", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=0x08000000,
+        ).stdout
+    except Exception as exc:
+        _log.debug("orphan reap: tasklist failed: %s", exc)
+        return 0
+    _me = os.getpid()
+    _killed = 0
+    for _line in _out.splitlines():
+        _line = _line.strip()
+        if not _line.startswith('"'):
+            continue
+        _parts = [p.strip('"') for p in _line.split('","')]
+        if len(_parts) < 2 or not _parts[1].isdigit():
+            continue
+        _img = _parts[0].strip().lower()
+        _pid_int = int(_parts[1])
+        if _img not in LLAMA_BIN_NAMES or _pid_int <= 0 or _pid_int == _me:
+            continue
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/PID", str(_pid_int)],
+                capture_output=True, timeout=5,
+                creationflags=0x08000000,
+            )
+            _killed += 1
+            _log.info(
+                "Reaped orphan llama.cpp process %s (PID %d) from a "
+                "previous run", _img, _pid_int,
+            )
+        except Exception:
+            continue
+    if _killed:
+        print(
+            f"[LLAMA.CPP] Reaped {_killed} orphaned llama.cpp "
+            "process(es) from a previous run",
+            flush=True,
+        )
+    return _killed
+
+
 # ---------------------------------------------------------------------------
 # Response sanitisation — strip chat-template control tokens that llama.cpp
 # sometimes leaks into the generated text (e.g. ``<|im_end|>``, ``</s>``).
@@ -236,6 +299,11 @@ class LlamaCppEngine:
         # started (test doubles, failed starts) never kill unrelated processes
         # listening on the port.
         self._server_started = False
+        # Sticky once ANY server was spawned.  A quick per-burst unload clears
+        # _server_started, so the port sweep must stay enabled for the engine's
+        # whole life or a lingering process is never reaped (observed
+        # 2026-10-11: a leaked llama-server outlived the run).
+        self._ever_started = False
 
         # Model capability descriptor (optional, set by caller)
         self.capability = None
@@ -775,6 +843,16 @@ class LlamaCppEngine:
         except Exception:
             pass
 
+        # The RAG embedding server is a sibling burst resource on its own port;
+        # release it too so only ONE llama.cpp model is resident while this
+        # server's KV cache is sized (one instance per turn on low-RAM devices).
+        # It relaunches lazily on the next embed, mirroring Laya.
+        try:
+            from AI import embedding_server as _embed_srv
+            _embed_srv.release(wait=5.0)
+        except Exception:
+            pass
+
         # ── RAM-aware native-context resolution ──────────────────────────
         # context_size <= 0 means "model's native training context".  For
         # large-context models on low-RAM machines the native window can
@@ -1083,6 +1161,7 @@ class LlamaCppEngine:
             )
             self.server_process = subprocess.Popen(cmd, **_spawn_kw)
             self._server_started = True
+            self._ever_started = True
         
             if blocking:
                 # Wait for server to be ready
@@ -1289,6 +1368,7 @@ class LlamaCppEngine:
                                 _retry_cmd, **_popen_args
                             )
                             self._server_started = True
+                            self._ever_started = True
                             # Reset start_time so we give each attempt a full chance
                             start_time = time.time()
                             continue
@@ -1447,7 +1527,7 @@ class LlamaCppEngine:
         # multi-attempt socket+netstat round-trip (~30s on slow machines) and
         # prevents killing unrelated processes that happen to listen on the
         # port.
-        _was_started = self._server_started
+        _was_started = self._server_started or self._ever_started
         if self.server_process:
             try:
                 _eng_logger.info("Stopping server...")

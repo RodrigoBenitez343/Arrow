@@ -425,12 +425,20 @@ class FormFillerExtractMixin:
         node renders its own boxy per-field view, so the plain ``[HANDLE]``
         call/response lines would only split that view apart.
         """
-        if cfg["engine"] == "ollama":
-            if self._ff_halt(stop_flag):
-                return ""
-            return self._ff_ollama_call(prompt, system, cfg)
+        engine = str(cfg.get("engine") or "llamacpp").strip().lower()
         if self._ff_halt(stop_flag):
             return ""
+        if engine == "ollama":
+            return self._ff_ollama_call(prompt, system, cfg)
+        try:
+            from AI import byok
+            is_local = byok.is_local_engine(engine)
+        except Exception:
+            is_local = engine in ("", "llamacpp", "llama.cpp", "llama_cpp")
+        if not is_local:
+            # BYOK provider engine: through the local gateway, where the
+            # "provider:model" prefix dispatches to the provider.
+            return self._ff_provider_call(prompt, system, cfg, engine)
         try:
             api_url = self._resolve_api_url()
             return self._call_llamacpp_api(
@@ -451,6 +459,38 @@ class FormFillerExtractMixin:
             log_block(logger, logging.ERROR, "Form LLM Call",
                       "call failed: %s" % exc)
             return ""
+
+    def _ff_provider_call(self, prompt, system, cfg, engine):
+        """A BYOK provider engine routes through the local gateway (the
+        model carries the ``provider:`` prefix; keys stay in byok.json)."""
+        try:
+            from AI import byok
+            from AI.consult import OllamaClient
+            model = byok.join_model_ref(engine, cfg.get("model"))
+            if not model:
+                log_block(logger, logging.WARNING, "Form LLM Call",
+                          "the %s engine requires an explicit model" % engine)
+                return ""
+            client = OllamaClient(base_url=self._resolve_api_url(), debug=False)
+            response = client.chat(
+                model=model,
+                prompt=prompt,
+                system=system,
+                temperature=cfg["temperature"],
+                max_tokens=cfg["max_tokens"],
+            )
+            if isinstance(response, dict):
+                out = response.get("response") or response.get("text") or ""
+            else:
+                out = str(response or "")
+            if out.strip():
+                return out
+            log_block(logger, logging.WARNING, "Form LLM Call",
+                      "the %s provider returned an empty reply" % engine)
+        except Exception as exc:
+            log_block(logger, logging.ERROR, "Form LLM Call",
+                      "provider call failed: %s" % exc)
+        return ""
 
     def _ff_ollama_call(self, prompt, system, cfg):
         try:

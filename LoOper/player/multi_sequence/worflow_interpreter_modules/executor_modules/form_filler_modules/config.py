@@ -53,6 +53,17 @@ class FormFillerConfigMixin:
             # field (lighter - for a bigger model that needs less scaffolding).
             "consolidate": _as_bool(data.get("consolidate"), True),
             "probe_cycles": _as_int(data.get("probe_cycles"), 3),
+            # CONFIDENCE GATE for a mechanically-reused (learned/cached) answer.
+            # A learned answer is written verbatim only when the match is at
+            # least this confident AND the page did not reject it; otherwise the
+            # node FABRICATES a fresh answer from the WHOLE context pool instead
+            # of repeating the stored one.  ``confidence_source`` picks the
+            # signal: 'laya' uses the calibrated noul probability (falling back
+            # to the embedding cosine), 'cosine' uses the embedding match only.
+            "reuse_confidence": _as_float(data.get("reuse_confidence"), 0.82),
+            "confidence_source": (
+                str(data.get("confidence_source") or "laya").strip().lower()
+                or "laya"),
             "engine": str(data.get("engine") or "llamacpp").strip().lower(),
             "model": str(data.get("model") or ""),
             "temperature": _as_float(data.get("temperature"), 0.1),

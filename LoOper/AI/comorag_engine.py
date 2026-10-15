@@ -1092,7 +1092,7 @@ class ProbeBasedConsolidator:
         Args:
             prompt: The LLM node's prompt (the initial query).
             context_sources: Dict with keys ``context_nodes``,
-                ``documents``, ``code_outputs``, ``llm_outputs``.
+                ``documents``, ``learned``, ``code_outputs``, ``llm_outputs``.
             graphrag_context: Optional GraphRAG context string.
             probe_generator: Optional callable ``(enhanced_intent,
                 facts_so_far) -> probe text | None``.  ``enhanced_intent``
@@ -1152,8 +1152,12 @@ class ProbeBasedConsolidator:
             a hard break so the chain stops with the failure visible.
         """
         # -- Flatten all context --
+        # 'learned' is a first-class stream too: the answers the user confirmed
+        # for a question (carried by the Context pool) are part of the pool and
+        # must be retrievable, not ignored just because they are not documents.
         all_texts: List[str] = []
-        for key in ("context_nodes", "documents", "code_outputs", "llm_outputs"):
+        for key in ("context_nodes", "documents", "learned", "code_outputs",
+                    "llm_outputs"):
             items = context_sources.get(key, []) or []
             if isinstance(items, str):
                 items = [items]

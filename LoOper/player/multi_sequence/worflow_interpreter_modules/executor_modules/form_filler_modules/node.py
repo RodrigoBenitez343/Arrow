@@ -19,6 +19,7 @@ from .common import (
     _ff_parse_learned_answers,
     _ff_pool_corrections,
     _ff_render_corrections,
+    _ff_scalarize,
     _ff_ungrounded_identifier,
     log_block,
     log_table,
@@ -168,6 +169,7 @@ class FormFillerNodeMixin:
             return "", ""
         exact = _ff_norm(label).strip("*? .:")
         if exact in learned_answers:
+            self._ff_last_match_conf = 1.0
             return learned_answers[exact], exact
         idx = self._ff_fact_index(learned_answers, cfg)
         if not idx:
@@ -184,10 +186,79 @@ class FormFillerNodeMixin:
                 if s > best_s:
                     best, best_s = item, s
             if best is not None and best_s >= self._FF_FACT_GATE:
+                self._ff_last_match_conf = best_s
                 return best["value"], best["label"]
         except Exception as exc:
             logger.debug("[FORM] learned-fact gate unavailable: %s", exc)
         return "", ""
+
+    # A free-text control that only accepts a NUMBER (the learned band cannot
+    # be committed to it).
+    _FF_NUMERIC_TYPES = ("number", "range")
+
+    def _ff_reuse_confidence(self, label, learned, cfg, context):
+        """Confidence (0..1) that a stored record may be reused for this field.
+
+        Starts from the match confidence (exact label = 1.0, semantic = the
+        embedding cosine).  With ``confidence_source == 'laya'`` a calibrated
+        entailment verdict is consulted against the POOL: a verdict that the
+        record does NOT answer this field drops the confidence to 0, so the
+        record is not reused verbatim and a fresh answer is fabricated from the
+        whole pool instead.  ``None`` (engine off) keeps the cosine verdict.
+        """
+        conf = float(getattr(self, "_ff_last_match_conf", 0.0) or 0.0)
+        if not learned:
+            return 0.0
+        if str(cfg.get("confidence_source") or "laya").lower() != "laya":
+            return conf
+        try:
+            from AI.laya_hooks import value_accuracy_or
+            _v = value_accuracy_or(label, learned, context)
+        except Exception:
+            _v = None
+        if _v is False:
+            log_block(
+                logger, logging.INFO, "Form Field: %s" % label,
+                "the stored answer %r does not fit this field (Laya) - "
+                "fabricating a fresh answer from the whole pool" % learned,
+            )
+            return 0.0
+        if _v is True:
+            return max(conf, 0.99)
+        return conf
+
+    def _ff_adapt_learned(self, learned, field):
+        """Adapt a learned answer to THIS field's control ('' = keep as-is).
+
+        A choice answer learned as a band ("2-5 years") is right for the CHOICE
+        question, but the SAME question can appear as a free-text control that
+        only accepts a single number; writing the band there is rejected (or
+        fails the site's review), and the field then sticks on the stored value
+        forever.  For a numeric control the band is scalarized to its lower
+        bound instead of being repeated verbatim.
+        """
+        val = str(learned or "").strip()
+        if not val:
+            return ""
+        itype = str(field.get("type") or "").strip().lower()
+        # A BAND ("2-5 years", "1 to 3", "5+") is unmistakably a CHOICE-shape
+        # answer: for a free-text control that is not a textarea it is scalarized
+        # even when the page hides the numeric requirement (type=text, no pattern).
+        _is_band = bool(re.search(r"\d\s*(?:-|\u2013|\u2014|to)\s*\d|\d\s*\+",
+                                  val, re.IGNORECASE))
+        _free_text = (not field.get("options")
+                      and str(field.get("tag") or "").lower() != "textarea")
+        if itype in self._FF_NUMERIC_TYPES or (_is_band and _free_text):
+            _sc = _ff_scalarize(val)
+            if _sc and _ff_norm(_sc) != _ff_norm(val):
+                log_block(
+                    logger, logging.INFO,
+                    "Form Field: %s" % (field.get("label") or ""),
+                    "learned answer %r adapted to this control -> %r"
+                    % (val, _sc),
+                )
+                return _sc
+        return ""
 
     def _ff_value_accurate(self, label, value, evidence):
         """Is the value ALREADY on the page the RIGHT one for this field?
@@ -681,10 +752,23 @@ class FormFillerNodeMixin:
             # never runs for a question the pool already tagged correct.
             learned, _learned_key = self._ff_learned_match(
                 label, learned_answers, cfg)
+            # CONFIDENCE GATE - a stored answer is reused VERBATIM only when it
+            # is a CONFIDENT match AND a semantic verdict (when available) does
+            # not say it fails this field.  A low-confidence or rejected record
+            # is NOT forced through: it rides as CONTEXT so a fresh answer is
+            # FABRICATED from the WHOLE pool (documents, learned, turns) - the
+            # stored value must never be repeated forever just because the
+            # field already "has an answer".
+            _conf = self._ff_reuse_confidence(label, learned, cfg, source_text)
+            _reuse_ok = bool(learned) and _conf >= float(
+                cfg.get("reuse_confidence", 0.82))
             learned_value = ""
-            if learned:
+            if learned and _reuse_ok:
                 if not options:
-                    learned_value = learned
+                    # Adapt a choice-learned record to a scalar-only control
+                    # (e.g. "2-5 years" -> "2" for a numeric free-text box).
+                    learned_value = self._ff_adapt_learned(learned, field) \
+                        or learned
                 elif _ff_option_exact(learned, options):
                     learned_value = _ff_option_match(learned, options) or learned
                 else:
@@ -699,7 +783,8 @@ class FormFillerNodeMixin:
             # SELECTION, not as free text the control cannot commit.  Read the
             # list (typing the record opens a typeahead) and pin the record onto
             # a real option before it is written.
-            if learned and not learned_value and (kind == "combo" or options):
+            if (learned and _reuse_ok and not learned_value
+                    and (kind == "combo" or options)):
                 learned_value = self._ff_resolve_combo_option(
                     field, learned, "", label, stop_flag)
 
@@ -708,6 +793,11 @@ class FormFillerNodeMixin:
             if learned_value:
                 self._ff_last_route = (
                     "learned fact: reused a correct answer (no ComoRAG)")
+            elif learned:
+                self._ff_last_route = (
+                    "learned (confidence %.2f < %.2f): fabricating from the "
+                    "whole pool" % (_conf, float(
+                        cfg.get("reuse_confidence", 0.82))))
 
             # 3a. PROBE (only the relevant slice).  A field whose PREVIOUS pass
             # found no evidence in UNCHANGED sources is not swept again: the
@@ -720,12 +810,14 @@ class FormFillerNodeMixin:
                 evidence = ""
                 self._ff_last_route = "memory: no evidence on the last pass"
             else:
+                self._ff_learned_hint = learned if not _reuse_ok else ""
                 evidence = self._ff_probe(
                     label, cfg, source_text, documents, stop_flag,
                 )
             if learned and not learned_value:
-                # The record pins NO option on its own: the field passes through
-                # the usual pipeline with the RECORD as its deciding context.
+                # The record did not decide this field on its own: it rides as
+                # CONTEXT (the pool's learned stream) so the pipeline can reuse
+                # or ADAPT it - never repeat it blindly.
                 evidence = ("The user already answered this field before: %s"
                             "\n\n%s" % (learned, evidence or "")).strip()
                 self._ff_last_route = "learned (unpinned): decided from the record"

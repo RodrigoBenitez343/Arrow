@@ -10,6 +10,14 @@ import logging
 from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 from .code_node_dialog import CodeAgentThread, _extract_code
+from .engine_options import (
+    engine_from_config,
+    engine_id,
+    fill_engine_combo,
+    models_for_engine,
+    select_engine,
+    store_model,
+)
 from .llm_dialogs import get_llamacpp_models
 from ..nodes_resources.base_node import get_default_api_url
 from PyQt5.QtCore import Qt, QSize, QThread, pyqtSignal
@@ -354,9 +362,9 @@ class AdvancedConditionalDialog(ModernDialog):
         gen_row = QHBoxLayout()
         gen_row.setSpacing(6)
 
-        # Engine selector
+        # Engine selector (Ollama, llama.cpp, or a BYOK provider)
         self.code_gen_engine = QComboBox()
-        self.code_gen_engine.addItems(["Ollama", "llama.cpp"])
+        fill_engine_combo(self.code_gen_engine)
         self.code_gen_engine.setFixedHeight(26)
         self.code_gen_engine.setFixedWidth(85)
         self.code_gen_engine.currentTextChanged.connect(self._on_code_gen_engine_changed)
@@ -439,7 +447,7 @@ class AdvancedConditionalDialog(ModernDialog):
         llm_engine_label = QLabel(_("Engine:"))
         llm_engine_label.setStyleSheet(f"color: {TEXT_COLOR};")
         self.llm_engine_combo = QComboBox()
-        self.llm_engine_combo.addItems(["Ollama", "llama.cpp"])
+        fill_engine_combo(self.llm_engine_combo)
         self.llm_engine_combo.setFixedHeight(26)
         self.llm_engine_combo.setFixedWidth(85)
         self.llm_engine_combo.currentTextChanged.connect(self._on_llm_engine_changed)
@@ -806,7 +814,7 @@ class AdvancedConditionalDialog(ModernDialog):
         engine_label = QLabel(_("Engine:"))
         engine_label.setStyleSheet(f"color: {TEXT_COLOR};")
         self.web_llm_engine_combo = QComboBox()
-        self.web_llm_engine_combo.addItems(["Ollama", "llama.cpp"])
+        fill_engine_combo(self.web_llm_engine_combo)
         self.web_llm_engine_combo.currentTextChanged.connect(self._on_web_llm_engine_changed)
         self.web_llm_model_combo = QComboBox()
         self.web_llm_model_combo.setEditable(True)
@@ -974,7 +982,8 @@ class AdvancedConditionalDialog(ModernDialog):
                 gguf_models = []
             cached = {'ollama': list(ollama_models), 'llamacpp': list(gguf_models)}
             self._web_llm_model_cache = cached
-        models = cached['llamacpp'] if use_llamacpp else cached['ollama']
+        models = cached['llamacpp'] if use_llamacpp else models_for_engine(
+            cached['ollama'], engine_id(self.web_llm_engine_combo))
         current = self.web_llm_model_combo.currentText()
         self.web_llm_model_combo.clear()
         if models:
@@ -1129,7 +1138,9 @@ class AdvancedConditionalDialog(ModernDialog):
             except Exception:
                 pass
         try:
-            self.web_llm_engine_combo.setCurrentText("llama.cpp" if cfg.get('llm_engine') == 'llamacpp' else "Ollama")
+            # A provider engine rides on the model's "provider:" prefix.
+            select_engine(self.web_llm_engine_combo, engine_from_config(
+                cfg.get('llm_engine'), False, cfg.get('llm_model', '')))
         except Exception:
             pass
         self._init_web_llm_models()
@@ -1185,8 +1196,9 @@ class AdvancedConditionalDialog(ModernDialog):
             'target_text': self.web_target_text_edit.text(),
             'case_sensitive': bool(self.web_case_sensitive_toggle.isChecked()),
             'js': self.web_js_edit.toPlainText(),
-            'llm_engine': 'llamacpp' if self.web_llm_engine_combo.currentText() == "llama.cpp" else 'ollama',
-            'llm_model': self.web_llm_model_combo.currentText(),
+            'llm_engine': engine_id(self.web_llm_engine_combo),
+            'llm_model': store_model(engine_id(self.web_llm_engine_combo),
+                                     self.web_llm_model_combo.currentText()),
             'llm_prompt': self.web_llm_prompt_edit.toPlainText(),
             'llm_timeout': timeout,
             'layout_locator': self.web_layout_locator or '',
@@ -1270,10 +1282,11 @@ class AdvancedConditionalDialog(ModernDialog):
             self.llm_enabled_toggle.setChecked(enabled)
         except Exception:
             pass
-        # Engine
-        engine = llm_cfg.get('engine', 'ollama')
+        # Engine (a provider engine rides on the model's "provider:" prefix)
+        engine = engine_from_config(llm_cfg.get('engine', 'ollama'), False,
+                                    llm_cfg.get('model', ''))
         try:
-            self.llm_engine_combo.setCurrentText("llama.cpp" if engine == 'llamacpp' else "Ollama")
+            select_engine(self.llm_engine_combo, engine)
         except Exception:
             pass
         # Populate model lists FIRST, then restore selection
@@ -1285,6 +1298,8 @@ class AdvancedConditionalDialog(ModernDialog):
                 self.llm_gguf_model.setCurrentText(str(model))
             else:
                 self.llm_ollama_model.setCurrentText(str(model))
+        # select_engine blocks signals: sync the model-selector visibility.
+        self._on_llm_engine_changed(self.llm_engine_combo.currentText())
         # Prompt
         prompt_text = llm_cfg.get('prompt', '')
         if prompt_text:
@@ -1331,6 +1346,8 @@ class AdvancedConditionalDialog(ModernDialog):
         except Exception:
             models = []
         if models:
+            models = models_for_engine(models,
+                                      engine_id(self.llm_engine_combo))
             self.llm_ollama_model.clear()
             self.llm_ollama_model.addItems(models)
             self.llm_ollama_model.setCurrentText(
@@ -1401,6 +1418,8 @@ class AdvancedConditionalDialog(ModernDialog):
         except Exception:
             models = []
         if models:
+            models = models_for_engine(models,
+                                       engine_id(self.code_gen_engine))
             self.code_gen_model.clear()
             self.code_gen_model.addItems(models)
             self.code_gen_model.setCurrentText(
@@ -1424,9 +1443,10 @@ class AdvancedConditionalDialog(ModernDialog):
         if not prompt:
             return
 
-        use_llamacpp = (self.code_gen_engine.currentText() == "llama.cpp")
+        _gen_engine = engine_id(self.code_gen_engine)
+        use_llamacpp = _gen_engine == "llamacpp"
         model = (self.code_gen_gguf.currentText() if use_llamacpp
-                 else self.code_gen_model.currentText())
+                 else store_model(_gen_engine, self.code_gen_model.currentText()))
 
         self.code_gen_btn.setEnabled(False)
         self.code_gen_btn.setText(_("..."))
@@ -1862,11 +1882,12 @@ class AdvancedConditionalDialog(ModernDialog):
             llm_enabled = False
         if llm_enabled:
             llm_prompt_text = self.llm_prompt_edit.toPlainText() if hasattr(self, 'llm_prompt_edit') else ''
-            use_llamacpp = (self.llm_engine_combo.currentText() == "llama.cpp") if hasattr(self, 'llm_engine_combo') else False
+            _llm_engine = engine_id(self.llm_engine_combo) if hasattr(self, 'llm_engine_combo') else 'llamacpp'
+            use_llamacpp = _llm_engine == "llamacpp"
             llm_model = (self.llm_gguf_model.currentText() if use_llamacpp else self.llm_ollama_model.currentText()) if hasattr(self, 'llm_gguf_model') else ''
             config['llm_condition'] = {
-                'engine': 'llamacpp' if use_llamacpp else 'ollama',
-                'model': str(llm_model),
+                'engine': _llm_engine,
+                'model': str(store_model(_llm_engine, llm_model)),
                 'prompt': str(llm_prompt_text),
                 'timeout': float(self.llm_timeout_spin.value()) if hasattr(self, 'llm_timeout_spin') else 10.0,
                 'use_vision': bool(self.llm_use_vision_toggle.isChecked()) if hasattr(self, 'llm_use_vision_toggle') else False

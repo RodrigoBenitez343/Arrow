@@ -6,7 +6,9 @@ Covers the Phase 1 runtime contract:
 - connected-but-undeclared ports are auto-injected as variables;
 - reserved execution ports ('input') are never bound as code variables;
 - code-node outputs are mirrored into port_store for port-store-first
-  consumers (other code nodes, context/output nodes).
+  consumers (other code nodes, context/output nodes);
+- the exec edge of the builder's exec+data pair never takes an input_data
+  slot, so a single upstream value reaches consumers as a plain scalar.
 
 Run:  python -m pytest LoOper/tests/test_code_node_port_flow.py
 """
@@ -158,3 +160,88 @@ def test_code_node_reads_another_code_nodes_port_store_output(exe):
     downstream['data']['output_variable'] = 'result'
     exe._execute_code_node(downstream, stop_flag=lambda: False)
     assert exe.llm_executor.get_variable('node_code2_result') == '<p>z</p>'
+
+
+def test_llm_context_text_reaches_code_verbatim(exe):
+    """The LLM 'context' output carries the RESPONSE TEXT (ports.resolve_port;
+    the {user_input,response} envelope is internal metadata, never a data
+    port).  A code node reads the answer verbatim."""
+    exe.llm_executor.set_variable('node_LLM_context', '<h1>page</h1>')
+    exe.port_store.set_output('test_chain', 'LLM', 'context', '<h1>page</h1>')
+    node = _make_code_node(
+        code="result = text",
+        input_vars=[{'name': 'text', 'type': 'string'}],
+        inputs=[{'from_node': 'LLM', 'output_type': 'context', 'input_port': 'text'}],
+    )
+    exe._execute_code_node(node, stop_flag=lambda: False)
+    assert exe.llm_executor.get_variable('node_code1_result') == '<h1>page</h1>'
+
+
+def test_code_reads_a_json_answer_verbatim_never_unwrapped(exe):
+    """A legitimately JSON answer (the LLM literally returns a {..} object)
+    must NOT be shape-guessed: data ports carry the value verbatim."""
+    import json as _json
+    answer = _json.dumps({'response': 'keep whole', 'x': 1})
+    exe.port_store.set_output('test_chain', 'LLM', 'context', answer)
+    node = _make_code_node(
+        code="result = text",
+        input_vars=[{'name': 'text', 'type': 'string'}],
+        inputs=[{'from_node': 'LLM', 'output_type': 'context', 'input_port': 'text'}],
+    )
+    exe._execute_code_node(node, stop_flag=lambda: False)
+    assert exe.llm_executor.get_variable('node_code1_result') == answer
+
+
+def test_plain_ctx_out_text_is_not_unwrapped(exe):
+    """A plain (non-JSON) ctx_out value passes through untouched."""
+    exe.port_store.set_output('test_chain', 'CTX', 'ctx_out', 'just text')
+    node = _make_code_node(
+        code="result = text",
+        input_vars=[{'name': 'text', 'type': 'string'}],
+        inputs=[{'from_node': 'CTX', 'output_type': 'ctx_out', 'input_port': 'text'}],
+    )
+    exe._execute_code_node(node, stop_flag=lambda: False)
+    assert exe.llm_executor.get_variable('node_code1_result') == 'just text'
+
+
+# ---------------------------------------------------------------------------
+# Exec edge + data edge on the same 'input' port (the builder's standard pair)
+# ---------------------------------------------------------------------------
+
+# code_ops + conditional_ops both read the producer's named port from the flat
+# variables channel, exactly as the builder wires it: one exec edge (no data)
+# plus one data edge carrying the value.
+_BUILDER_PAIR = [
+    {'from_node': 'up', 'output_type': 'output', 'input_port': 'input'},
+    {'from_node': 'up', 'output_type': 'result', 'input_port': 'input'},
+]
+
+
+def test_exec_edge_does_not_take_an_input_data_slot(exe):
+    """An exec-only edge must not occupy a slot in a code node's input_data.
+
+    Counting it made the ONE upstream value arrive list-wrapped as
+    [None, 'true']; a step comparing the text then never matched.
+    """
+    exe.llm_executor.set_variable('node_up_output_result', 'true')
+    node = _make_code_node(
+        code="result = type(input_data).__name__ + ':' + str(input_data)",
+        inputs=_BUILDER_PAIR,
+    )
+    exe._execute_code_node(node, stop_flag=lambda: False)
+    assert exe.llm_executor.get_variable('node_code1_result') == 'str:true'
+
+
+def test_code_conditional_takes_the_true_branch_through_a_data_edge(exe):
+    """The verdict a producer publishes on a named port reaches the condition
+    as a plain scalar, so a loop gated on 'true' can terminate."""
+    cond = {
+        'condition_type': 'code',
+        'code': 'result = str(input_data).strip().lower() == "true"',
+        'timeout': 5.0,
+        'node_id': 'cond1',
+    }
+    for verdict, expected in (('false', False), ('true', True)):
+        exe.llm_executor.set_variable('node_up_output_result', verdict)
+        assert exe._evaluate_code_condition(
+            cond, lambda: False, _BUILDER_PAIR) is expected, verdict

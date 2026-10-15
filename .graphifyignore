@@ -1,0 +1,9 @@
+# Keep the graphify knowledge graph focused on the app's own source.
+# Vendored engines / third-party sandboxes and generated data add noise, not signal.
+utils/
+build_pipeline/
+_paddleocr_models/
+runtime/
+LoOper/runtime/
+keygen/
+docs/

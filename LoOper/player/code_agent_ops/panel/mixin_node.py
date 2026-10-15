@@ -215,6 +215,14 @@ class NodeMixin(object):
                 models = get_real_cached_models(timeout=2.0) or get_cached_models()
             except Exception:
                 models = []
+            # Filtered to the selected engine (per-provider refresh).
+            try:
+                from NGUI.dialogs.engine_options import (
+                    engine_id, models_for_engine)
+                models = models_for_engine(models,
+                                           engine_id(self._engine_combo))
+            except Exception:
+                pass
             self._model_combo.addItems(models or ['llama3.2:latest'])
         if self._gguf_combo.count() == 0:
             try:
@@ -228,13 +236,24 @@ class NodeMixin(object):
                 self._gguf_combo.setPlaceholderText(_('No GGUF models found'))
 
     def _sync_model_ui(self):
-        """Reflect the loaded node's engine/model in the selectors."""
+        """Reflect the loaded node's engine/model in the selectors.
+
+        A BYOK provider engine rides on the stored model's "provider:"
+        prefix (the prefix IS the routing) — see NGUI.dialogs.engine_options.
+        """
         self._init_models()
         use_llamacpp = self._config.get('use_llamacpp', False)
         if isinstance(use_llamacpp, str):
             use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
-        self._engine_combo.setCurrentText('llama.cpp' if use_llamacpp
-                                          else 'Ollama')
+        try:
+            from NGUI.dialogs.engine_options import (
+                engine_from_config, select_engine)
+            select_engine(self._engine_combo, engine_from_config(
+                self._config.get('engine'), use_llamacpp,
+                self._config.get('gen_model', '')))
+        except Exception:
+            self._engine_combo.setCurrentText('llama.cpp' if use_llamacpp
+                                              else 'Ollama')
         if use_llamacpp:
             path = self._config.get('llamacpp_model_path') or ''
             if path:
@@ -256,6 +275,24 @@ class NodeMixin(object):
             self._init_models()
             if current:
                 self._gguf_combo.setCurrentText(current)
+        else:
+            self._refill_models()
+
+    def _refill_models(self):
+        """Re-populate the model combo for the selected engine."""
+        try:
+            from AI.model_cache import get_real_cached_models, get_cached_models
+            from NGUI.dialogs.engine_options import engine_id, models_for_engine
+            models = get_real_cached_models(timeout=2.0) or get_cached_models()
+            models = models_for_engine(models, engine_id(self._engine_combo))
+        except Exception:
+            return
+        current = self._model_combo.currentText()
+        self._model_combo.clear()
+        if models:
+            self._model_combo.addItems(models)
+        if current:
+            self._model_combo.setCurrentText(current)
 
     def _apply_engine_visibility(self):
         use_llamacpp = (self._engine_combo.currentText() == 'llama.cpp')
@@ -281,6 +318,12 @@ class NodeMixin(object):
         self._refresh_worker = None
         if not models:
             return
+        # Keep only the selected engine's models (per-provider refresh).
+        try:
+            from NGUI.dialogs.engine_options import engine_id, models_for_engine
+            models = models_for_engine(models, engine_id(self._engine_combo))
+        except Exception:
+            pass
         current = self._model_combo.currentText()
         self._model_combo.clear()
         self._model_combo.addItems(models)
@@ -290,9 +333,21 @@ class NodeMixin(object):
             self._model_combo.setCurrentText(current)
 
     def _chat_model(self):
-        if self._engine_combo.currentText() == 'llama.cpp':
+        """(model, use_llamacpp) — a provider engine prefixes the model so
+        the gateway routes it to the provider."""
+        try:
+            from NGUI.dialogs.engine_options import engine_id, store_model
+            engine = engine_id(self._engine_combo)
+        except Exception:
+            engine = ('llamacpp'
+                      if self._engine_combo.currentText() == 'llama.cpp'
+                      else 'ollama')
+        if engine == 'llamacpp':
             return self._gguf_combo.currentText(), True
-        return self._model_combo.currentText(), False
+        try:
+            return store_model(engine, self._model_combo.currentText()), False
+        except Exception:
+            return self._model_combo.currentText(), False
 
     def _budget(self):
         """Per-turn budget DERIVED from the native (RAM-aware) context window
@@ -396,7 +451,14 @@ class NodeMixin(object):
             return
         try:
             code = self._main_code
-            use_llamacpp = (self._engine_combo.currentText() == 'llama.cpp')
+            try:
+                from NGUI.dialogs.engine_options import engine_id, store_model
+                _engine = engine_id(self._engine_combo)
+            except Exception:
+                _engine = ('llamacpp'
+                           if self._engine_combo.currentText() == 'llama.cpp'
+                           else 'ollama')
+            use_llamacpp = _engine == 'llamacpp'
             self._node.set_property('code', code)
             self._node.set_property(
                 'input_vars', json.dumps(self._collect_rows(self._in_rows)))
@@ -404,8 +466,10 @@ class NodeMixin(object):
                 'output_vars', json.dumps(self._collect_rows(self._out_rows)))
             self._node.set_property(
                 'output_variable', self._config.get('output_variable', 'result'))
-            self._node.set_property('gen_model',
-                                    self._model_combo.currentText())
+            self._node.set_property(
+                'gen_model',
+                'llamacpp' if use_llamacpp
+                else store_model(_engine, self._model_combo.currentText()))
             self._node.set_property('use_llamacpp',
                                     'true' if use_llamacpp else 'false')
             self._node.set_property(

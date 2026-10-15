@@ -7,41 +7,18 @@ from ...screenshot_cleanup import register_temporal_screenshot, cleanup_screensh
 import logging
 logger = logging.getLogger(__name__)
 
-# Ports that ONLY drive execution — they carry NO data.  A value is data only
-# when it flows over a NAMED (non-base) port.  Base 'output', the empty
-# default, and the branch ports are exec-only.
-EXEC_ONLY_OUTPUT_PORTS = frozenset(
-    {'output', '', 'true', 'false', 'error', 'route'}
-)
-
 
 def upstream_value(variables, from_id, output_type=None):
     """Value a source node published for the given OUTPUT port.
 
-    Data flows ONLY over a NAMED (non-base) output port: ``data`` reads
-    ``node_<id>_data``; ``context``/``ctx_out`` read ``node_<id>_context``;
-    any other named port reads ``node_<id>_output_<port>``.  The base
-    ``output`` port, the empty default and the branch ports
-    (``true``/``false``/``error``/``route``) drive execution ONLY — they
-    carry no data, so a consumer reached through one sees ``None``.
-
-    Returns ``None`` when the source did not publish a value for that port.
+    Thin delegate to the ONE shared resolver
+    (``executor_modules.ports.resolve_port``): a Code node and an LLM node
+    reading the same edge therefore see the same value.  Base/branch ports
+    carry no data (execution only) and yield ``None``; every other named port
+    resolves by name.  Returns ``None`` when the source did not publish.
     """
-    ot = str(output_type or 'output').lower()
-    if ot == 'data':
-        return variables.get(f"node_{from_id}_data")
-    if ot in ('context', 'ctx_out'):
-        return variables.get(f"node_{from_id}_context")
-    # Base / branch ports drive execution ONLY — never a data source.
-    if ot in EXEC_ONLY_OUTPUT_PORTS:
-        return None
-    # Named output port — try the raw name first (port names are
-    # case-sensitive), then the lowered form.
-    for _port in (str(output_type), ot):
-        named = variables.get(f"node_{from_id}_output_{_port}")
-        if named is not None:
-            return named
-    return None
+    from ..worflow_interpreter_modules.executor_modules.ports import resolve_port
+    return resolve_port(variables, from_id, output_type)
 
 
 def _record_output_type(inp) -> Optional[str]:

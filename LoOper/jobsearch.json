@@ -1,0 +1,2517 @@
+{
+  "sequences": [],
+  "conditional_nodes": [
+    {
+      "condition_type": "web",
+      "image_path": "",
+      "image_data": "",
+      "threshold": 0.8,
+      "wait_time": 5.0,
+      "max_loops": 10,
+      "ocr_text": "",
+      "region": "",
+      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+      "timeout": 5.0,
+      "max_attempts": 3,
+      "scroll_direction": 1,
+      "loop_type": "",
+      "loop_position": "",
+      "sequence_file": "",
+      "iteration_delay": 1.0,
+      "loop_condition": "",
+      "case_sensitive": "true",
+      "node_id": "0x2ad9c6664d0",
+      "position": [
+        1080.0,
+        540.0
+      ],
+      "connections": [
+        {
+          "output_port": "true",
+          "target_node_id": "0x2ad9affc550",
+          "input_port": "input"
+        },
+        {
+          "output_port": "false",
+          "target_node_id": "0x2ad9b03fc50",
+          "input_port": "input"
+        }
+      ],
+      "description": "",
+      "web_mode": true,
+      "web_condition_type": "element_located",
+      "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"c58b6545\", \"d2322bc9\", \"_43143fb8\"], \"css\": \"main#workspace > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._8a16025f._91c3d372._5227b528 > div.b888a936._7eb5d10b._6e6c4a92 > div._77fe07c6._64e0136c._7606b7c8 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._43143fb8._2fc5bc11 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e.d4274206._2da322eb > div._4ad3fe9f._1470c439 > div.bde1bb6e._72fe9e39.ff91f810 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._29ec9d85._7d09cb64._087e6488 > div._2fc5bc11._22576f66.b8c411c0 > div._29ec9d85._7d09cb64._3767eefa > a._75cd6359.b0a316ff.ddf23a12 > span.c58b6545.d2322bc9._43143fb8\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"tag\": \"span\", \"text\": \"Easy Apply\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Easy Apply\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 641, \"vw\": 1360, \"w\": 111, \"x\": 591, \"y\": 319}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[1]/div[2]/div[2]/main[@id=\\\"workspace\\\"]/div[1]/div[2]/div[1]/div[2]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+      "web_text_source": "page",
+      "web_text_locator": "",
+      "web_target_text": "",
+      "web_case_sensitive": false,
+      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+      "web_llm_engine": "ollama",
+      "web_llm_model": "minicpm-v:latest",
+      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+      "web_llm_timeout": 8.0,
+      "web_layout_locator": "",
+      "web_layout_direction": -1,
+      "web_layout_attempts": 20,
+      "web_layout_tolerance": 12,
+      "web_timeout": 8.0
+    },
+    {
+      "condition_type": "code",
+      "image_path": "",
+      "image_data": "",
+      "threshold": 0.8,
+      "wait_time": 5.0,
+      "max_loops": 10,
+      "ocr_text": "",
+      "region": "",
+      "code": "# input_data carries the web sequence ctx_out text (a list when both output+ctx_out are wired).\n# entity_exhausted reads 'true' once no repeating element is left to click.\ndata = str(input_data).lower()\nexhausted = 'entity_exhausted' in data and 'true' in data\n# true branch = loop back (elements remain); false branch = stop (exhausted).\nresult = not exhausted",
+      "timeout": 5.0,
+      "max_attempts": 3,
+      "scroll_direction": 1,
+      "loop_type": "",
+      "loop_position": "",
+      "sequence_file": "",
+      "iteration_delay": 1.0,
+      "loop_condition": "",
+      "case_sensitive": "true",
+      "node_id": "0x2ad9e76dcd0",
+      "position": [
+        880.0,
+        640.0
+      ],
+      "connections": [
+        {
+          "output_port": "true",
+          "target_node_id": "0x2ad9c6664d0",
+          "input_port": "input"
+        },
+        {
+          "output_port": "false",
+          "target_node_id": "0x2ad96ea1bd0",
+          "input_port": "input"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "condition_type": "code",
+      "image_path": "",
+      "image_data": "",
+      "threshold": 0.8,
+      "wait_time": 5.0,
+      "max_loops": 10,
+      "ocr_text": "",
+      "region": "",
+      "code": "# input_data holds the previous node's output\n# True branch only when it is exactly the string \"true\" (case/space tolerant)\nresult = str(input_data).strip().lower() == \"true\"",
+      "timeout": 5.0,
+      "max_attempts": 3,
+      "scroll_direction": 1,
+      "loop_type": "",
+      "loop_position": "",
+      "sequence_file": "",
+      "iteration_delay": 1.0,
+      "loop_condition": "",
+      "case_sensitive": "true",
+      "node_id": "0x2ad96d4bf90",
+      "position": [
+        1900.0,
+        140.0
+      ],
+      "connections": [
+        {
+          "output_port": "true",
+          "target_node_id": "0x210242b5050",
+          "input_port": "input"
+        },
+        {
+          "output_port": "false",
+          "target_node_id": "0x21024bf7010",
+          "input_port": "input"
+        }
+      ],
+      "description": ""
+    }
+  ],
+  "llm_nodes": [],
+  "chain_import_nodes": [
+    {
+      "type": "chain_import",
+      "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\jobsearch.json",
+      "import_mode": "full",
+      "import_kind": "chain",
+      "prefix": "jobsearch",
+      "loop_count": 1,
+      "extra_delay": 0.0,
+      "enabled": true,
+      "run_in_sandbox": false,
+      "show_sandbox_window": true,
+      "emit_data": false,
+      "data_output_nodes": [],
+      "node_id": "0x2ad96d49c10",
+      "position": [
+        1420.0,
+        760.0
+      ],
+      "connections": [],
+      "sequences": [],
+      "conditional_nodes": [
+        {
+          "condition_type": "web",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x244edfbd990",
+          "position": [
+            1080.0,
+            540.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x244edf65bd0",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x244edf89a50",
+              "input_port": "input"
+            }
+          ],
+          "web_mode": true,
+          "web_condition_type": "element_located",
+          "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"c58b6545\", \"d2322bc9\", \"_43143fb8\"], \"css\": \"main#workspace > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._8a16025f._91c3d372._5227b528 > div.b888a936._7eb5d10b._6e6c4a92 > div._77fe07c6._64e0136c._7606b7c8 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._43143fb8._2fc5bc11 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e.d4274206._2da322eb > div._4ad3fe9f._1470c439 > div.bde1bb6e._72fe9e39.ff91f810 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._29ec9d85._7d09cb64._087e6488 > div._2fc5bc11._22576f66.b8c411c0 > div._29ec9d85._7d09cb64._3767eefa > a._75cd6359.b0a316ff.ddf23a12 > span.c58b6545.d2322bc9._43143fb8\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"tag\": \"span\", \"text\": \"Easy Apply\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Easy Apply\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 641, \"vw\": 1360, \"w\": 111, \"x\": 591, \"y\": 319}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[1]/div[2]/div[2]/main[@id=\\\"workspace\\\"]/div[1]/div[2]/div[1]/div[2]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+          "web_text_source": "page",
+          "web_text_locator": "",
+          "web_target_text": "",
+          "web_case_sensitive": false,
+          "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+          "web_llm_engine": "ollama",
+          "web_llm_model": "minicpm-v:latest",
+          "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+          "web_llm_timeout": 8.0,
+          "web_layout_locator": "",
+          "web_layout_direction": -1,
+          "web_layout_attempts": 20,
+          "web_layout_tolerance": 12,
+          "web_timeout": 8.0
+        },
+        {
+          "condition_type": "code",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# Evaluate previous node's output to decide routing\n# input_data contains the output from the previous node\n# Examples:\n#   # Check if LLM output contains specific keywords\n#   if input_data and 'no' in str(input_data).lower():\n#       result = False\n#   else:\n#       result = True\n\n# Active evaluation: check the user's response to 'Can I do Something else for you?'\n# If user says no (or anything containing 'no'), route to end.\n# Otherwise, continue the loop.\nimport re\nif input_data and re.search(r'\\bno\\b', str(input_data), re.IGNORECASE):\n    result = False\nelse:\n    result = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x244edfbdb90",
+          "position": [
+            1660.0,
+            340.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x244edf89a50",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "condition_type": "code",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data carries the web sequence ctx_out text (a list when both output+ctx_out are wired).\n# entity_exhausted reads 'true' once no repeating element is left to click.\ndata = str(input_data).lower()\nexhausted = 'entity_exhausted' in data and 'true' in data\n# true branch = loop back (elements remain); false branch = stop (exhausted).\nresult = not exhausted",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x244edfcfa10",
+          "position": [
+            880.0,
+            640.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x244edfbd990",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x244edfbb090",
+              "input_port": "input"
+            }
+          ]
+        }
+      ],
+      "llm_nodes": [],
+      "tts_nodes": [],
+      "chain_import_nodes": [
+        {
+          "type": "chain_import",
+          "chain_file_path": "C:\\Users\\LoOper\\AppData\\Local\\arrow\\chains\\repairtest.json",
+          "import_mode": "full",
+          "prefix": "repairtest",
+          "loop_count": 1,
+          "extra_delay": 0.0,
+          "enabled": true,
+          "run_in_sandbox": false,
+          "show_sandbox_window": true,
+          "emit_data": false,
+          "data_output_nodes": [],
+          "node_id": "0x244edf65bd0",
+          "position": [
+            1280.0,
+            500.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x244edfb72d0",
+              "input_port": "input"
+            }
+          ],
+          "sequences": [],
+          "conditional_nodes": [
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f291bc90",
+              "position": [
+                1720.0,
+                1120.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244edf71d10",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x244f29195d0",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "element_located",
+              "web_element_locator": "{\"ancestor_css\": \"button#ember533 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember533 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Review\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Review\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 51, \"x\": 906, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember533\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_text_source": "page",
+              "web_text_locator": "",
+              "web_target_text": "",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 2.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 2.0
+            },
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f29195d0",
+              "position": [
+                1960.0,
+                1240.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244f2895890",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "element_located",
+              "web_element_locator": "{\"ancestor_css\": \"button#ember374 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember374 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[1]/span[1]\", \"tag\": \"span\", \"text\": \"Next\", \"text_index\": null, \"text_xpath\": \"//span[normalize-space(.)=\\\"Next\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 35, \"x\": 922, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember374\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_text_source": "page",
+              "web_text_locator": "",
+              "web_target_text": "",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 2.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 2.0
+            },
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f2919350",
+              "position": [
+                2760.0,
+                1120.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244f2934f50",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x244f292bc10",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "text_present",
+              "web_element_locator": "",
+              "web_text_source": "element",
+              "web_text_locator": "{\"ancestor_css\": \"div#ember346 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember346 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Additional Questions LinkedIn Profile URL Website, blog or portfolio What languages do you speak fluently? Desired salar\", \"viewport\": {\"h\": 1131, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": -175}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember343\\\"]/div[1]/div[@id=\\\"ember346\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_target_text": "Please",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 2.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 2.0
+            },
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f291b750",
+              "position": [
+                1480.0,
+                1060.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244f28958d0",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x244f291bc90",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "element_located",
+              "web_element_locator": "{\"ancestor_css\": \"button#ember537 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember537 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/div[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Submit application\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Submit application\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 641, \"vw\": 1360, \"w\": 137, \"x\": 860, \"y\": 439}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember347\\\"]/div[1]/div[@id=\\\"ember350\\\"]/div[1]/div[2]/div[1]/footer[1]/div[2]/button[@id=\\\"ember537\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_text_source": "page",
+              "web_text_locator": "",
+              "web_target_text": "",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 10.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 10.0
+            },
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f292bc10",
+              "position": [
+                2660.0,
+                80.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244f2934f50",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x244f291bc90",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "text_present",
+              "web_element_locator": "",
+              "web_text_source": "element",
+              "web_text_locator": "{\"ancestor_css\": \"div#ember852 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember852 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Preguntas adicionales \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con Python? \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con LangChain?\", \"viewport\": {\"h\": 332, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": 24}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember849\\\"]/div[1]/div[@id=\\\"ember852\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_target_text": "Introduce ",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 2.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 2.0
+            },
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x244f292b890",
+              "position": [
+                2320.0,
+                860.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x244f2917210",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "text_present",
+              "web_element_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(1) > span:nth-of-type(1) > svg:nth-of-type(1) > svg:nth-of-type(2) > image:nth-of-type(1)\", \"aria_label\": null, \"css\": \"div#ember3926 > div.display-flex.flex-column.justify-space-between > div > span.jpac-modal-header-icon > svg > svg > image\", \"data_attrs\": {}, \"href\": \"https://static.licdn.com/aero-v1/sc/h/2y2u2mhlct0k9eme9b15wkljx\", \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"tag\": \"image\", \"text\": null, \"viewport\": {\"h\": 64, \"vh\": 641, \"vw\": 1360, \"w\": 64, \"x\": 648, \"y\": 60}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_text_source": "element",
+              "web_text_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2)\", \"aria_label\": null, \"classes\": [\"artdeco-modal__actionbar\", \"ember-view\", \"job-seeker-nba--modal-footer\"], \"css\": \"div#ember3927\", \"data_attrs\": {}, \"href\": null, \"id\": \"ember3927\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/div[2]/div[1]/div[2]/div[2]\", \"tag\": \"div\", \"text\": \"Not now Update profile\", \"text_index\": 0, \"text_xpath\": \"//div[normalize-space(.)=\\\"Not now Update profile\\\"]\", \"viewport\": {\"h\": 49, \"vh\": 641, \"vw\": 1360, \"w\": 552, \"x\": 404, \"y\": 413}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[2]/div[@id=\\\"ember3927\\\"]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_target_text": "Update profile",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 2.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 2.0
+            }
+          ],
+          "llm_nodes": [],
+          "tts_nodes": [],
+          "chain_import_nodes": [],
+          "output_nodes": [
+            {
+              "type": "output",
+              "label": "",
+              "variable_name": "",
+              "agent_visible": true,
+              "popup_on_finish": true,
+              "show_rating": false,
+              "render_mode": "text",
+              "tts_enabled": true,
+              "tts_text": "i applied to a job",
+              "tts_language": "en",
+              "tts_voice_model": "",
+              "tts_speed": 1.0,
+              "tts_speaker_id": null,
+              "tts_wait": true,
+              "image_source": "",
+              "node_id": "0x1d8728b7210",
+              "position": [
+                3160.0,
+                200.0
+              ],
+              "connections": []
+            },
+            {
+              "type": "output",
+              "label": "",
+              "variable_name": "",
+              "agent_visible": true,
+              "popup_on_finish": true,
+              "show_rating": true,
+              "render_mode": "text",
+              "tts_enabled": true,
+              "tts_text": "starting form population process",
+              "tts_language": "en",
+              "tts_voice_model": "",
+              "tts_speed": 1.0,
+              "tts_speaker_id": null,
+              "tts_wait": true,
+              "image_source": "",
+              "node_id": "0x28ff54f6a10",
+              "position": [
+                1080.0,
+                0.0
+              ],
+              "connections": [
+                {
+                  "output_port": "output",
+                  "target_node_id": "0x244edf72490",
+                  "input_port": "input"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "chain_import",
+          "chain_file_path": "C:\\Users\\LoOper\\AppData\\Local\\arrow\\chains\\jobsearch.json",
+          "import_mode": "full",
+          "prefix": "jobsearch",
+          "loop_count": 1,
+          "extra_delay": 0.0,
+          "enabled": true,
+          "run_in_sandbox": false,
+          "show_sandbox_window": true,
+          "emit_data": false,
+          "data_output_nodes": [],
+          "node_id": "0x244edf1ffd0",
+          "position": [
+            1350.0,
+            750.0
+          ],
+          "connections": [],
+          "sequences": [],
+          "conditional_nodes": [
+            {
+              "condition_type": "web",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x2e1bb4cbf10",
+              "position": [
+                1080.0,
+                540.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x2e1bc555b50",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x2e1bc4ea610",
+                  "input_port": "input"
+                }
+              ],
+              "web_mode": true,
+              "web_condition_type": "element_located",
+              "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"c58b6545\", \"d2322bc9\", \"_43143fb8\"], \"css\": \"main#workspace > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._8a16025f._91c3d372._5227b528 > div.b888a936._7eb5d10b._6e6c4a92 > div._77fe07c6._64e0136c._7606b7c8 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._43143fb8._2fc5bc11 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e.d4274206._2da322eb > div._4ad3fe9f._1470c439 > div.bde1bb6e._72fe9e39.ff91f810 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._29ec9d85._7d09cb64._087e6488 > div._2fc5bc11._22576f66.b8c411c0 > div._29ec9d85._7d09cb64._3767eefa > a._75cd6359.b0a316ff.ddf23a12 > span.c58b6545.d2322bc9._43143fb8\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"tag\": \"span\", \"text\": \"Easy Apply\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Easy Apply\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 641, \"vw\": 1360, \"w\": 111, \"x\": 591, \"y\": 319}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[1]/div[2]/div[2]/main[@id=\\\"workspace\\\"]/div[1]/div[2]/div[1]/div[2]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+              "web_text_source": "page",
+              "web_text_locator": "",
+              "web_target_text": "",
+              "web_case_sensitive": false,
+              "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+              "web_llm_engine": "ollama",
+              "web_llm_model": "minicpm-v:latest",
+              "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+              "web_llm_timeout": 8.0,
+              "web_layout_locator": "",
+              "web_layout_direction": -1,
+              "web_layout_attempts": 20,
+              "web_layout_tolerance": 12,
+              "web_timeout": 8.0
+            },
+            {
+              "condition_type": "code",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# Evaluate previous node's output to decide routing\n# input_data contains the output from the previous node\n# Examples:\n#   # Check if LLM output contains specific keywords\n#   if input_data and 'no' in str(input_data).lower():\n#       result = False\n#   else:\n#       result = True\n\n# Active evaluation: check the user's response to 'Can I do Something else for you?'\n# If user says no (or anything containing 'no'), route to end.\n# Otherwise, continue the loop.\nimport re\nif input_data and re.search(r'\\bno\\b', str(input_data), re.IGNORECASE):\n    result = False\nelse:\n    result = True",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x2e1c16dc350",
+              "position": [
+                1660.0,
+                340.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x2e1bc4ea610",
+                  "input_port": "input"
+                }
+              ]
+            },
+            {
+              "condition_type": "code",
+              "image_path": "",
+              "image_data": "",
+              "threshold": 0.8,
+              "wait_time": 5.0,
+              "max_loops": 10,
+              "ocr_text": "",
+              "region": "",
+              "code": "# input_data carries the web sequence ctx_out text (a list when both output+ctx_out are wired).\n# entity_exhausted reads 'true' once no repeating element is left to click.\ndata = str(input_data).lower()\nexhausted = 'entity_exhausted' in data and 'true' in data\n# true branch = loop back (elements remain); false branch = stop (exhausted).\nresult = not exhausted",
+              "timeout": 5.0,
+              "max_attempts": 3,
+              "scroll_direction": 1,
+              "loop_type": "",
+              "loop_position": "",
+              "sequence_file": "",
+              "iteration_delay": 1.0,
+              "loop_condition": "",
+              "case_sensitive": "true",
+              "node_id": "0x2e1bf782150",
+              "position": [
+                880.0,
+                640.0
+              ],
+              "connections": [
+                {
+                  "output_port": "true",
+                  "target_node_id": "0x2e1bb4cbf10",
+                  "input_port": "input"
+                },
+                {
+                  "output_port": "false",
+                  "target_node_id": "0x2e1bc4e80d0",
+                  "input_port": "input"
+                }
+              ]
+            }
+          ],
+          "llm_nodes": [],
+          "tts_nodes": [],
+          "chain_import_nodes": [
+            {
+              "type": "chain_import",
+              "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\repairtest.json",
+              "import_mode": "full",
+              "prefix": "repairtest",
+              "loop_count": 1,
+              "extra_delay": 0.0,
+              "enabled": true,
+              "run_in_sandbox": false,
+              "show_sandbox_window": true,
+              "node_id": "0x2e1bc555b50",
+              "position": [
+                1280.0,
+                480.0
+              ],
+              "connections": [
+                {
+                  "output_port": "output",
+                  "target_node_id": "0x2e1c1661450",
+                  "input_port": "input"
+                }
+              ],
+              "sequences": [],
+              "conditional_nodes": [
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bdec88150",
+                  "position": [
+                    1720.0,
+                    1120.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bdba90a90",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x13bdbcdcad0",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "element_located",
+                  "web_element_locator": "{\"ancestor_css\": \"button#ember533 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember533 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Review\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Review\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 51, \"x\": 906, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember533\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_text_source": "page",
+                  "web_text_locator": "",
+                  "web_target_text": "",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 2.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 2.0
+                },
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bdbcdcad0",
+                  "position": [
+                    1960.0,
+                    1240.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bd8d74ad0",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "element_located",
+                  "web_element_locator": "{\"ancestor_css\": \"button#ember374 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember374 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[1]/span[1]\", \"tag\": \"span\", \"text\": \"Next\", \"text_index\": null, \"text_xpath\": \"//span[normalize-space(.)=\\\"Next\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 35, \"x\": 922, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember374\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_text_source": "page",
+                  "web_text_locator": "",
+                  "web_target_text": "",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 2.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 2.0
+                },
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bdec18510",
+                  "position": [
+                    2760.0,
+                    1120.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bdebd7190",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x13bdbabc4d0",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "text_present",
+                  "web_element_locator": "",
+                  "web_text_source": "element",
+                  "web_text_locator": "{\"ancestor_css\": \"div#ember346 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember346 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Additional Questions LinkedIn Profile URL Website, blog or portfolio What languages do you speak fluently? Desired salar\", \"viewport\": {\"h\": 1131, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": -175}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember343\\\"]/div[1]/div[@id=\\\"ember346\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_target_text": "Please",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 2.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 2.0
+                },
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bd8bf0990",
+                  "position": [
+                    1480.0,
+                    1060.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bd8cae350",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x13bdec88150",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "element_located",
+                  "web_element_locator": "{\"ancestor_css\": \"button#ember537 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember537 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/div[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Submit application\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Submit application\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 641, \"vw\": 1360, \"w\": 137, \"x\": 860, \"y\": 439}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember347\\\"]/div[1]/div[@id=\\\"ember350\\\"]/div[1]/div[2]/div[1]/footer[1]/div[2]/button[@id=\\\"ember537\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_text_source": "page",
+                  "web_text_locator": "",
+                  "web_target_text": "",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 10.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 10.0
+                },
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bdbabc4d0",
+                  "position": [
+                    2660.0,
+                    80.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bdebd7190",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x13bdec88150",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "text_present",
+                  "web_element_locator": "",
+                  "web_text_source": "element",
+                  "web_text_locator": "{\"ancestor_css\": \"div#ember852 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember852 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Preguntas adicionales \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con Python? \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con LangChain?\", \"viewport\": {\"h\": 332, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": 24}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember849\\\"]/div[1]/div[@id=\\\"ember852\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_target_text": "Introduce ",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 2.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 2.0
+                },
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x13bd8aba110",
+                  "position": [
+                    2320.0,
+                    860.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x13bdbaa6650",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "text_present",
+                  "web_element_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(1) > span:nth-of-type(1) > svg:nth-of-type(1) > svg:nth-of-type(2) > image:nth-of-type(1)\", \"aria_label\": null, \"css\": \"div#ember3926 > div.display-flex.flex-column.justify-space-between > div > span.jpac-modal-header-icon > svg > svg > image\", \"data_attrs\": {}, \"href\": \"https://static.licdn.com/aero-v1/sc/h/2y2u2mhlct0k9eme9b15wkljx\", \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"tag\": \"image\", \"text\": null, \"viewport\": {\"h\": 64, \"vh\": 641, \"vw\": 1360, \"w\": 64, \"x\": 648, \"y\": 60}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_text_source": "element",
+                  "web_text_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2)\", \"aria_label\": null, \"classes\": [\"artdeco-modal__actionbar\", \"ember-view\", \"job-seeker-nba--modal-footer\"], \"css\": \"div#ember3927\", \"data_attrs\": {}, \"href\": null, \"id\": \"ember3927\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/div[2]/div[1]/div[2]/div[2]\", \"tag\": \"div\", \"text\": \"Not now Update profile\", \"text_index\": 0, \"text_xpath\": \"//div[normalize-space(.)=\\\"Not now Update profile\\\"]\", \"viewport\": {\"h\": 49, \"vh\": 641, \"vw\": 1360, \"w\": 552, \"x\": 404, \"y\": 413}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[2]/div[@id=\\\"ember3927\\\"]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_target_text": "Update profile",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 2.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 2.0
+                }
+              ],
+              "llm_nodes": [],
+              "tts_nodes": [],
+              "chain_import_nodes": []
+            },
+            {
+              "type": "chain_import",
+              "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\jobsearch.json",
+              "import_mode": "full",
+              "prefix": "jobsearch",
+              "loop_count": 1,
+              "extra_delay": 0.0,
+              "enabled": true,
+              "run_in_sandbox": false,
+              "show_sandbox_window": true,
+              "node_id": "0x2e1bc584210",
+              "position": [
+                1420.0,
+                780.0
+              ],
+              "connections": [],
+              "sequences": [],
+              "conditional_nodes": [
+                {
+                  "condition_type": "web",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x25aaaaf5590",
+                  "position": [
+                    1080.0,
+                    540.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x25aaa8fdc50",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x25aa52e77d0",
+                      "input_port": "input"
+                    }
+                  ],
+                  "web_mode": true,
+                  "web_condition_type": "element_located",
+                  "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2) > main:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > a:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"c58b6545\", \"d2322bc9\", \"_43143fb8\"], \"css\": \"main#workspace > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._8a16025f._91c3d372._5227b528 > div.b888a936._7eb5d10b._6e6c4a92 > div._77fe07c6._64e0136c._7606b7c8 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._43143fb8._2fc5bc11 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div.bde1bb6e.d4274206._2da322eb > div._4ad3fe9f._1470c439 > div.bde1bb6e._72fe9e39.ff91f810 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._4ad3fe9f._1470c439 > div.bde1bb6e._2fc5bc11._2ecc5b42 > div._29ec9d85._7d09cb64._087e6488 > div._2fc5bc11._22576f66.b8c411c0 > div._29ec9d85._7d09cb64._3767eefa > a._75cd6359.b0a316ff.ddf23a12 > span.c58b6545.d2322bc9._43143fb8\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"tag\": \"span\", \"text\": \"Easy Apply\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Easy Apply\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 641, \"vw\": 1360, \"w\": 111, \"x\": 591, \"y\": 319}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[1]/div[2]/div[2]/main[@id=\\\"workspace\\\"]/div[1]/div[2]/div[1]/div[2]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[3]/div[1]/div[1]/div[1]/div[1]/div[1]/a[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                  "web_text_source": "page",
+                  "web_text_locator": "",
+                  "web_target_text": "",
+                  "web_case_sensitive": false,
+                  "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                  "web_llm_engine": "ollama",
+                  "web_llm_model": "minicpm-v:latest",
+                  "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                  "web_llm_timeout": 8.0,
+                  "web_layout_locator": "",
+                  "web_layout_direction": -1,
+                  "web_layout_attempts": 20,
+                  "web_layout_tolerance": 12,
+                  "web_timeout": 8.0
+                },
+                {
+                  "condition_type": "code",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# Evaluate previous node's output to decide routing\n# input_data contains the output from the previous node\n# Examples:\n#   # Check if LLM output contains specific keywords\n#   if input_data and 'no' in str(input_data).lower():\n#       result = False\n#   else:\n#       result = True\n\n# Active evaluation: check the user's response to 'Can I do Something else for you?'\n# If user says no (or anything containing 'no'), route to end.\n# Otherwise, continue the loop.\nimport re\nif input_data and re.search(r'\\bno\\b', str(input_data), re.IGNORECASE):\n    result = False\nelse:\n    result = True",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x25aa46ca050",
+                  "position": [
+                    1660.0,
+                    340.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x25aa52e77d0",
+                      "input_port": "input"
+                    }
+                  ]
+                },
+                {
+                  "condition_type": "code",
+                  "image_path": "",
+                  "image_data": "",
+                  "threshold": 0.8,
+                  "wait_time": 5.0,
+                  "max_loops": 10,
+                  "ocr_text": "",
+                  "region": "",
+                  "code": "# input_data carries the web sequence ctx_out text (a list when both output+ctx_out are wired).\n# entity_exhausted reads 'true' once no repeating element is left to click.\ndata = str(input_data).lower()\nexhausted = 'entity_exhausted' in data and 'true' in data\n# true branch = loop back (elements remain); false branch = stop (exhausted).\nresult = not exhausted",
+                  "timeout": 5.0,
+                  "max_attempts": 3,
+                  "scroll_direction": 1,
+                  "loop_type": "",
+                  "loop_position": "",
+                  "sequence_file": "",
+                  "iteration_delay": 1.0,
+                  "loop_condition": "",
+                  "case_sensitive": "true",
+                  "node_id": "0x25aaa8df390",
+                  "position": [
+                    880.0,
+                    640.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "true",
+                      "target_node_id": "0x25aaaaf5590",
+                      "input_port": "input"
+                    },
+                    {
+                      "output_port": "false",
+                      "target_node_id": "0x25aaab74450",
+                      "input_port": "input"
+                    }
+                  ]
+                }
+              ],
+              "llm_nodes": [],
+              "tts_nodes": [],
+              "chain_import_nodes": [
+                {
+                  "type": "chain_import",
+                  "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\repairtest.json",
+                  "import_mode": "full",
+                  "prefix": "repairtest",
+                  "loop_count": 1,
+                  "extra_delay": 0.0,
+                  "enabled": true,
+                  "run_in_sandbox": false,
+                  "show_sandbox_window": true,
+                  "node_id": "0x25aaa8fdc50",
+                  "position": [
+                    1290.0,
+                    490.0
+                  ],
+                  "connections": [
+                    {
+                      "output_port": "output",
+                      "target_node_id": "0x25aa23f2b10",
+                      "input_port": "input"
+                    }
+                  ],
+                  "sequences": [],
+                  "conditional_nodes": [
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bdec88150",
+                      "position": [
+                        1720.0,
+                        1120.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bdba90a90",
+                          "input_port": "input"
+                        },
+                        {
+                          "output_port": "false",
+                          "target_node_id": "0x13bdbcdcad0",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "element_located",
+                      "web_element_locator": "{\"ancestor_css\": \"button#ember533 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember533 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Review\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Review\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 51, \"x\": 906, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember533\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_text_source": "page",
+                      "web_text_locator": "",
+                      "web_target_text": "",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 2.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 2.0
+                    },
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bdbcdcad0",
+                      "position": [
+                        1960.0,
+                        1240.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bd8d74ad0",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "element_located",
+                      "web_element_locator": "{\"ancestor_css\": \"button#ember374 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember374 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/form[1]/footer[1]/div[2]/button[1]/span[1]\", \"tag\": \"span\", \"text\": \"Next\", \"text_index\": null, \"text_xpath\": \"//span[normalize-space(.)=\\\"Next\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 593, \"vw\": 1280, \"w\": 35, \"x\": 922, \"y\": 359}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember348\\\"]/div[1]/div[@id=\\\"ember351\\\"]/div[1]/div[2]/form[1]/footer[1]/div[2]/button[@id=\\\"ember374\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_text_source": "page",
+                      "web_text_locator": "",
+                      "web_target_text": "",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 2.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 2.0
+                    },
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bdec18510",
+                      "position": [
+                        2760.0,
+                        1120.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bdebd7190",
+                          "input_port": "input"
+                        },
+                        {
+                          "output_port": "false",
+                          "target_node_id": "0x13bdbabc4d0",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "text_present",
+                      "web_element_locator": "",
+                      "web_text_source": "element",
+                      "web_text_locator": "{\"ancestor_css\": \"div#ember346 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember346 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Additional Questions LinkedIn Profile URL Website, blog or portfolio What languages do you speak fluently? Desired salar\", \"viewport\": {\"h\": 1131, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": -175}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember343\\\"]/div[1]/div[@id=\\\"ember346\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_target_text": "Please",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 2.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 2.0
+                    },
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bd8bf0990",
+                      "position": [
+                        1480.0,
+                        1060.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bd8cae350",
+                          "input_port": "input"
+                        },
+                        {
+                          "output_port": "false",
+                          "target_node_id": "0x13bdec88150",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "element_located",
+                      "web_element_locator": "{\"ancestor_css\": \"button#ember537 > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"artdeco-button__text\"], \"css\": \"button#ember537 > span.artdeco-button__text\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[2]/div[1]/footer[1]/div[2]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Submit application\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Submit application\\\"]\", \"viewport\": {\"h\": 20, \"vh\": 641, \"vw\": 1360, \"w\": 137, \"x\": 860, \"y\": 439}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember347\\\"]/div[1]/div[@id=\\\"ember350\\\"]/div[1]/div[2]/div[1]/footer[1]/div[2]/button[@id=\\\"ember537\\\"]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_text_source": "page",
+                      "web_text_locator": "",
+                      "web_target_text": "",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 10.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 10.0
+                    },
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bdbabc4d0",
+                      "position": [
+                        2660.0,
+                        80.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bdebd7190",
+                          "input_port": "input"
+                        },
+                        {
+                          "output_port": "false",
+                          "target_node_id": "0x13bdec88150",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "text_present",
+                      "web_element_locator": "",
+                      "web_text_source": "element",
+                      "web_text_locator": "{\"ancestor_css\": \"div#ember852 > div:nth-of-type(1) > div:nth-of-type(2) > form:nth-of-type(1) > div:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"ph5\"], \"css\": \"div#ember852 > div.YABrZXiMiUTUvocPYtHzeLvazFsJIxjYI > div > form > div.ph5\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[2]/div[1]/div[2]/form[1]/div[1]\", \"tag\": \"div\", \"text\": \"Preguntas adicionales \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con Python? \\u00bfCu\\u00e1ntos a\\u00f1os de experiencia tienes con LangChain?\", \"viewport\": {\"h\": 332, \"vh\": 641, \"vw\": 1360, \"w\": 729, \"x\": 308, \"y\": 24}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember849\\\"]/div[1]/div[@id=\\\"ember852\\\"]/div[1]/div[2]/form[1]/div[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_target_text": "Introduce ",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 2.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 2.0
+                    },
+                    {
+                      "condition_type": "web",
+                      "image_path": "",
+                      "image_data": "",
+                      "threshold": 0.8,
+                      "wait_time": 5.0,
+                      "max_loops": 10,
+                      "ocr_text": "",
+                      "region": "",
+                      "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+                      "timeout": 5.0,
+                      "max_attempts": 3,
+                      "scroll_direction": 1,
+                      "loop_type": "",
+                      "loop_position": "",
+                      "sequence_file": "",
+                      "iteration_delay": 1.0,
+                      "loop_condition": "",
+                      "case_sensitive": "true",
+                      "node_id": "0x13bd8aba110",
+                      "position": [
+                        2320.0,
+                        860.0
+                      ],
+                      "connections": [
+                        {
+                          "output_port": "true",
+                          "target_node_id": "0x13bdbaa6650",
+                          "input_port": "input"
+                        }
+                      ],
+                      "web_mode": true,
+                      "web_condition_type": "text_present",
+                      "web_element_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(1) > span:nth-of-type(1) > svg:nth-of-type(1) > svg:nth-of-type(2) > image:nth-of-type(1)\", \"aria_label\": null, \"css\": \"div#ember3926 > div.display-flex.flex-column.justify-space-between > div > span.jpac-modal-header-icon > svg > svg > image\", \"data_attrs\": {}, \"href\": \"https://static.licdn.com/aero-v1/sc/h/2y2u2mhlct0k9eme9b15wkljx\", \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"tag\": \"image\", \"text\": null, \"viewport\": {\"h\": 64, \"vh\": 641, \"vw\": 1360, \"w\": 64, \"x\": 648, \"y\": 60}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[1]/span[1]/svg[1]/svg[2]/image[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_text_source": "element",
+                      "web_text_locator": "{\"ancestor_css\": \"div#ember3926 > div:nth-of-type(1) > div:nth-of-type(2) > div:nth-of-type(2)\", \"aria_label\": null, \"classes\": [\"artdeco-modal__actionbar\", \"ember-view\", \"job-seeker-nba--modal-footer\"], \"css\": \"div#ember3927\", \"data_attrs\": {}, \"href\": null, \"id\": \"ember3927\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/div[2]/div[1]/div[2]/div[2]\", \"tag\": \"div\", \"text\": \"Not now Update profile\", \"text_index\": 0, \"text_xpath\": \"//div[normalize-space(.)=\\\"Not now Update profile\\\"]\", \"viewport\": {\"h\": 49, \"vh\": 641, \"vw\": 1360, \"w\": 552, \"x\": 404, \"y\": 413}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember3798\\\"]/div[1]/div[@id=\\\"ember3926\\\"]/div[1]/div[2]/div[@id=\\\"ember3927\\\"]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+                      "web_target_text": "Update profile",
+                      "web_case_sensitive": false,
+                      "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+                      "web_llm_engine": "ollama",
+                      "web_llm_model": "minicpm-v:latest",
+                      "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+                      "web_llm_timeout": 2.0,
+                      "web_layout_locator": "",
+                      "web_layout_direction": -1,
+                      "web_layout_attempts": 20,
+                      "web_layout_tolerance": 12,
+                      "web_timeout": 2.0
+                    }
+                  ],
+                  "llm_nodes": [],
+                  "tts_nodes": [],
+                  "chain_import_nodes": []
+                }
+              ]
+            }
+          ],
+          "output_nodes": [
+            {
+              "type": "output",
+              "label": "",
+              "agent_visible": true,
+              "popup_on_finish": true,
+              "show_rating": true,
+              "render_mode": "text",
+              "tts_enabled": true,
+              "tts_text": "searching for jobs",
+              "tts_language": "en",
+              "tts_voice_model": "",
+              "tts_speed": 1.0,
+              "tts_speaker_id": null,
+              "tts_wait": false,
+              "image_source": "",
+              "node_id": "0x25aabe59610",
+              "position": [
+                320.0,
+                480.0
+              ],
+              "connections": [
+                {
+                  "output_port": "output",
+                  "target_node_id": "0x2e1bc4ea610",
+                  "input_port": "input"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "output_nodes": [
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "searching for jobs",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": false,
+          "image_source": "",
+          "node_id": "0x25aabe59610",
+          "position": [
+            320.0,
+            480.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x244edf89a50",
+              "input_port": "input"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "chain_import",
+      "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\repairtest.json",
+      "import_mode": "full",
+      "import_kind": "chain",
+      "prefix": "repairtest",
+      "loop_count": 1,
+      "extra_delay": 0.0,
+      "enabled": true,
+      "run_in_sandbox": false,
+      "show_sandbox_window": true,
+      "emit_data": false,
+      "data_output_nodes": [],
+      "node_id": "0x2ad9affc550",
+      "position": [
+        1480.0,
+        260.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad9c540690",
+          "input_port": "input"
+        }
+      ],
+      "sequences": [],
+      "conditional_nodes": [
+        {
+          "condition_type": "web",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x2ad9a056fd0",
+          "position": [
+            3140.0,
+            1080.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x1ea0384bb50",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x1ea7fcac690",
+              "input_port": "input"
+            }
+          ],
+          "description": "",
+          "web_mode": true,
+          "web_condition_type": "element_located",
+          "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > dialog:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > footer:nth-of-type(1) > button:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"dj9l9a\", \"dj9l85\", \"dj9ia0\"], \"css\": \"div#root > dialog.dj9me5.dj9me4.dj9hyg > div.dj9al5.dj9h9w.dj9ia0 > div.dj9ap5.dj9jk0.dj9jkc > div.dj9get.dj9mf5 > div.dj9alx.dj9mf5 > div.dj9mgo.dj9al5.dj9h9w > div.dj9aph.dj9gfx.dj9hbx > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > footer.dj9loy.dj9ls6.dj9lwy > button.dj9l8n.dj9l8m.dj9sg > span.dj9l9a.dj9l85.dj9ia0\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]/span[1]\", \"tag\": \"span\", \"text\": \"Submit application\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Submit application\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 739, \"vw\": 1440, \"w\": 143, \"x\": 946, \"y\": 563}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+          "web_text_source": "page",
+          "web_text_locator": "",
+          "web_target_text": "",
+          "web_case_sensitive": false,
+          "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+          "web_llm_engine": "ollama",
+          "web_llm_model": "minicpm-v:latest",
+          "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+          "web_llm_timeout": 10.0,
+          "web_layout_locator": "",
+          "web_layout_direction": -1,
+          "web_layout_attempts": 20,
+          "web_layout_tolerance": 12,
+          "web_timeout": 10.0
+        },
+        {
+          "condition_type": "web",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x2ad9a054cd0",
+          "position": [
+            3860.0,
+            1920.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x1ea04956550",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x1ea038485d0",
+              "input_port": "input"
+            }
+          ],
+          "description": "",
+          "web_mode": true,
+          "web_condition_type": "element_located",
+          "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > dialog:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > footer:nth-of-type(1) > button:nth-of-type(1) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"dj9l9a\", \"dj9l85\", \"dj9ia0\"], \"css\": \"div#root > dialog.dj9me5.dj9me4.dj9hyg > div.dj9al5.dj9h9w.dj9ia0 > div.dj9ap5.dj9jk0.dj9jkc > div.dj9get.dj9mf5 > div.dj9alx.dj9mf5 > div.dj9mgo.dj9al5.dj9h9w > div.dj9aph.dj9gfx.dj9hbx > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > footer.dj9loy.dj9ls6.dj9lwy > button.dj9l8n.dj9l8m.dj9sg > span.dj9l9a.dj9l85.dj9ia0\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]/span[1]\", \"tag\": \"span\", \"text\": \"Next\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Next\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 739, \"vw\": 1440, \"w\": 54, \"x\": 1035, \"y\": 563}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[1]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+          "web_text_source": "page",
+          "web_text_locator": "",
+          "web_target_text": "",
+          "web_case_sensitive": false,
+          "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+          "web_llm_engine": "ollama",
+          "web_llm_model": "minicpm-v:latest",
+          "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+          "web_llm_timeout": 10.0,
+          "web_layout_locator": "",
+          "web_layout_direction": -1,
+          "web_layout_attempts": 20,
+          "web_layout_tolerance": 12,
+          "web_timeout": 10.0
+        },
+        {
+          "condition_type": "web",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x2ad9a056c50",
+          "position": [
+            3580.0,
+            1640.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x1ea04922150",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x1ea048d89d0",
+              "input_port": "input"
+            }
+          ],
+          "description": "",
+          "web_mode": true,
+          "web_condition_type": "element_located",
+          "web_element_locator": "{\"ancestor_css\": \"html:nth-of-type(1) > body:nth-of-type(1) > div:nth-of-type(1) > dialog:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(1) > div:nth-of-type(3) > div:nth-of-type(1) > footer:nth-of-type(1) > button:nth-of-type(2) > span:nth-of-type(1)\", \"aria_label\": null, \"classes\": [\"dj9l9a\", \"dj9l85\", \"dj9ia0\"], \"css\": \"div#root > dialog.dj9me5.dj9me4.dj9hyg > div.dj9al5.dj9h9w.dj9ia0 > div.dj9ap5.dj9jk0.dj9jkc > div.dj9get.dj9mf5 > div.dj9alx.dj9mf5 > div.dj9mgo.dj9al5.dj9h9w > div.dj9aph.dj9gfx.dj9hbx > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > div.dj9mgo.dj9al5.dj9h9w > footer.dj9loy.dj9ls6.dj9lwy > button.dj9l8n.dj9l8m.dj9sg > span.dj9l9a.dj9l85.dj9ia0\", \"data_attrs\": {}, \"href\": null, \"id\": null, \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[2]/span[1]\", \"tag\": \"span\", \"text\": \"Review\", \"text_index\": 0, \"text_xpath\": \"//span[normalize-space(.)=\\\"Review\\\"]\", \"viewport\": {\"h\": 32, \"vh\": 739, \"vw\": 1440, \"w\": 69, \"x\": 1020, \"y\": 563}, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/dialog[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[1]/div[3]/div[1]/footer[1]/button[2]/span[1]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+          "web_text_source": "page",
+          "web_text_locator": "",
+          "web_target_text": "",
+          "web_case_sensitive": false,
+          "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+          "web_llm_engine": "ollama",
+          "web_llm_model": "minicpm-v:latest",
+          "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+          "web_llm_timeout": 10.0,
+          "web_layout_locator": "",
+          "web_layout_direction": -1,
+          "web_layout_attempts": 20,
+          "web_layout_tolerance": 12,
+          "web_timeout": 10.0
+        },
+        {
+          "condition_type": "web",
+          "image_path": "",
+          "image_data": "",
+          "threshold": 0.8,
+          "wait_time": 5.0,
+          "max_loops": 10,
+          "ocr_text": "",
+          "region": "",
+          "code": "# input_data contains the output from the previous node (LLM result, code output, etc.)\n# Set result = True for true branch, False for false branch\nresult = True",
+          "timeout": 5.0,
+          "max_attempts": 3,
+          "scroll_direction": 1,
+          "loop_type": "",
+          "loop_position": "",
+          "sequence_file": "",
+          "iteration_delay": 1.0,
+          "loop_condition": "",
+          "case_sensitive": "true",
+          "node_id": "0x2ad9a058fd0",
+          "position": [
+            3680.0,
+            240.0
+          ],
+          "connections": [
+            {
+              "output_port": "true",
+              "target_node_id": "0x1ea049bbd10",
+              "input_port": "input"
+            },
+            {
+              "output_port": "false",
+              "target_node_id": "0x1ea7fc6a150",
+              "input_port": "input"
+            }
+          ],
+          "description": "",
+          "web_mode": true,
+          "web_condition_type": "text_present",
+          "web_element_locator": "",
+          "web_text_source": "page",
+          "web_text_locator": "{\"ancestor_css\": \"div#ember260 > div:nth-of-type(1) > div:nth-of-type(2)\", \"aria_label\": null, \"classes\": [\"artdeco-modal__content\", \"ember-view\"], \"css\": \"div#ember288\", \"data_attrs\": {}, \"href\": null, \"id\": \"ember288\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"shadow_hosts\": [{\"ancestor_css\": \"div#root > div:nth-of-type(3)\", \"aria_label\": null, \"classes\": [\"theme--light\"], \"css\": \"div#interop-outlet\", \"data_attrs\": {\"data-testid\": \"interop-shadowdom\"}, \"href\": null, \"id\": \"interop-outlet\", \"index\": 0, \"input_type\": null, \"name\": null, \"placeholder\": null, \"role\": null, \"structural_xpath\": \"/html/body/div[1]/div[3]\", \"tag\": \"div\", \"text\": null, \"xpath\": \"/html[1]/body[1]/div[@id=\\\"root\\\"]/div[@id=\\\"interop-outlet\\\"]\"}], \"structural_xpath\": \"/html/body/div[1]/div[1]/div[1]/div[1]/div[2]\", \"tag\": \"div\", \"text\": \"Your application was sent to Acclaim AI! You can keep track of your application in the \\\"Applied\\\" tab of My Jobs Turn you\", \"viewport\": {\"h\": 446, \"vh\": 739, \"vw\": 1440, \"w\": 552, \"x\": 444, \"y\": 32}, \"xpath\": \"/div[1]/div[@id=\\\"artdeco-modal-outlet\\\"]/div[@id=\\\"ember260\\\"]/div[1]/div[@id=\\\"ember288\\\"]\", \"_frame_path\": [], \"_cross_origin\": false, \"_window_ordinal\": 0}",
+          "web_target_text": "your application was sent",
+          "web_case_sensitive": false,
+          "web_js": "// Return a truthy value to follow the TRUE branch.\n// Example: return document.querySelectorAll('.job-card').length > 0;\nreturn !!document.querySelector('main');",
+          "web_llm_engine": "ollama",
+          "web_llm_model": "minicpm-v:latest",
+          "web_llm_prompt": "Respond with EXACTLY one word: \"True\" or \"False\".\nCondition to evaluate from the page:\n[describe the condition here]",
+          "web_llm_timeout": 10.0,
+          "web_layout_locator": "",
+          "web_layout_direction": -1,
+          "web_layout_attempts": 20,
+          "web_layout_tolerance": 12,
+          "web_timeout": 10.0
+        }
+      ],
+      "llm_nodes": [],
+      "tts_nodes": [],
+      "chain_import_nodes": [
+        {
+          "type": "chain_import",
+          "chain_file_path": "D:\\LoOperV2\\LoOper\\chains\\apply button.json",
+          "import_mode": "full",
+          "import_kind": "chain",
+          "prefix": "apply button",
+          "loop_count": 1,
+          "extra_delay": 0.0,
+          "enabled": true,
+          "run_in_sandbox": false,
+          "show_sandbox_window": true,
+          "emit_data": false,
+          "data_output_nodes": [],
+          "node_id": "0x2ad9a0595d0",
+          "position": [
+            1840.0,
+            -200.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a278450",
+              "input_port": "input"
+            }
+          ]
+        }
+      ],
+      "output_nodes": [
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "checking if the form asks for education",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea038485d0",
+          "position": [
+            4000.0,
+            2060.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a056fd0",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "submitting aplication",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea0384bb50",
+          "position": [
+            3380.0,
+            1080.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a2bedd0",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "checking if the aplication is ready to submit",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea0499b890",
+          "position": [
+            2900.0,
+            920.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a056fd0",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "checking if there is additional pages",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea048d89d0",
+          "position": [
+            3680.0,
+            1820.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a054cd0",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "clicking on the review button",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea04922150",
+          "position": [
+            3780.0,
+            1440.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a27bd50",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "filling the form",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea7fcadb90",
+          "position": [
+            5260.0,
+            780.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a278450",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "checking if the aplication is ready for review",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea7fcac690",
+          "position": [
+            3460.0,
+            1520.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a056c50",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": true,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "clicking the next button",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea04956550",
+          "position": [
+            4260.0,
+            1760.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a03f510",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": false,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "i am not sure if the aplication was sent",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea7fc6a150",
+          "position": [
+            3920.0,
+            340.0
+          ],
+          "connections": []
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": false,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "the aplication was sent, closing the annoying popup",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea049bbd10",
+          "position": [
+            3840.0,
+            140.0
+          ],
+          "connections": [
+            {
+              "output_port": "output",
+              "target_node_id": "0x2ad9a057c90",
+              "input_port": "input"
+            }
+          ]
+        },
+        {
+          "type": "output",
+          "label": "",
+          "variable_name": "",
+          "agent_visible": true,
+          "overlay_visible": true,
+          "popup_on_finish": true,
+          "show_rating": false,
+          "render_mode": "text",
+          "tts_enabled": true,
+          "tts_text": "i applied to a job",
+          "tts_language": "en",
+          "tts_voice_model": "",
+          "tts_speed": 1.0,
+          "tts_speaker_id": null,
+          "tts_wait": true,
+          "image_source": "",
+          "node_id": "0x1ea7fc36910",
+          "position": [
+            4440.0,
+            -140.0
+          ],
+          "connections": []
+        }
+      ]
+    }
+  ],
+  "form_filler_nodes": [],
+  "code_nodes": [
+    {
+      "type": "code",
+      "code": "import os, json\n\n# Persistent counter state (survives node executions)\n_STATE = os.path.join(os.path.expanduser(\"~\"), \".looper_counter_state.json\")\n\ntry:\n    with open(_STATE) as f:\n        count = int(json.load(f).get(\"count\", 0))\nexcept Exception:\n    count = 0\n\ncount += 1\n\nif count >= 10:\n    count = 0\n    result = \"true\"\nelse:\n    result = \"false\"\n\ntry:\n    with open(_STATE, \"w\") as f:\n        json.dump({\"count\": count}, f)\nexcept Exception:\n    pass\n",
+      "file_path": "",
+      "execute_on_input": true,
+      "output_variable": "result",
+      "timeout": 30,
+      "description": "",
+      "input_vars": [],
+      "output_vars": [
+        {
+          "name": "result",
+          "type": "string"
+        }
+      ],
+      "node_id": "0x2ad9c540690",
+      "position": [
+        1640.0,
+        180.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad96d4bf90",
+          "input_port": "input"
+        },
+        {
+          "output_port": "result",
+          "target_node_id": "0x2ad96d4bf90",
+          "input_port": "input"
+        }
+      ]
+    }
+  ],
+  "container_nodes": [],
+  "context_nodes": [],
+  "input_nodes": [],
+  "handle_nodes": [],
+  "mcp_nodes": [],
+  "output_nodes": [
+    {
+      "type": "output",
+      "label": "",
+      "variable_name": "",
+      "agent_visible": true,
+      "overlay_visible": true,
+      "popup_on_finish": true,
+      "show_rating": true,
+      "render_mode": "text",
+      "tts_enabled": true,
+      "tts_text": "searching for jobs",
+      "tts_language": "en",
+      "tts_voice_model": "",
+      "tts_speed": 1.0,
+      "tts_speaker_id": null,
+      "tts_wait": false,
+      "image_source": "",
+      "node_id": "0x25aabe59610",
+      "position": [
+        320.0,
+        480.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad9b03fc50",
+          "input_port": "input"
+        }
+      ]
+    },
+    {
+      "type": "output",
+      "label": "",
+      "variable_name": "",
+      "agent_visible": true,
+      "overlay_visible": true,
+      "popup_on_finish": true,
+      "show_rating": true,
+      "render_mode": "text",
+      "tts_enabled": true,
+      "tts_text": "finish 10 iterations",
+      "tts_language": "en",
+      "tts_voice_model": "",
+      "tts_speed": 1.0,
+      "tts_speaker_id": null,
+      "tts_wait": true,
+      "image_source": "",
+      "node_id": "0x210242b5050",
+      "position": [
+        2080.0,
+        20.0
+      ],
+      "connections": []
+    },
+    {
+      "type": "output",
+      "label": "",
+      "variable_name": "",
+      "agent_visible": true,
+      "overlay_visible": true,
+      "popup_on_finish": true,
+      "show_rating": true,
+      "render_mode": "text",
+      "tts_enabled": true,
+      "tts_text": "continuing",
+      "tts_language": "en",
+      "tts_voice_model": "",
+      "tts_speed": 1.0,
+      "tts_speaker_id": null,
+      "tts_wait": true,
+      "image_source": "",
+      "node_id": "0x21024bf7010",
+      "position": [
+        2080.0,
+        260.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad9b03fc50",
+          "input_port": "input"
+        }
+      ]
+    }
+  ],
+  "web_sequences": [
+    {
+      "name": "siguiente.json",
+      "session_file": "siguiente.json",
+      "headless": false,
+      "speed": 1.0,
+      "native_actions": true,
+      "loop_count": 1,
+      "extra_delay": 1.0,
+      "repeat_mode": "count",
+      "extract_items": [
+        "entity_exhausted"
+      ],
+      "node_id": "0x2ad9b03fc50",
+      "position": [
+        620.0,
+        600.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad9e76dcd0",
+          "input_port": "input"
+        },
+        {
+          "output_port": "ctx_out",
+          "target_node_id": "0x2ad9e76dcd0",
+          "input_port": "input"
+        }
+      ],
+      "description": ""
+    },
+    {
+      "name": "nextlist",
+      "session_file": "nextlist.json",
+      "headless": false,
+      "speed": 1.0,
+      "native_actions": true,
+      "loop_count": 1,
+      "extra_delay": 1.0,
+      "repeat_mode": "count",
+      "extract_items": [],
+      "node_id": "0x2ad96ea1bd0",
+      "position": [
+        1160.0,
+        720.0
+      ],
+      "connections": [
+        {
+          "output_port": "output",
+          "target_node_id": "0x2ad96d49c10",
+          "input_port": "input"
+        }
+      ],
+      "description": ""
+    }
+  ],
+  "collection": "",
+  "description": "",
+  "_web_chain_scope": "default"
+}

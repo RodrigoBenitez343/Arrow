@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 import uvicorn
@@ -92,11 +92,13 @@ try:
     from AI.llama_cpp_engine import LlamaCppEngine
     from AI.llama_cpp_engine import LlamaCppManager as llama_cpp_manager
     from AI.llama_cpp_engine import LLAMA_BIN_NAMES, pid_image_name
+    from AI.llama_cpp_engine import reap_orphan_llama_servers
 except ImportError:
     try:
         from llama_cpp_engine import LlamaCppEngine
         from llama_cpp_engine import LlamaCppManager as llama_cpp_manager
         from llama_cpp_engine import LLAMA_BIN_NAMES, pid_image_name
+        from llama_cpp_engine import reap_orphan_llama_servers
     except ImportError:
         # llama.cpp not available, create stub classes
         print("[WARNING] llama.cpp engine not available, using stub")
@@ -104,6 +106,9 @@ except ImportError:
 
         def pid_image_name(pid: int) -> str:
             return ""
+
+        def reap_orphan_llama_servers(logger=None) -> int:
+            return 0
 
         class LlamaCppEngine:
             def __init__(self, config=None):
@@ -767,9 +772,229 @@ def _background_cleanup_model(name: str):
         pass
 
 
+# ── BYOK provider routing ──────────────────────────────────────────────
+#
+# One logical endpoint, three wire routes (llama.cpp engine / Ollama / BYOK
+# providers).  Resolution order for every LLM and embedding route:
+#   1. explicit ``provider`` field
+#   2. model prefix "provider:model"
+#   3. per-capability role (chat / embeddings / vision) from ``byok.json``
+#   4. the route's legacy default (Ollama, or the engine for /llamacpp/*).
+# Roles are the cross-device switch: embeddings on the local engine + chat on
+# a cloud provider is just roles.embeddings="llamacpp", roles.chat="openai".
+
+
+def _with(request, **changes):
+    """A copy of a pydantic request with fields replaced (v1 + v2 safe)."""
+    try:
+        return request.model_copy(update=changes)   # pydantic v2
+    except AttributeError:
+        return request.copy(update=changes)          # pydantic v1
+
+
+def _role_key_for(request) -> str:
+    """Image-bearing requests consult the ``vision`` role, else ``chat``."""
+    return "vision" if getattr(request, "images", None) else "chat"
+
+
+def _split_provider_prefix(model: str) -> Tuple[str, str]:
+    """('provider', 'rest') when the model is prefixed with a known id.
+
+    Only known provider ids count, so ``llama3.2:1b`` and Windows GGUF
+    paths (``D:\\...gguf``) pass through untouched.
+    """
+    text = str(model or "")
+    if ":" not in text:
+        return "", text
+    head, rest = text.split(":", 1)
+    try:
+        from AI import byok
+        if byok.is_resolvable_provider_id(head.strip()):
+            return head.strip(), rest.strip()
+    except Exception:
+        pass
+    return "", text
+
+
+def _resolve_provider(explicit, model: str, role_key: str):
+    """(provider_id, model) after applying the resolution order.
+
+    An empty provider means "keep this route's legacy default".
+
+    The per-capability role is a FALLBACK: it fires only when the request
+    names no target at all.  An explicit provider, a ``provider:model``
+    prefix, or ANY passed model (a local GGUF path, an Ollama tag, a bare
+    name) already picked where this call runs and is never rerouted — a
+    node set to a local llama.cpp model must run locally even when the
+    chat role points at a cloud provider (measured 2026-10-09: the chat
+    role handed a GGUF path to DeepSeek, which rejected it).
+    """
+    provider = str(explicit or "").strip()
+    text = str(model or "")
+    prefix, rest = _split_provider_prefix(text)
+    if prefix:
+        provider = provider or prefix
+        text = rest
+    if not provider and not text and role_key:
+        try:
+            from AI import byok
+            role = byok.get_role(byok.load_settings(), role_key) or {}
+            pid = str(role.get("provider") or "").strip()
+            if pid == byok.LOCAL_ENGINE:
+                # The local engine brings its own default model.
+                provider = pid
+            elif pid:
+                name = str(role.get("model") or "").strip() or \
+                    byok.resolve_model(pid, "")
+                if name:
+                    provider, text = pid, name
+        except Exception:
+            pass
+    return provider, text
+
+
+def _messages_to_prompt(messages, system):
+    """Flatten an OpenAI-style message list for non-Ollama providers."""
+    instructions = str(system or "")
+    parts: List[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        content = m.get("content")
+        if isinstance(content, list):
+            content = " ".join(
+                str(p.get("text") or "") for p in content
+                if isinstance(p, dict))
+        content = str(content or "").strip()
+        if not content:
+            continue
+        if str(m.get("role") or "") == "system" and not instructions:
+            instructions = content
+        else:
+            parts.append(content)
+    return instructions, "\n\n".join(parts)
+
+
+def _byok_generate(request, provider: str, model: str):
+    """Non-Ollama BYOK provider generation → the legacy response shape."""
+    from AI import byok
+    if provider == byok.POOL_PROVIDER:
+        raise HTTPException(status_code=400, detail=byok.POOL_COMING_SOON_MSG)
+    if not byok.is_provider_id(provider):
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown provider '{provider}'.")
+    prompt = str(request.prompt or "")
+    instructions = str(request.system or "")
+    if request.messages and not prompt:
+        instructions, prompt = _messages_to_prompt(request.messages,
+                                                   instructions)
+    images = None
+    if request.images:
+        try:
+            images = process_images(request.images)
+        except Exception as e:
+            raise HTTPException(status_code=400,
+                                detail=f"Image processing failed: {e}")
+    try:
+        text = byok.generate_text(provider, model, prompt,
+                                  instructions=instructions, images=images)
+    except byok.ByokProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500,
+                            detail=f"Provider error: {str(e)}")
+    return {
+        "response": text,
+        "model": byok.resolve_model(provider, model) or model,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "done": True,
+    }
+
+
+def _byok_stream_response(request, provider: str, model: str):
+    """NDJSON stream in the app's {"text": accumulated} contract."""
+    from AI import byok
+    if provider == byok.POOL_PROVIDER:
+        raise HTTPException(status_code=400, detail=byok.POOL_COMING_SOON_MSG)
+    if not byok.is_provider_id(provider):
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown provider '{provider}'.")
+    instructions = str(request.system or "")
+    prompt = str(request.prompt or "")
+    if request.messages and not prompt:
+        instructions, prompt = _messages_to_prompt(request.messages,
+                                                   instructions)
+    try:
+        deltas = byok.generate_stream(provider, model, prompt,
+                                      instructions=instructions)
+    except byok.ByokProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    def _iter():
+        accumulated = ""
+        try:
+            for chunk in deltas:
+                accumulated += chunk
+                yield json.dumps({"text": accumulated}) + "\n"
+        except byok.ByokProviderError as e:
+            yield json.dumps({"text": accumulated, "error": str(e)}) + "\n"
+
+    return StreamingResponse(_iter(), media_type="application/x-ndjson")
+
+
+async def _remote_generate(request, provider: str, model: str,
+                           background_tasks: BackgroundTasks):
+    """Dispatch a non-default provider from any route."""
+    provider = str(provider or "").strip()
+    from AI import byok
+    if provider == "ollama":
+        return await chat_with_model(
+            _with(request, provider="ollama", model=model or request.model),
+            background_tasks)
+    if provider == byok.LOCAL_ENGINE:
+        with _LLAMACPP_LIFECYCLE_LOCK:
+            return await _llamacpp_generate_impl(
+                _with(request, provider=byok.LOCAL_ENGINE,
+                      model=model or request.model),
+                background_tasks, unload_after=True)
+    return _byok_generate(request, provider, model)
+
+
+async def _remote_embeddings(request, provider: str, model: str):
+    """Dispatch /embeddings to the local engine or a BYOK provider."""
+    from AI import byok
+    provider = str(provider or "").strip()
+    inputs = [str(x) for x in (request.inputs or [])]
+    if provider == byok.POOL_PROVIDER:
+        raise HTTPException(status_code=400, detail=byok.POOL_COMING_SOON_MSG)
+    if provider == byok.LOCAL_ENGINE:
+        try:
+            from AI.embedding_server import embed_texts as _local_embed_texts
+            vectors = _local_embed_texts(inputs)
+        except Exception as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Local embedding server failed: {e}")
+        if not vectors or len(vectors) != len(inputs):
+            raise HTTPException(
+                status_code=503,
+                detail="Local embedding model unavailable (check "
+                       "LLAMA_CPP.embedding_model_path).")
+        return {"embeddings": vectors}
+    if not byok.is_provider_id(provider):
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown provider '{provider}'.")
+    try:
+        vectors = byok.embed_texts(provider, model, inputs)
+    except byok.ByokProviderError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"embeddings": vectors}
+
+
 # Pydantic models for request/response
 class ChatRequest(BaseModel):
     model: str
+    provider: Optional[str] = None  # BYOK provider id, "llamacpp", or None
     prompt: Optional[str] = None
     messages: Optional[List[Dict[str, str]]] = None
     stream: bool = False
@@ -801,6 +1026,7 @@ class ChatResponse(BaseModel):
 
 class EmbeddingsRequest(BaseModel):
     model: str
+    provider: Optional[str] = None  # BYOK provider id or "llamacpp"
     inputs: List[str]
     # Optional request tuning, kept simple for now
     normalize: Optional[bool] = None
@@ -885,13 +1111,19 @@ async def health_check():
 
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
-    """List all available Ollama models"""
+    """List locally available models plus configured BYOK provider models.
+
+    BYOK entries carry the ``provider:model`` form the gateway dispatches
+    on, so listing them here turns every GUI model dropdown into a
+    provider+model selector (the choice routes through the prefix).
+    """
+    models: List[ModelInfo] = []
+    ollama_error: Optional[Exception] = None
     try:
         response = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=8)
         response.raise_for_status()
 
         data = response.json()
-        models: List[ModelInfo] = []
 
         def to_model_info(m: Any) -> ModelInfo:
             if isinstance(m, dict):
@@ -916,22 +1148,45 @@ async def list_models():
                     models.append(
                         ModelInfo(name=name, size=0, digest="", modified_at="")
                     )
-        else:
-            models = []
-
-        return models
-
     except requests.exceptions.RequestException as e:
-        raise HTTPException(
-            status_code=503, detail=f"Failed to fetch models from Ollama: {str(e)}"
-        )
+        # Ollama may be down while cloud providers are configured — keep
+        # serving those instead of failing the whole listing.
+        ollama_error = e
+        _api_logger.info("Ollama unreachable for /models: %s", e)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+    try:
+        from AI import byok
+        byok_names = byok.prefixed_model_names()
+    except Exception:
+        byok_names = []
+    for name in byok_names:
+        models.append(ModelInfo(name=name, size=0, digest="", modified_at=""))
+
+    if not models and ollama_error is not None:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to fetch models from Ollama: {str(ollama_error)}",
+        )
+    return models
 
 
 @app.post("/chat")
 async def chat_with_model(request: ChatRequest, background_tasks: BackgroundTasks):
-    """Chat with an Ollama model"""
+    """Chat with a model.
+
+    Non-Ollama providers (explicit ``provider`` field, a ``provider:model``
+    prefix or the configured role) are dispatched to the BYOK runtime or the
+    local llama.cpp engine; everything below stays the legacy Ollama route.
+    """
+    provider, _model = _resolve_provider(
+        request.provider, request.model, _role_key_for(request))
+    if provider and provider != "ollama":
+        return await _remote_generate(request, provider, _model,
+                                      background_tasks)
+    if _model and _model != request.model:
+        request = _with(request, model=_model)
     try:
         try:
             _cleanup_ollama_runners(request.model)
@@ -1124,6 +1379,15 @@ async def generate_text(request: ChatRequest, background_tasks: BackgroundTasks)
 
 @app.post("/generate_stream")
 async def generate_stream(request: ChatRequest):
+    provider, _model = _resolve_provider(
+        request.provider, request.model, _role_key_for(request))
+    if provider and provider not in ("ollama", "llamacpp"):
+        return _byok_stream_response(request, provider, _model)
+    if provider == "llamacpp":
+        return await _llamacpp_stream_impl(
+            _with(request, model=_model or request.model))
+    if _model and _model != request.model:
+        request = _with(request, model=_model)
     try:
         payload = {
             "model": request.model,
@@ -1173,6 +1437,12 @@ async def get_embeddings(request: EmbeddingsRequest, background_tasks: Backgroun
 
     Accepts a list of input strings and returns a list of embedding vectors.
     """
+    provider, _model = _resolve_provider(request.provider, request.model,
+                                         "embeddings")
+    if provider and provider != "ollama":
+        return await _remote_embeddings(request, provider, _model)
+    if _model and _model != request.model:
+        request = _with(request, model=_model)
     try:
         try:
             _cleanup_ollama_runners(request.model)
@@ -1450,6 +1720,50 @@ async def cleanup_endpoint(body: Dict[str, Any]):
             return {"ok": ok, "model": model}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/stop")
+def stop_all_inference():
+    """Provider-agnostic ESC stop: end in-flight generation and free the model
+    for EVERY backend — a stop is a stop for all providers, never selective.
+
+    Deliberately NOT ``@_engine_locked`` and declared sync: a running generation
+    holds the lifecycle lock for its whole duration, so a lock-guarded stop
+    could only WAIT for it.  Terminating the server process aborts the
+    in-flight request directly; the sync handler runs in the threadpool, so the
+    kill never stalls the event loop.  Covers llama.cpp, Ollama and the sibling
+    burst engines (embedding, Laya).  BYOK (remote) has no server-side stop.
+    """
+    result = {"llamacpp": "not_running", "ollama": False}
+    engine = LLAMACPP_ENGINE
+    if engine is not None:
+        try:
+            engine.stop_server()
+            result["llamacpp"] = "stopped"
+        except Exception as exc:
+            result["llamacpp"] = f"error: {exc}"
+    # Sibling burst engines: free the RAG embedding server + the Laya scorer.
+    try:
+        from AI import embedding_server as _emb
+        _emb.release(wait=0.0)
+    except Exception:
+        pass
+    try:
+        from AI import laya_client as _laya
+        _laya.release(wait=0.0)
+    except Exception:
+        pass
+    # Ollama: stop the currently LOADED model(s) only — never sweep every
+    # installed tag (a stop must be fast).  HTTP + CLI cover both builds.
+    try:
+        for _r in _list_http():
+            _stop_http(_r.get("name"), _r.get("id"))
+        for _r in _list_cli():
+            _stop_cli(_r.get("name"))
+        result["ollama"] = True
+    except Exception:
+        pass
+    return result
 
 
 @app.get("/vision-models")
@@ -1792,9 +2106,9 @@ def _ensure_llamacpp_engine(
             )
 
 
-@app.post("/llamacpp/chat")
-@_engine_locked
-async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks, raw_request: Request):
+async def _llamacpp_generate_impl(request: ChatRequest,
+                                  background_tasks: BackgroundTasks,
+                                  unload_after: bool):
     """Chat with a model using llama.cpp engine.
 
     Dynamically initializes the engine from the request's `model` field,
@@ -1807,12 +2121,22 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks,
     /llamacpp/release when the burst is done — never on a fixed idle clock, so
     a slow probe never gets its server unloaded underneath it.  The
     interactive /llamacpp/chat dialog keeps the model warm instead.
+
+    Provider dispatch runs first: an explicit ``provider`` field, a
+    ``provider:model`` prefix or the chat/vision role reroutes this engine
+    call to another provider (and vice versa from the other routes).
     """
+    provider, _model = _resolve_provider(
+        request.provider, request.model, _role_key_for(request))
+    if provider and provider != "llamacpp":
+        return await _remote_generate(request, provider, _model,
+                                      background_tasks)
+    if _model and _model != request.model:
+        request = _with(request, model=_model)
     try:
         global LLAMACPP_ENGINE
 
-        # Only the node-execution endpoint unloads after use.
-        _unload_after = raw_request.url.path.rstrip("/") == "/llamacpp/generate"
+        _unload_after = bool(unload_after)
         _req_seq = _bump_llamacpp_request_seq()
 
         _ensure_llamacpp_engine(
@@ -1970,11 +2294,21 @@ async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=500, detail=f"llama.cpp error: {str(e)}")
 
 
+@app.post("/llamacpp/chat")
+@_engine_locked
+async def llamacpp_chat(request: ChatRequest, background_tasks: BackgroundTasks, raw_request: Request):
+    """Interactive chat: keeps the model warm (never unloads after use)."""
+    return await _llamacpp_generate_impl(
+        request, background_tasks,
+        unload_after=raw_request.url.path.rstrip("/") == "/llamacpp/generate")
+
+
 @app.post("/llamacpp/generate")
 @_engine_locked
 async def llamacpp_generate(request: ChatRequest, background_tasks: BackgroundTasks, raw_request: Request):
-    """Generate text using llama.cpp engine (alias for chat) - node execution path"""
-    return await llamacpp_chat(request, background_tasks, raw_request)
+    """Generate text using llama.cpp engine (node execution path)."""
+    return await _llamacpp_generate_impl(request, background_tasks,
+                                         unload_after=True)
 
 
 @app.post("/llamacpp/release")
@@ -1999,8 +2333,7 @@ async def llamacpp_release():
     return {"status": "ok"}
 
 
-@app.post("/llamacpp/generate_stream")
-async def llamacpp_generate_stream(request: ChatRequest):
+async def _llamacpp_stream_impl(request: ChatRequest):
     """Stream text generation using llama.cpp engine"""
     try:
         global LLAMACPP_ENGINE
@@ -2056,6 +2389,22 @@ async def llamacpp_generate_stream(request: ChatRequest):
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/llamacpp/generate_stream")
+async def llamacpp_generate_stream(request: ChatRequest):
+    """Stream text generation: engine, Ollama or BYOK providers."""
+    provider, _model = _resolve_provider(
+        request.provider, request.model, _role_key_for(request))
+    if provider and provider != "llamacpp":
+        if provider == "ollama":
+            return await generate_stream(
+                _with(request, provider="ollama",
+                      model=_model or request.model))
+        return _byok_stream_response(request, provider, _model)
+    if _model and _model != request.model:
+        request = _with(request, model=_model)
+    return await _llamacpp_stream_impl(request)
 
 
 @app.get("/llamacpp/models")
@@ -2333,6 +2682,24 @@ def _shutdown_llamacpp() -> None:
 atexit.register(_shutdown_llamacpp)
 
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Best-effort teardown when the gateway stops: stop the llama.cpp engine
+    (and the sibling burst engines) so a graceful gateway stop never leaves a
+    llama-server behind.  Complements the atexit hook — atexit only fires on
+    a clean process exit, and a stopped/restarted gateway can otherwise leak
+    its child server."""
+    try:
+        _shutdown_llamacpp()
+    except Exception as _sd_exc:
+        _api_logger.debug("llamacpp shutdown skipped: %s", _sd_exc)
+    try:
+        from AI import embedding_server as _emb
+        _emb.release(wait=0.0)
+    except Exception:
+        pass
+
+
 @app.on_event("startup")
 async def startup_event():
     global OLLAMA_ENGINE, LLAMACPP_ENGINE, SETTINGS
@@ -2369,6 +2736,23 @@ async def startup_event():
         OLLAMA_ENGINE = None
 
     # Initialize llama.cpp Engine
+    #
+    # FIRST reap orphans: a crashed/killed previous run leaves llama-server /
+    # llama-embedding children alive (Windows children outlive the parent).
+    # They keep their models in RAM, and the next run picks a FRESH port
+    # (the old one is still bound), so on a long multi-LLM chain the orphans'+
+    # new server's memory OOMs the box.  At startup nothing of ours is up
+    # yet, so every llama.cpp binary is an orphan.  Scoped to LLAMA_BIN_NAMES.
+    try:
+        _reaped = reap_orphan_llama_servers(_api_logger)
+        if _reaped:
+            _api_logger.info(
+                "[LLAMA.CPP] Reaped %d orphaned llama.cpp process(es) "
+                "from a previous run", _reaped,
+            )
+    except Exception as _reap_exc:
+        _api_logger.debug("Orphan reap skipped: %s", _reap_exc)
+
     try:
         print("[LLAMA.CPP] Reading llamacpp configuration...")
         # Use config_loader which handles frozen-build path resolution
@@ -2396,6 +2780,13 @@ async def startup_event():
                 )
 
         if llamacpp_config.get("enabled", False) and llamacpp_config.get("model_path"):
+            # The engine's config port (8081) collides with the AGENT WEB
+            # SERVER, which binds 127.0.0.1:8081 in THIS same process — the
+            # port-scoped cleanup then refuses to kill it and start_server()
+            # times out with 503 "Failed to start llama.cpp server".  Allocate
+            # a real free port (>=9090), exactly like the lazy
+            # /llamacpp/generate path does.
+            llamacpp_config["server_port"] = _find_free_port()
             LLAMACPP_ENGINE = LlamaCppEngine(llamacpp_config)
             print(
                 f"[LLAMA.CPP] Engine initialized with model: {llamacpp_config['model_path']}"

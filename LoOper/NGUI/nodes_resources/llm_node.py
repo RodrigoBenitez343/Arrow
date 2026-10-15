@@ -340,31 +340,30 @@ class LLMNode(BaseNode):
         self.refresh_visual_state()
 
     def rebuild_orchestrator_ports(self):
-        """ON = orchestrator: expose the fused 'tools' INPUT port (chains +
-        brains) plus the 'trace' + 'route' outputs.  OFF = vanilla LLM node:
-        no 'tools' port — a plain LLM node has no tools, the orchestrator
-        owns tool routing."""
+        """ON = orchestrator: expose the 'tools' INPUT port (deterministic
+        chains) AND the 'brains' INPUT port (sub-brains — chains that
+        themselves contain an orchestrator) plus the 'trace' + 'route'
+        outputs.  OFF = vanilla LLM node: no tool ports — a plain LLM node
+        has no tools, the orchestrator owns tool routing."""
         try:
             on = bool(self.get_property("orchestrator_mode"))
         except Exception:
             on = False
 
-        # 'tools' INPUT port follows the switch (brains + chains fused into
-        # one port).  Added/removed here so a vanilla LLM node never shows it.
-        _tools_port = getattr(self, "_orch_tools_port", None)
-        if on and not _tools_port:
+        def _add_port(name):
             try:
                 in_rgb = tuple(
                     int(INPUT_PORT_COLOR.strip("#")[i:i + 2], 16)
                     for i in (0, 2, 4)
                 )
-                self._orch_tools_port = _add_multi_input(
-                    self, "tools", in_rgb, True,
+                return _add_multi_input(
+                    self, name, in_rgb, True,
                     data_type=UNIVERSAL_PORT_TYPE,
                 )
             except Exception:
-                self._orch_tools_port = None
-        elif not on and _tools_port:
+                return None
+
+        def _drop_port(port):
             try:
                 self.set_port_deletion_allowed(True)
             except Exception:
@@ -372,14 +371,29 @@ class LLMNode(BaseNode):
             # Drop any pipes first: delete_input removes the port item from
             # the scene but leaves its connections dangling.
             try:
-                _tools_port.clear_connections(push_undo=False)
+                port.clear_connections(push_undo=False)
             except Exception:
                 pass
             try:
-                self.delete_input(_tools_port)
+                self.delete_input(port)
             except Exception:
                 pass
+
+        # 'tools' (chains) and 'brains' (sub-brains) INPUT ports follow the
+        # switch.  Added/removed here so a vanilla LLM node never shows them.
+        _tools_port = getattr(self, "_orch_tools_port", None)
+        if on and not _tools_port:
+            self._orch_tools_port = _add_port("tools")
+        elif not on and _tools_port:
+            _drop_port(_tools_port)
             self._orch_tools_port = None
+
+        _brains_port = getattr(self, "_orch_brains_port", None)
+        if on and not _brains_port:
+            self._orch_brains_port = _add_port("brains")
+        elif not on and _brains_port:
+            _drop_port(_brains_port)
+            self._orch_brains_port = None
 
         added = getattr(self, "_orch_ports", None) or []
         if on and not added:

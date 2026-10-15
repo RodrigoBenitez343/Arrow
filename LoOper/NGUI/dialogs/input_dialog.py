@@ -106,14 +106,28 @@ class InputPropertiesDialog(ModernDialog):
         self.decision_model_combo = QComboBox()
         self.decision_model_combo.setEditable(True)
         self.decision_model_combo.setToolTip(_(
-            "GGUF models found in AI/models/. Blank borrows the chain's LLM\n"
-            "node model; with neither, the app default model is used."
+            "GGUF models from AI/models/, Ollama tags, and cloud provider\n"
+            "models as \"provider:model\" (configure keys in AI Settings).\n"
+            "Blank borrows the chain's LLM node model; with neither, the\n"
+            "app default model is used."
         ))
         try:
             from .llm_dialogs import get_llamacpp_models
             _gguf = get_llamacpp_models() or []
             if _gguf:
                 self.decision_model_combo.addItems([str(m) for m in _gguf])
+            # Cloud / server providers as "<provider>:<model>" plus cached
+            # Ollama tags — the gateway routes whatever is picked here.
+            from AI.model_cache import get_cached_models
+            names = list(get_cached_models() or [])
+            try:
+                from AI import byok
+                names = byok.prefixed_model_names() + names
+            except Exception:
+                pass
+            for name in dict.fromkeys([str(n) for n in names if n]):
+                if self.decision_model_combo.findText(name) < 0:
+                    self.decision_model_combo.addItem(name)
         except Exception:
             pass
         decision_layout.addWidget(self.decision_model_combo)

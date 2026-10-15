@@ -8,6 +8,7 @@ from .common import (
     _as_int,
     _ff_na_value,
     _ff_placeholder_value,
+    _ff_split_pool,
     _ff_ungrounded_identifier,
     log_block,
     log_table,
@@ -262,6 +263,13 @@ class FormFillerRepairMixin:
             )
         except Exception:
             ground = str(source_text or "")
+        # The pool's learned stream, consulted for the field in repair too: a
+        # stored answer rides the probe as CONTEXT so a rejected/target value
+        # can be ADAPTED from it, never re-derived from the documents alone.
+        try:
+            learned_answers = _ff_split_pool(source_text).get("learned") or {}
+        except Exception:
+            learned_answers = {}
         # A field the harness LEFT ALONE because the page already held a value
         # is a repair target TOO.  Many forms only reveal their rejections once
         # something submits them (a "Review"/"Next" click, or a chain that
@@ -343,6 +351,11 @@ class FormFillerRepairMixin:
             # 2026 or May 2023", so the rejected value became a probe target
             # and the plan chased it instead of the field's real answer.
             spec = self._ff_format_spec(field)
+            try:
+                _learned, _lk = self._ff_learned_match(
+                    label, learned_answers, cfg)
+            except Exception:
+                _learned = ""
             for attempt in range(attempts):
                 if stop_flag and stop_flag():
                     break
@@ -351,6 +364,7 @@ class FormFillerRepairMixin:
                     "%s (attempt %d/%d)"
                     % (reason, attempt + 1, attempts),
                 )
+                self._ff_learned_hint = _learned
                 evidence = self._ff_probe(
                     label, cfg, source_text, documents, stop_flag,
                     repair_hint=spec,

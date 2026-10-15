@@ -138,6 +138,16 @@ def _ff_parse_learned_answers(text):
 _FF_CORR_START = "[[FORM_CORRECTIONS]]"
 _FF_CORR_END = "[[/FORM_CORRECTIONS]]"
 
+# Section headers the Context node puts on its served pool.  They are ONE pool
+# - documents, stored rows, skills, history turns and the learned block are all
+# part of it - so a consumer must read them ALL, not only the documents.  The
+# headers name the streams only where a stream needs DIFFERENT handling (the
+# documents get weighted like attached files; the learned block is a keyed
+# memory).  Shared here so the producer and the parser cannot drift apart.
+_FF_DOCS_HEADER = "## Documents"
+_FF_SKILLS_HEADER = "## Skills"
+_FF_HISTORY_HEADER = "## History"
+
 
 def _ff_pool_corrections(text):
     """The learned-answer text carried inside the context pool.
@@ -198,6 +208,50 @@ def _ff_split_corrections(text):
             clean = clean[:a] + clean[b + len(_FF_CORR_END):]
         pairs.update(_ff_parse_learned_answers(inner))
     return clean.strip(), pairs
+
+
+def _ff_split_pool(text):
+    """Split a Context node's served pool into learned vs the rest.
+
+    The served blob is ONE pool: documents, stored rows, skills, history turns
+    and the learned-answer sentinel block all belong to it, and retrieval must
+    see them ALL.  This separates only the pieces that need DIFFERENT handling:
+    the learned answers (a keyed memory the node reuses/adapts) from everything
+    else (the material a probe retrieves).  The documents section is split off
+    only when the node marked it, so the engine can weight it like an attached
+    file.  Never drops anything - an unmarked stream stays in ``context``.
+    """
+    s = str(text or "")
+    learned_text = _ff_pool_corrections(s)
+    learned = _ff_parse_learned_answers(learned_text)
+    body = re.sub(
+        re.escape(_FF_CORR_START) + r".*?" + re.escape(_FF_CORR_END),
+        "", s, flags=re.DOTALL,
+    ).strip()
+    documents, context = "", body
+    if _FF_DOCS_HEADER in body:
+        before, after = body.split(_FF_DOCS_HEADER, 1)
+        documents = after.strip()
+        context = before.strip()
+    return {
+        "documents": documents,
+        "context": context,
+        "learned": learned,
+        "learned_text": learned_text,
+    }
+
+
+def _ff_scalarize(value):
+    """The first number inside *value*, '' when it holds none.
+
+    A choice answer learned as a band ("2-5 years", "5+ years") cannot be
+    written into a free-text control that only accepts a single number: the
+    page rejects it or the site's review does.  The LOWER bound is the honest
+    scalar for a "how many" question.  Returns '' when the value carries no
+    digit (then the caller keeps the value as-is).
+    """
+    nums = re.findall(r"\d+(?:\.\d+)?", str(value or ""))
+    return nums[0] if nums else ""
 
 
 def _ff_cos(a, b):
@@ -525,16 +579,40 @@ class _FFEmbedClient:
         texts = list(texts)
         if not texts:
             return []
-        if self._engine == "ollama":
+        engine = str(self._engine or "llamacpp").lower()
+        model = model_name or self._model or ""
+        if engine == "ollama":
             try:
                 import os
                 from AI.consult import OllamaClient
                 host = os.getenv("OLLAMA_HOST", "localhost")
                 port = os.getenv("OLLAMA_PORT", "11434")
                 client = OllamaClient(base_url=f"http://{host}:{port}", debug=False)
-                return client.embeddings(model_name or self._model or "nomic-embed-text", texts) or []
+                return client.embeddings(model or "nomic-embed-text", texts) or []
             except Exception as exc:
                 logger.debug("[FORM] Ollama embedding failed: %s", exc)
+                return []
+        try:
+            from AI import byok
+            is_local = byok.is_local_engine(engine)
+        except Exception:
+            is_local = engine in ("", "llamacpp", "llama.cpp", "llama_cpp")
+        if not is_local:
+            # BYOK provider engine: route through the local gateway — the
+            # "provider:model" prefix dispatches (keys stay in byok.json).
+            try:
+                from AI import byok as _byok
+                from AI.consult import OllamaClient
+                from player.multi_sequence.llm_executor_resources.config_utils import (
+                    get_default_api_url)
+                model = _byok.join_model_ref(engine, model)
+                if not model:
+                    logger.debug("[FORM] provider embedding needs an explicit model")
+                    return []
+                client = OllamaClient(base_url=get_default_api_url(), debug=False)
+                return client.embeddings(model, texts) or []
+            except Exception as exc:
+                logger.debug("[FORM] provider embedding failed: %s", exc)
                 return []
         try:
             from AI import embedding_server

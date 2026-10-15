@@ -71,6 +71,9 @@ class BottomActionsToolbar(QWidget):
         self._input_ask_event = threading.Event()
         self._input_ask_response = None
         self._input_ask_active = False
+        # Inline option buttons shown under a pending ask (choice / yes-no).
+        self._ask_options_widget = None
+        self._last_ask_meta = None
         self._chat_controller.set_ask_user_callback(self._make_ask_user_callback())
         try:
             self._chat_controller.set_ask_user_v2_callback(self._make_ask_user_v2_callback())
@@ -269,6 +272,7 @@ class BottomActionsToolbar(QWidget):
                 self._input_ask_response = text
                 self._input_ask_active = False
                 self._add_chat_bubble(text, True)
+                self._clear_ask_options()
                 self._input_field.clear()
                 self._update_input_height()
                 self._input_ask_event.set()
@@ -309,7 +313,11 @@ class BottomActionsToolbar(QWidget):
                     lines.append(f"{i + 1}) {label}")
             if accepts.get('images') or accepts.get('documents'):
                 lines.append('(Attach a file by typing or pasting its path)')
-            reply = legacy('\n'.join(p for p in lines if p))
+            reply = legacy(
+                '\n'.join(p for p in lines if p),
+                {'kind': kind, 'choices': choices, 'accepts': accepts,
+                 'default': request.get('default', '')},
+            )
             value = str(reply or '').strip()
             attachments = []
             import os as _os
@@ -329,19 +337,107 @@ class BottomActionsToolbar(QWidget):
         return ask_user_v2
 
     def _make_ask_user_callback(self):
-        """Create a blocking callback that asks the user in chat for input."""
-        def ask_user(question):
+        """Create a blocking callback that asks the user in chat for input.
+
+        ``meta`` (optional) carries the v2 shape of the question
+        (``kind``/``choices``); when it names options, the choices render as
+        buttons and a click answers directly instead of the user typing one.
+        """
+        def ask_user(question, meta=None):
             self._input_ask_event.clear()
             self._input_ask_response = None
             self._input_ask_active = True
+            self._last_ask_meta = dict(meta) if meta else None
             self._post_ui(lambda q=question: self._add_chat_bubble(q, False))
+            if self._last_ask_meta:
+                self._post_ui(
+                    lambda m=self._last_ask_meta: self._show_ask_options(m)
+                )
             self._post_ui(self._scroll_to_bottom)
             self._post_ui(self._force_ui_flush)
             self._input_ask_event.wait()
             resp = self._input_ask_response or ""
             self._input_ask_active = False
+            self._post_ui(self._clear_ask_options)
             return resp
         return ask_user
+
+    # ── Inline ask options (click a choice instead of typing it) ────────
+
+    def _ask_option_list(self, meta):
+        """(label, value) pairs to offer as buttons for an ask; [] = text-only."""
+        kind = str((meta or {}).get('kind') or 'text')
+        if kind == 'yes_no':
+            return [('Yes', 'yes'), ('No', 'no')]
+        if kind == 'choice':
+            out = []
+            for c in (meta or {}).get('choices') or []:
+                if isinstance(c, dict):
+                    label = str(c.get('label') or c.get('value') or '')
+                    value = str(c.get('value') or c.get('label') or '')
+                else:
+                    label = value = str(c)
+                if label:
+                    out.append((label, value))
+            return out
+        return []
+
+    def _show_ask_options(self, meta):
+        """Render the pending ask's choices as buttons under its question."""
+        self._clear_ask_options()
+        options = self._ask_option_list(meta)
+        if not options:
+            return
+        kind = str((meta or {}).get('kind') or 'text')
+        holder = QFrame(self._chat_container)
+        holder.setObjectName("askOptions")
+        holder.setStyleSheet(
+            "QFrame#askOptions { background: transparent; border: none; }"
+        )
+        holder.setMaximumWidth(self._bubble_max_width())
+        box = QHBoxLayout(holder) if kind == 'yes_no' else QVBoxLayout(holder)
+        box.setContentsMargins(2, 0, 2, 6)
+        box.setSpacing(4)
+        for label, value in options:
+            btn = QPushButton(label, holder)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setAutoDefault(False)
+            btn.setStyleSheet(
+                f"QPushButton {{ color: {TEXT_COLOR};"
+                f" background: rgba(0, 194, 160, 0.10);"
+                f" border: 1px solid {ACCENT_COLOR}; border-radius: 8px;"
+                f" padding: 5px 12px; font-size: 12px; }}"
+                f"QPushButton:hover {{ background: rgba(0, 194, 160, 0.22); }}"
+            )
+            btn.clicked.connect(
+                lambda _=False, v=value, l=label: self._answer_ask(v, l)
+            )
+            box.addWidget(btn)
+        self._chat_layout.addWidget(holder, 0, Qt.AlignLeft)
+        self._ask_options_widget = holder
+        self._scroll_to_bottom()
+
+    def _clear_ask_options(self):
+        """Drop the pending ask's option buttons (idempotent, UI thread)."""
+        holder = getattr(self, '_ask_options_widget', None)
+        self._ask_options_widget = None
+        if holder is not None:
+            try:
+                holder.setParent(None)
+                holder.deleteLater()
+            except Exception:
+                pass
+
+    def _answer_ask(self, value, label):
+        """Answer a pending ask from an option button (GUI thread)."""
+        if not self._input_ask_active:
+            return
+        self._input_ask_response = value
+        self._input_ask_active = False
+        self._add_chat_bubble(label, True)
+        self._clear_ask_options()
+        QTimer.singleShot(0, self._scroll_to_bottom)
+        self._input_ask_event.set()
 
     def _add_chat_bubble(self, text, is_user, bubble_color=None):
         if self._placeholder_label is not None:

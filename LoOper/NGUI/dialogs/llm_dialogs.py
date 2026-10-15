@@ -45,6 +45,14 @@ from PyQt5.QtWidgets import (
 
 from ..constants import TEXT_COLOR
 from ..i18n import _
+from .engine_options import (
+    engine_from_config,
+    engine_id,
+    fill_engine_combo,
+    models_for_engine,
+    select_engine,
+    store_model,
+)
 from .base_dialog import ModernDialog
 from .toggle_switch import ModernToggle
 from .utils import get_default_api_url
@@ -209,6 +217,10 @@ class LLMPropertiesDialog(ModernDialog):
 
     def _on_refresh_complete(self, available_models, current_model, refresh_btn):
         """Called on main thread when model refresh finishes."""
+        # The gateway merges Ollama + every provider's models; keep only
+        # what the SELECTED engine serves (per-provider refresh).
+        available_models = models_for_engine(
+            available_models, engine_id(self.engine_combo))
         self.model_combo.clear()
         self.model_combo.addItems(available_models)
         if current_model in available_models:
@@ -220,7 +232,8 @@ class LLMPropertiesDialog(ModernDialog):
 
     def on_engine_changed(self, engine):
         """Handle engine selection change"""
-        use_llamacpp = engine == "llama.cpp"
+        engine = engine_id(self.engine_combo)
+        use_llamacpp = engine == "llamacpp"
 
         # Show/hide appropriate model dropdowns
         self.model_combo.setVisible(not use_llamacpp)
@@ -228,6 +241,19 @@ class LLMPropertiesDialog(ModernDialog):
 
         self.llamacpp_model_combo.setVisible(use_llamacpp)
         self.llamacpp_model_label.setVisible(use_llamacpp)
+
+        # Re-populate the model list for the selected engine so the combo
+        # never mixes another provider's models into the choice.
+        if not use_llamacpp:
+            try:
+                current_model = self.model_combo.currentText()
+                models = models_for_engine(self.get_available_models(), engine)
+                self.model_combo.clear()
+                self.model_combo.addItems(models)
+                if current_model:
+                    self.model_combo.setCurrentText(current_model)
+            except Exception:
+                pass
 
         # Refresh GGUF model list when switching to llama.cpp
         # so newly downloaded models are visible immediately
@@ -444,10 +470,12 @@ class LLMPropertiesDialog(ModernDialog):
         model_layout.setContentsMargins(8, 12, 8, 8)
         model_layout.setSpacing(6)
 
-        # Engine selection (Ollama vs llama.cpp)
+        # Engine selection (Ollama, llama.cpp, or a BYOK provider — the
+        # provider choice persists as a "<provider>:<model>" prefix, see
+        # engine_options).
         model_layout.addWidget(QLabel(_("Engine:")), 0, 0)
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(["Ollama", "llama.cpp"])
+        fill_engine_combo(self.engine_combo)
         self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
         model_layout.addWidget(self.engine_combo, 0, 1)
 
@@ -456,8 +484,11 @@ class LLMPropertiesDialog(ModernDialog):
         self.model_label = model_layout.itemAtPosition(1, 0).widget()
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
-        # Populate model list from cache only (no API calls on dialog open)
-        self.model_combo.addItems(self.get_available_models())
+        # Populate model list from cache only (no API calls on dialog open),
+        # filtered to the selected engine (Ollama by default) so providers'
+        # entries never mix into the list.
+        self.model_combo.addItems(models_for_engine(
+            self.get_available_models(), engine_id(self.engine_combo)))
         model_layout.addWidget(self.model_combo, 1, 1)
 
         # llama.cpp model selection (initially hidden)
@@ -1066,11 +1097,15 @@ class LLMPropertiesDialog(ModernDialog):
             if isinstance(use_llamacpp, str):
                 use_llamacpp = use_llamacpp.lower() in ("true", "1", "yes", "on")
 
-            # Set engine selection
-            if use_llamacpp:
-                self.engine_combo.setCurrentText("llama.cpp")
-            else:
-                self.engine_combo.setCurrentText("Ollama")
+            # Engine selection: a provider engine rides on the model's
+            # "provider:" prefix (the prefix IS the routing), else the
+            # explicit engine hint, else the legacy use_llamacpp flag.
+            select_engine(self.engine_combo, engine_from_config(
+                self.current_config.get("engine"), use_llamacpp,
+                self.current_config.get("model", "")))
+            # select_engine blocks signals: refresh the engine-dependent
+            # visibility exactly like a user pick would.
+            self.on_engine_changed(self.engine_combo.currentText())
 
             # Basic tab settings — empty by default: llama.cpp nodes run
             # their GGUF, Ollama nodes pick a model explicitly.
@@ -1306,12 +1341,15 @@ class LLMPropertiesDialog(ModernDialog):
 
     def get_config(self):
         """Get the LLM configuration from the dialog"""
-        # Determine which engine is selected
-        use_llamacpp = self.engine_combo.currentText() == "llama.cpp"
+        # Determine which engine is selected (a provider engine persists as
+        # the model's "provider:" prefix — the gateway dispatches on it).
+        engine = engine_id(self.engine_combo)
+        use_llamacpp = engine == "llamacpp"
 
         config = {
             "use_llamacpp": use_llamacpp,
-            "model": self.model_combo.currentText() if not use_llamacpp else "llamacpp",
+            "model": (store_model(engine, self.model_combo.currentText())
+                      if not use_llamacpp else "llamacpp"),
             "llamacpp_model_path": self.llamacpp_model_combo.currentText()
             if use_llamacpp
             else "",

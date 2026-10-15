@@ -338,3 +338,55 @@ def test_reselect_tool_with_model_skipped_off_the_llamacpp_path(monkeypatch):
     assert llm_exec._reselect_tool_with_model(
         "r", ["n1"], {"n1": "d"}, {}, "x", {}, "u", False) is None
     assert calls == []                  # an Ollama node never pays this call
+
+
+# ---------------------------------------------------------------------------
+# executor._stop_active_inference — provider-agnostic ESC stop
+# ---------------------------------------------------------------------------
+
+
+def test_stop_active_inference_uses_gateway_stop(monkeypatch):
+    """A gateway /stop is provider-agnostic — no per-provider stop needed."""
+    calls = []
+
+    def _post(url, **kw):
+        calls.append(url)
+        return type("R", (), {"status_code": 200})()
+
+    monkeypatch.setattr(llm_exec._rq, "post", _post)
+    llm_exec._stop_active_inference(
+        "http://localhost:8000", "http://localhost:11434", "m", False,
+    )
+    assert calls == ["http://localhost:8000/stop"]
+
+
+def test_stop_active_inference_falls_back_to_ollama(monkeypatch):
+    """No gateway (node pointed straight at Ollama) → still stop the model."""
+    calls = []
+
+    def _post(url, **kw):
+        calls.append((url, kw.get("json")))
+        if url.endswith("/stop"):
+            raise ConnectionError("no gateway")
+        return type("R", (), {"status_code": 200})()
+
+    monkeypatch.setattr(llm_exec._rq, "post", _post)
+    llm_exec._stop_active_inference(
+        "http://localhost:8000", "http://localhost:11434", "llama3", False,
+    )
+    assert calls[0][0] == "http://localhost:8000/stop"
+    assert calls[-1] == ("http://localhost:11434/api/stop", {"model": "llama3"})
+
+
+def test_stop_active_inference_direct_mode_stops_engine(monkeypatch):
+    """Exported agent (no HTTP): stop the in-process engine, no gateway call."""
+    from AI import inprocess_transport as dt
+    stopped = []
+    monkeypatch.setattr(dt, "stop", lambda: stopped.append(1) or True)
+
+    http = []
+    monkeypatch.setattr(llm_exec._rq, "post", lambda url, **kw: http.append(url))
+
+    llm_exec._stop_active_inference("", "", "m", True)
+    assert stopped == [1]
+    assert http == []

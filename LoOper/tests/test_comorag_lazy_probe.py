@@ -441,3 +441,27 @@ def test_unavailable_relevance_verdict_keeps_the_finding(caplog):
     assert _refused_counts(caplog.text) == 0            # nothing purged
     assert "ComoRAG Purge" not in caplog.text
     assert cons.facts_pool                              # the finding survived
+
+
+def test_stop_flag_ends_the_sweep_before_the_first_cycle(caplog):
+    """ESC during a long consolidation must end the sweep at a cycle
+    boundary.  The caller passes ``stop_flag``; a missing wiring made the
+    sweep run to completion and ignore the abort."""
+    fake = _FakeEmbed()
+    cons = _make(fake, max_probes=6)
+    probes = {"n": 0}
+
+    def _gen(intent, facts):
+        probes["n"] += 1
+        return "What does topic 3 cover?"
+
+    caplog.set_level("WARNING")
+    cons.consolidate(
+        prompt="what does topic 3 cover?",
+        system_prompt="",
+        context_sources={"documents": [_big_corpus()]},
+        probe_generator=_gen,
+        stop_flag=lambda: True,  # the user hit ESC
+    )
+    assert probes["n"] == 0, "a stop must end the sweep BEFORE probing"
+    assert "stopped by user" in caplog.text

@@ -26,6 +26,14 @@ from PyQt5.QtWidgets import (
 )
 
 from .base_dialog import ModernDialog
+from .engine_options import (
+    engine_from_config,
+    engine_id,
+    fill_engine_combo,
+    models_for_engine,
+    select_engine,
+    store_model,
+)
 from ..constants import (
     ACCENT_COLOR, ACCENT_HOVER, ACCENT_SOFT, BLOCK_COLOR, BLOCK_HOVER, CODE_NODE_COLOR,
     DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_COLOR, TEXT_MUTED, SIDE_PANEL_BG, BAR_BG,
@@ -384,7 +392,7 @@ class CodeNodeDialog(ModernDialog):
         layout.addWidget(engine_label)
 
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(["Ollama", "llama.cpp"])
+        fill_engine_combo(self.engine_combo)
         self.engine_combo.setFixedHeight(28)
         self.engine_combo.setFixedWidth(90)
         self.engine_combo.setStyleSheet(
@@ -1025,11 +1033,12 @@ class CodeNodeDialog(ModernDialog):
 
         # Build conversation prompt
         prompt = self._build_conversation_prompt()
-        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
+        _chat_engine = engine_id(self.engine_combo)
+        use_llamacpp = _chat_engine == "llamacpp"
         if use_llamacpp:
             model = self.llamacpp_combo.currentText()
         else:
-            model = self.model_combo.currentText()
+            model = store_model(_chat_engine, self.model_combo.currentText())
 
         self._gen_thread = CodeAgentThread(prompt, model, use_llamacpp=use_llamacpp)
         self._gen_thread.finished.connect(self._on_ai_response)
@@ -1079,8 +1088,10 @@ class CodeNodeDialog(ModernDialog):
         self._render_chat()
         self._scroll_chat_to_bottom()
 
-        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
-        model = self.llamacpp_combo.currentText() if use_llamacpp else self.model_combo.currentText()
+        _loop_engine = engine_id(self.engine_combo)
+        use_llamacpp = _loop_engine == "llamacpp"
+        model = (self.llamacpp_combo.currentText() if use_llamacpp
+                 else store_model(_loop_engine, self.model_combo.currentText()))
         api_url = get_default_api_url()
 
         # Parse test args
@@ -1327,11 +1338,13 @@ class CodeNodeDialog(ModernDialog):
 
     def _init_models(self):
         """Populate model combos and set engine selection."""
-        # Ollama models
+        # Ollama models (filtered to the selected engine — never another
+        # provider's entries).
         try:
             models = get_real_cached_models(timeout=2.0)
             if not models:
                 models = get_cached_models()
+            models = models_for_engine(models, engine_id(self.engine_combo))
             if models:
                 self.model_combo.addItems(models)
             else:
@@ -1352,13 +1365,15 @@ class CodeNodeDialog(ModernDialog):
         if llamacpp_model:
             self.llamacpp_combo.setCurrentText(llamacpp_model)
 
-        # Apply engine selection from config
+        # Apply engine selection from config (a provider engine rides on
+        # the gen_model's "provider:" prefix).
         use_llamacpp = self.config.get('use_llamacpp', False)
         if isinstance(use_llamacpp, str):
             use_llamacpp = use_llamacpp.lower() in ('true', '1', 'yes', 'on')
-        self._use_llamacpp = use_llamacpp
-        if use_llamacpp:
-            self.engine_combo.setCurrentText("llama.cpp")
+        select_engine(self.engine_combo, engine_from_config(
+            self.config.get('engine'), use_llamacpp,
+            self.config.get('gen_model', '')))
+        self._use_llamacpp = engine_id(self.engine_combo) == 'llamacpp'
         self._apply_engine_visibility()
 
     def _on_engine_changed(self, engine):
@@ -1411,6 +1426,9 @@ class CodeNodeDialog(ModernDialog):
         """Called on main thread when model refresh finishes."""
         self.refresh_btn.setEnabled(True)
         self.refresh_btn.setText("R")
+        # The gateway merges Ollama + every provider's models; keep only
+        # what the SELECTED engine serves (per-provider refresh).
+        models = models_for_engine(models, engine_id(self.engine_combo))
         if models:
             self.model_combo.clear()
             self.model_combo.addItems(models)
@@ -1752,7 +1770,8 @@ class CodeNodeDialog(ModernDialog):
 
     def get_config(self):
         """Return the dialog configuration for saving."""
-        use_llamacpp = (self.engine_combo.currentText() == "llama.cpp")
+        _gen_engine = engine_id(self.engine_combo)
+        use_llamacpp = _gen_engine == 'llamacpp'
         # Collect current IO var declarations from the UI
         input_vars = self._collect_var_rows(self._io_input_layout)
         output_vars = self._collect_var_rows(self._io_output_layout)
@@ -1763,7 +1782,8 @@ class CodeNodeDialog(ModernDialog):
             'output_variable': self.config.get('output_variable', 'result'),
             'timeout': self.config.get('timeout', 30),
             'use_llamacpp': use_llamacpp,
-            'gen_model': self.model_combo.currentText() if not use_llamacpp else 'llamacpp',
+            'gen_model': (store_model(_gen_engine, self.model_combo.currentText())
+                          if not use_llamacpp else 'llamacpp'),
             'llamacpp_model_path': self.llamacpp_combo.currentText() if use_llamacpp else '',
             'gen_prompt': '',
             'description': self.desc_edit.text(),

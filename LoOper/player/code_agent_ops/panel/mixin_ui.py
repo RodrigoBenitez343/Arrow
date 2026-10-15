@@ -154,15 +154,19 @@ class UiMixin(object):
         hl.addWidget(back_btn)
         hv.addLayout(hl)
 
-        # Row 2: engine + model (Ollama / llama.cpp) - the only config the
-        # chat needs; the selected model is stored on the node when code is
-        # applied.
+        # Row 2: engine + model (Ollama / llama.cpp / BYOK providers) — the
+        # only config the chat needs; the selected model is stored on the
+        # node when code is applied.
         sel = QHBoxLayout()
         sel.setSpacing(6)
         self._engine_lbl = QLabel(_('Engine:'))
         sel.addWidget(self._engine_lbl)
         self._engine_combo = QComboBox()
-        self._engine_combo.addItems(['Ollama', 'llama.cpp'])
+        try:
+            from NGUI.dialogs.engine_options import fill_engine_combo
+            fill_engine_combo(self._engine_combo)
+        except Exception:
+            self._engine_combo.addItems(['Ollama', 'llama.cpp'])
         self._engine_combo.setFixedHeight(24)
         self._engine_combo.setFixedWidth(110)
         self._engine_combo.currentTextChanged.connect(self._on_engine_changed)

@@ -826,8 +826,19 @@ def test_a_stale_pick_fails_closed_never_falls_back_to_the_whole_page():
     """
     from player.web import actions as web_actions
     fg = web_actions.JS_FOREGROUND
-    assert "if (roots.length) return roots;" in fg          # a real pick wins
-    assert "if (picked) return [{__wvpNoScope: true}];" in fg  # stale -> closed
+    # ONE root, and only from a rung that names exactly ONE element: a rung that
+    # matches several (every dialog carries the site's shared classes) names
+    # nothing, so a lookalike container can never be taken for the picked one.
+    assert "function __wvpScopePick(" in fg
+    assert "if (on.length > 1) continue;" in fg       # ambiguous rung -> skipped
+    assert "if (el) return [el];" in fg               # ONE root, never a union
+    assert "return [{__wvpNoScope: true}];" in fg     # stale -> fail closed
+    # The enumerator resolves the SAME pick and, when it does not, stays inside
+    # the page's open popup layers - never the whole document.
+    assert "return __wvpScopePick(selectors, true);" \
+        in web_actions.JS_ENUMERATE_FORM_FIELDS
+    assert "if (!layers.length) return JSON.stringify([]);" \
+        in web_actions.JS_ENUMERATE_FORM_FIELDS
     # The write, the read-back AND the two CLICKING combo snippets all confine
     # to that scope - the pre-fix combo pick ignored it and clicked anywhere.
     for js in (web_actions.JS_SET_FIELD, web_actions.JS_FIELD_STATE,
