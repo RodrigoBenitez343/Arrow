@@ -1238,16 +1238,16 @@ class ChainsLibrary(QWidget):
         # -- Helper for icon-only tab buttons --
         def _make_tab_btn(icon_node_type, icon_tabler_name, tooltip_text, checked_color, is_checked=False):
             btn = QPushButton()
-            btn.setFixedHeight(32)
+            btn.setFixedHeight(40)
             btn.setCheckable(True)
             btn.setChecked(is_checked)
             # Try node icon first, then tabler icon
-            ico = get_node_icon(icon_node_type, 18) if icon_node_type else None
+            ico = get_node_icon(icon_node_type, 22) if icon_node_type else None
             if ico is None or ico.isNull():
-                ico = load_tabler_icon(icon_tabler_name, 18)
+                ico = load_tabler_icon(icon_tabler_name, 22)
             if ico and not ico.isNull():
                 btn.setIcon(ico)
-                btn.setIconSize(QSize(18, 18))
+                btn.setIconSize(QSize(22, 22))
             btn.setToolTip(tooltip_text)
             btn.setStyleSheet(
                 f"""
@@ -1273,7 +1273,7 @@ class ChainsLibrary(QWidget):
 
         # Icon definitions: (icon_node_type, tabler_icon_fallback, tooltip_text, checked_color)
         _tab_icons = [
-            (None,   'FILES',         _("Sequences"), 'rgba(255, 255, 255, 0.04)'),
+            ('sequence', 'PLAYLIST', _("Sequences"), 'rgba(255, 255, 255, 0.04)'),
             ('chain_import', 'BOX_MULTIPLE', _("Chains"),   CHAIN_IMPORT_COLOR),
             ('llm',   'ROBOT',         _("LLM"),       LLM_COLOR),
             ('context', 'DATABASE',      _("Context"),   CONTEXT_NODE_COLOR),
@@ -1301,7 +1301,12 @@ class ChainsLibrary(QWidget):
         tab_buttons_layout.addWidget(self._context_tab_btn)
         tab_buttons_layout.addWidget(self._code_tab_btn)
         tab_buttons_layout.addWidget(self._web_seq_tab_btn)
-        content_layout.addLayout(tab_buttons_layout)
+        # Wrapped so the row can be hidden when the tabs are driven from the
+        # canvas sub-dock instead (the panel then stays a plain list).
+        self._tabs_bar = QWidget(self._content_frame)
+        tab_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self._tabs_bar.setLayout(tab_buttons_layout)
+        content_layout.addWidget(self._tabs_bar)
 
         # Search bar for filtering nodes in the active tab
         # Placed BEFORE all scroll areas so it stays at the top for every tab
@@ -1329,9 +1334,11 @@ class ChainsLibrary(QWidget):
         content_layout.addWidget(self._search_field)
         self._search_field.textChanged.connect(self._filter_active_tab)
 
-        # --- Collection management bar (visible only on Chains tab) ---
+        # --- Collection management bar (always available: the collection can
+        # be created/renamed/removed from any tab; it filters the chain and
+        # sequence lists) ---
         self._collections_bar = QFrame(self._content_frame)
-        self._collections_bar.setVisible(False)
+        self._collections_bar.setVisible(True)
         coll_bar_layout = QHBoxLayout(self._collections_bar)
         coll_bar_layout.setContentsMargins(0, 0, 0, 0)
         coll_bar_layout.setSpacing(4)
@@ -1571,6 +1578,22 @@ class ChainsLibrary(QWidget):
         QTimer.singleShot(0, self._position_toggle)
 
     def _position_toggle(self):
+        # Stale-object guard: this slot is scheduled via QTimer.singleShot and
+        # can fire after the widget tree was already destroyed (window closed,
+        # test teardown).  Touching a deleted C++ widget raises a NATIVE access
+        # violation (not a catchable RuntimeError), so bail out via sip first.
+        try:
+            try:
+                from PyQt5 import sip as _sip
+            except Exception:
+                import sip as _sip  # type: ignore
+            if _sip.isdeleted(self):
+                return
+            btn = getattr(self, '_toggle_btn', None)
+            if btn is None or _sip.isdeleted(btn):
+                return
+        except Exception:
+            return
         if not self._toggle_btn: return
         pos = self.mapTo(self.graph_view, QPoint(0, 0))
         # For left panel, toggle is on the right side of the panel
@@ -2026,6 +2049,19 @@ class ChainsLibrary(QWidget):
         self._sequences_container.updateGeometry()
         QTimer.singleShot(0, self._sync_sequence_buttons)
 
+    @staticmethod
+    def _card_width(viewport, layout):
+        """A card fills the scroll viewport minus the list's own right margin.
+
+        (The old fixed ``viewport - 30`` left a visible gap before the
+        scrollbar and went stale whenever the panel was resized.)
+        """
+        try:
+            right = layout.contentsMargins().right()
+        except Exception:
+            right = 0
+        return max(0, viewport.width() - right)
+
     def _sync_sequence_buttons(self):
         """Sync sequence button widths."""
         if not hasattr(self, '_sequences_scroll_area') or not self._sequences_scroll_area:
@@ -2033,7 +2069,7 @@ class ChainsLibrary(QWidget):
         viewport = self._sequences_scroll_area.viewport()
         if not viewport:
             return
-        target_width = max(0, viewport.width() - 30)
+        target_width = self._card_width(viewport, self._sequences_container_layout)
         for i in range(self._sequences_container_layout.count()):
             item = self._sequences_container_layout.itemAt(i)
             w = item.widget() if item else None
@@ -2103,7 +2139,7 @@ class ChainsLibrary(QWidget):
         viewport = self._web_seq_scroll_area.viewport()
         if not viewport:
             return
-        target_width = max(0, viewport.width() - 30)
+        target_width = self._card_width(viewport, self._web_seq_container_layout)
         for i in range(self._web_seq_container_layout.count()):
             item = self._web_seq_container_layout.itemAt(i)
             w = item.widget() if item else None
@@ -2117,7 +2153,43 @@ class ChainsLibrary(QWidget):
         QTimer.singleShot(0, self._sync_chain_buttons)
         QTimer.singleShot(0, self._sync_sequence_buttons)
         QTimer.singleShot(0, self._sync_web_seq_buttons)
+        QTimer.singleShot(0, self._sync_context_node_buttons)
+        QTimer.singleShot(0, self._sync_code_node_buttons)
+        QTimer.singleShot(0, self._sync_llm_node_buttons)
     
+    def set_tabs_visible(self, visible):
+        """Show/hide the internal tab row (hidden when a sub-dock drives it)."""
+        bar = getattr(self, '_tabs_bar', None)
+        if bar is not None:
+            bar.setVisible(bool(visible))
+
+    def active_tab_key(self):
+        """The key of the list currently shown."""
+        for key, btn in (
+            ('sequence', self._sequences_tab_btn),
+            ('chain', self._chains_tab_btn),
+            ('llm', self._llm_tab_btn),
+            ('context', self._context_tab_btn),
+            ('code', self._code_tab_btn),
+            ('web_seq', self._web_seq_tab_btn),
+        ):
+            if btn.isChecked():
+                return key
+        return 'chain'
+
+    def select_tab(self, key):
+        """Switch to a collection by key (used by the canvas sub-dock)."""
+        fn = {
+            'sequence': self._switch_to_sequences_tab,
+            'chain': self._switch_to_chains_tab,
+            'llm': self._switch_to_llm_tab,
+            'context': self._switch_to_context_tab,
+            'code': self._switch_to_code_tab,
+            'web_seq': self._switch_to_web_seq_tab,
+        }.get(key)
+        if fn is not None:
+            fn()
+
     def _switch_to_sequences_tab(self):
         """Switch to the Sequences tab."""
         self._active_coll_type = 'sequence'
@@ -2157,7 +2229,7 @@ class ChainsLibrary(QWidget):
         self._update_collections_combo()
         QTimer.singleShot(0, self._sync_chain_buttons)
         QTimer.singleShot(0, self._filter_active_tab)
-    
+
     def _switch_to_context_tab(self):
         """Switch to the Context Nodes tab."""
         self._sequences_tab_btn.setChecked(False)
@@ -2172,7 +2244,7 @@ class ChainsLibrary(QWidget):
         self._code_scroll_area.setVisible(False)
         self._llm_scroll_area.setVisible(False)
         self._web_seq_scroll_area.setVisible(False)
-        self._collections_bar.setVisible(False)
+        self._collections_bar.setVisible(True)
         self._refresh_context_nodes_list()
         QTimer.singleShot(0, self._filter_active_tab)
     
@@ -2190,7 +2262,7 @@ class ChainsLibrary(QWidget):
         self._code_scroll_area.setVisible(True)
         self._llm_scroll_area.setVisible(False)
         self._web_seq_scroll_area.setVisible(False)
-        self._collections_bar.setVisible(False)
+        self._collections_bar.setVisible(True)
         self._refresh_code_nodes_list()
         QTimer.singleShot(0, self._filter_active_tab)
     
@@ -2208,7 +2280,7 @@ class ChainsLibrary(QWidget):
         self._code_scroll_area.setVisible(False)
         self._llm_scroll_area.setVisible(True)
         self._web_seq_scroll_area.setVisible(False)
-        self._collections_bar.setVisible(False)
+        self._collections_bar.setVisible(True)
         self._refresh_llm_nodes_list()
         QTimer.singleShot(0, self._filter_active_tab)
 
@@ -2226,7 +2298,7 @@ class ChainsLibrary(QWidget):
         self._code_scroll_area.setVisible(False)
         self._llm_scroll_area.setVisible(False)
         self._web_seq_scroll_area.setVisible(True)
-        self._collections_bar.setVisible(False)
+        self._collections_bar.setVisible(True)
         self._refresh_web_seq_list()
         QTimer.singleShot(0, self._filter_active_tab)
 
@@ -2372,7 +2444,7 @@ class ChainsLibrary(QWidget):
         viewport = self._context_scroll_area.viewport()
         if not viewport:
             return
-        target_width = max(0, viewport.width() - 30)
+        target_width = self._card_width(viewport, self._context_container_layout)
         for i in range(self._context_container_layout.count()):
             item = self._context_container_layout.itemAt(i)
             w = item.widget() if item else None
@@ -2455,7 +2527,7 @@ class ChainsLibrary(QWidget):
         viewport = self._code_scroll_area.viewport()
         if not viewport:
             return
-        target_width = max(0, viewport.width() - 30)
+        target_width = self._card_width(viewport, self._code_container_layout)
         for i in range(self._code_container_layout.count()):
             item = self._code_container_layout.itemAt(i)
             w = item.widget() if item else None
@@ -2536,7 +2608,7 @@ class ChainsLibrary(QWidget):
         viewport = self._llm_scroll_area.viewport()
         if not viewport:
             return
-        target_width = max(0, viewport.width() - 30)
+        target_width = self._card_width(viewport, self._llm_container_layout)
         for i in range(self._llm_container_layout.count()):
             item = self._llm_container_layout.itemAt(i)
             w = item.widget() if item else None

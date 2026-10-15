@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QToolButton,
     QFrame, QSizePolicy, QApplication, QGraphicsDropShadowEffect,
-    QLineEdit, QComboBox, QScrollArea, QGridLayout
+    QLineEdit, QComboBox, QScrollArea, QGridLayout, QMessageBox
 )
 from PyQt5.QtCore import Qt, QPoint, QSize, QTimer, QMimeData, QPropertyAnimation, QEasingCurve, QAbstractAnimation
 from PyQt5.QtCore import QFileSystemWatcher
@@ -31,9 +31,16 @@ from ..constants import (
 )
 from .collapsible_toolbar import make_toggle_triangle_icon
 from ..i18n import _
+from ..icons import tabler_qicon
 from ..dialogs.toggle_switch import ModernToggle
 
 logger = logging.getLogger(__name__)
+
+#: Button geometry for the actions column. The 24px glyph matches the library
+#: cards' icons and the 40px height matches the special-nodes cards, so the
+#: three dropdown panels read as one family.
+_ACTION_ICON_PX = 24
+_ACTION_BUTTON_H = 40
 
 # Shared style for every button on the actions (top) bar. The [icononly="true"]
 # rule lets the buttons shrink to icon-only when the bar is too narrow for text.
@@ -42,10 +49,10 @@ _ACTION_BUTTON_QSS = f"""
         background: rgba(255, 255, 255, 0.05);
         color: {TEXT_COLOR};
         border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
+        border-radius: 10px;
         padding: 1px 6px;
         min-width: 64px;
-        min-height: 22px;
+        min-height: {_ACTION_BUTTON_H}px;
         font-weight: 500;
     }}
     QPushButton:hover {{
@@ -56,8 +63,9 @@ _ACTION_BUTTON_QSS = f"""
         background: rgba(255, 255, 255, 0.12);
     }}
     QPushButton[icononly="true"] {{
-        min-width: 18px;
-        padding: 0px 2px;
+        min-width: {_ACTION_BUTTON_H}px;
+        min-height: {_ACTION_BUTTON_H}px;
+        padding: 0px 4px;
     }}
 """
 
@@ -539,6 +547,7 @@ class ActionsToolbar(QWidget):
         # Buttons whose text hides when the bar is too narrow for it.
         self._label_buttons = []
         self._labels_needed = None
+        self._compact = False
 
         # Content frame (framed)
         self._content_frame = QFrame(self)
@@ -674,12 +683,27 @@ class ActionsToolbar(QWidget):
         btn.style().unpolish(btn)
         btn.style().polish(btn)
 
+    def set_compact(self, compact=True):
+        """Icon-only buttons: the label lives in the tooltip only.
+
+        Used when the bar is hosted as a narrow vertical column instead of the
+        wide top bar, where full labels look cramped.
+        """
+        self._compact = bool(compact)
+        self._update_responsive_labels()
+
     def _update_responsive_labels(self):
         """Drop the button text to icons-only when the bar is too narrow for it."""
         buttons = getattr(self, "_label_buttons", None)
         if not buttons:
             return
         try:
+            if getattr(self, '_compact', False):
+                for btn, _label in buttons:
+                    if btn.text():
+                        btn.setText("")
+                    self._set_icon_only(btn, True)
+                return
             if self._labels_needed is None:
                 self._labels_needed = self._compute_labels_needed()
             avail = max(0, self.width() - 8)
@@ -701,34 +725,67 @@ class ActionsToolbar(QWidget):
             btn.setToolTip(tooltip)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         try:
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(_ACTION_BUTTON_H)
         except Exception:
             pass
         btn.setIcon(icon)
-        btn.setIconSize(QSize(18, 18))
+        btn.setIconSize(QSize(_ACTION_ICON_PX, _ACTION_ICON_PX))
         btn.setStyleSheet(_ACTION_BUTTON_QSS)
         self._label_buttons.append((btn, label_text or ""))
         return btn
 
+    def _prompt_record_kind(self):
+        """Record asks FIRST what it should record.
+
+        Desktop sequences and web sessions are separate recorders (and land in
+        different folders), so the choice is made explicit here instead of
+        silently defaulting to the desktop one.
+        """
+        try:
+            box = QMessageBox(self)
+            box.setWindowTitle(_("Record"))
+            box.setText(_("What do you want to record?"))
+            web_btn = box.addButton(_("Web sequence"), QMessageBox.AcceptRole)
+            desk_btn = box.addButton(_("Desktop sequence"), QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec_()
+            clicked = box.clickedButton()
+            if clicked is web_btn:
+                self._record_kind_chosen('web')
+            elif clicked is desk_btn:
+                self._record_kind_chosen('desktop')
+        except Exception as e:
+            logger.error(f"Record prompt failed: {e}")
+
+    def _record_kind_chosen(self, kind):
+        """Start the chosen recorder: 'web' session or 'desktop' sequence."""
+        try:
+            if kind == 'web':
+                self.graph_view.record_web_session(None)
+            else:
+                self.graph_view.record_new_sequence()
+        except Exception as e:
+            logger.error(f"Record failed ({kind}): {e}")
+
     def _make_record_icon_button(self):
         btn = QPushButton(_("Record"), self)
-        btn.clicked.connect(lambda: self.graph_view.record_new_sequence())
-        btn.setToolTip(_("Record Sequence"))
+        btn.clicked.connect(self._prompt_record_kind)
+        btn.setToolTip(_("Record a sequence (web or desktop)"))
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         try:
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(_ACTION_BUTTON_H)
         except Exception:
             pass
-        pix = QPixmap(22, 22)
+        pix = QPixmap(_ACTION_ICON_PX, _ACTION_ICON_PX)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.Antialiasing)
         p.setBrush(QColor(220, 0, 0))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(3, 3, 16, 16)
+        p.drawEllipse(1, 1, _ACTION_ICON_PX - 2, _ACTION_ICON_PX - 2)
         p.end()
         btn.setIcon(QIcon(pix))
-        btn.setIconSize(QSize(18, 18))
+        btn.setIconSize(QSize(_ACTION_ICON_PX, _ACTION_ICON_PX))
         btn.setStyleSheet(_ACTION_BUTTON_QSS)
         self._label_buttons.append((btn, _("Record")))
         return btn
@@ -792,12 +849,9 @@ class ActionsToolbar(QWidget):
             logger.error(f"Save chain error: {e}")
 
     def _icon_play(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.PLAYER_PLAY, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('PLAYER_PLAY', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -815,12 +869,9 @@ class ActionsToolbar(QWidget):
         return QIcon(pix)
 
     def _icon_open(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.FOLDER_OPEN, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('FOLDER_OPEN', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -841,12 +892,9 @@ class ActionsToolbar(QWidget):
         return QIcon(pix)
 
     def _icon_save(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.DEVICE_FLOPPY, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('DEVICE_FLOPPY', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -865,12 +913,9 @@ class ActionsToolbar(QWidget):
         return QIcon(pix)
 
     def _icon_copy(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.COPY, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('COPY', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -885,12 +930,9 @@ class ActionsToolbar(QWidget):
         return QIcon(pix)
 
     def _icon_paste(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.CLIPBOARD_TEXT, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('CLIPBOARD_TEXT', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -907,12 +949,9 @@ class ActionsToolbar(QWidget):
         return QIcon(pix)
 
     def _icon_undo(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.ARROW_BACK_UP, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('ARROW_BACK_UP', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -920,21 +959,20 @@ class ActionsToolbar(QWidget):
         pen = p.pen()
         pen.setColor(QColor(TEXT_COLOR))
         pen.setWidthF(2.0)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
         p.setPen(pen)
-        # curved arrow pointing left
-        p.drawArc(4, 12, 10, 8, 0 * 16, 180 * 16)
-        p.drawLine(4, 16, 8, 12)
-        p.drawLine(4, 16, 8, 20)
+        # curved arrow pointing left, centred on the 24px canvas
+        p.drawArc(4, 7, 16, 13, 30 * 16, 120 * 16)
+        p.drawLine(4, 14, 8, 10)
+        p.drawLine(4, 14, 8, 18)
         p.end()
         return QIcon(pix)
 
     def _icon_redo(self) -> QIcon:
-        if TablerIcons and OutlineIcon:
-            try:
-                img = TablerIcons.load(OutlineIcon.ARROW_FORWARD_UP, size=24, color=TEXT_COLOR, stroke_width=2.0)
-                return QIcon(img.toqpixmap())
-            except Exception:
-                pass
+        ico = tabler_qicon('ARROW_FORWARD_UP', _ACTION_ICON_PX)
+        if ico is not None and not ico.isNull():
+            return ico
         pix = QPixmap(24, 24)
         pix.fill(Qt.transparent)
         p = QPainter(pix)
@@ -942,10 +980,12 @@ class ActionsToolbar(QWidget):
         pen = p.pen()
         pen.setColor(QColor(TEXT_COLOR))
         pen.setWidthF(2.0)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
         p.setPen(pen)
-        # curved arrow pointing right
-        p.drawArc(10, 12, 10, 8, 0 * 16, -180 * 16)
-        p.drawLine(20, 16, 16, 12)
-        p.drawLine(20, 16, 16, 20)
+        # curved arrow pointing right, centred on the 24px canvas
+        p.drawArc(4, 7, 16, 13, 30 * 16, -120 * 16)
+        p.drawLine(20, 14, 16, 10)
+        p.drawLine(20, 14, 16, 18)
         p.end()
         return QIcon(pix)

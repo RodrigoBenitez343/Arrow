@@ -40,6 +40,11 @@ hiddenimports = [
     'PyQt5.QtSvg',
     'PyQt5.QtPrintSupport',
     'PyQt5.QtOpenGL',
+    # Interactive HTML artifacts: the agent overlay embeds a QWebEngineView.
+    'PyQt5.QtWebEngineWidgets',
+    'PyQt5.QtWebEngineCore',
+    'PyQt5.QtWebEngine',
+    'PyQt5.QtWebChannel',
     'NodeGraphQt',
     'pytablericons',
     'PIL.ImageQt',

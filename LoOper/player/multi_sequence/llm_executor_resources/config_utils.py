@@ -33,16 +33,46 @@ def get_default_llm_model(engine: str = "llamacpp") -> str:
     LLM node to borrow from): the orchestrator's picker/synthesis calls and
     the Input node's decision evaluator.
 
-    llamacpp: ``AI/config.json`` → ``LLAMA_CPP.model_path`` (the same model
-    the app preloads).  ollama: the first cached Ollama model, else "".
+    LOCAL PRIORITY: an explicit local engine with a configured GGUF never
+    yields to the chat role — the build-time provider must not leak into
+    built artifacts (measured 2026-10-09: a composer-built brain ran
+    deepseek because the role filled its empty model).
+
+    BYOK role fallback: only when the local engine has no GGUF (or the
+    engine is not the local one), a non-engine chat role supplies its
+    ``provider:model``.  ollama: the first cached Ollama model, else "".
     """
     engine = str(engine or "llamacpp").strip().lower()
     if engine in ("llamacpp", "llama.cpp", "llama_cpp"):
         try:
             from AI.config_loader import get_llamacpp_config
-            return str(get_llamacpp_config().get("model_path") or "").strip()
+            path = str(get_llamacpp_config().get("model_path") or "").strip()
+            if path:
+                return path
         except Exception:
-            return ""
+            pass
+    try:
+        from AI import byok
+        role = byok.get_role(byok.load_settings(), "chat")
+        provider = str(role.get("provider") or "").strip()
+        if provider and provider != byok.LOCAL_ENGINE:
+            model = str(role.get("model") or "").strip() or \
+                byok.resolve_model(provider, "")
+            if model:
+                return f"{provider}:{model}"
+    except Exception:
+        pass
+    if engine in ("llamacpp", "llama.cpp", "llama_cpp"):
+        return ""            # local engine, no GGUF, no role fill
+    # An explicit BYOK provider engine: its configured model, prefixed so
+    # every caller routes there through the gateway.
+    try:
+        from AI import byok
+        if engine != "ollama" and byok.is_provider_id(engine):
+            model = str(byok.resolve_model(engine, "")).strip()
+            return byok.join_model_ref(engine, model) if model else ""
+    except Exception:
+        pass
     try:
         from AI.model_cache import get_cached_models
         models = get_cached_models() or []

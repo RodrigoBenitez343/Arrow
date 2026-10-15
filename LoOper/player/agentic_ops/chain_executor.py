@@ -29,7 +29,8 @@ class ChainExecutor:
                    ask_user_callback=None,
                    ask_user_v2_callback=None,
                    on_output_ready=None,
-                   stop_flag=None) -> str:
+                   stop_flag=None,
+                   bound_inputs=None) -> str:
         """Execute a chain file and return a human-readable result.
 
         Args:
@@ -48,6 +49,10 @@ class ChainExecutor:
             stop_flag: Optional callable that returns True when the caller wants
                          execution cancelled (e.g. the agent overlay's stop event).
                          Combined with the global ESC monitor.
+            bound_inputs: Optional dict {label: value} written into the chain's
+                         advertised agent_modifiable Input slots (the chat-mode
+                         bind_input channel) — priority 0 in input resolution,
+                         ahead of LLM reasoning.
 
         Returns:
             A human-readable string (e.g."Executed 'extract_products': found
@@ -94,6 +99,9 @@ class ChainExecutor:
                 # Follow self-callback (tail-call) handoffs in a flat loop:
                 # a chain that imports itself releases this execution and a
                 # fresh run of the same chain starts in the single slot.
+                _run_vars = None
+                if bound_inputs:
+                    _run_vars = {'_chain_bound_inputs': dict(bound_inputs)}
                 chain_ok, player = play_chain_with_tailcalls(
                     chain_path,
                     agent_query=agent_query,
@@ -102,6 +110,7 @@ class ChainExecutor:
                     ask_user_v2_callback=ask_user_v2_callback,
                     on_output_ready=on_output_ready,
                     stop_flag=_combined_stop,
+                    variables=_run_vars,
                     run_source="agent",
                 )
                 if chain_ok is False:

@@ -1,6 +1,7 @@
 # dialogs/ai_settings_dialog.py
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import requests
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
+    QComboBox,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
@@ -30,6 +32,58 @@ from ..constants import (ACCENT_COLOR, DARK_GREY, LIGHT_GREY, MEDIUM_GREY, TEXT_
 from ..i18n import _
 from .base_dialog import ModernDialog, UserGuideDialog
 from .toggle_switch import ModernToggle
+
+logger = logging.getLogger(__name__)
+
+
+def _byok_module():
+    """Import AI.byok from either layout (source or frozen); None on failure."""
+    try:
+        from AI import byok
+        return byok
+    except Exception:
+        pass
+    try:
+        ai_dir = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), "..", "..", "AI"))
+        root = os.path.dirname(ai_dir)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from AI import byok
+        return byok
+    except Exception:
+        return None
+
+
+class ProviderJob(QThread):
+    """Off-thread model listing / connection test (network must not block UI)."""
+
+    done = pyqtSignal(str, str, dict)  # (task, provider_id, result)
+
+    def __init__(self, task, provider_id, settings):
+        super().__init__()
+        self._task = task
+        self._provider_id = provider_id
+        self._settings = settings
+
+    def run(self):
+        byok = _byok_module()
+        if byok is None:
+            self.done.emit(self._task, self._provider_id,
+                           {"ok": False,
+                            "message": _("Provider runtime unavailable.")})
+            return
+        try:
+            if self._task == "models":
+                models = byok.list_models(self._provider_id, self._settings)
+                self.done.emit(self._task, self._provider_id,
+                               {"ok": True, "models": [m["id"] for m in models]})
+            else:
+                result = byok.test_connection(self._provider_id, self._settings)
+                self.done.emit(self._task, self._provider_id, result or {})
+        except Exception as e:
+            self.done.emit(self._task, self._provider_id,
+                           {"ok": False, "message": str(e)})
 
 
 class APIServerThread(QThread):
@@ -163,6 +217,7 @@ class AISettingsDialog(ModernDialog):
 
         self.setup_ui()
         self.load_settings()
+        self._load_byok_into_ui()
 
         # Check API status
         QTimer.singleShot(100, self.check_api_status)
@@ -199,6 +254,7 @@ class AISettingsDialog(ModernDialog):
 
         # Create tab widget
         tab_widget = QTabWidget()
+        self._tab_widget = tab_widget
 
         # API Configuration Tab
         api_tab = QWidget()
@@ -317,6 +373,10 @@ class AISettingsDialog(ModernDialog):
         advanced_tab.setLayout(advanced_layout)
         tab_widget.addTab(advanced_tab, _("Advanced"))
 
+        # Providers tab: BYOK cloud keys, local servers, CLI tools + the
+        # per-capability routing (chat / embeddings / vision).
+        tab_widget.addTab(self._build_providers_tab(), _("Providers"))
+
         layout.addWidget(tab_widget)
 
         # Dialog buttons using QDialogButtonBox for consistency
@@ -337,6 +397,341 @@ class AISettingsDialog(ModernDialog):
 
         layout.addWidget(self.button_box)
         # self.setLayout(layout) # Removed as we use ModernDialog's layout logic
+
+    # ── Providers tab (BYOK) ──────────────────────────────────────────
+
+    def _build_providers_tab(self):
+        """Provider keys/servers + the per-capability routing section."""
+        self._byok = {}
+        self._provider_jobs = []
+        self.role_provider_combos = {}
+        self.role_model_edits = {}
+        self.provider_rows = {}
+
+        tab = QWidget()
+        outer = QVBoxLayout(tab)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        host = QWidget()
+        lay = QVBoxLayout(host)
+
+        info = QLabel(_(
+            "Bring your own keys: cloud providers, local model servers or "
+            "CLI tools. Toggle on every provider you want available — they "
+            "work in parallel, each keeping its own key, server/command and "
+            "model. Keys are stored on this machine (byok.json)."))
+        info.setWordWrap(True)
+        lay.addWidget(info)
+
+        # --- one row per provider, every provider rendered at once ---
+        byok = _byok_module()
+        if byok is not None:
+            for choice in byok.provider_choices():
+                self._add_provider_row(lay, choice)
+
+        # --- routing (fallback only; per-site pickers always win) ---
+        route_group = QGroupBox(
+            _("Fallback routing — used when a step doesn't pick its own model"))
+        route_form = QFormLayout()
+        role_labels = {
+            "chat": _("Chat / generation:"),
+            "embeddings": _("Embeddings:"),
+            "vision": _("Vision / images:"),
+        }
+        if byok is not None:
+            for key in ("chat", "embeddings", "vision"):
+                combo = QComboBox()
+                combo.addItem(_("Auto (legacy)"), "")
+                for choice in byok.provider_choices():
+                    combo.addItem(choice["label"], choice["id"])
+                    if choice["coming_soon"]:
+                        item = combo.model().item(combo.count() - 1)
+                        if item is not None:
+                            item.setEnabled(False)
+                            item.setToolTip(_("Coming soon"))
+                edit = QLineEdit()
+                edit.setPlaceholderText(_("model id (optional)"))
+                row = QWidget()
+                row_lay = QHBoxLayout(row)
+                row_lay.setContentsMargins(0, 0, 0, 0)
+                row_lay.addWidget(combo, 1)
+                row_lay.addWidget(edit, 1)
+                route_form.addRow(QLabel(role_labels[key]), row)
+                self.role_provider_combos[key] = combo
+                self.role_model_edits[key] = edit
+
+        route_note = QLabel(_(
+            "Every node and picker can choose its own provider:model — the "
+            "model lists now include cloud entries like \"openai:gpt-4o-mini\". "
+            "This section only fills the gaps: embeddings locally while the "
+            "LLM runs in the cloud → Chat = a cloud provider; everything "
+            "local → leave everything on Auto. Laya and needle2 always run "
+            "locally."))
+        route_note.setWordWrap(True)
+        route_form.addRow(route_note)
+        route_group.setLayout(route_form)
+        lay.addWidget(route_group)
+
+        lay.addStretch()
+        scroll.setWidget(host)
+        outer.addWidget(scroll)
+        return tab
+
+    def _add_provider_row(self, parent_layout, choice):
+        """One provider as its own row: enable toggle + its family fields.
+
+        Toggling several on makes them all available in parallel — every
+        model picker then lists ``provider:model`` for each enabled provider.
+        """
+        pid = choice.get("id")
+        family = choice.get("family", "cloud")
+        is_engine = pid == "llamacpp"
+        is_pool = family == "pool"
+        is_cloud = family == "cloud"
+        is_local = family == "local-server" and not is_engine
+        is_cli = family == "cli"
+
+        box = QGroupBox(choice.get("label", pid))
+        form = QFormLayout(box)
+
+        toggle = None
+        if not is_engine and not is_pool:
+            toggle = ModernToggle()
+            form.addRow(_("Available:"), toggle)
+
+        key_edit = saved_label = None
+        if is_cloud:
+            key_edit = QLineEdit()
+            key_edit.setEchoMode(QLineEdit.Password)
+            key_edit.setPlaceholderText(_("Paste the API key"))
+            saved_label = QLabel("")
+            saved_label.setStyleSheet(f"color: {ACCENT_COLOR};")
+            key_row = QWidget()
+            key_lay = QHBoxLayout(key_row)
+            key_lay.setContentsMargins(0, 0, 0, 0)
+            key_lay.addWidget(key_edit, 1)
+            key_lay.addWidget(saved_label)
+            form.addRow(_("API key:"), key_row)
+
+        url_edit = None
+        if is_local:
+            url_edit = QLineEdit()
+            url_edit.setPlaceholderText(_("e.g. http://localhost:11434"))
+            form.addRow(_("Server URL:"), url_edit)
+
+        command_edit = None
+        if is_cli:
+            command_edit = QLineEdit()
+            command_edit.setPlaceholderText(_("e.g. claude or codex"))
+            form.addRow(_("Command (CLI):"), command_edit)
+
+        model_combo = refresh_btn = test_btn = None
+        if is_pool or is_engine:
+            status_label = QLabel(
+                _("Coming soon") if is_pool
+                else _("Served by the built-in llama.cpp engine."))
+            status_label.setWordWrap(True)
+            if is_pool:
+                status_label.setStyleSheet(f"color: {MEDIUM_GREY};")
+            form.addRow(status_label)
+        else:
+            model_combo = QComboBox()
+            model_combo.setEditable(True)
+            refresh_btn = QPushButton(_("Refresh Models"))
+            refresh_btn.clicked.connect(
+                lambda _c, p=pid: self._refresh_provider_models(p))
+            model_row = QWidget()
+            model_lay = QHBoxLayout(model_row)
+            model_lay.setContentsMargins(0, 0, 0, 0)
+            model_lay.addWidget(model_combo, 1)
+            model_lay.addWidget(refresh_btn)
+            form.addRow(_("Model:"), model_row)
+
+            test_btn = QPushButton(_("Test Connection"))
+            test_btn.clicked.connect(lambda _c, p=pid: self._test_provider(p))
+            status_label = QLabel("")
+            status_label.setWordWrap(True)
+            status_row = QWidget()
+            status_lay = QHBoxLayout(status_row)
+            status_lay.setContentsMargins(0, 0, 0, 0)
+            status_lay.addWidget(test_btn)
+            status_lay.addWidget(status_label, 1)
+            form.addRow("", status_row)
+
+        self.provider_rows[pid] = {
+            "box": box, "family": family, "toggle": toggle,
+            "key": key_edit, "saved": saved_label, "url": url_edit,
+            "command": command_edit, "model": model_combo,
+            "refresh": refresh_btn, "test": test_btn, "status": status_label,
+        }
+        parent_layout.addWidget(box)
+
+    def _load_byok_into_ui(self):
+        """Populate every provider row from byok.json (never raises)."""
+        byok = _byok_module()
+        if byok is None:
+            return
+        try:
+            self._byok = byok.load_settings()
+            for pid, row in self.provider_rows.items():
+                stored = byok.get_provider_settings(self._byok, pid)
+                if row["key"] is not None:
+                    row["key"].setText(str(stored.get("api_key") or ""))
+                if row["saved"] is not None:
+                    row["saved"].setText(
+                        _("saved") if stored.get("credential_saved") else "")
+                if row["url"] is not None:
+                    row["url"].setText(str(stored.get("url") or ""))
+                if row["command"] is not None:
+                    row["command"].setText(str(stored.get("command") or ""))
+                if row["model"] is not None:
+                    row["model"].clear()
+                    for model_id in stored.get("available_models") or []:
+                        row["model"].addItem(str(model_id))
+                    if stored.get("model"):
+                        row["model"].setCurrentText(str(stored["model"]))
+                if row["toggle"] is not None:
+                    row["toggle"].setChecked(bool(stored.get("enabled")))
+                if row["refresh"] is not None:
+                    row["status"].setText(
+                        str(stored.get("model_refresh_message") or ""))
+            roles = self._byok.get("roles") or {}
+            for key, combo in self.role_provider_combos.items():
+                stored = str((roles.get(key) or {}).get("provider") or "")
+                idx = combo.findData(stored)
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+                self.role_model_edits[key].setText(
+                    str((roles.get(key) or {}).get("model") or ""))
+        except Exception:
+            logger.warning("Failed to load BYOK settings into the UI",
+                           exc_info=True)
+
+    def _collect_byok_settings(self):
+        """Every provider row + routing combos → the working settings dict."""
+        providers = self._byok.setdefault("providers", {})
+        for pid, row in self.provider_rows.items():
+            family = row["family"]
+            if pid == "llamacpp" or family == "pool":
+                continue
+            key = row["key"].text().strip() if row["key"] is not None else ""
+            url = row["url"].text().strip() if row["url"] is not None else ""
+            command = (row["command"].text().strip()
+                       if row["command"] is not None else "")
+            model = (row["model"].currentText().strip()
+                     if row["model"] is not None else "")
+            toggle_on = bool(row["toggle"] is not None
+                             and row["toggle"].isChecked())
+            # Skip rows the user never touched — no empty-provider bloat.
+            if not (providers.get(pid) or key or url or command or model
+                    or toggle_on):
+                continue
+            prov = providers.setdefault(pid, {})
+            if key:
+                prov["api_key"] = key
+                prov["credential_saved"] = True
+            prov["url"] = url
+            prov["command"] = command
+            prov["model"] = model
+            if row["model"] is not None:
+                models = [row["model"].itemText(i)
+                          for i in range(row["model"].count())]
+                if models:
+                    prov["available_models"] = models
+            if row["toggle"] is not None:
+                prov["enabled"] = toggle_on
+        roles = self._byok.setdefault("roles", {})
+        for key, combo in self.role_provider_combos.items():
+            roles[key] = {
+                "provider": combo.currentData() or "",
+                "model": self.role_model_edits[key].text().strip(),
+            }
+        return self._byok
+
+    def _save_byok(self):
+        """Persist providers + routing into byok.json (never raises)."""
+        byok = _byok_module()
+        if byok is None:
+            return
+        try:
+            byok.save_settings(self._collect_byok_settings())
+        except Exception:
+            logger.warning("Failed to save BYOK settings", exc_info=True)
+
+    def _refresh_provider_models(self, provider_id):
+        if provider_id:
+            self._start_provider_job("models", provider_id)
+
+    def _test_provider(self, provider_id):
+        if provider_id:
+            self._start_provider_job("test", provider_id)
+
+    def _start_provider_job(self, task, provider_id):
+        """Run list/test on a worker so the dialog never blocks."""
+        row = self.provider_rows.get(provider_id)
+        try:
+            settings = self._collect_byok_settings()
+        except Exception:
+            settings = self._byok
+        if row is not None:
+            row["status"].setText(_("Working…"))
+            if row["refresh"] is not None:
+                row["refresh"].setEnabled(False)
+            if row["test"] is not None:
+                row["test"].setEnabled(False)
+        job = ProviderJob(task, provider_id, settings)
+        job.done.connect(self._on_provider_job_done)
+        job.finished.connect(job.deleteLater)
+        job.finished.connect(
+            lambda p=provider_id: self._provider_job_finished(p))
+        self._provider_jobs.append(job)
+        job.start()
+
+    def _provider_job_finished(self, provider_id):
+        row = self.provider_rows.get(provider_id)
+        if row is None:
+            return
+        if row["refresh"] is not None:
+            row["refresh"].setEnabled(True)
+        if row["test"] is not None:
+            row["test"].setEnabled(True)
+
+    def _on_provider_job_done(self, task, provider_id, result):
+        row = self.provider_rows.get(provider_id)
+        if row is None:
+            return
+        if task == "models":
+            models = [str(m) for m in (result.get("models") or [])]
+            if models and row["model"] is not None:
+                current = row["model"].currentText()
+                row["model"].clear()
+                row["model"].addItems(models)
+                if current:
+                    row["model"].setCurrentText(current)
+                message = _("{n} model(s) found.").format(n=len(models))
+                row["status"].setText(message)
+                prov = self._byok.setdefault("providers", {}).setdefault(
+                    provider_id, {})
+                prov["available_models"] = models
+                prov["has_fetched_models"] = True
+                prov["model_refresh_message"] = message
+            else:
+                row["status"].setText(
+                    str(result.get("message") or _("No models returned.")))
+            return
+        ok = bool(result.get("ok"))
+        message = str(result.get("message") or "")
+        row["status"].setText(("OK — " if ok else "") + message)
+        try:
+            import time as _time
+            self._byok.setdefault("verification", {})[provider_id] = {
+                "ok": ok,
+                "message": message,
+                "model_id": (row["model"].currentText().strip()
+                             if row["model"] is not None else ""),
+                "tested_at": _time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+        except Exception:
+            pass
 
     def load_settings(self):
         """Load settings from config file via config_loader"""
@@ -422,6 +817,9 @@ class AISettingsDialog(ModernDialog):
                 print(
                     f"Warning: failed to refresh model cache after saving settings: {cache_err}"
                 )
+
+            # Persist BYOK providers + routing into byok.json.
+            self._save_byok()
 
             QMessageBox.information(
                 self, _("Success"), _("Settings saved successfully!")

@@ -1233,16 +1233,66 @@ def test_orchestrator_model_borrows_chain_llm_node():
     assert model == 'Borrowed.gguf'
 
 
-def test_orchestrator_model_falls_back_to_app_default():
+def test_orchestrator_model_falls_back_to_app_default(monkeypatch):
     """The shipped orchestrator root has NO LLM node and a blank model — the
     picker must still get a model (AI/config.json default).  Regression: the
     run stopped with 'No model configured and no chain LLM node to borrow
-    from' and produced zero steps."""
+    from' and produced zero steps.  Patched to no-role settings: this test
+    covers the LEGACY fallback (the role-aware fallback is covered by
+    test_orchestrator_fallback_uses_the_chat_role_when_set)."""
+    from AI import byok
+    monkeypatch.setattr(byok, 'load_settings', byok.default_settings)
     h = _Harness()
     h.workflow_graph = {}
     engine, model = h._orchestrator_model_config({'engine': 'llamacpp', 'model': ''})
     assert engine == 'llamacpp'
     assert model.lower().endswith('.gguf'), f'app default not resolved: {model!r}'
+
+
+def test_orchestrator_fallback_uses_the_chat_role_when_set(monkeypatch):
+    """With NO local GGUF configured, a chat role fills the blank model
+    with its provider-prefixed model — never a GGUF path (the 2026-10-09
+    bug: the GGUF path was handed to DeepSeek and rejected)."""
+    import AI.config_loader as _cl
+    from AI import byok
+    monkeypatch.setattr(_cl, 'get_llamacpp_config',
+                        lambda: {'model_path': ''})
+    settings = byok.parse_settings({
+        'providers': {'deepseek': {'model': 'deepseek-flash'}},
+        'roles': {'chat': {'provider': 'deepseek', 'model': ''}}})
+    monkeypatch.setattr(byok, 'load_settings', lambda: settings)
+    h = _Harness()
+    h.workflow_graph = {}
+    engine, model = h._orchestrator_model_config({'engine': 'llamacpp', 'model': ''})
+    assert model == 'deepseek:deepseek-flash'
+    assert engine == 'deepseek'          # the prefix made it self-route
+
+
+def test_orchestrator_local_mode_wins_over_the_chat_role(monkeypatch):
+    """A brain in LOCAL mode is local: its GGUF (or the app default) beats
+    the chat-role fallback — the build-time provider must never leak into
+    the artifact (the composer sets these fields on built brains)."""
+    from AI import byok
+    settings = byok.parse_settings({
+        'providers': {'deepseek': {'model': 'deepseek-flash'}},
+        'roles': {'chat': {'provider': 'deepseek', 'model': ''}}})
+    monkeypatch.setattr(byok, 'load_settings', lambda: settings)
+    h = _Harness()
+    h.workflow_graph = {}
+
+    # Node carries its own GGUF path → that path is used.
+    engine, model = h._orchestrator_model_config(
+        {'use_llamacpp': True, 'llamacpp_model_path': r'D:\m\q.gguf',
+         'model': ''})
+    assert (engine, model) == ('llamacpp', r'D:\m\q.gguf')
+
+    # Local flag without a path → the app default GGUF, not the role.
+    import AI.config_loader as _cl
+    monkeypatch.setattr(_cl, 'get_llamacpp_config',
+                        lambda: {'model_path': r'D:\m\app_default.gguf'})
+    engine, model = h._orchestrator_model_config(
+        {'use_llamacpp': True, 'llamacpp_model_path': '', 'model': ''})
+    assert (engine, model) == ('llamacpp', r'D:\m\app_default.gguf')
 
 
 def test_orchestrator_llm_call_payload_thinking_disabled(monkeypatch):
@@ -1252,7 +1302,11 @@ def test_orchestrator_llm_call_payload_thinking_disabled(monkeypatch):
     Verified against both local models: thinking on → the whole budget is
     spent on reasoning_content and content comes back EMPTY (seen in a real
     session); raw completion → chat-trained models emit an immediate EOS.
+    (Patched to no-role settings: the legacy engine leg is what this test
+    verifies.)
     """
+    from AI import byok
+    monkeypatch.setattr(byok, 'load_settings', byok.default_settings)
     h = _Harness()
     captured = {}
 
@@ -4390,3 +4444,97 @@ def test_freeze_respects_the_kill_switch(tmp_path, monkeypatch):
     h._execute_orchestrator_node(orch, None)
 
     assert not (tmp_path / 'learned').exists()
+
+
+# ---------------------------------------------------------------------------
+# LLM-node orchestrator: fused-port pass-through (tools/brains split)
+# ---------------------------------------------------------------------------
+
+
+def _llm_orch_node(inputs):
+    return {
+        'id': '0xllm', 'type': 'llm',
+        'data': {'orchestrator_mode': True, 'orch_goal': 'g'},
+        'inputs': inputs,
+        'connections': {},
+    }
+
+
+def test_llm_orchestrator_pass_through_keeps_brains_and_tools_split():
+    """brains stay brains, tools/chains become the loop's chains set."""
+    h = _Harness()
+    node = _llm_orch_node([
+        {'from_node': '0xT', 'input_port': 'tools'},
+        {'from_node': '0xB', 'input_port': 'brains'},
+        {'from_node': '0xL', 'input_port': 'chains'},
+        {'from_node': '0xG', 'input_port': 'input'},
+    ])
+    synthetic = h._orchestrator_from_llm_node(node)
+    ports = {inp['input_port'] for inp in synthetic['inputs']}
+    assert ports == {'brains', 'chains'}
+    by_from = {inp['from_node']: inp['input_port'] for inp in synthetic['inputs']}
+    assert by_from['0xB'] == 'brains'
+    assert by_from['0xT'] == 'chains'
+    assert by_from['0xL'] == 'chains'
+
+
+def test_llm_orchestrator_brain_on_tools_port_is_skipped_with_warning(tmp_path):
+    """The presence gate stays as the safety net: a chain that contains an
+    orchestrator wired to 'tools' is skipped, never run as deterministic."""
+    nested = tmp_path / 'nested.json'
+    nested.write_text(json.dumps({
+        'llm_nodes': [{'node_id': 'n1', 'orchestrator_mode': True,
+                       'connections': []}],
+        'chain_import_nodes': [],
+    }), encoding='utf-8')
+    plain = _write_chain(tmp_path / 'plain.json', {'sequences': []})
+    h = _Harness()
+    node = _llm_orch_node([
+        {'from_node': '0xB', 'input_port': 'tools'},
+        {'from_node': '0xC', 'input_port': 'tools'},
+    ])
+    h.workflow_graph = {
+        '0xB': _brain('0xB', 'nested brain', str(nested)),
+        '0xC': _brain('0xC', 'plain chain', str(plain)),
+    }
+    synthetic = h._orchestrator_from_llm_node(node)
+    chains = h._orchestrator_collect_chains(synthetic)
+    names = [c['name'] for c in chains]
+    assert 'plain chain' in names
+    assert 'nested brain' not in names  # presence gate skipped it
+
+
+def test_llm_orchestrator_brains_port_collects_sub_brain(tmp_path):
+    nested = tmp_path / 'nested.json'
+    nested.write_text(json.dumps({
+        'llm_nodes': [{'node_id': 'n1', 'orchestrator_mode': True,
+                       'connections': []}],
+        'chain_import_nodes': [],
+    }), encoding='utf-8')
+    h = _Harness()
+    node = _llm_orch_node([
+        {'from_node': '0xB', 'input_port': 'brains'},
+    ])
+    h.workflow_graph = {
+        '0xB': _brain('0xB', 'nested brain', str(nested)),
+    }
+    synthetic = h._orchestrator_from_llm_node(node)
+    brains = h._orchestrator_collect_brains(synthetic)
+    assert len(brains) == 1
+    assert brains[0]['nested'] is True
+    assert brains[0]['kind'] == 'chain'
+
+
+def test_orchestrator_model_config_follows_the_provider_prefix():
+    """A provider-prefixed model self-routes: the engine follows the prefix
+    so the loop's LLM calls take the gateway leg (engine selectors)."""
+    h = _Harness()
+    engine, model = h._orchestrator_model_config(
+        {'engine': 'llamacpp', 'model': 'openai:gpt-4o-mini'})
+    assert engine == 'openai'
+    assert model == 'openai:gpt-4o-mini'
+
+    # No prefix: the engine stays as configured.
+    engine, model = h._orchestrator_model_config(
+        {'engine': 'ollama', 'model': 'llama3.2:1b'})
+    assert (engine, model) == ('ollama', 'llama3.2:1b')

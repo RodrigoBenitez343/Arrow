@@ -939,21 +939,70 @@ def _llamacpp_raw_completion(
 def _fire_llamacpp_release(api_base: str) -> None:
     """Tell the API gateway the node's llamacpp burst is over.
 
-    Fire-and-forget (3s timeout): the gateway schedules a seq-guarded unload
-    under its lifecycle lock.  A lost release only delays the unload until the
-    next request or app exit — never a correctness problem.
+    Runs on its own daemon thread and waits INDEFINITELY (no timeout): the
+    gateway's /llamacpp/release takes the lifecycle lock, which an in-flight
+    generation of another node holds for its whole duration — the old 3s
+    client timeout abandoned the release there and the model stayed resident
+    until app exit (observed 2026-10-11).  Retried, so a transient gateway
+    hiccup cannot silently drop the unload either.
     """
-    try:
-        if not api_base:
+    if not api_base:
+        return
+    import requests as _rq_rel
+    import time as _time
+    url = f"{api_base.rstrip('/')}/llamacpp/release"
+    for _attempt in range(3):
+        try:
+            _rq_rel.post(url, json={}, timeout=None)
             return
-        import requests as _rq_rel
-        _rq_rel.post(
-            f"{api_base.rstrip('/')}/llamacpp/release",
-            json={},
-            timeout=3,
-        )
-    except Exception:
-        pass
+        except Exception as exc:
+            if _attempt == 2:
+                logger.warning(
+                    "llamacpp release failed after 3 attempts: %s", exc)
+            else:
+                _time.sleep(1.0)
+
+
+def _stop_active_inference(api_base: str, ollama_base: str, model: str,
+                           direct_mode: bool) -> None:
+    """Provider-agnostic ESC stop: end generation for EVERY backend.
+
+    A stop is a stop for all providers, never selective:
+      - in-process engine (exported agent): stop the engine directly;
+      - app gateway: one ``/stop`` terminates llama.cpp + Ollama + the burst
+        engines (embedding, Laya);
+      - no gateway (node pointed straight at Ollama): stop the Ollama model.
+    BYOK (remote) has no server-side stop — the worker is abandoned.
+    """
+    if direct_mode:
+        try:
+            from AI import inprocess_transport as _dt
+            _dt.stop()
+        except Exception:
+            pass
+        return
+    gw = (api_base or "").rstrip("/")
+    if gw:
+        try:
+            # No timeout: a stop must COMPLETE, never be abandoned mid-kill.
+            # stop_server() legitimately takes >10s (terminate + wait(10) +
+            # port sweep); the old 3s client timeout left the server resident
+            # on ESC (observed 2026-10-11).
+            if _rq.post(f"{gw}/stop", json={}, timeout=None).status_code < 400:
+                return
+        except Exception:
+            pass
+    ob = (ollama_base or "").rstrip("/")
+    if ob:
+        try:
+            _rq.post(
+                f"{ob}/api/stop",
+                json={"model": model},
+                headers={"Connection": "close"},
+                timeout=2,
+            )
+        except Exception:
+            pass
 
 
 def _clean_ingested_text(text: str) -> str:
@@ -987,28 +1036,14 @@ def _context_port_payload(variables: Dict[str, Any], f_id: str,
     """Payload of an upstream node connected to this LLM node's context
     INPUT port, resolved by the SOURCE output port.
 
-    Context-type and LLM nodes store ``node_<id>_context``; a ``data`` edge
-    (Input node) stores ``node_<id>_data``; a named port reads
-    ``node_<id>_output_<port>``.  Base/branch source ports drive execution
-    only — they carry no data, so they yield "".
+    Thin delegate to the ONE shared resolver (``ports.resolve_port``):
+    ``context``/``ctx_out`` read the response TEXT, ``data`` reads the
+    Input node value, a named port reads its own channel; base/branch
+    source ports carry no data.  Returns "" when nothing was published.
     """
-    try:
-        ot = str(output_type or '').lower()
-        if ot == 'data':
-            raw = variables.get(f"node_{f_id}_data", "") or ""
-            return str(raw) if raw and str(raw).strip() else ""
-        if ot in ('context', 'ctx_out'):
-            raw = variables.get(f"node_{f_id}_context", "") or ""
-            return str(raw) if raw and str(raw).strip() else ""
-        # Base/branch ports carry no data.
-        if ot in ('output', '', 'true', 'false', 'error', 'route'):
-            return ""
-        named = variables.get(f"node_{f_id}_output_{output_type}")
-        if named is None:
-            named = variables.get(f"node_{f_id}_output_{ot}")
-        return str(named) if named is not None and str(named).strip() else ""
-    except Exception:
-        return ""
+    from ..worflow_interpreter_modules.executor_modules.ports import resolve_port
+    val = resolve_port(variables, f_id, output_type)
+    return str(val) if val is not None and str(val).strip() else ""
 
 
 def _generate_fact_answer(probe, evidence, llm_config, api_url):
@@ -2441,6 +2476,31 @@ class LLMExecutor:
             and _direct_transport.is_direct_mode()
         )
 
+        _burst_released = [False]
+
+        def _release_burst():
+            """Fire the burst-end /llamacpp/release for a llamacpp node.
+
+            The consolidation probes and the main generation hold the model
+            with cleanup_after=False and are released once by an explicit
+            /llamacpp/release.  Idempotent (fires at most once per node) and
+            safe to call from every exit path — an abort (ESC), an early
+            return, or an exception that skips the generation path would
+            otherwise leave that llama-server orphaned until app exit.
+            """
+            if not (_use_llamacpp_flag and api_url) or _direct_active:
+                return
+            if _burst_released[0]:
+                return
+            _burst_released[0] = True
+            try:
+                threading.Thread(
+                    target=_fire_llamacpp_release, args=(api_url,),
+                    daemon=True,
+                ).start()
+            except Exception:
+                pass
+
         def _ensure_emb_client():
             """Build the RAG embedding client ONLY when RAG actually runs.
 
@@ -2949,6 +3009,7 @@ class LLMExecutor:
                         response_generator=_resp_gen,
                         judge=_judge_gen,
                         relevance_judge=_rel_judge,
+                        stop_flag=stop_flag,
                     )
 
                     if consolidated_context:
@@ -3071,6 +3132,7 @@ class LLMExecutor:
         if stop_flag and stop_flag():
             logger.info("LLM node execution stopped by user request before API call")
             _cleanup_vision_images()
+            _release_burst()
             return None
 
         # Debug: log the final prompt that will be sent to the LLM
@@ -3081,6 +3143,9 @@ class LLMExecutor:
 
         def _task_runner(out_dict: Dict[str, Any]):
             if stop_flag and stop_flag():
+                # Aborted after the consolidation burst loaded the model but
+                # before generation — release it so no server is orphaned.
+                _release_burst()
                 return
 
             _node_id = llm_data.get("node_id") or llm_data.get("id") or node.get("id")
@@ -3113,6 +3178,7 @@ class LLMExecutor:
                     if not llamacpp_model_path:
                         logger.error("llama.cpp model path not specified")
                         out_dict["error"] = "llama.cpp model path not specified"
+                        _release_burst()
                         return
 
                     # Resolve relative model path against AI/models/
@@ -3136,6 +3202,7 @@ class LLMExecutor:
                             f"llama.cpp model not found: {llamacpp_model_path}"
                         )
                         out_dict["error"] = f"Model not found: {llamacpp_model_path}"
+                        _release_burst()
                         return
 
                     # Build llama.cpp API payload
@@ -3349,22 +3416,14 @@ class LLMExecutor:
                         error_msg = f"llama.cpp execution failed: {str(llamacpp_err)}"
                         logger.error(error_msg, exc_info=True)
                         out_dict["error"] = error_msg
-
-                    # Node burst complete (main generation + consolidation
-                    # probes + recursion): release the model NOW instead of
-                    # leaving it to an idle clock — the burst held it via
-                    # cleanup_after=False on every call.  Fire-and-forget: a
-                    # lost release only delays the unload until the next
-                    # request or app exit.
-                    if not direct_mode:
-                        try:
-                            threading.Thread(
-                                target=_fire_llamacpp_release,
-                                args=(llamacpp_api_url,),
-                                daemon=True,
-                            ).start()
-                        except Exception:
-                            pass
+                    finally:
+                        # Node burst complete (main generation + consolidation
+                        # probes + recursion): ALWAYS release the model the
+                        # burst held via cleanup_after=False — on success, on
+                        # abort (ESC), and on any exception.  A hand-placed
+                        # release skipped by an early return leaked the
+                        # server (observed 2026-10-11).
+                        _release_burst()
                     return
 
                 # Otherwise use Ollama (existing code)
@@ -3830,19 +3889,12 @@ class LLMExecutor:
         while th.is_alive():
             if stop_flag and stop_flag():
                 logger.info(
-                    "Stop flag detected. Attempting to stop LLM generation..."
+                    "Stop flag detected. Stopping ALL providers "
+                    "(llama.cpp / Ollama) and freeing burst engines..."
                 )
-                try:
-                    for _ in range(2):
-                        _rq.post(
-                            f"{_base}/api/stop",
-                            json={"model": model},
-                            headers={"Connection": "close"},
-                            timeout=2,
-                        )
-                        time.sleep(0.1)
-                except Exception:
-                    pass
+                _stop_active_inference(
+                    api_url, _base, model, _direct_active,
+                )
                 break
             # No timeout: allow long-running local models to complete
             try:
@@ -3853,6 +3905,13 @@ class LLMExecutor:
             th.join(timeout=0.2)
         except Exception:
             pass
+        # A user stop terminated the active backend above; the daemon worker
+        # dies with it.  Return a clean abort instead of surfacing the kill as
+        # a node FAILURE (the worker's transport error is an artefact of the
+        # stop, not a real engine failure).
+        if stop_flag and stop_flag():
+            _cleanup_vision_images()
+            return None
         result = shared.get("result")
         if result is None and shared.get("error"):
             logger.error(f"LLM request failed: {shared.get('error')}")
@@ -4261,17 +4320,25 @@ class LLMExecutor:
             node_id = llm_data.get("node_id") or llm_data.get("id") or node.get("id")
             if node_id:
                 self.variables[f"node_{node_id}_output"] = _publish_text
-                # ── Task 1/2: Structured context with user_input + response ──
+                # ── The 'context' OUTPUT carries the RESPONSE TEXT ──
+                # The port's contract is text: a Code/LLM/Output node wired to
+                # it reads the answer verbatim, with no {user_input, response}
+                # shape to unwrap (ports.resolve_port).  The structured
+                # envelope is METADATA — published as context_meta below.
+                self.variables[f"node_{node_id}_context"] = _publish_text or ""
+                _input_for_ctx = self.variables.get(
+                    f"node_{node_id}_source_input", ""
+                ) or ""
+                # ── Structured metadata: user_input + response (+ tool) ──
                 try:
                     import json as _json
                     import re as _re
-                    _input_for_ctx = self.variables.get(f"node_{node_id}_source_input", "") or ""
                     _ctx_dict = {
                         "user_input": str(_input_for_ctx),
                         "response": str(_publish_text or ""),
                     }
                     # Enrich with tool id + description when response is a USE_TOOL command
-                    # so downstream LLMs have actual context about which tool was selected
+                    # so downstream consumers have context about which tool was selected
                     try:
                         _tool_match = _re.search(r'USE_TOOL:\s*(\S+)', str(response_text or ""))
                         if _tool_match:
@@ -4287,10 +4354,11 @@ class LLMExecutor:
                                 )
                     except Exception:
                         pass
-                    _ctx_payload = _json.dumps(_ctx_dict, ensure_ascii=False)
-                    self.variables[f"node_{node_id}_context"] = _ctx_payload
+                    self.variables[f"node_{node_id}_context_meta"] = _json.dumps(
+                        _ctx_dict, ensure_ascii=False
+                    )
                 except Exception:
-                    self.variables[f"node_{node_id}_context"] = _publish_text or ""
+                    pass
 
                 # ── Unified input_context for all node types (Task 2) ──
                 try:

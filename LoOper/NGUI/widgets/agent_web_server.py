@@ -18,6 +18,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Callable
 
@@ -325,6 +326,7 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
   .msg .mdh{font-weight:700;margin:6px 0 2px}
   .msg ul{margin:4px 0 4px 18px}
   .msg a{color:#00C2A0}
+  .ask-opts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -463,17 +465,37 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   // ── Rendered output (v2 envelope: {v:2, kind:"output", mode, label, content, asset}) ──
 
-  function sanitizeHtml(html) {
-    var t = document.createElement("template");
-    t.innerHTML = html;
-    t.content.querySelectorAll("script, iframe, object, embed").forEach(function(el) { el.remove(); });
-    t.content.querySelectorAll("*").forEach(function(el) {
-      for (var i = el.attributes.length - 1; i >= 0; i--) {
-        var attr = el.attributes[i];
-        if (attr.name.toLowerCase().indexOf("on") === 0) el.removeAttribute(attr.name);
-      }
-    });
-    return t.innerHTML;
+  // Interactive HTML artifacts render in a sandboxed iframe: scripts and CSS
+  // run in an isolated origin (note the absent allow-same-origin), so an
+  // LLM-produced page can be interactive without reaching into this chat page.
+  function renderArtifact(div, html, label) {
+    if (label) {
+      var l = document.createElement("div");
+      l.className = "smeta";
+      l.style.opacity = ".75";
+      l.style.marginBottom = "5px";
+      l.textContent = label;
+      div.appendChild(l);
+    }
+    var frame = document.createElement("iframe");
+    frame.setAttribute("sandbox",
+      "allow-scripts allow-forms allow-modals allow-popups allow-downloads");
+    frame.style.cssText =
+      "width:100%;height:360px;border:1px solid rgba(255,255,255,0.1);" +
+      "border-radius:10px;background:#0B0E12";
+    frame.srcdoc = String(html || "");
+    div.appendChild(frame);
+
+    var btn = document.createElement("button");
+    btn.textContent = "Open";
+    btn.style.cssText = "margin-top:6px;padding:4px 10px;border-radius:6px;" +
+      "border:1px solid rgba(0,194,160,0.4);background:transparent;color:#00C2A0;" +
+      "cursor:pointer;font:inherit;font-size:.72rem;font-weight:700";
+    btn.onclick = function () {
+      var blob = new Blob([String(html || "")], { type: "text/html" });
+      window.open(URL.createObjectURL(blob), "_blank", "noopener");
+    };
+    div.appendChild(btn);
   }
 
   // ── Rendering helpers (text / markdown / code / html) ──
@@ -549,7 +571,7 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
       img.style.borderRadius = "6px";
       div.appendChild(img);
     } else if (msg.mode === "html") {
-      div.innerHTML = sanitizeHtml(content);
+      renderArtifact(div, content, label);
     } else if (msg.mode === "markdown") {
       div.innerHTML = mdToHtml(content);
     } else if (msg.mode === "code") {
@@ -944,6 +966,74 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
     afterRow.parentElement.insertBefore(fb, afterRow.nextSibling);
   }
 
+  // ── Ask prompts: choice / yes-no options render as clickable buttons ──
+
+  function askOptionList(msg) {
+    // (label, value) pairs to offer for an ask; [] means answer by typing.
+    var kind = msg.kind || "";
+    if (kind === "yes_no") {
+      return [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }];
+    }
+    if (kind === "choice") {
+      var out = [];
+      (msg.choices || []).forEach(function (c) {
+        var label = (c && (c.label || c.value)) || String(c);
+        var value = (c && (c.value || c.label)) || String(c);
+        if (label) out.push({ label: String(label), value: String(value) });
+      });
+      return out;
+    }
+    return [];
+  }
+
+  function renderAsk(msg) {
+    // Agent is asking for input mid-execution.  Option questions become
+    // clickable buttons so a choice never has to be typed as a number.
+    var div = document.createElement("div");
+    div.className = "msg agent";
+    div.textContent = msg.question || "";
+    var opts = askOptionList(msg);
+    if (opts.length) {
+      var row = document.createElement("div");
+      row.className = "ask-opts";
+      opts.forEach(function (o) {
+        var b = document.createElement("button");
+        b.className = "mini accent";
+        b.textContent = o.label;
+        b.onclick = function () { answerAsk(o, row); };
+        row.appendChild(b);
+      });
+      div.appendChild(row);
+    }
+    var time = document.createElement("div");
+    time.className = "time";
+    time.textContent = new Date().toLocaleTimeString();
+    div.appendChild(time);
+    messages.appendChild(div);
+    lastAgentMsgDiv = div;
+    messages.scrollTop = messages.scrollHeight;
+    waitingForAnswer = true;
+    inputBox.placeholder = opts.length ? "Or type an answer..." : "Your answer...";
+    inputBox.focus();
+    agentBusy = true;
+    stopBtn.style.display = "inline-block";
+    // Voice-first: start the mic so the user can answer by speaking.
+    beginVoiceAnswer();
+  }
+
+  function answerAsk(option, row) {
+    // A click on an option answers the pending ask with the option's value.
+    if (!ws || ws.readyState !== WebSocket.OPEN) { return; }
+    addMsg(option.label, "user");
+    ws.send(JSON.stringify({ type: "answer", text: option.value }));
+    if (row) { row.style.display = "none"; }
+    waitingForAnswer = false;
+    endVoiceAnswer();
+    inputBox.placeholder = "Message";
+    agentBusy = true;
+    stopBtn.style.display = "inline-block";
+  }
+
   // ── WebSocket ──
 
   function connectWS() {
@@ -993,15 +1083,9 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
           return;
         }
         if (msg.type === "ask") {
-          // Agent is asking the user for input mid-execution
-          addMsg(msg.question, "agent");
-          waitingForAnswer = true;
-          inputBox.placeholder = "Your answer...";
-          inputBox.focus();
-          agentBusy = true;
-          stopBtn.style.display = "inline-block";
-          // Voice-first: start the mic so the user can answer by speaking.
-          beginVoiceAnswer();
+          // Agent is asking the user for input mid-execution; option
+          // questions render as clickable buttons instead of typed numbers.
+          renderAsk(msg);
           return;
         }
         if (msg.kind === "output") {
@@ -1589,6 +1673,10 @@ class AgentWebServer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ready = threading.Event()
         self._shutdown_event: asyncio.Event | None = None
+        # Supervisor loop control: stop() latches _stopping so a crashed loop
+        # is never resurrected; _restart_delay spaces out crash retries.
+        self._stopping = False
+        self._restart_delay = 2.0
 
     @property
     def state(self) -> ServerState:
@@ -1617,8 +1705,11 @@ class AgentWebServer:
         for p in range(self._port, self._port + 10):
             _free_port(p)
 
+        self._stopping = False
         self._ready.clear()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, daemon=True, name="AgentWebServer"
+        )
         self._thread.start()
         # Wait for server to be ready (up to 15 seconds)
         ok = self._ready.wait(timeout=15.0)
@@ -1627,6 +1718,9 @@ class AgentWebServer:
         return ok
 
     def stop(self) -> None:
+        # Explicit stop is final: latch it so the supervisor loop in _run()
+        # never re-serves after the user switched the server off.
+        self._stopping = True
         # Signal the event loop to shut down gracefully so the
         # finally block in _serve() can run runner.cleanup().
         if self._shutdown_event is not None and self._loop is not None:
@@ -1646,16 +1740,26 @@ class AgentWebServer:
         return self._state.remote_url
 
     def _run(self) -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        self._loop = loop
-        try:
-            loop.run_until_complete(self._serve())
-        except Exception:
-            logger.exception("AgentWebServer event loop crashed")
-        finally:
-            loop.close()
-            self._loop = None
+        # Supervisor loop: the phone-facing server must stay up for hours.
+        # A crashed event loop or a failed port bind is retried after a short
+        # backoff; only an explicit stop() breaks the loop.
+        while not self._stopping:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._loop = loop
+            try:
+                loop.run_until_complete(self._serve())
+            except Exception:
+                logger.exception("AgentWebServer event loop crashed — restarting")
+                # Re-arm for a fresh start on the next attempt.
+                self._ready.clear()
+                self._shutdown_event = None
+                if self._stopping:
+                    break
+                time.sleep(self._restart_delay)
+            finally:
+                loop.close()
+                self._loop = None
 
     async def _serve(self) -> None:
         state = self._state

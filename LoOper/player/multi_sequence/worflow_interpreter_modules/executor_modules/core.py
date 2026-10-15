@@ -425,6 +425,10 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                         'skipped': _stall_id in self.skipped_nodes,
                     }
                     logger.error("[STALL] Node %s details: %s", _stall_id, _stall_deets)
+                self._record_chain_failure(
+                    'stall', '', '',
+                    'Workflow stalled — cannot proceed. Remaining: %s'
+                    % ', '.join(_dead_labels))
                 self._cleanup_run_context()
                 return False
             
@@ -1016,6 +1020,13 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     return True
                 logger.error(f"Node {current_node_id} execution failed, stopping workflow")
                 chain_logger.error(f"Node {current_node_id} FAILED execution. Stopping workflow.")
+                # Record WHY for the builder's test report (never a bare
+                # "a node returned an error" with no reason).
+                _node_type = node.get('type', 'unknown')
+                self._record_chain_failure(
+                    'node_error', current_node_id, _node_type,
+                    self._node_failure_text(current_node_id)
+                    or 'node returned an error')
                 # Invoke failure callback for visual error reporting (e.g., highlight node in GUI)
                 if on_node_failed:
                     try:
@@ -1030,6 +1041,35 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         chain_logger.info("=== CHAIN RUN COMPLETED SUCCESSFULLY ===")
         self._cleanup_run_context()
         return True
+
+    def _node_failure_text(self, node_id):
+        """Best-effort failure text for one node (never raises)."""
+        for _suffix in ('error', 'stderr', 'terminal_output'):
+            try:
+                _val = self.llm_executor.get_variable(
+                    f"node_{node_id}_{_suffix}")
+            except Exception:
+                _val = None
+            if _val is not None and str(_val).strip():
+                return str(_val).strip()
+        return ''
+
+    def _record_chain_failure(self, kind, node_id='', node_type='', reason=''):
+        """Record WHY the chain ended abnormally (for the builder's test).
+
+        Written as flat variables so any caller (the builder's ``test_chain``
+        report, the agent) can read a concrete reason instead of guessing.
+        Never raises.
+        """
+        try:
+            self.llm_executor.set_variable('_chain_failed', True)
+            self.llm_executor.set_variable('_chain_failure_kind', str(kind or ''))
+            self.llm_executor.set_variable('_chain_failed_node', str(node_id or ''))
+            self.llm_executor.set_variable('_chain_failed_type', str(node_type or ''))
+            self.llm_executor.set_variable(
+                '_chain_failure_reason', str(reason or '')[:2000])
+        except Exception:
+            pass
 
     def _clear_node_legacy_vars(self, node_id):
         """Drop every flat ``node_<id>_*`` variable for a stale node.

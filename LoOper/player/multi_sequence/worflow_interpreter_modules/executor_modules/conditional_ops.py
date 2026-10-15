@@ -739,7 +739,11 @@ class ConditionalMixin:
                 if input_port == 'args':
                     if isinstance(val, dict):
                         args.update(val)
-                else:
+                elif val is not None:
+                    # Exec-only edges resolve to None and carry no data: they
+                    # must not take a slot, or the ONE upstream value arrives
+                    # list-wrapped as [None, value] and a condition comparing
+                    # against its text (e.g. input_data == "true") never fires.
                     input_data_list.append(val)
             except Exception:
                 continue
@@ -940,6 +944,13 @@ class ConditionalMixin:
         
         llm_engine = str(conditional_node.get('llm_engine') or 'ollama').strip().lower()
         llm_model = str(conditional_node.get('llm_model') or conditional_node.get('model') or '').strip()
+        # A provider-prefixed model self-routes: the engine follows the
+        # prefix, so the gateway leg (not the local GGUF path) serves it.
+        try:
+            from AI import byok
+            llm_engine, llm_model = byok.normalize_engine_model(llm_engine, llm_model)
+        except Exception:
+            pass
         if not llm_model:
             # The conditional dialog's model combo can save empty when the
             # model cache was cold at edit time.  Fall back to the chain's
@@ -1029,7 +1040,8 @@ class ConditionalMixin:
                         named = self.llm_executor.get_variable(f"node_{from_node_id}_output_{output_type}")
                     out_val = named
                 val = out_val if (out_val is not None and str(out_val).strip()) else ctx_val
-                if input_port != 'args':
+                if input_port != 'args' and val is not None:
+                    # Exec-only edges carry no data (see the code condition).
                     input_data_list.append(val)
             except Exception:
                 continue

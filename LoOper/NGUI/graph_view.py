@@ -1028,6 +1028,13 @@ class GraphViewWidget(QWidget):
         try:
             from .dialogs.chain_expansion_dialog import ChainExpansionDialog
             dialog = ChainExpansionDialog(node, self)
+            # An import without a valid chain file cannot be edited — the
+            # dialog warned and left itself unbuilt; never show it (the old
+            # flow exec_()'d an empty nested canvas and crashed natively).
+            if not getattr(dialog, 'valid', True):
+                dialog.deleteLater()
+                logger.info("Chain editor skipped: no chain file configured")
+                return
             dialog.exec_()
             # The dialog may have saved changes to the imported chain file
             # (added/renamed Output nodes or their variable names) — reload

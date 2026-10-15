@@ -286,9 +286,9 @@ class MainWindow(QMainWindow):
             self._ensure_global_hotkey()
 
             # ── Code Node Studio (non-modal code editor + AI chat) ──
-            # Hosted inside the graph's CENTER column (between the left/right bars)
-            # so its width adapts to them and it rises into the center's free space
-            # without pushing the left/right bars.
+            # Hosted in the graph's CENTER column as a full-canvas takeover:
+            # while open it hides the graph row (canvas + builder chat) and the
+            # studio fills the column, so its width adapts to the window.
             try:
                 self.code_panel = CodeNodePanel(self)
                 self.code_panel.hide()
@@ -296,12 +296,38 @@ class MainWindow(QMainWindow):
                 if cl is not None:
                     cl.addWidget(self.code_panel)
                     try:
-                        cl.setStretch(cl.indexOf(self.graph_view.node_graph_widget), 1)
+                        target = getattr(self.graph_view, '_graph_row', None) or \
+                            self.graph_view.node_graph_widget
+                        cl.setStretch(cl.indexOf(target), 1)
                     except Exception:
                         pass
                 self.graph_view.code_node_selected.connect(self._on_code_node_selected)
             except Exception as e:
                 logger.error(f"Failed to initialize Code Node Studio: {e}")
+
+            # ── Builder chat (scaffolds system chains into the canvas) ──
+            try:
+                from .widgets.builder_panel import BuilderPanel, PANEL_WIDTH
+                self.builder_panel = BuilderPanel(self)
+                self.builder_panel.hide()
+                self._builder_width = PANEL_WIDTH
+                # The chat is a FLOATING overlay on the canvas' right side
+                # (like the dock/panels): the canvas stays full-bleed, so no
+                # empty band is painted and the canvas-side button above the
+                # chat never moves.
+                ui = getattr(self.graph_view, 'ui_components', None)
+                if ui is not None:
+                    ui.set_builder_panel(self.builder_panel)
+                else:
+                    cl = getattr(self.graph_view, '_center_layout', None)
+                    if cl is not None:
+                        cl.addWidget(self.builder_panel)
+                # The canvas-side Builder button opens/closes the same chat.
+                canvas_btn = getattr(self.graph_view, '_builder_toggle_btn', None)
+                if canvas_btn is not None:
+                    canvas_btn.clicked.connect(self._on_builder_btn)
+            except Exception as e:
+                logger.error(f"Failed to initialize Builder panel: {e}")
 
             logger.debug("UI setup completed successfully")
         except Exception as e:
@@ -367,6 +393,14 @@ class MainWindow(QMainWindow):
         code_studio_action.triggered.connect(self._toggle_code_studio)
         self.addAction(code_studio_action)
         self._code_studio_action = code_studio_action
+
+        builder_action = QAction(_("Builder"), self)
+        builder_action.setCheckable(True)
+        builder_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        builder_action.setShortcutContext(Qt.ApplicationShortcut)
+        builder_action.triggered.connect(self._toggle_builder)
+        self.addAction(builder_action)
+        self._builder_action = builder_action
 
         # Modern top bar: our own controls at both ends (the native title bar is
         # gone): mode switch + graph/agent controls on the left, window controls
@@ -452,6 +486,8 @@ class MainWindow(QMainWindow):
             self._graph_aux, "SETTINGS", _("AI Settings"), self.open_ai_settings))
         gal.addWidget(self._make_top_button(
             self._graph_aux, "FILE_TEXT", _("Logs"), self.open_logs))
+        # No Builder button here: its canvas-side floating toggle already
+        # opens/closes the chat, so a second one in the top bar is redundant.
         lay.addWidget(self._graph_aux)
 
         # Agent-mode controls (shown only while the panel is open).
@@ -562,6 +598,118 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Code Node Studio load failed: {e}")
 
+    def _on_builder_btn(self):
+        """Top-bar Builder toggle: open/close the builder chat panel."""
+        panel = getattr(self, 'builder_panel', None)
+        if panel is None:
+            return
+        if panel.isVisible():
+            self._toggle_builder(False)
+        else:
+            self._toggle_builder(True)
+
+    def _toggle_builder(self, checked=None):
+        """Show/hide the Builder chat panel."""
+        panel = getattr(self, 'builder_panel', None)
+        if panel is None:
+            return
+        if checked:
+            self._show_builder()
+        else:
+            self._hide_builder()
+            return
+        action = getattr(self, '_builder_action', None)
+        if action is not None:
+            action.setChecked(bool(checked))
+
+    def _show_builder(self):
+        """Slide the Builder chat in on the RIGHT; the chain canvas stays
+        visible and editable on the left (side-by-side, agent-mode look)."""
+        panel = getattr(self, 'builder_panel', None)
+        if panel is None:
+            return
+        try:
+            self.graph_view._builder_panel_visible = True
+            self.graph_view._builder_reserved_width = 536
+            self.graph_view.ui_components.set_builder_width(0)
+            self.graph_view.ui_components.layout_floating_bars()
+        except Exception:
+            pass
+        self._animate_builder(0, self._builder_target_width())
+        action = getattr(self, '_builder_action', None)
+        if action is not None:
+            action.setChecked(True)
+        btn = getattr(self.graph_view, '_builder_toggle_btn', None)
+        if btn is not None:
+            btn.setChecked(True)
+
+    def _hide_builder(self):
+        """Slide the Builder chat out; the canvas reclaims the full width."""
+        panel = getattr(self, 'builder_panel', None)
+        if panel is None:
+            return
+        try:
+            self.graph_view._builder_panel_visible = False
+            self.graph_view._builder_reserved_width = 0
+            self.graph_view.ui_components.layout_floating_bars()
+        except Exception:
+            pass
+        self._animate_builder(max(0, panel.width()), 0, then_hide=True)
+        action = getattr(self, '_builder_action', None)
+        if action is not None:
+            action.setChecked(False)
+        btn = getattr(self.graph_view, '_builder_toggle_btn', None)
+        if btn is not None:
+            btn.setChecked(False)
+
+    def _builder_target_width(self):
+        """The chat's resting width (its fixed PANEL_WIDTH)."""
+        return int(getattr(self, '_builder_width', 0) or 500)
+
+    def _animate_builder(self, start, end, then_hide=False):
+        """Slide the chat overlay in/out by animating its width.
+
+        The chat is geometry-positioned (not layout-managed), so the width is
+        fed to ``UIComponents.set_builder_width``: the panel slides in from
+        the right edge with the canvas untouched behind it.
+        """
+        ui = getattr(self.graph_view, 'ui_components', None)
+        if ui is None:
+            return
+        try:
+            from PyQt5.QtCore import QEasingCurve, QVariantAnimation
+            anim = QVariantAnimation(self)
+            anim.setDuration(190)
+            anim.setStartValue(max(0, int(start)))
+            anim.setEndValue(max(0, int(end)))
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.valueChanged.connect(
+                lambda v: ui.set_builder_width(int(v)))
+            anim.finished.connect(
+                self._on_builder_hidden if then_hide else self._on_builder_shown)
+            anim.start()
+            self._builder_anim = anim  # keep the ref alive while it runs
+        except Exception:
+            try:
+                ui.set_builder_width(int(end))
+            except Exception:
+                pass
+
+    def _on_builder_shown(self):
+        """Settle the chat at its resting width once the slide finishes."""
+        try:
+            self.graph_view.ui_components.set_builder_width(
+                self._builder_target_width())
+        except Exception:
+            pass
+
+    def _on_builder_hidden(self):
+        """Close the chat overlay once the slide-out finishes."""
+        try:
+            self.graph_view.ui_components.set_builder_width(0)
+        except Exception:
+            pass
+
     def _toggle_code_studio(self, checked=None):
         """Show/hide the Code Node Studio (View menu)."""
         panel = getattr(self, 'code_panel', None)
@@ -594,7 +742,8 @@ class MainWindow(QMainWindow):
             return
         try:
             cl = getattr(self.graph_view, '_center_layout', None)
-            gw = getattr(self.graph_view, 'node_graph_widget', None)
+            gw = getattr(self.graph_view, '_graph_row', None) or \
+                getattr(self.graph_view, 'node_graph_widget', None)
             if cl is not None:
                 gi = cl.indexOf(gw) if gw is not None else -1
                 pi = cl.indexOf(panel)
@@ -646,7 +795,8 @@ class MainWindow(QMainWindow):
             panel.hide()
         try:
             cl = getattr(self.graph_view, '_center_layout', None)
-            gw = getattr(self.graph_view, 'node_graph_widget', None)
+            gw = getattr(self.graph_view, '_graph_row', None) or \
+                getattr(self.graph_view, 'node_graph_widget', None)
             if cl is not None:
                 gi = cl.indexOf(gw) if gw is not None else -1
                 pi = cl.indexOf(panel) if panel is not None else -1

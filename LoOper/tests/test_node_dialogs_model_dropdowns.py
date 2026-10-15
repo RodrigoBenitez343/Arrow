@@ -136,8 +136,9 @@ def test_llm_node_orchestrator_switch_is_reversible(qapp):
 
 
 def test_llm_node_prompt_port_and_tools_gating(qapp):
-    """A vanilla LLM node has a 'prompt' port but no 'tools' port; the
-    'tools' port appears only in orchestrator mode (brains+chains fused)."""
+    """A vanilla LLM node has a 'prompt' port but no tool ports; the
+    'tools' (chains) and 'brains' (sub-brains) ports appear only in
+    orchestrator mode."""
     import NGUI.graph_elements  # noqa: F401
     from NGUI.nodes_resources.llm_node import LLMNode
 
@@ -146,14 +147,18 @@ def test_llm_node_prompt_port_and_tools_gating(qapp):
     assert "prompt" in vanilla_inputs
     assert "context" in vanilla_inputs
     assert "tools" not in vanilla_inputs
+    assert "brains" not in vanilla_inputs
 
     node.set_orchestrator_mode(True)
     orch_inputs = {p.name() for p in node.input_ports()}
     assert "tools" in orch_inputs
+    assert "brains" in orch_inputs
     assert "prompt" in orch_inputs
 
     node.set_orchestrator_mode(False)
-    assert "tools" not in {p.name() for p in node.input_ports()}
+    off_inputs = {p.name() for p in node.input_ports()}
+    assert "tools" not in off_inputs
+    assert "brains" not in off_inputs
 
 
 def test_handle_node_exposes_data_in_and_out_ports(qapp):

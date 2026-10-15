@@ -38,6 +38,14 @@ def main():
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     except Exception:
         pass
+    # Qt requires the WebEngine module to be imported BEFORE the QApplication
+    # is created.  The agent overlay embeds a QWebEngineView to render
+    # interactive HTML artifacts, so pull it in early.  Guarded: a build
+    # without PyQtWebEngine still launches and falls back to a static label.
+    try:
+        import PyQt5.QtWebEngineWidgets  # noqa: F401
+    except Exception:
+        pass
     app = QApplication(sys.argv)
     # Detect and set UI language from OS
     set_language_from_os()
