@@ -110,6 +110,18 @@ class FormFillerWebMixin:
                 got = self._ff_scan_web(driver, web_actions, [sel], in_frame)
                 if got:
                     return got, sel
+                if (self._ff_is_positional_rung(sel)
+                        and self._ff_selectors_visible(driver, [sel])):
+                    # The POSITION the user pinned is on the page and holds no
+                    # field (a wizard mid-transition, an empty step).  Stop here:
+                    # the CONTENT rungs below record what the element LOOKED like
+                    # - and a site that gives every popup the same hashed classes
+                    # re-resolves them to a lookalike container, which is how a
+                    # control OUTSIDE the picked div keeps entering the field
+                    # table, the read-back and the ComoRAG context (live:
+                    # 'Resolved via div > dialog.dj9me5...' -> '[combo] Search').
+                    # The pinned position outranks the resemblance.
+                    break
             if not scope_selectors:
                 return (self._ff_scan_web(driver, web_actions, [], in_frame),
                         "whole page")
@@ -433,6 +445,26 @@ class FormFillerWebMixin:
         """
         return getattr(self, "_ff_run_scope_sel", None) or []
 
+    def _ff_selectors_visible(self, driver, selectors):
+        """True when ANY of *selectors* resolves to a VISIBLE element.
+
+        The scope's liveness is what decides whether a rung is authoritative, so
+        it is measured, not guessed from the (possibly empty) field list.
+        Best-effort: no browser, a script error or an unreadable page is False.
+        """
+        if driver is None or not selectors:
+            return False
+        try:
+            from .....web import actions as web_actions
+            return bool(driver.execute_script(
+                web_actions.JS_DEEP_SEARCH + web_actions.JS_FOREGROUND +
+                "return (function(s){for(var i=0;i<s.length;i++){try{"
+                "var m=__wvpDeepAll([s[i]]);for(var j=0;j<m.length;j++){"
+                "if(__wvpVisible(m[j]))return true;}}catch(e){}}return false;})"
+                "(arguments[0]);", list(selectors)))
+        except Exception:
+            return False
+
     def _ff_scope_alive(self, driver, where):
         """Log whether the picked container is STILL on the page (diagnostic).
 
@@ -444,16 +476,7 @@ class FormFillerWebMixin:
         sel = self._ff_run_scope()
         if not sel or driver is None:
             return
-        try:
-            from .....web import actions as web_actions
-            alive = driver.execute_script(
-                web_actions.JS_DEEP_SEARCH + web_actions.JS_FOREGROUND +
-                "return (function(s){for(var i=0;i<s.length;i++){try{"
-                "var m=__wvpDeepAll(s[i]);for(var j=0;j<m.length;j++){"
-                "if(__wvpVisible(m[j]))return true;}}catch(e){}}return false;})"
-                "(arguments[0]);", sel)
-        except Exception:
-            alive = None
+        alive = self._ff_selectors_visible(driver, sel)
         log_block(logger, logging.INFO, "Form Scope",
                   "picked container still on the page after %s: %s"
                   % (where, alive))

@@ -264,7 +264,7 @@ class LLMOperationsMixin:
             dialog._update_ocr_region_label()
 
             # Advanced tab - Output configuration
-            write_text_str = node.get_property("write_text") or "true"
+            write_text_str = str(node.get_property("write_text") or "true")
             write_text = write_text_str.lower() in ("true", "1", "yes", "on")
             dialog.write_text_checkbox.setChecked(write_text)
 
@@ -276,18 +276,18 @@ class LLMOperationsMixin:
             )
 
             # Async processing
-            use_async_str = node.get_property("use_async") or "true"
+            use_async_str = str(node.get_property("use_async") or "true")
             use_async = use_async_str.lower() in ("true", "1", "yes", "on")
             dialog.use_async_checkbox.setChecked(use_async)
 
             # Features tab - Vision configuration
-            use_vision_str = node.get_property("use_vision") or "false"
+            use_vision_str = str(node.get_property("use_vision") or "false")
             use_vision = use_vision_str.lower() in ("true", "1", "yes", "on")
             dialog.use_vision_checkbox.setChecked(use_vision)
 
             # vision_model is no longer a separate combo — images go directly to the main model
 
-            screenshot_enabled_str = node.get_property("screenshot_enabled") or "true"
+            screenshot_enabled_str = str(node.get_property("screenshot_enabled") or "true")
             screenshot_enabled = screenshot_enabled_str.lower() in (
                 "true",
                 "1",
@@ -296,7 +296,7 @@ class LLMOperationsMixin:
             )
             dialog.screenshot_enabled_checkbox.setChecked(screenshot_enabled)
 
-            use_direct_rag_str = node.get_property("use_direct_rag") or "false"
+            use_direct_rag_str = str(node.get_property("use_direct_rag") or "false")
             use_direct_rag = use_direct_rag_str.lower() in ("true", "1", "yes", "on")
             dialog.use_direct_rag_checkbox.setChecked(use_direct_rag)
             # Engine-aware default: llama.cpp nodes embed with the local
@@ -357,7 +357,7 @@ class LLMOperationsMixin:
             )
 
             # ----- llama.cpp config (load) -----
-            use_llamacpp_str = node.get_property("use_llamacpp") or "false"
+            use_llamacpp_str = str(node.get_property("use_llamacpp") or "false")
             use_llamacpp = use_llamacpp_str.lower() in ("true", "1", "yes", "on")
             if use_llamacpp:
                 dialog.engine_combo.setCurrentText("llama.cpp")

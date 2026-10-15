@@ -32,6 +32,9 @@ HIDDEN_IMPORTS = [
     # Agent-mode UI (overlay + floating dot, same as the full app)
     "NGUI.widgets.agent_overlay", "NGUI.widgets.agent_dot",
     "NGUI.widgets.agent_web_server",
+    # Interactive HTML artifacts: the overlay embeds a QWebEngineView.
+    "PyQt5.QtWebEngineWidgets", "PyQt5.QtWebEngineCore",
+    "PyQt5.QtWebEngine", "PyQt5.QtWebChannel",
     # Player / agentic ops
     "player.agentic_ops.simple_agent", "player.agentic_ops.chain_executor",
     "player.agentic_ops.run_memory", "player.agentic_ops.description_repair",
@@ -69,8 +72,7 @@ HIDDEN_IMPORTS = [
 ]
 
 EXCLUDES = [
-    "PyQt5.QtWebEngineWidgets", "PyQt5.QtWebEngine",
-    "PyQt5.QtWebChannel", "PyQt5.QtMultimedia",
+    "PyQt5.QtMultimedia",
     "NodeGraphQt", "pyqtgraph",
     "paddleocr", "paddle", "paddlepaddle",
     "matplotlib", "tkinter",

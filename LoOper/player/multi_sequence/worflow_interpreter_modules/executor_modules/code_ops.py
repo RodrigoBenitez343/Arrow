@@ -23,38 +23,19 @@ class CodeMixin:
     def _resolve_code_input_value(self, from_node_id, output_type, input_port=''):
         """Resolve the raw value an upstream node published for a port.
 
-        Producers publish asymmetrically today: some write only legacy flat
-        variables (node_{id}_output / node_{id}_output_{port}), others (web
-        sequences, mirrored in core.py) write only the port-scoped store.
-        Legacy lookups stay first so dual-store producers keep their current
-        value; the port store is the fallback that lets data-only producers
-        (web ctx_out, etc.) reach the code node.  Returns the raw payload,
-        never unwrapped.
+        Delegates to the ONE shared resolver (``ports.resolve_port``) -- the
+        same one the LLM node's input readers use, so a Code node and an LLM
+        node wired to the same edge see the SAME value.  Base ports
+        (``output``/``input``/branch) drive execution only and yield ``None``;
+        every other port (``data``/``context``/``ctx_out``/custom) resolves by
+        name.  The value is returned VERBATIM -- no shape guessing.
         """
-        output_type = str(output_type or 'output')
-        input_port = str(input_port or '')
-        # Base/branch ports drive execution ONLY — they carry no data.
-        if output_type in ('output', '', 'true', 'false', 'error', 'route'):
-            return None
-        # Try the named output port first
-        val = self.llm_executor.get_variable(f"node_{from_node_id}_output_{output_type}")
-        if val is None:
-            val = self._port_store_value(from_node_id, output_type)
-        return val
-
-    def _port_store_value(self, from_node_id, output_type):
-        """Port-scoped read with a sane chain_id default for standalone use."""
-        try:
-            chain_id = getattr(self, 'chain_id', None) or 'default_chain'
-            val = self.port_store.get_output(chain_id, str(from_node_id), str(output_type))
-            if val is not None:
-                logger.debug(
-                    "Code node input '%s' from %s resolved via port store",
-                    output_type, from_node_id,
-                )
-            return val
-        except Exception:
-            return None
+        from .ports import resolve_port
+        chain_id = getattr(self, 'chain_id', None) or 'default_chain'
+        return resolve_port(
+            self.llm_executor.variables, from_node_id, output_type,
+            self.port_store, chain_id,
+        )
 
     def _execute_code_node(self, node, stop_flag, input_overrides=None, arg_overrides=None):
         """
@@ -136,7 +117,11 @@ class CodeMixin:
             val = self._resolve_code_input_value(from_node_id, output_type, input_port)
             
             if input_port == 'input':
-                input_data.append(val)
+                # Exec-only edges carry no data: never let one occupy a slot,
+                # or the single real value arrives list-wrapped as
+                # [None, value] instead of the plain value.
+                if val is not None:
+                    input_data.append(val)
             elif input_port == 'args':
                 if isinstance(val, dict):
                     args.update(val)

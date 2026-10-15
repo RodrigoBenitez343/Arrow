@@ -20,6 +20,13 @@ from PyQt5.QtWidgets import (
 )
 
 from .base_dialog import ModernDialog
+from .engine_options import (
+    engine_from_config,
+    engine_id,
+    fill_engine_combo,
+    select_engine,
+    store_model,
+)
 
 from .toggle_switch import ModernToggle
 from ..i18n import _
@@ -76,10 +83,7 @@ class _WebPickThread(QThread):
             logger.error("Element picker failed: %s", exc)
             self.picked.emit(None)
 
-# Dialog labels <-> runtime engine values
-_ENGINE_LABELS = ["Ollama", "llama.cpp"]
-_ENGINE_TO_RUNTIME = {"Ollama": "ollama", "llama.cpp": "llamacpp"}
-_ENGINE_FROM_RUNTIME = {"ollama": "Ollama", "llamacpp": "llama.cpp"}
+# (Engine labels/ids live in .engine_options — one list for every dialog.)
 
 
 def _wrap_label(text):
@@ -145,7 +149,7 @@ class FormFillerDialog(ModernDialog):
 
         model_layout.addWidget(QLabel(_("Engine:")), 0, 0)
         self.engine_combo = QComboBox()
-        self.engine_combo.addItems(_ENGINE_LABELS)
+        fill_engine_combo(self.engine_combo)
         self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
         model_layout.addWidget(self.engine_combo, 0, 1)
 
@@ -389,7 +393,7 @@ class FormFillerDialog(ModernDialog):
     # ------------------------------------------------------------------
 
     def on_engine_changed(self, text):
-        use_llamacpp = text == "llama.cpp"
+        use_llamacpp = engine_id(self.engine_combo) == "llamacpp"
         self.ollama_model_combo.setVisible(not use_llamacpp)
         self.ollama_model_label.setVisible(not use_llamacpp)
         self.gguf_model_combo.setVisible(use_llamacpp)
@@ -482,11 +486,12 @@ class FormFillerDialog(ModernDialog):
     # ------------------------------------------------------------------
 
     def get_config(self):
-        engine = _ENGINE_TO_RUNTIME.get(self.engine_combo.currentText(), "llamacpp")
-        if engine == "ollama":
-            model = self.ollama_model_combo.currentText().strip()
-        else:
+        engine = engine_id(self.engine_combo)
+        if engine == "llamacpp":
             model = self.gguf_model_combo.currentText().strip()
+        else:
+            # A provider engine persists as the model's "provider:" prefix.
+            model = store_model(engine, self.ollama_model_combo.currentText().strip())
         return {
             'mode': self.mode_combo.currentText(),
             'instruction': self.instruction_edit.toPlainText().strip(),
@@ -518,13 +523,14 @@ class FormFillerDialog(ModernDialog):
         mode = str(cfg.get('mode') or 'web')
         self.mode_combo.setCurrentText(mode if mode in ('web', 'desktop') else 'web')
 
-        engine = str(cfg.get('engine') or 'llamacpp').lower()
-        self.engine_combo.setCurrentText(_ENGINE_FROM_RUNTIME.get(engine, 'llama.cpp'))
+        engine = engine_from_config(cfg.get('engine'), False,
+                                    cfg.get('model', ''))
+        select_engine(self.engine_combo, engine)
         model = str(cfg.get('model') or '')
-        if engine == 'ollama':
-            self.ollama_model_combo.setCurrentText(model)
-        else:
+        if engine == 'llamacpp':
             self.gguf_model_combo.setCurrentText(model)
+        else:
+            self.ollama_model_combo.setCurrentText(model)
         self.on_engine_changed(self.engine_combo.currentText())
 
         try:

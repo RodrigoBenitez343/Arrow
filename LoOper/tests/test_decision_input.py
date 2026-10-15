@@ -542,3 +542,39 @@ def test_carry_without_any_source_still_fails_for_non_handle_consumers():
     h = _make()
     node = _input_node(default_value='')  # connections: {'output': []}
     assert h._execute_input_node(node, lambda: False) is None
+
+
+# ---------------------------------------------------------------------------
+# Provider-prefixed decision model self-routes (engine selectors)
+# ---------------------------------------------------------------------------
+
+
+def test_decision_model_prefix_routes_to_the_gateway_leg(monkeypatch):
+    """A provider-prefixed decision_model follows the prefix: the engine
+    becomes the provider, so the gateway (OllamaClient) leg serves it — not
+    the local GGUF path the stale decision_engine claimed."""
+    import AI.consult as consult
+    from player.multi_sequence.llm_executor_resources import config_utils
+
+    calls = {}
+
+    class _Client:
+        def __init__(self, base_url=None, **kw):
+            calls['base_url'] = base_url
+
+        def chat(self, model=None, prompt=None, **kw):
+            calls['model'] = model
+            calls['system'] = kw.get('system')
+            return {'response': 'true'}
+
+    monkeypatch.setattr(consult, 'OllamaClient', _Client)
+    monkeypatch.setattr(config_utils, 'get_default_api_url',
+                        lambda: 'http://gateway.test')
+
+    h = _Harness()  # raw mixin: the real _input_llm_call runs
+    node = {'decision_engine': 'llamacpp',  # stale value, prefix must win
+            'decision_model': 'openai:gpt-4o-mini'}
+    out = h._input_llm_call('Q?', node, lambda: False, max_tokens=8)
+    assert out == 'true'
+    assert calls['base_url'] == 'http://gateway.test'
+    assert calls['model'] == 'openai:gpt-4o-mini'

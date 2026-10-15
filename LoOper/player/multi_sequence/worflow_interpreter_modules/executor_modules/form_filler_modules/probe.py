@@ -8,6 +8,7 @@ from .common import (
     _ff_drop_foreign_qa,
     _ff_finding_lines,
     _ff_norm,
+    _ff_split_pool,
     _strip_think,
     log_block,
     logger,
@@ -431,7 +432,7 @@ class FormFillerProbeMixin:
         return (out or "").strip() or None
 
     def _ff_probe_consolidate(self, label, probe, cfg, source_text, documents,
-                             stop_flag=None):
+                             stop_flag=None, learned_hint=""):
         """Multi-cycle ComoRAG consolidation for one field.
         Wires the SAME hooks the LLM node wires: an INTENT PLANNER
         (what to look for), a PROBE GENERATOR (so the extra cycles ask a
@@ -451,12 +452,22 @@ class FormFillerProbeMixin:
         """
         from AI.laya_hooks import relevance_or, sufficiency_or
         self._ff_last_synth = None
+        # The context pool is ONE pool: documents, stored rows, skills, history
+        # turns and the learned answers ALL belong to it.  Split it so every
+        # stream reaches the engine as a retrievable source - the learned
+        # answers included - instead of being treated as "not the document" and
+        # dropped.  Nothing is lost: an unmarked stream stays in 'context'.
+        pool = _ff_split_pool(source_text)
         doc_texts = self._ff_doc_texts(documents)
+        if pool["documents"]:
+            doc_texts = list(doc_texts) + [pool["documents"]]
         ctx = {}
         if doc_texts:
             ctx["documents"] = doc_texts
-        if source_text:
-            ctx["context_nodes"] = [source_text]
+        if pool["context"]:
+            ctx["context_nodes"] = [pool["context"]]
+        if pool["learned_text"]:
+            ctx["learned"] = [pool["learned_text"]]
         if not ctx:
             return ""
         if self._ff_halt(stop_flag):
@@ -468,7 +479,15 @@ class FormFillerProbeMixin:
                       "engine unavailable: %s" % exc)
             return ""
         embed_client = None
-        if cfg["engine"] == "ollama":
+        _ff_engine = str(cfg.get("engine") or "llamacpp").strip().lower()
+        try:
+            from AI import byok as _byok
+            _ff_is_local = _byok.is_local_engine(_ff_engine)
+        except Exception:
+            _ff_is_local = _ff_engine in ("", "llamacpp", "llama.cpp", "llama_cpp")
+        if _ff_engine == "ollama" or not _ff_is_local:
+            # Ollama direct; BYOK providers through the local gateway
+            # ("provider:model" prefix dispatch — see _FFEmbedClient).
             emb = _FFEmbedClient(cfg["engine"], cfg["model"])
             embed_client = lambda texts: emb.embeddings(cfg["model"], texts) or []  # noqa: E731
         try:
@@ -632,11 +651,26 @@ class FormFillerProbeMixin:
             return ""
         if not parts:
             self._ff_last_route = "single-pass (no ComoRAG result)"
-            return ""
+            return self._ff_learned_head(learned_hint)
+        _lh = self._ff_learned_head(learned_hint)
+        if _lh:
+            # The user's own answer for THIS field leads the evidence: it is
+            # the pool's learned stream, and a rejected/low-confidence answer
+            # must be able to fall back on it (and ADAPT it), never be left to
+            # re-derive the same value from the documents alone.
+            parts.insert(0, _lh)
         return "\n\n".join(parts)
 
+    def _ff_learned_head(self, learned_hint):
+        """The labeled head for one field's learned answer ('' when none)."""
+        v = str(learned_hint or "").strip()
+        if not v:
+            return ""
+        return ("[LEARNED - the user already answered this field; reuse it "
+                "or ADAPT it to the exact format this field requires]:\n%s" % v)
+
     def _ff_probe(self, label, cfg, source_text, documents=None, stop_flag=None,
-                  repair_hint=""):
+                  repair_hint="", learned_hint=""):
         """Retrieve the material for ``label`` - facts + verbatim excerpts.
 
         The field label (+ instruction) is the goal.  With ``consolidate`` on
@@ -654,6 +688,13 @@ class FormFillerProbeMixin:
             return ""
         if self._ff_halt(stop_flag):
             return ""
+        # The pool's learned stream for THIS field rides as an instance setting
+        # (set by the field loop / repair pass right before the call), so the
+        # probe keeps its original signature - a caller that mocks it is not
+        # forced to know about a new keyword.
+        if not learned_hint:
+            learned_hint = getattr(self, "_ff_learned_hint", "")
+        self._ff_learned_hint = ""
         # The probe is the field's question text; on a repair run the page's
         # rejection feedback rides along so the retrieval targets the format.
         probe = label if not repair_hint else (label + "\n" + repair_hint)
@@ -664,6 +705,7 @@ class FormFillerProbeMixin:
         if cfg["consolidate"] and cfg["probe_cycles"] > 1:
             facts = self._ff_probe_consolidate(
                 label, probe, cfg, source_text, documents, stop_flag,
+                learned_hint=learned_hint,
             )
             if facts:
                 self._ff_last_route = (
@@ -741,7 +783,13 @@ class FormFillerProbeMixin:
                           "context probe failed for '%s': %s" % (label, exc))
         if head and head[:120] not in "\n\n".join(parts):
             parts.insert(0, "[Source document start]:\n" + head)
-        return _ff_drop_foreign_qa("\n\n".join(parts), label)
+        _joined = _ff_drop_foreign_qa("\n\n".join(parts), label)
+        _lh = self._ff_learned_head(learned_hint)
+        if _lh:
+            # A single-pass retrieval must see the pool's learned stream too:
+            # it leads so a rejected answer can be adapted instead of repeated.
+            _joined = ("%s\n\n%s" % (_lh, _joined)).strip()
+        return _joined
 
     def _ff_stop_requested(self, stop_flag):
         """True when the user pressed ESC (the shared keyboard monitor flag)."""

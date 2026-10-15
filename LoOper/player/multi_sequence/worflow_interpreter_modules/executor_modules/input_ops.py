@@ -141,10 +141,34 @@ class InputMixin:
         # shared ``_chain_input_context`` variable, which every input node
         # may inject into its connected nodes to support recursion.
 
+        # 0) Externally bound value (chat-mode bind_input): the router
+        #    executor writes values directly into advertised
+        #    agent_modifiable slots before the chain runs — deterministic,
+        #    no LLM reasoning.  Outranks every other strategy.
+        _bound = None
+        try:
+            _bound_map = self.llm_executor.get_variable("_chain_bound_inputs") or {}
+            if isinstance(_bound_map, dict) and _bound_map:
+                _lk = str(label or '').strip().lower()
+                if _lk:
+                    for _k, _v in _bound_map.items():
+                        if str(_k).strip().lower() == _lk:
+                            _bound = _v
+                            break
+        except Exception:
+            _bound = None
+
+        if _bound is not None:
+            result = str(_bound)
+            logger.info(
+                "[INPUT] Node %s (label='%s') using bound input value "
+                "(%d chars)", node_id, label, len(result),
+            )
+
         # 1) Agent-modifiable: the LLM reasons the value from the field
         #    label + chain context.  Runs on every execution so a looped
         #    node re-infers from the current context each iteration.
-        if agent_modifiable and agent_mode:
+        elif agent_modifiable and agent_mode:
             _ctx = ""
             try:
                 _ctx = self._resolve_input_upstream_value(node)
@@ -833,6 +857,13 @@ class InputMixin:
         import time
         engine = str(node_data.get('decision_engine') or 'llamacpp').strip().lower()
         model = str(node_data.get('decision_model') or '').strip()
+        # A provider-prefixed model self-routes: the engine follows the
+        # prefix, so the gateway leg (not the local GGUF path) serves it.
+        try:
+            from AI import byok
+            engine, model = byok.normalize_engine_model(engine, model)
+        except Exception:
+            pass
         if not model:
             try:
                 for wnode in (self.workflow_graph or {}).values():

@@ -29,14 +29,38 @@ class ChainExpansionDialog(ModernDialog):
         self.chain_import_node = chain_import_node
         self.parent_graph_view = parent_graph_view
         self.config_manager = None  # Will be initialized after graph_view is created
-        
+
         self.setModal(True)
         self.resize(1000, 700)
-        
+
+        # Validate BEFORE any UI: an import without an (existing) chain file
+        # cannot be edited.  The old flow still built the whole nested
+        # GraphViewWidget and then showed the dialog with an EMPTY canvas —
+        # the state that crashed natively when opened from a freshly
+        # created, still-empty import node.  ``valid`` tells the caller to
+        # skip exec_() entirely.
+        self.valid = self._import_chain_file_exists()
+        if not self.valid:
+            QMessageBox.warning(
+                self, _("Warning"),
+                _("Chain file not found or not configured.\n\n"
+                  "Set the chain file on the import node first (double-click "
+                  "the node or use its properties)."))
+            return
+
         self.setup_ui()
         self.load_chain_config()
         # Load the chain into the graph view after config is loaded
         self.load_chain_into_graph()
+
+    def _import_chain_file_exists(self):
+        """True when the import node points at an existing chain file."""
+        try:
+            import_config = self.chain_import_node.get_chain_import_config()
+            chain_file = str(import_config.get('chain_file') or '')
+            return bool(chain_file) and os.path.exists(chain_file)
+        except Exception:
+            return False
     
     def load_chain_config(self):
         """Load the chain configuration from the import node"""

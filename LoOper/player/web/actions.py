@@ -774,38 +774,66 @@ function __wvpOptionLabel(el) {
   return clean(el.getAttribute('value'));
 }
 /**
- * The SCOPE roots the field resolution is confined to: the user's picked
- * container(s) when set, else the page's TOP LAYERS (an open modal / popup).
+ * The ONE element a selector ladder identifies: the first rung that resolves
+ * UNAMBIGUOUSLY.
+ *
+ * A rung that matches several elements identifies nothing, so taking ``ms[0]`` is
+ * a coin flip - and a site that styles EVERY popup with the same CSS-module
+ * classes (LinkedIn: dj9me5 / dj9me4 / dj9hyg) makes it land on a LOOKALIKE
+ * container, e.g. the header 'Search' dialog instead of the picked form.  Once
+ * that happens the fields OUTSIDE the picked div read as if they were inside it
+ * (enumeration, read-back, comboboxes and clicks all confine themselves to this
+ * pick).  Prefer a match that is rendered - and on top when asked; a rung with
+ * exactly ONE match that is merely scrolled out of view still counts, because
+ * the pick is the pick.
+ */
+function __wvpScopePick(list, requireTopmost) {
+  var arr = (typeof list === 'string') ? [list] : (list || []);
+  for (var i = 0; i < arr.length; i++) {
+    if (!arr[i]) continue;
+    var ms = [];
+    try { ms = __wvpDeepAll([arr[i]]); } catch (e) { ms = []; }
+    if (!ms.length) continue;
+    var on = [];
+    for (var j = 0; j < ms.length; j++) {
+      try {
+        if (__wvpVisible(ms[j])
+            && (!requireTopmost || __wvpTopmost(ms[j]))) on.push(ms[j]);
+      } catch (e) {}
+    }
+    if (on.length === 1) return on[0];
+    if (on.length > 1) continue;          // ambiguous: this rung names nothing
+    if (ms.length === 1) return ms[0];    // unique, off-screen: still the pick
+  }
+  return null;
+}
+/**
+ * The SCOPE root the field resolution is confined to: the user's picked
+ * container when set, else the page's TOP LAYERS (an open modal / popup).
  *
  * Resolution is TOP-DOWN: with no explicit pick it confines itself to the
  * layer(s) actually on screen, so the base page's chrome behind a modal (a
- * header 'Search' box) is never matched as a form field.  These are the SAME
- * layers the enumeration already uses, so the sweep and the repair resolve from
- * the SAME place.  [] (no pick at all) -> no confinement (whole document,
- * exactly as before).  A pick that is PRESENT but does not resolve FAILS
- * CLOSED - see below.
+ * header 'Search' box) is never matched as a form field.  This resolves from
+ * the SAME pick the enumeration uses, so the sweep and the repair agree on the
+ * container.  [] (no pick at all) -> no confinement (whole document, exactly as
+ * before).  A pick that is PRESENT but does not resolve FAILS CLOSED - see below.
  */
 function __wvpScopeRoots(scopeSel) {
   var list = (typeof scopeSel === 'string') ? [scopeSel]
            : (scopeSel && scopeSel.length ? scopeSel : []);
-  var picked = false;
-  var roots = [];
-  for (var i = 0; i < list.length; i++) {
-    if (!list[i]) continue;
-    picked = true;
-    var ms = __wvpDeepAll(list[i]);
-    if (ms.length) roots.push(ms[0]);
-  }
-  if (roots.length) return roots;            // explicit pick wins
-  // A pick was GIVEN but resolved to nothing: the picked container is not on
-  // this page (a stale pick, or a form whose layout no longer matches).  FAIL
-  // CLOSED - never widen to the whole page, where the site's own chrome - a
-  // header 'Search' box that also DECLARES itself a combobox - would be
-  // matched and CLICKED (opening it), closing the very popup the form lives
-  // in.  The sentinel is not a DOM node, so __wvpInScope is false for every
-  // element: nothing outside the (unresolvable) pick is ever acted on.
-  if (picked) return [{__wvpNoScope: true}];
-  return __wvpModalLayers();                 // no pick -> confine to a REAL popup only
+  if (!list.length) return __wvpModalLayers();   // no pick -> a REAL popup only
+  var el = __wvpScopePick(list, false);
+  if (el) return [el];                   // ONE root: the picked container
+  // A pick was GIVEN but resolved to nothing, or only to an ambiguous set of
+  // lookalikes: the picked container is not on this page (a stale pick, or a
+  // form whose layout no longer matches).  FAIL CLOSED - never widen to the
+  // whole page, where the site's own chrome - a header 'Search' box that also
+  // DECLARES itself a combobox - would be matched and CLICKED (opening it),
+  // closing the very popup the form lives in.  The sentinel is not a DOM node,
+  // so __wvpInScope is false for every element: nothing outside the (unresolvable)
+  // pick is ever acted on.  One root, never a union: a root PER ladder rung put
+  // every lookalike dialog in scope at once.
+  return [{__wvpNoScope: true}];
 }
 /**
  * The page's OPEN MODAL / popup layer(s) - the explicit markers only.
@@ -1520,17 +1548,11 @@ JS_ENUMERATE_FORM_TREE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (s
   } catch (e) {}
   var root = __wvpRootDoc(), scoped = false;
   if (scopeSelectors && scopeSelectors.length) {
-    for (var s = 0; s < scopeSelectors.length && !scoped; s++) {
-      var ms = [];
-      try { ms = __wvpDeepAll(scopeSelectors[s]); } catch (e) { ms = []; }
-      for (var m = 0; m < ms.length; m++) {
-        try {
-          if (__wvpVisible(ms[m]) && __wvpTopmost(ms[m])) {
-            root = ms[m]; scoped = true; break;
-          }
-        } catch (e) {}
-      }
-    }
+    // The SAME pick the field enumerator uses, so the tree and the field table
+    // can never resolve to two different containers (an ambiguous rung - every
+    // dialog carrying the site's shared classes - names nothing).
+    var scopeEl = __wvpScopePick(scopeSelectors, true);
+    if (scopeEl) { root = scopeEl; scoped = true; }
     if (!scoped) {
       // A PICKED container is WHERE the form is: no whole-page fallback (the
       // page's global 'Search' box behind a modal is not the form).
@@ -2022,22 +2044,13 @@ JS_ENUMERATE_FORM_FIELDS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function 
   // ('form > div' matches the page's own form) resolved to the page UNDERNEATH
   // a shadow-hosted modal, and - because a scope drops the covered/on-top gate
   // - the fields BEHIND the modal were enumerated ('it only sees the base
-  // one').  Collect EVERY deep match and prefer one that is rendered AND on top
-  // (uncovered = the modal); fall back to the first match so a legitimate
-  // container that is merely scrolled out of view is never lost.
+  // one').  The shared pick therefore surveys EVERY deep match and takes the
+  // rung only when it names exactly one rendered, uncovered element: an ambiguous
+  // rung (every dialog on the site carries the same hashed classes) names
+  // nothing, and a rung with a single match that is merely scrolled out of view
+  // is still the pick.
   function scopeMatch(selectors) {
-    var first = null;
-    for (var si = 0; selectors && si < selectors.length; si++) {
-      var ms = [];
-      try { ms = __wvpDeepAll([selectors[si]]); } catch (e) { ms = []; }
-      for (var mi = 0; mi < ms.length; mi++) {
-        if (!first) first = ms[mi];
-        try {
-          if (__wvpVisible(ms[mi]) && __wvpTopmost(ms[mi])) return ms[mi];
-        } catch (e) {}
-      }
-    }
-    return first;
+    return __wvpScopePick(selectors, true);
   }
   var root = __wvpRootDoc();
   var scoped = false;
@@ -2059,6 +2072,17 @@ JS_ENUMERATE_FORM_FIELDS = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function 
       root = ((scopeEl.tagName || '').toLowerCase() === 'iframe'
               && scopeEl.contentDocument)
              ? scopeEl.contentDocument : scopeEl;
+    } else {
+      // The pick did NOT resolve (the form moved, its layout rotated, or only
+      // lookalikes matched).  Enumerating the WHOLE document here is the leak:
+      // it read the site's own chrome - a header 'Search' combobox - into the
+      // field table, and from there into the read-back and the ComoRAG context
+      // (live: 'Resolved via div > dialog.dj9me5...' -> '[combo] Search').  The
+      // documented policy has no whole-page fallback for a picked scope, so fall
+      // back to the page's OPEN POPUP layers - where a migrated form really
+      // lives - and otherwise return NOTHING (the caller waits and re-scans).
+      layers = __wvpTopLayers();
+      if (!layers.length) return JSON.stringify([]);
     }
   } else {
     layers = __wvpTopLayers();
