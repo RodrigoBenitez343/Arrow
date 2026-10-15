@@ -189,6 +189,9 @@ automation.log*
 /utils/laya_english_f16.gguf
 /utils/license.bin
 /utils/blockkey/
+/utils/OpenMausBot/
+/utils/byok-runtime/
+/utils/MiroFish/
 
 # -----------------------------------------------------------------------------
 # .qoder — agent workspace (scratch files, caches, ~2 GB test blobs)
