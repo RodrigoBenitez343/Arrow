@@ -2,6 +2,8 @@
 
 Arrow is a Windows desktop platform for building, running, and scheduling intelligent automation entirely on local hardware: record any interaction once, compose it into a visual workflow graph, and execute it deterministically — with local AI (llama.cpp / Ollama), local vision, local OCR, and local speech. No cloud, no telemetry, no per-token fees.
 
+On top of that deterministic core, Arrow is an **agent platform you own**: a chat you talk to ("agent mode"), a side-docked **assisted builder** that scaffolds whole agents as node graphs while you watch, and an **Android phone client** that reaches the host over a peer-to-peer link — no IP address, no VPN, no server-served page. And if local models are not enough, **BYOK** lets any node or agent reason through your own cloud keys (or a local model server) while everything else stays on-device.
+
 This document is the **technical reference** for the current codebase: architecture, every subsystem, the frameworks it is built on, the data formats it reads and writes, and the engineering doctrine behind its implementations. The internal package name is still `LoOper`; the product brand is **Arrow**.
 
 ---
@@ -9,24 +11,27 @@ This document is the **technical reference** for the current codebase: architect
 ## Contents
 
 1. Platform overview
-2. Technology stack
-3. High-level architecture
-4. Runtime topology
-5. The chain workflow model (nodes, ports, data flow)
-6. The execution engine
-7. Recording subsystems (desktop + web)
-8. Playback & grounding (desktop + web)
-9. AI stack (inference, retrieval, vision, speech)
-10. Agent mode (system chains, tools, orchestrator, deterministic chains, goals, routing shadows)
-11. Memory & context
-12. Specialized subsystems (form filler, handle, MCP, code)
-13. Scheduling, sandbox & remote access
-14. Export & build pipeline
-15. Configuration, environment & data
-16. Engineering doctrine (methodologies)
-17. Testing & verification
-18. Repository layout
-19. Licensing & distribution
+2. The system chain — a meta-harness you shape (brain, hands, audit)
+3. Technology stack
+4. High-level architecture
+5. Runtime topology
+6. The chain workflow model (nodes, ports, data flow)
+7. The execution engine
+8. Recording subsystems (desktop + web)
+9. Playback & grounding (desktop + web)
+10. AI stack (inference, retrieval, vision, speech, BYOK)
+11. Agent mode (system chains, orchestrator goal loop, deterministic chains, goals, routing shadows)
+12. The assisted builder (panel, composer, planner, teach flows)
+13. Memory & context
+14. Specialized subsystems (form filler, handle, MCP, code)
+15. The phone client (P2P Android app)
+16. Scheduling, sandbox & remote access
+17. Export & build pipeline (agents, MSI, APK)
+18. Configuration, environment & data
+19. Engineering doctrine (methodologies)
+20. Testing & verification
+21. Repository layout
+22. Licensing & distribution
 
 ---
 
@@ -36,8 +41,8 @@ This document is the **technical reference** for the current codebase: architect
 
 - **A visual automation platform.** Workflows ("chains") are node graphs, not scripts. Recorded desktop sequences and browser flows are first-class nodes you connect, branch, loop, and nest.
 - **A deterministic execution engine with embedded AI.** The graph is a symbolic program; LLM nodes, conditional gates, decision inputs, and the orchestrator add fuzzy reasoning only at the seams. Nothing critical depends on a model producing well-formed output.
-- **An agent platform.** Agent Mode turns chains into tools for a local model. The agent's "mind" is a **system chain** you design in the editor — up to and including an **Orchestrator root** that routes a goal across multiple mini-brain chains until it is achieved.
-- **Fully on-device.** Bundled GGUF models via llama.cpp, ONNX vision, PaddleOCR, Piper TTS, Vosk STT. Works offline and in air-gapped environments.
+- **An agent platform you own.** Agent mode has no hardcoded behaviour: the agent's "mind" is a **system chain** you design in the editor — up to and including an **Orchestrator root** that routes a goal across multiple mini-brain chains until it is achieved (see §2 and §11). The **assisted builder** (§12) scaffolds that mind from a plain-language goal, and the **phone client** (§15) talks to it over a P2P link.
+- **Fully on-device.** Bundled GGUF models via llama.cpp, ONNX vision, PaddleOCR, Piper TTS, Vosk STT. Works offline and in air-gapped environments. **BYOK** (§10.7) is the opt-in exception: your own cloud API keys, your own local model server, per node or per agent.
 - **Composable approval and memory primitives.** Approvals are Input nodes plus branch routing; memory is Context nodes plus an inspectable SQLite store and Graph RAG.
 
 ### 1.2 Capability map
@@ -45,20 +50,24 @@ This document is the **technical reference** for the current codebase: architect
 | Capability | What it does | Primary code |
 |---|---|---|
 | Node-graph editor | Author, edit, expand, and run chains | `NGUI/` (PyQt5 + NodeGraphQt) |
+| Assisted builder | Chat that scaffolds system chains on the live canvas; autonomous composition; teach flows | `NGUI/widgets/builder_panel.py`, `player/builder/` |
 | Desktop recorder | Capture clicks, typing, scrolls, drags, clipboard + screenshots + UIA elements | `recorder/`, `NGUI/widgets/recording_overlay.py` |
 | Web recorder | DOM-level browser capture via CDP injection; selector-based sessions | `player/web/` (recorder, picker, inject) |
 | Execution engine | Dependency-gated scheduler loop over typed nodes; branches, loops, sub-chains | `player/multi_sequence_player.py`, `player/multi_sequence/worflow_interpreter_modules/` |
 | Desktop replay | Element-first (UIA) + template-matching cascade, OCR conditions, human-like pacing | `player/action_handlers.py`, `player/computer_vision.py`, `player/uia_locator.py`, `player/ocr_engine.py` |
 | Web replay | Native-first CDP ladder, durable shared browser profile, entity-driven | `player/web/engine.py`, `player/web/handlers/` |
 | Local AI | llama.cpp GGUF + Ollama; chat/generate/embed endpoints | `AI/llama_cpp_engine.py`, `AI/ollama_engine.py`, `AI/api.py` |
+| BYOK providers | Cloud OpenAI-compatible providers, local model servers, CLI tools, behind the same gateway | `AI/byok.py`, `NGUI/dialogs/ai_settings_dialog.py`, `NGUI/dialogs/engine_options.py` |
 | Semantic retrieval | ComoRAG probe-driven retrieval; embeddings; Graph RAG | `AI/comorag_engine.py`, `AI/embedding_server.py`, `AI/graph_rag.py` |
 | Laya engine | Embedded System-1 decision engine (typed choice/score/noul, CPU) | `AI/laya_client.py`, `AI/laya_hooks.py`, `AI/laya_bench.py`, `AI/bin/laya.exe`, `AI/models/laya-GGUF/` |
 | Vision | VLM screen understanding (LFM2.5-VL), ONNX object detection, PaddleOCR | `AI/recursive_vision_reasoner.py`, `player/computer_vision.py`, `player/ocr_engine.py` |
-| Speech | Piper neural TTS, Vosk STT (voice mode) | `player/tts_engine.py`, `player/stt_engine.py` |
-| Agent mode | System-chain-driven agent; chat overlay; phone client; chains-as-tools | `player/agentic_ops/`, `NGUI/widgets/agent_overlay.py`, `NGUI/widgets/agent_web_server.py` |
+| Speech | Piper neural TTS, Vosk STT (voice mode, desktop + phone) | `player/tts_engine.py`, `player/stt_engine.py` |
+| Agent mode | System-chain-driven agent; chat overlay; chains-as-tools | `player/agentic_ops/`, `NGUI/widgets/agent_overlay.py`, `NGUI/widgets/agent_mode.py` |
+| Agent transport | Local aiohttp API (`/ws`, `/stt`, `/tts`) + P2P Pear/Bare sidecar | `NGUI/widgets/agent_web_server.py`, `agent_sidecar/` |
+| Phone client | Android app (WebView + Pear worklet + QR scanner + notifications) | `phone_client/` (Kotlin + JS), `build_pipeline/build_phone_apk.ps1` |
 | Orchestrator | Goal loop over mini-brain chains; LLM/Laya picker; trace + synthesis | `player/…/executor_modules/orchestrator_ops.py`, `NGUI/nodes_resources/orchestrator_node.py` |
 | Persistent goals | Wake-driven goal ledger; blocked lifecycle | `player/agentic_ops/goal_ledger.py` |
-| Memory | Turn-based in-run context + SQLite persistence + RAG + consolidation | `port_store.py`, `AI/context_database.py`, `context_ops.py` |
+| Memory | Turn-based in-run context + SQLite persistence + RAG + consolidation + activity timeline | `port_store.py`, `AI/context_database.py`, `context_ops.py`, `player/agentic_ops/run_memory.py` |
 | Scheduling | once / daily / weekly / interval, JSON-persisted, in-process runs | `NGUI/scheduler_service.py` |
 | RDP sandbox | Run automation inside an isolated Windows session | `sandbox_agent.py`, `setup_rdp_agent.py`, `utils/rdpwrap/` |
 | Agent export | Compile a system chain + transitive assets into a standalone exe | `builder/agent_exporter.py`, `builder/agent_standalone_entry.py` |
@@ -66,16 +75,64 @@ This document is the **technical reference** for the current codebase: architect
 
 ---
 
-## 2. Technology stack
+## 2. The system chain — a meta-harness you shape
 
-### 2.1 Core frameworks
+### 2.1 The bot is a document, not a black box
+
+Agent mode has **no hardcoded behaviour**. Everything the agent *is* — how it receives a request, how it reasons, what it remembers, which tools it may use, how it answers — lives in one editable artifact: the **system chain**, a chain JSON whose `collection` is `"System"`. The same visual graph editor used for automation builds the bot. The same execution engine runs it. The same logs, traces, ratings and memory panels audit it. There is no hidden classifier, no fallback router, no vendor-side loop.
+
+This is the same idea as hosted services that let you configure a personal AI bot — give it a personality, connect some tools, watch it act on your behalf. Arrow takes that idea to its conclusion: the bot is not a server-side profile reachable only through someone else's settings page. It is a document on your machine, made of the same nodes as every other chain, editable at any time, replaceable by copying a file, and fully inspectable while it runs.
+
+### 2.2 Brain and hands
+
+```mermaid
+flowchart TB
+    subgraph Brain["THE BRAIN — one System chain file (collection = System)"]
+        In["Input nodes<br/>receive the query,<br/>ask the user, gate branches"] --> LLM["LLM nodes<br/>reason with tools, vision,<br/>web mode, consolidation"]
+        LLM --> Orch{"Orchestrator node (optional)<br/>goal loop: observe -> pick -> scope -> act -> verify"}
+        Orch --> Ctx["Context nodes<br/>turn-based memory,<br/>persistent + consolidated"]
+        Ctx --> Out["Output nodes<br/>answer the user,<br/>render artifacts"]
+    end
+
+    subgraph Hands["THE HANDS — tool chains wired to the router ports"]
+        Seq["Sequences<br/>recorded desktop routines"]
+        WebSeq["Web sequences<br/>recorded browser routines"]
+        Det["Deterministic chains<br/>(chains port — no routing inference)"]
+        SubBrain["Sub-brains<br/>(brains port — nested routers)"]
+        Steps["LLM steps, code,<br/>form filler, handle, MCP"]
+    end
+
+    Orch -- "tools / brains / chains<br/>runtime-derived descriptions" --> Hands
+    Hands -- "verified step results<br/>+ honest failures" --> Orch
+    In -- "ask-user v2 questions" --> User["THE USER<br/>answers, rates, stops, audits"]
+    User -- "edits the graph, records new hands,<br/>reviews trace + logs + action-graph shadows" --> Brain
+```
+
+- **The brain** is the system chain: Input nodes receive the query, LLM nodes reason, Context nodes remember, an Orchestrator node (optional) loops toward the goal, Output nodes answer. Multiple system chains = multiple named agents ("coworkers"), each its own file.
+- **The hands** are tool chains — recorded desktop sequences, recorded web sessions, deterministic chains, LLM processing steps, sub-brains — wired to the brain's router ports (`tools` / `brains` / `chains`). Every hand is a real, replayable, testable automation; the agent never "imagines" an action, it dispatches a chain that runs on the same engine as manual playback.
+- **You shape both, all the time.** Record a routine → it becomes a hand. Draw a gate → the brain routes on it. Watch a run → rate it, and the description-repair loop rewords the hand's routing signal. Let the orchestrator verify a run → it freezes into a **learned chain** you can open, edit or delete. Chat with the builder → it scaffolds a whole new system chain on the canvas while you watch it take shape and fix it directly.
+
+### 2.3 No shipped default — the bot starts as yours
+
+Arrow ships **no default system chain**. On the first chat, the router answers *"No system chain loaded"* and points at the editor; the assisted builder scaffolds a System-collection chain from a plain-language goal (§12), or you draw one by hand. When several System chains exist, the agent overlay offers them as selectable coworkers. The router keeps your explicit choice for the session; otherwise it uses a chain flagged `is_default` (the "root brain" marker), then the first System chain on disk. Deleting or replacing the file changes the agent — nothing else does.
+
+### 2.4 Every step is auditable
+
+The same property that makes the bot editable makes it trustworthy: every step of every run leaves evidence. The orchestrator publishes its full step log on the `trace` port with per-step verdicts (`ok: true/false`); routing shadows render the derived action graph and a plan projection (§11.7); the activity timeline records every chain run, node execution and chat turn (§13); outputs are rateable and descriptions self-repair. ESC aborts any run; a blocked goal parks itself visibly instead of spinning. Nothing the agent does is unobservable.
+
+---
+
+## 3. Technology stack
+
+### 3.1 Core frameworks
 
 | Domain | Technology |
 |---|---|
 | Language / runtime | Python ≥ 3.10 (Windows), `multiprocessing`, threads + Qt event loop |
 | Desktop UI | **PyQt5** (dark theme, high-DPI), **NodeGraphQt** (graph editor), `pytablericons` (vector icons), `i18n` (EN/ES) |
-| Local HTTP API | **FastAPI** + **uvicorn** (chat, generate, embeddings, llama.cpp lifecycle, vision bootstrap) |
-| LLM inference | **llama.cpp** (bundled `llama-server.exe`, GGUF, Vulkan backends) and **Ollama** (HTTP) |
+| Local HTTP API | **FastAPI** + **uvicorn** (chat, generate, embeddings, llama.cpp lifecycle, vision bootstrap, BYOK gateway) |
+| Agent transport | **aiohttp** (`/ws`, `/stt`, `/tts`) + **Pear / Bare** sidecar (**hyperdht** byte-pipe, Ed25519 keys) |
+| LLM inference | **llama.cpp** (bundled `llama-server.exe`, GGUF, Vulkan backends), **Ollama** (HTTP), and **BYOK** providers (OpenAI-compatible chat completions, local model servers, CLI tools) |
 | Embeddings | Dedicated llama.cpp embedding mode (`embeddinggemma-300M GGUF`) |
 | Desktop input | `pynput` / low-level Windows hooks, `PyAutoGUI`, `pyperclip`, `keyboard` |
 | Computer vision | **OpenCV** (multi-scale template matching), `mss` (capture), Pillow, scikit-image, SciPy |
@@ -86,10 +143,11 @@ This document is the **technical reference** for the current codebase: architect
 | Memory / data | **SQLite** (`SQLAlchemy`), JSON files, atomic tmp+replace writes |
 | System-1 decisions | **Laya** (ModernBERT-large, typed noul/choice questions, one encoder pass), embedded CPU runtime |
 | Documents | `PyPDF2` (PDF extraction), `python-docx` (Word) |
-| Packaging | **PyInstaller** (onedir), **WiX Toolset** (per-user MSI), PowerShell build pipeline |
+| Phone client | **Kotlin** Android app (WebView + Pear bare-kit worklet + ZXing QR scan + foreground service), **Node.js** host sidecar (`hyperdht`, `b4a`) |
+| Packaging | **PyInstaller** (onedir), **WiX Toolset** (per-user MSI), **Gradle / AGP + NDK** (Android APK), PowerShell build pipeline |
 | Security | `cryptography` (offline HMAC license validation) |
 
-### 2.2 Optional dependency extras (`pyproject.toml`)
+### 3.2 Optional dependency extras (`pyproject.toml`)
 
 | Extra | Contents | When |
 |---|---|---|
@@ -97,42 +155,52 @@ This document is the **technical reference** for the current codebase: architect
 | `vision313_win` | torch, torchvision (Python 3.13+, Windows) | Vision support on newer Pythons |
 | `overwatch` | FastAPI, LangChain, loguru, pandas… | OverWatch companion service and its utilities |
 
-Web automation dependencies (`selenium`, `undetected-chromedriver`, `keyboard`) are declared in `LoOper/requirements.txt`; everything else is pinned in `pyproject.toml`.
+Web automation dependencies (`selenium`, `undetected-chromedriver`, `keyboard`) are declared in `LoOper/requirements.txt`; everything else is pinned in `pyproject.toml`. The phone client and the agent sidecar carry their own `package.json` files (`LoOper/phone_client/`, `LoOper/agent_sidecar/`).
 
 ---
 
-## 3. High-level architecture
+## 4. High-level architecture
 
 ```mermaid
 flowchart TB
     subgraph UI["NGUI — PyQt5 desktop UI"]
         Editor["Node graph editor<br/>NodeGraphQt + dialogs"]
-        Overlays["Agent chat overlay / dot / execution overlay"]
+        Builder["Builder chat panel<br/>scaffolds system chains on the canvas"]
+        Overlays["Agent chat overlay / dot / execution overlay<br/>float dock, artifacts"]
         Panels["Chains library, scheduler panel,<br/>code node studio, agent settings"]
     end
 
     subgraph Engine["Player — execution engine"]
         Interp["Workflow interpreter<br/>scheduler loop + per-type node ops"]
+        BuilderCore["Assisted builder core<br/>assistant / composer / planner / devtools"]
         DRec["Desktop recorder<br/>global input hooks + overlay"]
         WebEng["Web recorder + replay engine<br/>Selenium + CDP"]
         Ground["Grounding: UIA, template matching,<br/>OCR, vision (Handle)"]
     end
 
     subgraph AIStack["AI subsystem"]
-        API["FastAPI local API :8000"]
-        Engines["llama.cpp GGUF :8081<br/>Ollama :11434"]
+        API["FastAPI local API :8000<br/>+ BYOK gateway routing"]
+        Engines["llama.cpp GGUF :8081<br/>Ollama :11434<br/>BYOK providers"]
         Rag["Embeddings + ComoRAG + Graph RAG"]
         Laya["Laya decision engine<br/>embedded laya.exe, cpu"]
     end
 
+    subgraph Transport["Agent transport"]
+        WS["aiohttp agent API<br/>/ws /stt /tts"]
+        Sidecar["Pear/Bare sidecar<br/>hyperdht, Ed25519 key"]
+        Phone["Android phone client<br/>WebView + worklet + notifications"]
+    end
+
     subgraph Store["Persistence"]
-        Chains["chains/*.json"]
+        Chains["chains/*.json<br/>(incl. learned/)"]
         Seqs["sequences/ + web_sequences/"]
         DB["data/context.db (SQLite)"]
-        Misc["schedules.json, goal ledger,<br/>session logs"]
+        Misc["schedules.json, goal ledger,<br/>run_memory.db, artifacts/, byok.json,<br/>builder_settings.json, session logs"]
     end
 
     Editor --> Interp
+    Builder --> BuilderCore
+    BuilderCore --> Interp
     Panels --> Interp
     Overlays --> Interp
     Interp --> WebEng
@@ -142,6 +210,10 @@ flowchart TB
     Interp --> Laya
     DRec --> Seqs
     API --> Engines
+    WS --> Overlays
+    WS --> Interp
+    Sidecar --> WS
+    Phone -. "hyperdht, by pubkey" .-> Sidecar
     Interp --> Chains
     Interp --> DB
     Interp --> Misc
@@ -149,13 +221,15 @@ flowchart TB
 
 **The three pillars:**
 
-1. **NGUI** — the editor and all runtime surfaces (overlays, panels). Graph authoring with typed nodes, dialogs for configuration, chain library with collections, scheduler UI, and the agent chat/phone surfaces.
-2. **Player** — the execution engine and all input/output machinery: the workflow interpreter (builder → executor → navigator), the desktop recorder, the web recorder/replay engine, and the grounding stack (UIA, template matching, OCR, vision).
-3. **AI** — the local inference and retrieval stack: a FastAPI server exposing chat/generate/embed over llama.cpp and Ollama, the embedding server, ComoRAG/GraphRAG retrieval, and the embedded Laya decision engine.
+1. **NGUI** — the editor and all runtime surfaces (overlays, panels, builder chat). Graph authoring with typed nodes, dialogs for configuration, chain library with collections, scheduler UI, the agent chat/phone surfaces, and the side-docked builder panel.
+2. **Player** — the execution engine and all input/output machinery: the workflow interpreter (builder → executor → navigator), the desktop recorder, the web recorder/replay engine, the grounding stack (UIA, template matching, OCR, vision), and the assisted-builder core (`player/builder/`).
+3. **AI** — the local inference and retrieval stack: a FastAPI server exposing chat/generate/embed over llama.cpp, Ollama and BYOK providers, the embedding server, ComoRAG/GraphRAG retrieval, and the embedded Laya decision engine.
+
+Around the pillars sit two satellite surfaces: the **agent transport** (aiohttp API + P2P sidecar + Android app) and the **persistence** layer (chains, recordings, databases, ledgers).
 
 ---
 
-## 4. Runtime topology
+## 5. Runtime topology
 
 ```mermaid
 flowchart LR
@@ -165,21 +239,27 @@ flowchart LR
     GUI --> Mtmd["llama-mtmd-cli subprocess<br/>vision inference"]
     GUI --> Sandbox["sandbox_agent.py<br/>RDP session HTTP agent"]
     GUI -. lazy-launch .-> Laya2["Laya decision daemon<br/>embedded laya.exe + GGUF"]
+    GUI --> WSS["Agent web server (aiohttp)<br/>/ws /stt /tts on 0.0.0.0"]
+    WSS --> Sidecar["Pear/Bare sidecar (Node.js)<br/>hyperdht node, publishes pubkey"]
+    Sidecar -. "DHT, by Ed25519 key" .-> Phone["Android phone client<br/>WebView chat UI + worklet"]
     GUI --> Export["Exported agent exe<br/>ARROW_DIRECT_ENGINE=1"]
 ```
 
 - **Launcher (`LoOper.py`)** — a bootstrap process that can run the GUI, or execute a `.py` argument directly (interpreter mode), which is how the RDP sandbox agent and exported agents are spawned.
-- **GUI process** — PyQt5 main window; hosts the graph editor, overlays, scheduler thread, recorder listeners, and (by default) the FastAPI server.
+- **GUI process** — PyQt5 main window; hosts the graph editor, overlays, builder panel, scheduler thread, recorder listeners, and (by default) the FastAPI server.
 - **llama.cpp subprocess** — the bundled `llama-server.exe` (default port 8081) serves all GGUF inference; engine lifecycle is managed by `AI/llama_cpp_engine.py` (start on demand, health-check, release).
 - **Vision subprocess** — multimodal inference runs through `llama-mtmd-cli` with a GGUF + mmproj projector pair.
 - **Laya engine** — embedded, lazy-launched daemon (`AI/bin/laya.exe` + `AI/models/laya-GGUF/`), `None` on failure; every consumer falls back to LLM paths automatically.
+- **Agent web server** — an aiohttp server (bound to `0.0.0.0`) exposing the agent protocol (`/ws` chat + panels, `/stt`, `/tts`, `/status`). It serves **no HTML** — the chat UI ships inside the phone app.
+- **Pear/Bare sidecar** — a Node.js child process (`agent_sidecar/looper-agent-sidecar.js`) that publishes an Ed25519 public key on the DHT and byte-pipes connected peers to the aiohttp server's local port. Its key persists in `%LOCALAPPDATA%\LoOper\agent-key.json`, so the scannable code stays stable. When the sidecar cannot run, the server falls back to a plain `http://<tailscale-or-lan-ip>:<port>` URL.
+- **Phone client** — the Android app scans the `pear://<pubkey>` QR (or accepts a pasted key), dials the host over hyperdht, and drives the host's API through a loopback pipe (§15).
 - **Exported agents** — standalone executables that embed the app, the system chain, and its transitive chains; they run with `ARROW_DIRECT_ENGINE=1` (no external API dependency at all).
 
 ---
 
-## 5. The chain workflow model
+## 6. The chain workflow model
 
-### 5.1 Chain JSON format
+### 6.1 Chain JSON format
 
 A chain is a JSON document whose top-level sections each hold a list of typed nodes (the visual graph is stored as node lists + connections, not as an opaque blob):
 
@@ -192,7 +272,7 @@ A chain is a JSON document whose top-level sections each hold a list of typed no
 | `chain_import_nodes` | Chain Import | Run another chain as a sub-workflow / tool |
 | `form_filler_nodes` | Form Filler | Document-grounded multi-field form completion |
 | `code_nodes` | Code | Custom Python with JSON in/out |
-| `container_nodes` | Container | VM-based grouping node |
+| `container_nodes` | Container | Legacy VM-grouping node (deprecated; kept for file compatibility) |
 | `context_nodes` | Context | Persistent cross-chain memory |
 | `input_nodes` | Input | Value injection, questions, decision routing, media acceptance |
 | `handle_nodes` | Handle | Vision-based click/scroll/zoom grounding |
@@ -201,7 +281,7 @@ A chain is a JSON document whose top-level sections each hold a list of typed no
 | `orchestrator_nodes` | Orchestrator | Goal loop over mini-brain chains |
 | `tts_nodes` | (legacy) | Auto-migrated into LLM nodes with TTS enabled |
 
-Chain metadata: `name`, `description`, `collection` (e.g. `System`, `Tools`, `Brains`), and `is_default` (marks the default system chain).
+Chain metadata: `name`, `description`, `collection` (e.g. `System`, `Tools`, `Brains`), and `is_default` (marks the root brain — the System chain the router prefers when no explicit agent is selected). **No system chain ships with the app**: agent mode works with whatever System-collection chains you author (see §2.3).
 
 ```json
 {
@@ -215,7 +295,37 @@ Chain metadata: `name`, `description`, `collection` (e.g. `System`, `Tools`, `Br
 }
 ```
 
-### 5.2 Node catalog
+### 6.2 Node catalog
+
+```mermaid
+flowchart TB
+    subgraph Sources["Sources — how value enters the graph"]
+        I["Input<br/>value injection,<br/>questions, decisions"]
+        S["Sequence<br/>recorded desktop routine"]
+        WS["Web Sequence<br/>recorded browser session"]
+        M["MCP<br/>external protocol tools"]
+    end
+    subgraph Reasoning["Reasoning — where judgement lives"]
+        L["LLM<br/>reasoning, tools, vision,<br/>web mode, TTS"]
+        O["Orchestrator<br/>goal loop over brains +<br/>deterministic chains"]
+        C["Conditional<br/>image / OCR / wait / web<br/>branch gates"]
+    end
+    subgraph Acting["Acting — what touches the world"]
+        S2["Sequence replay"]
+        WS2["Web Sequence replay"]
+        H["Handle<br/>vision-grounded click /<br/>scroll / zoom / key"]
+        F["Form Filler<br/>multi-field completion"]
+        CD["Code<br/>custom Python"]
+    end
+    subgraph Memory["Memory"]
+        CX["Context<br/>turn-based, persistent,<br/>consolidation"]
+    end
+    subgraph Composition["Composition & output"]
+        CI["Chain Import<br/>sub-chain / tool / brain"]
+        O2["Output<br/>chat bubble / artifact /<br/>agent-visible result"]
+    end
+    Sources --> Reasoning --> Acting --> Memory --> Composition
+```
 
 | Node | Role | Notable behaviour |
 |---|---|---|
@@ -226,15 +336,15 @@ Chain metadata: `name`, `description`, `collection` (e.g. `System`, `Tools`, `Br
 | LLM | Reasoning node | Tools, vision, structured output, web mode, TTS, consolidation |
 | Chain Import | Composition | Sub-chain in-player or as an LLM tool; classified *brain* (contains an orchestrator) vs *deterministic chain* |
 | Form Filler | Structured data entry | Knowledge base + repair loops + review gate |
-| Code | Extension point | Inline/file Python, JSON arguments, output variables |
-| Container | VM grouping | Groups nodes into a sub-VM |
+| Code | Extension point | Inline/file Python, JSON arguments, named IO ports, output variables |
+| Container | Legacy VM grouping | Deprecated — the assisted builder declines to create one; existing files still load |
 | Context | Memory | Turn-based history, SQLite persistence, consolidation |
 | Handle | Vision action | VLM scene understanding + LLM reasoning for click/scroll/zoom |
 | MCP | External tools | Discovered tools exposed to the router model |
-| Output | Sink | Chat bubble / popup / agent-visible results |
+| Output | Sink | Chat bubble / popup / interactive HTML artifact / agent-visible results |
 | Orchestrator | Goal loop | Runs frozen deterministic chains first, else picks mini brains; synthesizes the final answer |
 
-### 5.3 Ports and data flow
+### 6.3 Ports and data flow
 
 Every node exposes **named ports**. Execution flows along **exec edges** (base ports such as `output` → `input`); values flow along **data edges** (`data`, `true`/`false`, `trace`, `blocked`, `files`, `brains`, `chains`, …). The distinction is what keeps the engine predictable: a data edge never triggers execution, an exec edge never smuggles values.
 
@@ -247,11 +357,12 @@ flowchart LR
 ```
 
 - All port values are stored per chain in the **PortScopedStore** and exposed as `node_<id>_<port>` variables; downstream nodes read only ports they are explicitly connected to.
+- The port contract is enforced in one place (`executor_modules/ports.py` — the single publisher + resolver): base ports (`''`, `output`, `true`, `false`, `error`, `route`) drive **execution only** and carry **no data** — a consumer reached through one sees `None`. Every other port (`data`, `context`, `ctx_out`, and any custom port a Code node declares in its IO tab) carries **data**, published under the port's own name and resolved by that name. The LLM `context` output is the plain response text; the structured `{user_input, response}` envelope is internal metadata and never reaches a data port, so no consumer has to unwrap it.
 - Chain-to-chain state rides explicit variables: `_chain_input_context` (the prompt channel into sub-chains), `selected_by_llm`, tool results, etc. There is no hidden global state between chains.
 - Branch-capable nodes are: Conditional nodes, Input nodes with **decision mode**, and Input nodes with **routed yes/no questions**. They own `true` / `false` output ports.
 - **Router ports make the source a subroutine.** A node whose execution edges land *only* on a router input port (`llm.tools`, `orchestrator.brains`, `orchestrator.chains`) is flagged `tool_provider` once at graph build — generically, for every node type, after stale edges are dropped — and never runs in the main loop: its router invokes it. `selected_by_llm` rides along as a dispatch/reporting marker, never as an execution grant.
 
-### 5.4 Branching and loops
+### 6.4 Branching and loops
 
 ```mermaid
 flowchart TB
@@ -267,15 +378,16 @@ flowchart TB
     Gate -- "none left / stopped" --> Done["Chain complete"]
 ```
 
-- Branch sweep: when a branch-capable node resolves, the unchosen branch is recursively **marked skipped** (shared `_mark_skipped` machinery) so merges never stall.
+- Branch sweep: when a branch-capable node resolves, the unchosen branch is recursively **marked skipped** (shared `_mark_skipped` machinery) so merges never stall. The sweep is **edge-exact**: its reachability walk never expands back *through* the gating conditional, and a node proven to be on the chosen side is never swept — a loop-back edge on the unchosen leg must not leak the chosen branch's nodes into the skipped set.
 - Loop-backs re-inject context: an Input node re-resolves on every pass, which is how iterative workflows (search-refine, retry ladders) are built with pure topology.
+- **A pass with no work is a dead end, not a loop.** A generalized loop-back re-iterates only when the pass actually executed at least one **work** node; a pass made up solely of outputs/conditionals cannot make progress, so the chain completes there instead of spinning (and never re-arms the nodes it had un-skipped).
 - Decision and routed questions are re-evaluated per loop pass, keeping gates accurate inside iterating workflows.
 
 ---
 
-## 6. The execution engine
+## 7. The execution engine
 
-### 6.1 Components
+### 7.1 Components
 
 | Component | File | Responsibility |
 |---|---|---|
@@ -286,10 +398,11 @@ flowchart TB
 | Per-type ops | `…/executor_modules/*_ops.py` | One module per node family (input, llm, chain, conditional, code, context, handle, mcp, form filler, orchestrator, output, sequence, container) |
 | Dependencies | `…/executor_modules/dependencies.py` | Readiness gate: exec edges, data edges, branch-source rules |
 | Port store | `…/executor_modules/port_store.py` | Named-port values + turn-based history per chain |
+| Port contract | `…/executor_modules/ports.py` | Single publisher + resolver: exec-only ports carry no data, data ports resolve by name |
 
-### 6.2 Execution semantics
+### 7.2 Execution semantics
 
-- **Dependency-gated scheduling.** A node runs only when every incoming edge it needs is settled: exec edges fire in order, data edges only gate consumers that actually read them. Branch sweeps pre-settle the unchosen side so merges proceed.
+- **Dependency-gated scheduling.** A node runs only when every incoming edge it needs is settled: exec edges fire in order, data edges only gate consumers that actually read them. Branch sweeps pre-settle the unchosen side so merges proceed; the sweep is edge-exact (it never traverses back through the gating conditional) and never sweeps a node on the chosen side.
 - **Tool-provider gating.** Chain-import nodes wired to a tool consumer (LLM tools port, Orchestrator `brains` port) are *tool providers*: they never start the chain standalone, they only run when selected.
 - **Stop semantics.** A single stop flag is polled everywhere (including inside model calls); ESC aborts a run immediately, and pending ask-user waits are released (the answer is discarded, not eaten by the next query).
 - **Failure model is fail-closed.** Unparseable model answers route to the configured default branch; missing criteria fail without a model call; extraction errors degrade to logged fallbacks — never a crash, never a silent wrong turn.
@@ -297,9 +410,9 @@ flowchart TB
 
 ---
 
-## 7. Recording subsystems
+## 8. Recording subsystems
 
-### 7.1 Desktop recorder
+### 8.1 Desktop recorder
 
 | Module | Role |
 |---|---|
@@ -312,7 +425,7 @@ flowchart TB
 
 Capture policy highlights (all recorded alongside the action): the **cropped image** of the click target, the **Windows UIA element** the click landed on (ControlType + bounding box), and precise coordinates. The recorder groups rapid scrolls into one action, buffers typed text into one type action, and recognizes clipboard shortcuts. When the target is a browser and you record a Web Sequence node, the same workflow hands over to the web recorder (below) so browser steps are captured as DOM entities instead of images.
 
-### 7.2 Web recorder
+### 8.2 Web recorder
 
 | Module | Role |
 |---|---|
@@ -323,13 +436,13 @@ Capture policy highlights (all recorded alongside the action): the **cropped ima
 | `player/web/inject/locators.js` | Selector derivation for recorded elements |
 | `player/web/events.py` / `session.py` | Event schema + durable session storage |
 
-Recordings are stored as **web sequences** (`web_sequences/*.json`): element-driven steps with selector identities, **never absolute coordinates**. Identity rules favour stable attributes (`data-*`, ids, text containment), exclude outer containers from repeating-element matches, and treat repeated items as entities with cursor semantics for replay.
+Recordings are stored as **web sequences** (`web_sequences/*.json`): element-driven steps with selector identities, **never absolute coordinates**. Identity rules favour stable attributes (`data-*`, ids, text containment), exclude outer containers from repeating-element matches, and treat repeated items as entities with cursor semantics for replay. Every locator additionally records a **structural path** — `tag` + `nth-of-type` at every level, at FULL depth, with no id / class / text — i.e. the element's *kind and place*; that is what a **picked container** (form-filler page scope, conditional targets) resolves by when the content-derived tokens have all rotated between instances.
 
 ---
 
-## 8. Playback & grounding
+## 9. Playback & grounding
 
-### 8.1 Desktop replay — two independent locators
+### 9.1 Desktop replay — two independent locators
 
 ```mermaid
 flowchart TB
@@ -349,7 +462,7 @@ flowchart TB
 - **OCR conditions** — `player/ocr_engine.py` + `ocr_worker.py` (PaddleOCR) power text conditions in Conditional nodes.
 - **Human-like behaviour** — jittered click targets, curved mouse paths, variable timing.
 
-### 8.2 Web replay engine
+### 9.2 Web replay engine
 
 ```mermaid
 flowchart LR
@@ -369,30 +482,52 @@ flowchart LR
 
 ---
 
-## 9. AI stack
+## 10. AI stack
 
-### 9.1 Inference engines
+### 10.1 Inference engines
 
 | Engine | Transport | Notes |
 |---|---|---|
 | **llama.cpp** | `llama-server.exe` subprocess, port 8081, HTTP | GGUF models, GPU-layer offload (Vulkan), embedding mode for the embedding server |
 | **Ollama** | HTTP :11434 | Alternative provider; model pulled/selected by name |
+| **BYOK providers** | HTTPS (OpenAI-compatible chat completions) / HTTP (local servers) / subprocess (CLI tools) | Your own cloud keys, LM Studio, Claude/Codex CLI — see §10.7 |
 | **llama-mtmd-cli** | subprocess per inference | Multimodal vision (GGUF + mmproj projector) |
 
 `AI/model_cache.py` and `AI/model_downloads.py` manage model inventory and downloads; `AI/gguf_model_info.py` inspects GGUF geometry (context limits, layer counts) to size runtime parameters. The engine is authoritative about context size — the app caps requests to the model's training context.
 
-### 9.2 Local API surface (`AI/api.py`, FastAPI)
+### 10.2 Local API surface (`AI/api.py`, FastAPI)
 
 | Endpoint | Purpose |
 |---|---|
 | `/health`, `/models`, `/bootstrap/status` | Liveness, model inventory, startup state |
-| `/chat`, `/generate`, `/generate_stream` | Unified chat/generation (routes to the active provider) |
+| `/chat`, `/generate`, `/generate_stream` | Unified chat/generation (routes to the active provider — llama.cpp, Ollama, or BYOK) |
 | `/embeddings` | Embedding vectors (embedding server) |
 | `/llamacpp/*` (`chat`, `generate`, `generate_stream`, `start`, `stop`, `status`, `models`, `release`) | Direct llama.cpp lifecycle + inference |
 | `/vision-models` | Vision model inventory |
 | `/cleanup` | Free engines after bursts |
 
-### 9.3 Embeddings & semantic retrieval
+**BYOK gateway routing.** One logical endpoint, three wire routes (llama.cpp engine / Ollama / BYOK providers). Resolution order for every LLM and embedding route:
+
+```mermaid
+flowchart LR
+    A["Request"] --> B{"1. explicit<br/>provider field?"}
+    B -- yes --> Go["Route to that provider"]
+    B -- no --> C{"2. model prefix<br/>provider:model?"}
+    C -- yes --> Go
+    C -- no --> D{"3. per-capability role<br/>from byok.json?"}
+    D -- yes --> Go
+    D -- no --> E["4. legacy default<br/>(Ollama, or the engine for /llamacpp/*)"]
+    E --> Go
+    Go --> R{"Provider kind"}
+    R -- llamacpp --> L["Local llama-server"]
+    R -- ollama --> O["Ollama native /api/generate"]
+    R -- cloud --> C2["OpenAI-compatible<br/>chat completions"]
+    R -- cli --> C3["Claude / Codex CLI subprocess"]
+```
+
+Roles are the cross-device switch: embeddings on the local engine + chat on a cloud provider is just `roles.embeddings="llamacpp"`, `roles.chat="openai"` in `byok.json`.
+
+### 10.3 Embeddings & semantic retrieval
 
 - `AI/embedding_server.py` — lazy thread-safe singleton: own llama.cpp embedding process, batching, health-check/restart, atexit shutdown.
 - `AI/comorag_engine.py` — **ComoRAG** retrieval: the embedding space is used as a detached sparse attention layer over large context sources.
@@ -410,11 +545,11 @@ flowchart LR
 - `AI/graph_rag.py` — Graph RAG over stored context (nano-graphrag lineage): surfaces relevant past knowledge to reasoning nodes and records execution fragments so the agent can reason about what happened.
 - `AI/laya_hooks.py` — the Laya verdicts wired into the ComoRAG pipeline **by default** (both for LLM nodes and for the form filler): **fact creation** (per-finding relevance verdict before a finding enters the memory pool), **probing assessment / consumption** (the sufficiency judge that ends the sweep with `ANSWER:` or keeps probing with `MISSING:`), and **choice picking** (`choose_option`, the form filler's semantic option rail — argmax with a confidence floor, `None` when no option clearly wins so the field is asked). Typed noul questions via the embedded engine, LLM evaluators as the fallback, `LOOPER_LAYA=off` back to LLM-only.
 
-### 9.4 Laya System-1 decision engine
+### 10.4 Laya System-1 decision engine
 
-An embedded **typed-decision model** (Laya — the open reproduction of TypeSafe Jev: ModernBERT-large 421M, `noul`/`choice`/`score` questions answered in one encoder pass, no token generation) that answers the questions the pipelines used to ask a small LLM: *which worker fits this goal best*, *does this text satisfy this criterion*, *is this finding on topic* and *is the goal answerable yet*. It runs as a lazy-launched child process (`AI/bin/laya.exe daemon`, newline JSON-RPC on stdin/stdout — a ~1.7 MB self-contained CPU build) managed by `AI/laya_client.py`, and it is **always optional**: every consumer calls it once, gets `None` on any failure, and falls back to the LLM path. **Consumers, all Laya-first by default**: the Orchestrator picker (done-probe + worker-only choice + conservative ask, in `orchestrator_ops.py`), the Input-node decision evaluator, the ComoRAG fact-curation verdict + sufficiency judge (LLM nodes) and the form filler's field judge + finding curator (`AI/laya_hooks.py`, verdict correctness over latency — CPU-only, ~2 s/verdict on 12 threads). `AI/laya_bench.py` is the gate harness (brain-picking and decision benchmarks, exit codes for shipping Laya options on/off). A `LOOPER_LAYA=off` kill switch forces every consumer onto LLM paths (`LOOPER_JEV` is honored as the legacy name). The English quants ship in `AI/models/laya-GGUF/` (`ud_q4_k_m` default, `q8_0`, `f16`; `LOOPER_LAYA_MODEL` overrides) — the model loads once in ~2 s, deltas per verdict after that. **It is a burst resource, not a resident one**: the daemon starts on the first request and unloads once the burst ends (`LOOPER_LAYA_KEEP_ALIVE_SECONDS`, default 2 s), and `AI/llama_cpp_engine.LlamaCppEngine.start_server()` releases it before allocating the (much larger) llama-server model — on the native/APU builds the two share one memory pool, and measured 2026-09-23 a resident scorer collapsed the llama.cpp native context 262144 → 1024 tokens and OOM'd the Vulkan KV-cache allocation. The next request simply relaunches it (~2 s).
+An embedded **typed-decision model** (Laya — the open reproduction of TypeSafe Jev: ModernBERT-large 421M, `noul`/`choice`/`score` questions answered in one encoder pass, no token generation) that answers the questions the pipelines used to ask a small LLM: *which worker fits this goal best*, *does this text satisfy this criterion*, *is this finding on topic* and *is the goal answerable yet*. It runs as a lazy-launched child process (`AI/bin/laya.exe daemon`, newline JSON-RPC on stdin/stdout — a ~1.7 MB self-contained CPU build) managed by `AI/laya_client.py`, and it is **always optional**: every consumer calls it once, gets `None` on any failure, and falls back to the LLM path. **Consumers, all Laya-first by default**: the Orchestrator picker (done-probe + worker-only choice + conservative ask, in `orchestrator_ops.py`), the deterministic-chains gate and per-step verifier, the Input-node decision evaluator, the ComoRAG fact-curation verdict + sufficiency judge (LLM nodes), the form filler's field judge + finding curator (`AI/laya_hooks.py`, verdict correctness over latency — CPU-only, ~2 s/verdict on 12 threads), and the assisted builder's grading gates (action pick, done/ask probes, chain-match grades — `player/builder/laya_grades.py`). `AI/laya_bench.py` is the gate harness (brain-picking and decision benchmarks, exit codes for shipping Laya options on/off). A `LOOPER_LAYA=off` kill switch forces every consumer onto LLM paths (`LOOPER_JEV` is honored as the legacy name). The English quants ship in `AI/models/laya-GGUF/` (`ud_q4_k_m` default, `q8_0`, `f16`; `LOOPER_LAYA_MODEL` overrides) — the model loads once in ~2 s, deltas per verdict after that. **It is a burst resource, not a resident one**: the daemon starts on the first request and unloads once the burst ends (`LOOPER_LAYA_KEEP_ALIVE_SECONDS`, default 2 s), and `AI/llama_cpp_engine.LlamaCppEngine.start_server()` releases it before allocating the (much larger) llama-server model — on the native/APU builds the two share one memory pool, and measured 2026-09-23 a resident scorer collapsed the llama.cpp native context 262144 → 1024 tokens and OOM'd the Vulkan KV-cache allocation. The next request simply relaunches it (~2 s).
 
-### 9.5 Vision & document understanding
+### 10.5 Vision & document understanding
 
 | Layer | Technology | Used by |
 |---|---|---|
@@ -423,18 +558,27 @@ An embedded **typed-decision model** (Laya — the open reproduction of TypeSafe
 | OCR | PaddleOCR (det/rec/cls, bundled models) | Conditional text conditions, form filler, doc pipelines |
 | Document extraction | PyPDF2 (PDF), python-docx (Word), txt | Input-node media, form filler grounding |
 
-### 9.6 Speech
+### 10.6 Speech
 
-- **TTS** — Piper ONNX voices (`LoOper/data/piper_voices/`): spoken input prompts, spoken results, TTS-capable nodes with variable interpolation. Legacy standalone TTS nodes are auto-migrated into LLM nodes.
-- **STT** — Vosk (`LoOper/data/vosk_models/`): voice mode for agent chat; transcriptions go through the same dispatch path as typed text.
+- **TTS** — Piper ONNX voices (`LoOper/data/piper_voices/`): spoken input prompts, spoken results, TTS-capable nodes with variable interpolation. Legacy standalone TTS nodes are auto-migrated into LLM nodes. The agent transport exposes `/tts` so the phone app speaks every agent output.
+- **STT** — Vosk (`LoOper/data/vosk_models/`): voice mode for agent chat, on the desktop and over the phone's `/stt` endpoint; transcriptions go through the same dispatch path as typed text.
+
+### 10.7 BYOK — bring your own keys, without giving up the local core
+
+`AI/byok.py` is one Python module for user-owned cloud keys, local model servers and CLI tools, behind the same generation API every node uses. Ported behavior (not shape) from the retired TS `utils/byok-runtime`:
+
+- **Provider manifest** — cloud providers all speak the OpenAI-compatible chat-completions subset: `anthropic`, `openai`, `google`, `xai`, `openrouter`, `groq`, `mistral`, `deepseek`, `deepinfra`, `together`, `fireworks`; local model servers speak their native wire: `ollama`, `lm-studio`; CLI providers spawn local commands: `claude`, `codex`. `llamacpp` is the pseudo-provider owned by the local gateway (the built-in engine); `pool` is the future P2P compute pool, visible in the UI but disabled ("coming soon").
+- **Selection surfaces** — the AI Settings dialog (`NGUI/dialogs/ai_settings_dialog.py`) stores settings and API keys; `NGUI/dialogs/engine_options.py` is the single source of truth for every engine selector in the app (LLM nodes, code nodes, conditionals, form filler, Code Node Studio). Selecting a provider persists as a `"<provider>:<model>"` prefix on the model field, which the gateway dispatches — the engine is derivable from the stored model, so no new chain field was needed. Role presets (`byok.json`) pick providers per capability (chat / embeddings / vision).
+- **Safety properties** — settings live in `byok.json` inside the durable runtime dir (host-owned storage), are sanitized on load, and **API keys are never logged and never written into `AI/config.json`**. 429 rate-limit retries (2, `Retry-After` honored, backoff capped at 10 s), friendly error messages, model listing and connection tests are built in.
+- **The assisted builder** can use any BYOK provider as its build-time engine (the provider that *drives the browser* during teach demonstrations, §12), while the built artifacts default to the local engine — the build-time provider never leaks into the artifact.
 
 ---
 
-## 10. Agent mode
+## 11. Agent mode
 
-### 10.1 The system chain is the agent's mind
+### 11.1 The system chain is the agent's mind
 
-Agent mode has **no hardcoded behaviour**. It requires a *system chain* (a chain with `collection: "System"`) that defines the entire cognitive architecture: Input nodes receive the query, LLM nodes reason, Context nodes remember, Chain Import nodes act as tools, Output nodes surface the answer. Multiple system chains = multiple named agents with different roles.
+Agent mode has **no hardcoded behaviour**. It executes a *system chain* (a chain with `collection: "System"`) that defines the entire cognitive architecture: Input nodes receive the query, LLM nodes reason, Context nodes remember, Chain Import nodes act as tools, Output nodes surface the answer. Multiple system chains = multiple named agents ("coworkers") with different roles. See §2 for the meta-harness framing.
 
 ```mermaid
 sequenceDiagram
@@ -455,19 +599,19 @@ sequenceDiagram
     O-->>U: answer
 ```
 
-- **Dispatch** (`player/agentic_ops/simple_agent.py`) selects the default system chain (`is_default`) or first System chain, then executes it through the same engine as manual playback.
+- **Dispatch** (`player/agentic_ops/simple_agent.py`) selects the system chain: the user's explicit choice is kept across requests (dropped only when the file disappears); otherwise the chain flagged `is_default` (root brain), then the first System chain on disk. With none, the router answers *"No system chain loaded. Create a chain with collection='System' in the chain editor to define the agent's behavior."* — no fallback, no hidden classifier. The chosen chain executes through the same engine as manual playback.
 - **Chains-as-tools**: any chain connected to an LLM's tools port is selectable at runtime; tool descriptions are **runtime-derived** from the chain's description and inputs — never persisted stale.
 - **Stepped protocol for small models**: the router picks a tool by name (a bare token or short alias — never nested JSON); each agent-modifiable Input node then extracts its own single value with one focused call. One tiny selection + N tiny extractions replaces one schema-shaped tool call — that is why a 3B model suffices.
 - **Ask-user v2**: any Input node with a prompt pauses the run and asks through the richest available channel — chat overlay with buttons for yes/no or multiple choices, attach/paste affordances for documents and images — answerable from desktop **or phone**; a reply that names a file becomes an attachment. Legacy ask-user consumers (form filler) keep working unchanged.
 - **Activity memory & memory-only chat** — `player/agentic_ops/run_memory.py` keeps ONE append-only SQLite timeline per install (`LoOper/data/run_memory.db`, the durable runtime dir when frozen): every chain run, every node that executed, every chat turn and schedule lifecycle, timestamped and scoped (agent / manual / schedule). Temporal questions ("what did we do yesterday") are answered by filtering that record — the model reads timestamped lines and never computes dates. Memory-only chat mode answers strictly from this timeline and never dispatches a chain. `LOOPER_RUN_MEMORY=off` disables recording; `LOOPER_RUN_MEMORY_DB` overrides the path.
 
-### 10.2 The Orchestrator — goal loop over mini brains
+### 11.2 The Orchestrator — goal loop over mini brains
 
-The default system chain ships with an **Orchestrator node** as its root: instead of one brain, several mini-brain chains are wired to its `brains` port, and the orchestrator loops toward the goal — it **scopes one step at a time** and asks the picked specialist brain to run it, reading the output back to drive the next turn. A brain may itself be a **tool router** (an LLM node with atomic tool chains on its `tools` port): the orchestrator never names tools — its scoped step rides into the brain, and the brain's own router picks which tool serves it (`linkedin.json` → verify with the vision brain → `jobsearch.json` → `repairtest.json`).
+An agent's system chain is usually rooted in an **Orchestrator node** (authored in the editor — nothing ships pre-built): instead of one brain, several mini-brain chains are wired to its `brains` port, and the orchestrator loops toward the goal — it **scopes one step at a time** and asks the picked specialist brain to run it, reading the output back to drive the next turn. A brain may itself be a **tool router** (an LLM node with atomic tool chains on its `tools` port): the orchestrator never names tools — its scoped step rides into the brain, and the brain's own router picks which tool serves it (`linkedin.json` → verify with the vision brain → `jobsearch.json` → `repairtest.json`).
 
 ```mermaid
 flowchart TB
-    Goal["Goal arrives on input port"] --> State["Observe the world:<br/>web page + desktop window"]
+    Goal["Goal arrives on input port"] --> State["Observe the world:<br/>web page OR desktop window<br/>(exclusive surface per the node's mode)"]
     State --> Pick{"Picker decides the next step<br/>one-word contract"}
     Pick -- "worker N" --> Scope["Scope the step:<br/>goal + progress + state → ONE instruction"]
     Scope --> Run["Run mini brain in-player<br/>its router chooses the tool"]
@@ -482,18 +626,18 @@ flowchart TB
     Synth --> Out["Publish output + trace"]
 ```
 
-- **Three inputs to every decision** — the GOAL, what WAS DONE (the step result and the trace) and **the world NOW** (the observed state digest). A result is the brain's own prose: it reads *"opened LinkedIn"* whether or not anything moved, so the digest is what lets the model *confirm* a step instead of assuming it (measured 2026-09-23: a failed web sequence reported success, Laya verified it, and the loop closed as done). The digest is one read per iteration, shared by the chains gate, the picker, the scoper and the verifier; sources are optional and read-only — the chain's own live browser page (URL, title, visible text with shadow roots and frames, never launched, never navigated) and the desktop foreground window (title + process). The surface is **exclusive**, picked by the node's Web Mode toggle (orchestrator mode) — **web** reads the live browser page (when this chain owns no session, it reads the SHARED browser the dispatched web chains opened), **desktop** reads the focused window **on the monitor under the cursor** (multi-monitor aware; the topmost window on that monitor is the fallback). Empty when nothing is observable; `LOOPER_ORCH_STATE=off` disables it.
+- **Three inputs to every decision** — the GOAL, what WAS DONE (the step result and the trace) and **the world NOW** (the observed state digest). A result is the brain's own prose: it reads *"opened LinkedIn"* whether or not anything moved, so the digest is what lets the model *confirm* a step instead of assuming it (measured 2026-09-23: a failed web sequence reported success, Laya verified it, and the loop closed as done). The digest is one read per iteration, shared by the chains gate, the picker, the scoper and the verifier; sources are optional and read-only — the chain's own live browser page (URL, title, visible text with shadow roots and frames, never launched, never navigated) and the desktop foreground window (title + process). The surface is **exclusive**, picked by the node's Web Mode toggle: **web** reads the live browser page (when this chain owns no session, it reads the SHARED browser the dispatched web chains opened), **desktop** reads the focused window **on the monitor under the cursor** (multi-monitor aware; the topmost window on that monitor is the fallback). Empty when nothing is observable; `LOOPER_ORCH_STATE=off` disables it.
 - **Web/desktop scope + headless** — Web Mode ON makes the orchestrator **web-exclusive** (observe/verify on the shared browser), OFF **desktop-exclusive**. A web orchestrator may also be **headless** (`orch_headless`, the "Headless web" toggle shown only under Web Mode): its dispatched web chains run in an invisible browser (`web.session.run_headless`) and never attach to the visible workbench.
 - **Workers** — mini brains are the unit of dispatch; each brain's runtime-derived description (chain description + `[inputs: …]` + a router brain's `[tools: …]` names as context) is what the picker chooses on. A worker may be a whole chain (`chain_import` on `brains`) **or a single node** (sequence, web sequence, conditional, code, LLM, form filler, handle, MCP): the node's own **description** field is then the routing text (its label + type + one structural hint otherwise), and a conditional worker evaluates once and publishes its verdict — a *check* step, never branch navigation.
 - **Picker** — `llm` (one strictly-parsed token: worker number, `DONE`, `ASK`; one stricter retry) or `laya` (done-probe + worker-only choice + conservative ask via the embedded engine; zero parsing). Either way, unparseable → stop with the trace as the answer; no prose scanning.
 - **Step scoping** — after the pick, one short turn turns the covered scope + progress + the observed state into ONE imperative instruction (`Your next step: …`): the orchestrator scopes, the brain picks the tool. The worker's prompt is its **MISSION** (the task(s) inside its scope) plus progress — the original request never rides along. When that turn yields nothing, the description-as-task prompt is used (previous behavior). **Scope integrity**: a scope that silently DROPS one of a compound directive's actions is refused (the dispatch does not happen, the directive is handed back) — measured 2026-09-24: the scope *"Open LinkedIn.com and click on your network."* cost the request its `home` action. Single-action directives are not policed this way — paraphrasing (`home button` → *the house icon*) is the scoper's job.
 - **Verification looks at the world** — the per-step verdict's premise carries the step result **and** the state digest, and a step the executor reported as failed (it returned no next node — the same convention the main loop turns into *"Node X execution failed"*) is `ok=False` without a scorer forward.
-- **Guards** — step cap (default 15), no-progress detector (identical worker + identical step + identical result twice), stop flag checked between steps; sub-brains run through the normal chain-import path with `_chain_input_context` carrying goal + progress **plus the propagation packet** (`_chain_root_goal`, `_chain_plan`, `_chain_state` — see the handback contract in 10.3). An unresolvable chain import (no path, or the file is gone) now **fails the node** instead of skipping ahead — a run of broken imports used to log ERRORs and still report success end to end (measured 2026-09-23).
+- **Guards** — step cap (default 15), no-progress detector (identical worker + identical step + identical result twice), stop flag checked between steps; sub-brains run through the normal chain-import path with `_chain_input_context` carrying goal + progress **plus the propagation packet** (`_chain_root_goal`, `_chain_plan`, `_chain_state` — see the handback contract in 11.3). An unresolvable chain import (no path, or the file is gone) now **fails the node** instead of skipping ahead — a run of broken imports used to log ERRORs and still report success end to end (measured 2026-09-23).
 - **Synthesis** — one final short LLM pass turns the trace into a plain-language answer (the rendered trace is the fallback). The full step log is published on the `trace` port; `blocked` marks a goal parked for the user.
-- **Composition** — mini brains are ordinary chains (they never run standalone); `chains/ORCHESTRATOR.json` wires the router brains and every brain file is loaded from disk at dispatch time. Removing the orchestrator file leaves agent mode with the remaining System chains — or the explicit "No system chain loaded" error when none exists; routing never falls back to a hidden classifier.
+- **Composition** — mini brains are ordinary chains (they never run standalone); every brain file is loaded from disk at dispatch time. An agent with **no orchestrator** is a plain system chain (LLM + tools + memory + outputs) and works exactly like that; removing the brain wiring leaves the loop with the remaining System chains — or the explicit "No system chain loaded" error when none exists. Routing never falls back to a hidden classifier.
 - **Steering a worker** — the scoped step arrives as `Your next step: …` alongside the goal and progress (carried verbatim on an entry **carry** input), while an **`agent_modifiable`** input runs one extraction turn that pulls its single parameter (query, item, filter…) out of that prompt — its **label** is the filter. To build one: add an Input node, set its label to the parameter it should supply (e.g. *Search query*), tick *agent-modifiable*, forward it downstream. Two budgets to know: the extraction sees the parent context capped at 500 chars per input (the goal comes first, so it survives — keep long briefs on a carry input and let agent-modifiable inputs own the parameters), and in manual runs without an agent session agent-modifiable inputs behave as carries, so the brain still executes.
 
-### 10.3 Deterministic chains — the `chains` port and the freeze loop
+### 11.3 Deterministic chains — the `chains` port and the freeze loop
 
 The orchestrator's second input port carries **deterministic chains**: orchestrator-free compositions that answer a known request end to end with **no routing inference**. One rule decides which kind a chain is — *does it contain an orchestrator, directly or through its imports?* — and that same rule drives the port it may be wired to, its node color (`import_kind`), and what may be frozen.
 
@@ -504,7 +648,7 @@ flowchart TB
     Frozen --> V{"Per-step Laya verdict"}
     V -- "not False" --> Gate
     V -- False --> Loop
-    Gate -- "unclear / exhausted / engine off" --> Loop["Brain loop (10.2)"]
+    Gate -- "unclear / exhausted / engine off" --> Loop["Brain loop (11.2)"]
     Loop --> Done{"every step verified True,<br/>ended done, 2+ chain steps?"}
     Done -- yes --> Freeze["Freeze: learned chain<br/>imports + routing.examples"]
     Freeze --> Wire["Wire to the chains port<br/>atomic write + .bak"]
@@ -517,7 +661,7 @@ flowchart TB
 - **A partial fit is ASSEMBLED, not re-derived.** When no artifact covers the request but its PARTS do, the plan picks one deterministic **unit** per consecutive run of directives — a whole learned artifact first (its composition covers that span exactly), else one of its step files, else an atomic chain on the port — materializes them as ONE continuous chain (`.pending_` name) and runs it as the whole answer: one dispatch, zero scorer reads. The plan must contain an artifact: a plain atomic sequence stays on the per-directive path, which verifies every step separately and freezes the same variation at the end anyway. A verified assembly is renamed into `learned_…` and **wired as the new learned artifact for that variation** — learned chains composed of learned chains, not only of atomic tools; a failed verification deletes the pending file and the ladder takes over (an unverified run is never persisted). Ambiguity is never a guess — two candidates for one run decline the whole plan. Measured 2026-09-24 on the real library: `['open linkedin', 'click my network', 'click my messages', 'click jobs']` → `[the 3-step artifact, jobs.json]` ✓, `['click the button']` (two descriptions contain it) → no plan ✓.
 - **The gate asks the step question — a chain may serve SEVERAL steps, learned artifacts never appear here.** The port is the human's action space: every wired chain (except learned artifacts) is scored for the directive, one `noul` forward each, judged against the CURRENT DIRECTIVE (never the compound request): *"The next step toward the goal is to `<description | routing.examples>`."* Alignment comes from the **floor `_CHAIN_GATE_MIN = 0.6`** plus the human description itself: the candidates whose description **names at least one object the step names** form the pool, the best neural score in it wins, and a pick that names **more objects than the runner-up** is CONFIRMED (`margin` irrelevant). Measured live 2026-09-24 on the 7 wired chains, both directions: `click on my network` read 0.641 against the tool "clicks on my network button" while an unrelated chain read 0.620 (margin 0.021 — a perfect match the margin alone declined), and for `press my network button` the scorer picked the WRONG chain by 0.001 (home 0.656 vs `clicks on "my network" button` 0.655) while only the right chain named the step's object. A tie in objects named is real ambiguity and `margin >= _CHAIN_GATE_MARGIN = 0.10` over the runner-up decides. Correct picks measured 0.625–0.81, the tiny model's noise band at or below ~0.51 (measured 2026-09-24: `messages` read 0.506 for a home-button directive and ran while the floor was 0.5) — a miss costs one brain round, a false positive runs the wrong chain. **A chain is not one action**: after a verified step the plan advances by the SPAN that chain's own description names — a routine chain ("opens linkedin and clicks on messages") serves several consecutive directives without per-action routing, a step-sized chain advances exactly one, and the count is computed, never assumed. Learned chains are excluded entirely (one scored 0.756 because its example IS a goal text). **Discovery stays at the current level** — an orchestrator learns its own chains and brains, and a brain's description surfaces only what it ROUTES WITH (`tools` / `brains` ports, one level at the boundary); a nested orchestrator's deterministic `chains` is that level's own action space (learned artifacts keep accumulating there) and is never flattened upward, or a deep agent (3 brains per level, ten levels) would OOM its context before it ran. The OBJECT comparisons around the gate (plan dedupe, learned composition coverage, assembly units) assume **no vocabulary at all**: the library classifies its own generic terms from the wired chains' signals — a word many chains share names no object for that library (`click`, `button`, `page` in an English UI set) while a word only some carry does — and plurals/third-person are stemmed as language glue. Rename a chain, add a language, rewire the port: the classification follows the data.
 - **A verified step advances the directive; a completed plan ends the run.** When a step's verdict is True the next directive becomes the routing unit (its own steps are its progress). Once **every** directive of a real decomposition was executed and verified, the level ends `done` structurally: the plan IS the goal decomposition, so covering it covers the goal — the picker, the scoper and the done-probe are never consulted for work to invent (measured 2026-09-24: on a fully achieved LinkedIn goal the done-probe read 0.394 on a steps-only premise and the scoper then fabricated *"select 'Send a Message'"* for `jobsearch`, which ran and looped until ESC). The probe keeps its role while the plan can still be unfinished: mid-plan, and for an **unsplit** plan — a single directive that echoes the goal, the planner's *already one action* / *could not split* answer — where the picker / done-probe ends the run exactly as before (a multi-step goal like *"find the cheapest monitor"* still loops past its first verified step).
-- **Laya is a burst resource** (`LOOPER_LAYA_KEEP_ALIVE_SECONDS`, see 15.2) — the daemon is normally unloaded between steps, so the gate **starts** it (~2 s) when a chain set is wired; a machine with the engine disabled for the session (kill switch / no exe / no model) keeps the fast path closed without probing.
+- **Laya is a burst resource** (`LOOPER_LAYA_KEEP_ALIVE_SECONDS`, see §18.2) — the daemon is normally unloaded between steps, so the gate **starts** it (~2 s) when a chain set is wired; a machine with the engine disabled for the session (kill switch / no exe / no model) keeps the fast path closed without probing.
 - **A step the node itself reported as failed is never dressed as success.** Node executors return the next node id on success and `None` on failure (the same convention the main loop turns into *"Node X execution failed"*); the orchestrator records `Outcome: FAILED (<type>) — the node aborted before completing` and the trace's `ok` is False without paying a scorer forward. (Measured 2026-09-23: a failed web sequence used to report *"ran successfully"*, Laya verified it True, and the loop closed as done.)
 - **Per-step verification** — after every dispatched step (brain or frozen chain) one Laya forward answers *"did this step accomplish what it was asked?"* and the verdict rides on the trace as `ok` (True / False / None when the engine is down). Its premise includes the step's result — unlike the goal-level done-probe, which judges from steps alone because result prose reads as a completed claim. `picker=laya` runs and the fast path may relaunch the engine for the verdict; a `picker=llm` run keeps the no-launch rule.
 - **The freeze is data, not weights.** A run compiles into a learned chain only when it ended naturally (`done`, never after ESC/stop), **every** step verified True, every step was a library chain, and there were at least two steps (a single step *is* the library chain). The artifact is **composition-only** — one `chain_import` per step, `input → imports → output`, plus a `routing` block (verbatim past requests, provenance, counters) — so a library fix propagates to every learned chain and the file stays tiny. Two guards keep it honest: one artifact per goal (a repeat run rebuilds its own file instead of piling up timestamped twins), and the source chain must **host this orchestrator** (its id must be in that file) or the freeze is skipped — the artifact never lands in a chain that never ran it. **The artifact describes itself in steps**: each step's description is read from the atomic chain it imports and persisted with the artifact (`steps[]` + a step-wise `description`), so the orchestrator judges what it DOES without opening a file (and a later artifact that composes this one inherits that step list as its step description). Artifacts and host-file edits are written as **pure-ASCII JSON** (non-ASCII escaped) and the chain editor reads/writes chains as UTF-8 — measured 2026-09-24: a single `→` in a learned description plus a locale-codec load made the file (and a chain with an em dash) unloadable in the editor, which looked like a broken orchestrator. The wiring target resolves the orchestrator's id the way the builder stores it (`data.node_id`; a built orchestrator node carries no top-level `id`) — reading only `node['id']` left every learned chain on disk but unwired.
@@ -526,7 +670,7 @@ flowchart TB
 - **Where it lives** — `chains/learned/learned_<stamp>_<slug>.json`, wired automatically into the running chain file (atomic write, one-time `.bak`, never twice). Frozen builds write and resolve under the runtime dir. `LOOPER_LEARN=off` disables the freeze; without the Laya engine the fast path stays closed and the loop handles everything.
 - **Authoring surfaces** — sequence, web sequence and conditional dialogs carry the **description** field the picker routes on (code nodes and the orchestrator already had one; the handle node uses its goal description), and chain-import nodes are painted by `import_kind`.
 
-### 10.4 Input node v2 — interaction gates
+### 11.4 Input node v2 — interaction gates
 
 ```mermaid
 flowchart TB
@@ -545,7 +689,7 @@ flowchart TB
 - **Question modes** — free text, yes/no, or a choice list (`[{label, value}]` pairs); answers are normalized against the options (exact label/value, case-insensitive; one re-ask, then default).
 - **Accepted media** — `accept_text` / `accept_images` / `accept_documents`; documents are text-extracted (PDF/Word/txt), images contribute their path; attachments ride the `data` port payload and a `node_<id>_files` side channel into downstream code nodes.
 
-### 10.5 Persistent goals (wake-driven)
+### 11.5 Persistent goals (wake-driven)
 
 ```mermaid
 stateDiagram-v2
@@ -558,15 +702,17 @@ stateDiagram-v2
 ```
 
 - `player/agentic_ops/goal_ledger.py` — atomic tmp+replace writes to `LoOper/data/agent_goals.json`; corrupt-safe load; a single active goal; per-activation trace records.
-- Enable `use_goal_ledger` on the Orchestrator: a blocked goal parks itself (`blocked` port) and **resumes on the next activation** — wake-driven persistence, not a busy daemon. Schedule the chain to create the wakes (see §13).
+- Enable `use_goal_ledger` on the Orchestrator: a blocked goal parks itself (`blocked` port) and **resumes on the next activation** — wake-driven persistence, not a busy daemon. Schedule the chain to create the wakes (see §16).
 
-### 10.6 Agent surfaces
+### 11.6 Agent surfaces
 
-- **Chat overlay** — a floating rounded overlay (toggleable) and a full workspace (`File > Agent`), chat bubbles with transcripts per named agent, stop/ratings, voice mode.
-- **Phone client** — the chat is served over LAN/Tailnet with a scannable QR; runs started from either surface are answerable and stoppable from either; history syncs on reconnect.
-- **Exported agents** — any system chain can be compiled into a standalone `.exe` (see §14) with the agent surfaces intact.
+- **Chat overlay** — a floating rounded overlay (toggleable) and a full workspace (`File > Agent`), chat bubbles with transcripts per named agent (coworkers), stop/ratings, voice mode.
+- **Float dock** — the overlay bars are no longer edge-docked: one floating row of three toggle buttons (Actions / Library / Nodes) sits where the top bar used to be, each sliding its panel down under the row; the Library panel carries a per-collection sub-dock. One panel open at a time, so the canvas stays readable and the builder chat keeps its column.
+- **Interactive HTML artifacts** — an Output node with `render_mode='html'` makes the agent's answer a self-contained artifact (HTML + CSS + JS): persisted to a durable, browsable `artifacts/` folder (`NGUI/widgets/artifacts.py` normalizes fenced model output), rendered interactively in the desktop overlay (QWebEngineView) and in the web/phone client (sandboxed iframe).
+- **Phone client** — the chat UI ships inside the Android app and reaches the host over a P2P link by public key (`pear://<pubkey>` QR — no IP, no VPN); runs started from either surface are answerable and stoppable from either; history syncs on reconnect (§15).
+- **Exported agents** — any system chain can be compiled into a standalone `.exe` (see §17) with the agent surfaces intact.
 
-### 10.7 Routing diagnostics — derived action graph & plan projection
+### 11.7 Routing diagnostics — derived action graph & plan projection
 
 Two log-only shadows render what routing *could* go on; nothing dispatches on them yet.
 
@@ -578,7 +724,64 @@ Both blocks ride at INFO and are silenced with `LOOPER_ORCH_GRAPH=off`. The proj
 
 ---
 
-## 11. Memory & context
+## 12. The assisted builder — scaffolding brains on the canvas
+
+### 12.1 The panel and the actor split
+
+The **builder chat** (`NGUI/widgets/builder_panel.py`, side-docked on the right of the main window) is a mode on the canvas, not a node: it creates Arrow's existing nodes, wires them, edits their properties, asks the user to teach steps via the recorders, and saves the result as a `collection="System"` chain. The canvas stays visible and editable on the left — the user watches the bot take shape and edits it directly.
+
+The actor split is the same neuro-symbolic contract the runtime uses:
+
+- **The model proposes.** The builder's own engine (any llama.cpp / Ollama / BYOK model, from `builder_settings.json`) writes prose — the reply, the plan, the arguments — and reasons about the next step (`player/builder/reasoning.py`: ONE short sentence, fail-open — no gateway / no model / timeout means `None` and the build continues).
+- **Laya grades.** `player/builder/laya_grades.py` supplies single-encoder-pass verdicts for every micro-decision (action pick, done/ask gates, recording coverage, chain match); every grade is **fail-open** — `None` means "Laya unavailable" and callers degrade to LLM judgement.
+- **Needle2 fills.** Grammar-constrained schemas (`player/builder/devtools.py`: `BUILDER_TOOL_SCHEMAS`) pin the chosen action's arguments to the node's real property schema, one field at a time (`extract_arguments`).
+- **Python writes.** `execute_builder_call` is the **only** canvas writer: `create_node`, `wire`, `edit_node`, `configure_node`, `set_description`, `save_chain`, `read_node`, `build_skill`, `test_chain`, `delete_node`. Both executors **never raise** — every failure becomes a deterministic error string.
+
+```mermaid
+flowchart TB
+    Goal["User goal, in plain language"] --> Chat["Builder panel chat<br/>(canvas visible on the left)"]
+    Chat --> Reason["Reasoning turn<br/>ONE sentence: the next step<br/>(fail-open, no timeout)"]
+    Reason --> Laya["Laya grades<br/>pick action / gate ask / gate done<br/>(noul + choice, fail-open)"]
+    Laya --> Needle["Needle2 fills the action's<br/>arguments from the node schema"]
+    Needle --> Py["Python executes on the LIVE graph<br/>create / wire / edit / save — the only writer"]
+    Py --> Test["test_chain on the real engine"]
+    Test -- "not met" --> Reason
+    Test -- "passed" --> Save["Save as collection='System' chain"]
+    Save --> Agent["Agent mode runs it<br/>user audits and keeps editing"]
+```
+
+- **Two chat modes.** (1) The **assistant** (`assistant.py`) answers questions grounded in the live chain and the user's selection, and acts on nodes only when asked — one bounded turn per message (≤8 actions), with an *iterate* loop for self-verification: edit → test → read → edit again until the chain passes its own test (≤40 rounds, stopped by an idle guard of 6 no-change rounds or Stop). It also builds **skill ladders** (`build_skill`): the decomposed working form of one process — `input → llm/code/conditional steps → output` with a shared context pool that LLM steps write to and the last step reads back; a saved skill is imported by the orchestrator as a tool. (2) The **autonomous compose** (`composer.py` + `planner.py`'s Laya-driven build loop) decomposes a goal into tools and assembles the whole system chain in one flow, below.
+- **Structure is never a model decision.** The composer always emits the same skeleton the hand-built system chains use — `input → orchestrator LLM → output`, with `chain_import` nodes wired to the orchestrator's `tools` port (and `brains` when the matched chain routes too). A tiny model picking "the next action" from a flat menu could never assemble a topology — it created junk LLM nodes and never one wire. So topology is code; the model only fills it in.
+
+### 12.2 Autonomous composition and the teach ladder
+
+```mermaid
+flowchart TB
+    G["Goal"] --> D["Reasoning LLM decomposes into<br/>3-6 TOOL lines (capabilities, not screen steps)"]
+    D --> M{"Match each tool against<br/>the chain library"}
+    M -- "match (Laya grade, floor + margin +<br/>object rules)" --> W["Wire chain_import to tools<br/>(or brains when the file routes)"]
+    M -- "no match" --> Teach{"Teach, cheapest first"}
+    Teach -- "web routine" --> Demo["PROVIDER DEMONSTRATES:<br/>drives the shared browser<br/>(web_act), every action recorded"]
+    Demo --> Frozen["Freeze into web_sequences/<tool>.json,<br/>wrap into a sub-chain, wire"]
+    Teach -- "declined / failed" --> Card["Teach card: user records<br/>web/desktop -> wrapped<br/>or builder authors an llm step<br/>or nested sub-brain"]
+    Card --> Frozen
+    Teach -- "nothing worked" --> Report["Report the tool honestly<br/>never faked with empty nodes"]
+    W --> Save["Set routing description + save<br/>collection='System' chain"]
+    Frozen --> Save
+```
+
+- **Decomposition** — one planning turn splits the goal into 3–6 TOOL lines: reusable capabilities (navigate, search, click, fill, scrape, read — or one LLM processing step: extract, merge, summarize, classify). Explicit screen micro-steps and "ask the user" lines are refused by the prompt contract.
+- **Matching** — each tool line is graded against the existing chain library with the runtime direct-chain gate's measured rules (`grade_chain_match`: goal-framed Laya read, floor 0.65, object confirmation, 0.10 margin) after a cheap text presort (`PRESORT_K = 3`). A plan line that NAMES its own node type (`input (ask): …`, `llm (vanilla): …`, `code: …`, `conditional: …`, `web_sequence (dom replay): …`) routes itself: input/output/orchestrator lines ARE the skeleton; designed llm/code/conditional/sub-brain steps are **authored, never matched** (matching them picked stale artifacts at the margins). Designed steps run on the LOCAL engine by default — the build-time provider never leaks into the artifact.
+- **The teach ladder, cheapest first** — an unmatched tool is taught in three steps: (1) a **web routine is demonstrated**: the configured provider is given a REAL Chrome through LoOper's own web stack and drives it action by action (navigate / click / type / scroll / press) through the replay handlers, so what it does here is exactly what a later replay does; every executed action is recorded as a web `Event` and a successful demonstration freezes into `web_sequences/<slug>.json`, wrapped into a sub-chain (`wrap.wrap_recording`) and wired — a real tool, demonstrated instead of described; an attempt that gets stuck stops and reports what it tried; (2) the **teach card** asks the user to record a web/desktop routine (the recorded node is wrapped into its own sub-chain file and replaced by a `chain_import` — `wrap.py` — the recording file itself is never touched), or the builder authors an `llm` step (prompted `input → LLM → output`), or a nested **sub-brain** system chain is written with the subtask as its `orch_goal`; (3) a tool that survives none of it is **reported** — nothing is ever faked with empty nodes. The plan size is the teach budget: EVERY unmatched tool gets its own ask.
+- **Chat-mode runtime binding** — the other half of the grammar tools (`RUNTIME_TOOL_SCHEMAS` / `execute_runtime_call` / `RuntimeRouter` + `runtime_tools.py`): when the built system chain runs in chat mode, arguments bind into the advertised `agent_modifiable` Input slots, Output nodes are read back (port store first, legacy variable fallback), and Context memory is appended — one deterministic step instead of per-field LLM reasoning.
+
+### 12.3 The runbook — one source of truth for nodes
+
+`player/builder/runbook.py` is the structured node reference every builder component consumes: what each node is FOR, the ports it exposes (collected from `NGUI/nodes_resources/*.py`), the fields that matter (aligned with `node_templates.NODE_EDIT_FIELDS`), when to use it, and when the builder must ASK the user instead of guessing. `node_templates.py` turns it into the builder's edit allowlists and type registry; the same source renders `docs/NODE_RUNBOOK.md` (`python -m player.builder.runbook --write`). The builder deliberately **declines** `mcp` and `container` node types — the user adds those manually. On-the-fly chain learning (freeze) stays a runtime agent-mode feature, not a build-time one: the builder saves a real, auditable chain and the user takes it from there.
+
+---
+
+## 13. Memory & context
 
 ```mermaid
 flowchart TB
@@ -592,39 +795,78 @@ flowchart TB
 
 - **In-run state** — the PortScopedStore keeps named-port values plus a turn-based history (user turn, tool turn, result) per chain; `clear_on_finish` context nodes are scoped to exactly one execution run.
 - **Persistence** — Context nodes write to `context.db` (`AI/context_database.py`): append-only turns with per-(chain, node) rolling caps, cross-chain sharing, and merge policies.
-- **Retrieval** — Graph RAG surfaces relevant past knowledge to reasoning nodes; ComoRAG consolidation distills large sources into grounded facts via probe-retrieval cycles (§9.3).
+- **Retrieval** — Graph RAG surfaces relevant past knowledge to reasoning nodes; ComoRAG consolidation distills large sources into grounded facts via probe-retrieval cycles (§10.3).
 - **Consolidation** — LLM nodes with `use_context_consolidation` enable a probe-driven memory-organization loop; turn history is trimmed to `max_history` with amortized counters.
+- **Activity timeline** — `run_memory.db` records every chain run, node execution, chat turn and schedule lifecycle (§11.1) — the audit substrate for temporal questions and memory-only chat.
 - **Inspection** — the Agent Settings dialog renders a goal-relationship graph with tabbed panels for executions and feedback: memory is reviewable, correctable, clearable.
 
 ---
 
-## 12. Specialized subsystems
+## 14. Specialized subsystems
 
-### 12.1 Form Filler node
+### 14.1 Form Filler node
 
-Document-grounded multi-field completion: field discovery on live pages/apps, knowledge-file lookups (including learned ask-user answers), per-field validation, page-rejected field repair loops, and a review gate before submission. Choice controls (select / combo / merged radio-checkbox groups) are resolved by the **Laya** semantic picker — every option is scored against the value the model meant, and the pick is taken only when it clears a confidence floor and a margin over the runner-up; an unclear pick is refused so the field is **asked** instead of guessed. A **list-backed** control is never skipped on a pre-filled value (a `<select>` rests on its first option), so a page default is corrected from the context and the field is only rewritten when the answer differs; a text field the page already filled stays untouched. Fact composition parses composer findings in every form a small model emits (bare / markdown-bolded / numbered) and keeps only findings traceable to the retrieved excerpts. Its ask-user path keeps the legacy callback signature — fully compatible with the ask-user v2 channel.
+Document-grounded multi-field completion: field discovery on live pages/apps, knowledge-file lookups (including learned ask-user answers), per-field validation, page-rejected field repair loops, and a review gate before submission. Choice controls (select / combo / merged radio-checkbox groups) are resolved by the **Laya** semantic picker — every option is scored against the value the model meant, and the pick is taken only when it clears a confidence floor and a margin over the runner-up; an unclear pick is refused so the field is **asked** instead of guessed. A **list-backed** control is never skipped on a pre-filled value (a `<select>` rests on its first option), so a page default is corrected from the context and the field is only rewritten when the answer differs; a text field the page already filled stays untouched. Fact composition parses composer findings in every form a small model emits (bare / markdown-bolded / numbered) and keeps only findings traceable to the retrieved excerpts. Its ask-user path keeps the legacy callback signature — fully compatible with the ask-user v2 channel. A **picked page-scope container** is resolved by **position, not content**: the pick's structural path (kind + place) leads the scope ladder and the recorded id / hashed class / text fall back behind it, so the same container is re-found on another form with the same layout. A pick that is **present but does not resolve** on the current page **fails closed** — the node acts on nothing rather than widening to the whole page (where the site's own chrome behind the form, e.g. a header search box that also declares itself a combobox, would be resolved and its list opened — a click outside the form that closes the form's own popup). Only **no pick at all** still means the whole document, as before; every path that ACTS is confined to that scope — the write, the read-back, the choice/switch write and the two combo snippets — and every form-fill CLICK passes ONE scope-checked choke point (a combo's option list and a choice's label must be inside the scope too), so a control on the page behind the form (a header search box, a base-page radio or label) can never be clicked and close the form's own dialog. The page's Laya-navigable element **tree is layer-confined** to the layer actually on screen (an open modal / popup) — the same layers the field enumerator and the write/read scope use — so a control on the page behind a dialog (a header search box) is never read or branched on. A **learned answer arrives with no evidence** (the learned fast-path skips the probe), so it stands as its own source for the option scorer; on a **selection field** (a typeahead/combo or any list-backed control) the record is pinned onto one of the page's OWN options — typing it to open the list — instead of being written as raw text the control cannot commit. A list-backed value is then **committed by CLICKING its option**, as separate polled turns (trigger → type → click): holding an option's TEXT is not a selection, and re-typing the value the field already holds changes nothing — so a controlled typeahead never even pops its list and there is nothing to pick. The field reads back correct while the form stalls on 'Next'; only a control that will not commit falls through to the plain write.
 
-### 12.2 Handle node (vision grounding)
+### 14.2 Handle node (vision grounding)
 
 Combines VLM scene understanding (LFM2.5-VL) with LLM reasoning to issue grounded click/scroll/zoom/key actions on screen content that lacks selectors — vision-reasoning-action for arbitrary UIs.
 
-### 12.3 MCP node
+### 14.3 MCP node
 
 Connects Model Context Protocol servers as workflow nodes; discovered tools are exposed to the router model as individually selectable actions (same name-only selection contract as chains).
 
-### 12.4 Code node & Code Node Studio
+### 14.4 Code node & Code Node Studio
 
-Inline or file-based Python with JSON arguments and output variables; runs pure-Python execution with strict outputs. The Code Node Studio provides an editing panel with an Aider-style iterative local-agent loop for authoring code inside the graph.
+Inline or file-based Python with JSON arguments, named IO ports and output variables; runs pure-Python execution with strict outputs. The Code Node Studio provides an editing panel with an Aider-style iterative local-agent loop for authoring code inside the graph.
 
 ---
 
-## 13. Scheduling, sandbox & remote access
+## 15. The phone client (P2P Android app)
 
-### 13.1 Scheduler
+The phone client is a **standalone Pear / Bare app** (Android) and a companion to agent mode — it is not part of the Python/NGUI app. It dials the LoOper host by its **Ed25519 public key over `hyperdht`** and exposes the connection on a loopback port: **no IP address, no VPN, no server-served page**. The chat UI is bundled in the APK (`android/app/src/main/assets/web/index.html`) and drives the host's transport API (`/ws`, `/stt`, `/tts`) through the pipe — the phone controls the agent from anywhere.
 
-`NGUI/scheduler_service.py` runs any chain on a schedule — **once, daily, weekly, interval** — with enable/disable, next-run display, and run-now. Schedules persist to `schedules.json`; execution is **in-process** through the same `MultiSequencePlayer` path as manual playback. Schedule wakes are also what resume persistent goals (§10.5).
+```mermaid
+flowchart TB
+    subgraph Phone["Android phone client"]
+        UI["WebView — bundled chat UI<br/>(secure asset origin via WebViewAssetLoader)"]
+        Worklet["Pear bare-kit worklet<br/>runs core/entry.js with the host key"]
+        QR["ZXing QR scanner<br/>reads pear://<pubkey>, stores the key"]
+        NS["NotifyService — foreground service<br/>one notification per agent message / ask"]
+        UI <--> Worklet
+    end
+    subgraph DHT["Peer-to-peer transport"]
+        NET["hyperdht<br/>discovery by Ed25519 public key"]
+    end
+    subgraph Host["LoOper desktop host"]
+        Sidecar["Pear/Bare sidecar (Node.js)<br/>agent_sidecar/looper-agent-sidecar.js"]
+        WS["aiohttp agent API<br/>/ws (chat + panels) /stt /tts /status"]
+        Overlay["AgentOverlay + SimpleChainRouter<br/>system chain execution"]
+        Sidecar -- "byte-pipe to 127.0.0.1" --> WS
+        WS --> Overlay
+    end
+    Worklet -- "dht.connect(pubkey)" --> NET
+    NET --> Sidecar
+    QR --> Worklet
+    NS --> Worklet
+```
 
-### 13.2 RDP sandbox
+- **How it connects** — the host publishes `pear://<pubkey>` behind its QR code (the sidecar's persistent key lives in `%LOCALAPPDATA%\LoOper\agent-key.json`, so the code stays stable; `AGENT_PEAR_PUBKEY` in `AI/config.json` can pin a specific key). The app scans the QR or accepts a pasted key, stores it, auto-reconnects on the next launch, and starts a worklet running `core/entry.js` with the pubkey; the worklet byte-pipes the stream to `127.0.0.1:<port>`, where the WebView opens `ws://…/ws` — piped to the host's `/ws`. When the sidecar cannot run, the agent-mode panel falls back to a plain `http://<tailscale-or-lan-ip>:<port>` URL (legacy LAN/Tailnet path).
+- **Notifications + background** — one system notification per agent message / ask prompt; a **foreground service** (`NotifyService`, type `dataSync`) keeps the worklet + pipe alive while the UI is hidden (there is no push server — a P2P link must stay up) and shows an ongoing "Connected" notification. Suppressed while the UI is in the foreground. Permissions at launch: `RECORD_AUDIO` (voice) and, on Android 13+, `POST_NOTIFICATIONS`.
+- **Voice** — text-to-speech: every agent output (and every ask question) is spoken via the host's `/tts`, per message. Speech-to-text: hold (or tap, during an ask) the mic button; audio is captured at the device rate, resampled to 16 kHz, and POSTed to `/stt`.
+- **Layout — one core, many shells** — `core/connect.js` (dial by key, byte-pipe to loopback), `core/entry.js` (read the key from Bare.argv, report readiness over IPC/stdout); `android/` (Kotlin `MainActivity` worklet + WebView + QR, `NotifyService`, manifest); `package.json` (`hyperdht`, `bare-net`, `b4a`); `pear.json` (Pear manifest — `pear .` on desktop works too). Generated build output (gradle wrapper, `bare-kit` prebuild, linked addons, `app.bundle`) is git-ignored and recreated by the build.
+- **Current limits** (from the client's own README) — `minSdk = 26`; cleartext HTTP enabled app-wide for the loopback hop; `dataSync` foreground service is capped ~6 h/day on Android 15+ (a permanent link needs `specialUse`); trust-on-first-use key acceptance (an allow-list check against a pinned host key is on the TODO); the iOS shell is not built yet — the same `core/` packs as a worklet + `WKWebView`.
+- **Desktop development run** — `cd LoOper/phone_client && npm install && npm start -- <64-char-host-pubkey>` prints `{"type":"ready","port":8081}`; open `http://127.0.0.1:8081/` in a browser (`bare` must be on PATH).
+
+---
+
+## 16. Scheduling, sandbox & remote access
+
+### 16.1 Scheduler
+
+`NGUI/scheduler_service.py` runs any chain on a schedule — **once, daily, weekly, interval** — with enable/disable, next-run display, and run-now. Schedules persist to `schedules.json`; execution is **in-process** through the same `MultiSequencePlayer` path as manual playback. Schedule wakes are also what resume persistent goals (§11.5).
+
+### 16.2 RDP sandbox
 
 ```mermaid
 flowchart LR
@@ -635,16 +877,17 @@ flowchart LR
 
 Automation runs inside an isolated Windows session via a local HTTP agent; the desktop you are using stays untouched. Chains can opt into sandbox mode (`run_in_sandbox`) per sequence/chain-import.
 
-### 13.3 Remote access
+### 16.3 Remote access
 
-- The agent chat is served over LAN or Tailnet (Tailscale IP) with a QR code — a phone can drive runs, answer ask-user questions, and stop executions.
-- Remote clients receive the same busy lifecycle, transcripts, history sync, and pending-question replay as the desktop overlay.
+- **Primary: P2P by key.** The agent chat is reached from the Android app over hyperdht using the host's public key (§15) — no IP, no VPN, no exposed port. The QR in agent mode carries `pear://<pubkey>`; scanning it pairs the phone to the host.
+- **Fallback: LAN / Tailnet.** When the Pear sidecar cannot run, the same aiohttp API is reachable at `http://<tailscale-or-lan-ip>:<port>` (`AGENT_TAILSCALE_IP` in `AI/config.json` supplies the displayed address) — the legacy path, still supported.
+- Remote clients receive the same busy lifecycle, transcripts, history sync, and pending-question replay as the desktop overlay; runs started from either surface are answerable and stoppable from either.
 
 ---
 
-## 14. Export & build pipeline
+## 17. Export & build pipeline
 
-### 14.1 Standalone agent export
+### 17.1 Standalone agent export
 
 ```mermaid
 flowchart TB
@@ -657,11 +900,16 @@ flowchart TB
 - `builder/agent_exporter.py` resolves every chain referenced transitively (including orchestrator brains), bundles chains/sequences/models, and builds a one-folder executable.
 - Exported agents run **directly on the local engines** (`ARROW_DIRECT_ENGINE=1`): no FastAPI dependency, fully offline; in frozen builds without the engine, Laya paths degrade to LLM automatically.
 
-### 14.2 Application build (MSI)
+### 17.2 Application build (MSI)
 
 `build_pipeline/` drives the product build: dependency staging (llama.cpp binaries, Chrome, model files), PyInstaller via `LoOperApp.spec`, runtime hooks for ONNX Runtime/torch, WiX source generation (`generate_wxs.py` → `arrow.wxs`), and `build_msi.ps1` producing the per-user MSI with custom UI and EULA.
 
-### 14.3 Packaged build: native DLLs & CPU compatibility
+### 17.3 Phone client build (Android APK)
+
+- **One-shot prerequisites** — `Arrow_setup.bat` installs Node.js, JDK 17, GitHub CLI, Android Studio, the Android SDK command-line tools + platform 35 + NDK 27.2.12479018, and a portable Gradle, then generates the project's Gradle wrapper (`SKIP_PHONE=1` skips the phone prerequisites).
+- **Build** — `build_pipeline/build_phone_apk.ps1` (debug by default, `-Configuration Release` for release, `-SkipNpmInstall` when deps are installed): it checks prerequisites, auto-detects the SDK (`%LOCALAPPDATA%\Android\Sdk`), the JDK 17 install and `.tools\gradle` (no env vars needed), fetches the `bare-kit` prebuild via `gh` (unless already present), runs `npm install`, then `gradle assemble<Debug|Release>`; the Gradle `preBuild` runs `link` (bare-link → native addons) and `pack` (bare-pack → `app.bundle`). Output: `android/app/build/outputs/apk/debug/app-debug.apk`; install with `adb install -r`.
+
+### 17.4 Packaged build: native DLLs & CPU compatibility
 
 The MSI does **not** ship the llama.cpp engine and does **not** bake any CPU instruction set. Instead the installer **builds the engine on the host machine** (`install_dependencies.ps1` → `setup_llama_engine.ps1`): it detects the host, installs the C++ toolchain (CMake + VS Build Tools) when a local build is required, compiles the vendored fork with `GGML_CPU_ALL_VARIANTS` (runtime ISA dispatch), verifies the result (`llama-server --version`), and falls back to the official portable prebuilt if the build cannot run. An engine built on a developer machine can therefore never conflict with the end user's CPU.
 
@@ -683,9 +931,9 @@ On an AVX-less CPU the app therefore opens and runs normally; OCR simply returns
 
 ---
 
-## 15. Configuration, environment & data
+## 18. Configuration, environment & data
 
-### 15.1 `AI/config.json` (key entries)
+### 18.1 `AI/config.json` (key entries)
 
 | Key | Meaning |
 |---|---|
@@ -694,15 +942,19 @@ On an AVX-less CPU the app therefore opens and runs normally; OCR simply returns
 | `LLAMA_CPP.gpu_layers` / `threads` / `context_size` / `batch_size` | Engine tuning (0 = model defaults) |
 | `API_PORT`, `AUTO_START_API` | Local API control (default 8000 / true) |
 | `OLLAMA_HOST`, `OLLAMA_PORT` | Ollama endpoint |
-| `AGENT_TAILSCALE_IP` | Remote agent access address |
+| `AGENT_TAILSCALE_IP` | Displayed remote address for the legacy LAN/Tailnet fallback (§16.3) |
+| `AGENT_PEAR_PUBKEY` | Pinned host key for the P2P agent transport (default identity persists in `%LOCALAPPDATA%\LoOper\agent-key.json`) |
+| `AGENT_WEB_SERVER_ENABLED` | Start the aiohttp agent API + sidecar |
 
-### 15.2 Environment variables
+BYOK settings and API keys live in **`byok.json`** (durable runtime dir), sanitized on load — keys are never logged and never written into `config.json`. The assisted builder's own engine/model preferences live in **`builder_settings.json`** (engine, model, reasoning toggle, max steps).
+
+### 18.2 Environment variables
 
 | Variable | Purpose |
 |---|---|
 | `API_PORT`, `AUTO_START_API`, `API_TIMEOUT` | Local API networking |
 | `OLLAMA_HOST`, `OLLAMA_PORT`, `OVERWATCH_API_URL` | External service endpoints |
-| `TAILSCALE_SERVER_IP`, `AGENT_TAILSCALE_IP` | Remote access |
+| `TAILSCALE_SERVER_IP`, `AGENT_TAILSCALE_IP` | Legacy remote access |
 | `LOOPER_AGENT_PORT` | RDP sandbox agent port |
 | `LOOPER_LAYA` | `off` forces all Laya consumers onto LLM paths (`LOOPER_JEV` honored as the legacy name) |
 | `LOOPER_LAYA_MODEL`, `LOOPER_LAYA_THREADS`, `LOOPER_LAYA_EXE` | Quant override (name or path) / CPU worker count / engine binary override |
@@ -719,7 +971,7 @@ On an AVX-less CPU the app therefore opens and runs normally; OCR simply returns
 | `YOLO_AUTOINSTALL` | Disable ultralytics auto-install |
 | `QT_ENABLE_HIGHDPI_SCALING`, `QT_AUTO_SCREEN_SCALE_FACTOR` | High-DPI behaviour |
 
-### 15.3 Data persistence
+### 18.3 Data persistence
 
 | Data | Storage | Location |
 |---|---|---|
@@ -731,39 +983,49 @@ On an AVX-less CPU the app therefore opens and runs normally; OCR simply returns
 | Schedules | JSON | `schedules.json` |
 | Goal ledger | JSON (atomic) | `LoOper/data/agent_goals.json` |
 | Run memory (activity timeline) | SQLite (WAL) | `LoOper/data/run_memory.db` (durable runtime dir in frozen builds) |
+| BYOK settings + keys | JSON (sanitized) | `byok.json` (durable runtime dir) |
+| Builder settings | JSON | `builder_settings.json` (durable runtime dir) |
+| HTML artifacts | HTML files | `LoOper/data/artifacts/` (durable runtime dir in frozen builds) |
+| Sidecar identity key | JSON | `%LOCALAPPDATA%\LoOper\agent-key.json` |
 | TTS/STT models | ONNX / Vosk | `LoOper/data/piper_voices/`, `LoOper/data/vosk_models/` |
 | Logs | text | `logs/session_*.md`, `automation.log`, `run.log` |
 
-### 15.4 Logging
+### 18.4 Logging
 
 Unified telemetry: a root logging dispatch fans every record out to the colorized console, `automation.log`, and a per-session markdown log (`logs/session_*.md`) — including records from subprocesses (API, engines) that join the parent session by id. Long model outputs are written as titled log blocks instead of inline blobs.
 
 ---
 
-## 16. Engineering doctrine (methodologies)
+## 19. Engineering doctrine (methodologies)
 
 These are the load-bearing design principles the codebase is held to; they explain most of the “why” behind the implementations above.
 
 1. **Neuro-symbolic execution.** The graph is a deterministic program. AI is used only where fuzzy judgment adds value — never as a single point of failure for micro-decisions. Every AI touchpoint has a symbolic fallback or a fail-closed default.
 2. **Small-model discipline.** Every model interaction is shaped for 1–4B models: stepped protocols (pick a name, then extract one field at a time), strict single-token contracts, reasoning-tag stripping instead of prose parsing, bounded retries, and prompts sized to the model window.
-3. **Named-port contracts, no implicit state.** Values move only along explicit edges; ports are named and namespaced per chain. What a node does is decided by topology + configuration, never by its position in the graph.
+3. **Named-port contracts, no implicit state.** Values move only along explicit edges; ports are named and namespaced per chain. Exec-only ports carry no data; data ports resolve by name (one publisher, one resolver — `executor_modules/ports.py`). What a node does is decided by topology + configuration, never by its position in the graph.
 4. **Runtime-derived descriptions, never persisted.** Tool descriptions are generated from chain metadata and inputs at call time, so editing a chain instantly changes how the model sees it — there is no stale description cache.
 5. **Fail-closed defaults, byte-identical off states.** New capabilities ship as default-off toggles; chains that do not use them behave exactly as before. Unparseable answers route to configured defaults (e.g. decision default = false) and log loudly.
 6. **Entity-first grounding over coordinates.** Web replay resolves recorded entities via stable selectors (never absolute coordinates); desktop replay tries the recorded UIA element before image templates. Two independent locators beat one clever matcher.
 7. **No timeouts on local model execution.** Long inference is legal; interruption is a stop-flag concern. Timeouts are reserved for network-ish edges with retry policies.
 8. **Serialized, on-demand model lifecycle.** No model preload at startup; one shared engine with a serialization lock; burst-aware cleanup; RAM-aware context sizing (the engine, not the request, owns the effective context).
 9. **Approvals and memory are primitives, not features.** An approval is an Input question plus branch routing; memory is Context nodes plus an inspectable SQLite store. Users compose them; the platform does not hardcode policy.
-10. **Offline and telemetry-free.** All inference, storage, and licensing work without network access; nothing leaves the machine.
-11. **Everything inspectable and reversible.** Execution logs, memory panels, trace ports, blocked states, and rated outputs give the operator a full audit surface — and ESC always aborts.
-12. **Test discipline.** Non-trivial logic leaves a runnable check behind; behavior-affecting changes land with regression tests (see §17), and UI logic is testable headless via offscreen Qt.
+10. **The model proposes, Python writes.** Models never emit chain JSON, file writes or wire calls — in the runtime orchestrator (structure is code), and in the assisted builder (`execute_builder_call` is the only canvas writer). Structure is never a model decision; a model that can only propose cannot corrupt the artifact.
+11. **The bot is plain data.** An agent is a chain file: copied, diffed, edited, exported, deleted. Learning freezes into data (learned chains), not weights; audit traces, ratings, shadows and the activity timeline are the feedback loop.
+12. **Offline and telemetry-free.** All inference, storage, and licensing work without network access; nothing leaves the machine. BYOK is the opt-in exception, isolated to the providers you configure.
+13. **Everything inspectable and reversible.** Execution logs, memory panels, trace ports, blocked states, and rated outputs give the operator a full audit surface — and ESC always aborts.
+14. **Test discipline.** Non-trivial logic leaves a runnable check behind; behavior-affecting changes land with regression tests (see §20), and UI logic is testable headless via offscreen Qt.
 
 ---
 
-## 17. Testing & verification
+## 20. Testing & verification
 
-- **Framework** — pytest under `LoOper/tests/` (~80 test modules, ~1,900 tests collected as of the current tree) plus standalone unittest harnesses for subsystems with special lifecycles (e.g. execution skip/loop regressions).
+- **Framework** — pytest under `LoOper/tests/` (~100 test modules, ~1,900 tests collected as of the current tree) plus standalone unittest harnesses for subsystems with special lifecycles (e.g. execution skip/loop regressions).
 - **Headless UI** — Qt tests run offscreen (`QT_QPA_PLATFORM=offscreen`) with lightweight fakes for graph views and overlays; overlay/bg-thread flows are exercised with stub web servers and message capture.
-- **Execution semantics** — the skip/loop regression harness covers branch sweeps, convergence, loops, decision routing, and tool-provider gating; graph fixtures are built exactly like the player builds them. The orchestrator suites (node in `tests/test_orchestrator_node.py` — including the propagation packet and the shadow blocks — the derived substrate in `tests/test_action_graph.py`, assets in `tests/test_orchestrator_assets.py`, gating in `tests/test_tool_provider_flag.py`) cover node brains, the `chains`-port gate and fast path, the freeze gates, and a shipped-asset classification sweep; `tests/test_chain_config_encoding.py` pins the chain editor's UTF-8 load/save round-trip (locale-codec reads mojibaked non-ASCII and crashed on bytes cp1252 leaves undefined).
+- **Execution semantics** — the skip/loop regression harness covers branch sweeps, convergence, loops, decision routing, and tool-provider gating; graph fixtures are built exactly like the player builds them. The orchestrator suites (node in `tests/test_orchestrator_node.py` — including the propagation packet and the shadow blocks — the derived substrate in `tests/test_action_graph.py`, assets in `tests/test_orchestrator_assets.py`, gating in `tests/test_tool_provider_flag.py`) cover node brains, the `chains`-port gate and fast path, the freeze gates, and a shipped-asset classification sweep; `tests/test_chain_config_encoding.py` pins the chain editor's UTF-8 load/save round-trip (locale-codec reads mojibaked non-ASCII and crashed on bytes cp1252 leaves undefined). Branch-sweep reachability and the loop dead-end guard have focused regressions of their own (`tests/test_conditional_branch_skip_reachability.py`, `tests/test_loop_deadend_guard.py`), and the form-filler suites pin the position-first page scope and the layer-confined element tree.
+- **Assisted builder** — `tests/test_builder_assistant.py`, `test_builder_composer.py`, `test_builder_planner.py`, `test_builder_laya_grades.py`, `test_builder_tools.py`, `test_builder_web_act.py`, `test_builder_settings.py`, `test_builder_runtime_binding.py`, `test_runbook.py`, and `test_builder_panel_smoke.py` cover the chat, the compose/teach ladder, the Laya grades, the grammar tools, the provider-driven web demonstrations, and the panel UI.
+- **BYOK & provider routing** — `tests/test_byok.py` (manifest, sanitization, retries), `test_byok_dialog_smoke.py`, `test_gateway_byok_routing.py` (resolution order), `test_engine_selectors.py`, `test_node_dialogs_model_dropdowns.py`.
+- **Ports & data flow** — `tests/test_ports.py` pins the exec-only vs data-port contract and the single resolver; `test_code_node_port_flow.py` covers Code-node IO wiring.
+- **Transport & artifacts** — `tests/test_agent_overlay_server_lifetime.py`, `test_artifacts.py`, plus `test_embedding_server_burst.py`, `test_orphan_reap.py`, `test_model_downloads.py` for the engine lifecycle.
 - **Isolation** — tests use temp trees and monkeypatched roots (config, exporter, ledger) so nothing touches real user data.
 
 Run the suite:
@@ -774,41 +1036,46 @@ python -m pytest LoOper/tests/ -q
 
 ---
 
-## 18. Repository layout
+## 21. Repository layout
 
 ```
 LoOperV2/
 ├── LoOper/
 │   ├── main.py                  # GUI entry (delegates to NGUI/app.py)
-│   ├── NGUI/                    # PyQt5 UI: editor, dialogs, overlays, panels, scheduler
+│   ├── NGUI/                    # PyQt5 UI: editor, dialogs, overlays, panels, scheduler, builder chat
 │   ├── player/                  # Execution engine, recorder, web recorder/replay, grounding
 │   │   ├── multi_sequence/      # Interpreter (builder, navigator, executor_modules/*)
 │   │   ├── agentic_ops/         # System-chain agent runtime (router, chain executor, run memory, goal ledger, description repair)
+│   │   ├── builder/             # Assisted builder core (assistant, composer, planner, devtools,
+│   │   │                        #   laya_grades, node_templates, reasoning, runbook, runtime_tools,
+│   │   │                        #   settings, trace, web_act, wrap)
 │   │   └── web/                 # CDP recorder, replay engine, handlers, inject scripts
 │   ├── recorder/                # Desktop recorder (mouse/keyboard/scroll/screenshot)
-│   ├── AI/                      # FastAPI server, engines, embeddings, RAG, Laya engine, models, bin
+│   ├── AI/                      # FastAPI server, engines, embeddings, RAG, BYOK, Laya engine, models, bin
+│   ├── agent_sidecar/           # Host-side Pear/Bare P2P transport (Node.js: hyperdht, b4a)
+│   ├── phone_client/            # Android app + Pear core (Kotlin + JS): WebView, worklet, QR, notifications
 │   ├── builder/                 # Standalone agent exporter + standalone entry
-│   ├── chains/                  # Chain workflows (incl. system chains and demo brains)
-│   ├── sequences/ web_sequences/ data/  # Recordings, context.db, models, voices
-│   └── tests/                   # Pytest suite
-├── build_pipeline/              # PyInstaller spec, WiX MSI generator, PowerShell build scripts
+│   ├── chains/                  # Chain workflows (incl. user System chains and learned/ artifacts)
+│   ├── sequences/ web_sequences/ data/  # Recordings, context.db, models, voices, artifacts/
+│   └── tests/                   # Pytest suite (~100 modules)
+├── build_pipeline/              # PyInstaller spec, WiX MSI generator, APK build, PowerShell scripts
 ├── keygen/                      # Offline license generation/validation
 ├── utils/                       # Vendored engines and toolkits (llama.cpp, ComoRAG, nano-graphrag,
 │                                #   openjev (checkpoint + archived pre-Laya tools), aider, little-coder, rdpwrap, playwright-mcp, …)
-├── docs/                        # User guide, business analyses, compatibility docs
+├── docs/                        # User guide, NODE_RUNBOOK.md, business analyses, compatibility docs
 ├── runtime/                     # Runtime shims
 └── tests/                       # Standalone harnesses (execution skip regressions, …)
 ```
 
 ---
 
-## 19. Licensing & distribution
+## 22. Licensing & distribution
 
 - Individual use is free: every automation feature and node type, no execution limits.
 - License files are **offline HMAC-signed and hardware-bound** (`keygen/`); no activation servers.
 - The enterprise right is **agent export** — compiling a complete agent (system chain + transitive assets) into a distributable executable.
-- The packaged MSI installer (WiX) is the recommended path for end users; source runs use `LoOper.py` / `run_looper.bat` (see the root `README.md` for install steps and product overview).
+- The packaged MSI installer (WiX) is the recommended path for end users; source runs use `Arrow_setup.bat` (one-shot bootstrap + launcher) or `LoOper.py` (see the root `README.md` for the customer-facing quick start; this file is the technical reference). The Android phone client installs from the APK built by `build_pipeline/build_phone_apk.ps1`.
 
 ---
 
-*This document describes the current implementation, including the Orchestrator goal loop, Input node v2 interaction gates, the embedded Laya decision engine, and the goal ledger. It replaces the legacy README that predated the chain-import, agent-mode, web-automation, and memory subsystems.*
+*This document describes the current implementation, including the system-chain meta-harness (§2), the Orchestrator goal loop with deterministic chains and learned-chain freezing (§11), Input node v2 interaction gates, the embedded Laya decision engine, the assisted builder (§12), BYOK provider routing (§10.7), the P2P phone client (§15), and the goal ledger. It replaces the legacy README that predated the chain-import, agent-mode, web-automation, memory, builder, and phone-client subsystems.*
