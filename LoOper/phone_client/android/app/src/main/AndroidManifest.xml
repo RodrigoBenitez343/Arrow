@@ -4,7 +4,13 @@
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- Per-message notifications (runtime-requested on API 33+). -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Foreground service keeps the P2P pipe alive while backgrounded. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-feature android:name="android.hardware.camera" android:required="false" />
+  <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
   <application
       android:label="LoOper Agent"
@@ -20,6 +26,11 @@
         <category android:name="android.intent.category.LAUNCHER" />
       </intent-filter>
     </activity>
+
+    <service
+        android:name=".NotifyService"
+        android:exported="false"
+        android:foregroundServiceType="dataSync" />
 
   </application>
 
