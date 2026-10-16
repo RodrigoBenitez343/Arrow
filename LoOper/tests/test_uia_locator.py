@@ -70,6 +70,27 @@ def test_tiers_prefer_stable_signals_and_never_go_control_type_only():
     assert locator.element_tiers({"control_type": 50000}) == []
 
 
+def test_positional_list_row_automation_id_is_demoted_not_dropped():
+    """A shell file-list row carries its POSITIONAL index as AutomationId
+    (Windows 11 Explorer re-numbers rows per materialised block), so it must not
+    out-rank the file Name - but it is still offered, last, never dropped.
+    """
+    desc = {"automation_id": "8", "name": "report", "class_name": "UIItem",
+            "control_type": 50007}          # ListItem row
+    labels = [label for _, label in locator.element_tiers(desc)]
+    assert labels == ["Name+ControlType", "ControlType+ClassName",
+                      "AutomationId+ControlType"]
+
+
+def test_a_non_list_numeric_automation_id_still_ranks_first():
+    # Numeric-looking ids only lose their rank on LIST items; elsewhere the id
+    # keeps its usual precedence.
+    desc = {"automation_id": "42", "name": "OK", "class_name": "Button",
+            "control_type": 50000}          # Button, not a list item
+    labels = [label for _, label in locator.element_tiers(desc)]
+    assert labels[0] == "AutomationId+ControlType"
+
+
 # ------------------------------------------------------- recorded click offset
 
 def test_attach_click_offset_records_position_inside_the_element():
@@ -668,3 +689,63 @@ def test_row_keyer_prefers_aid_then_unique_name_then_ordinal():
     assert key_of(0, named[0]) == "name:targeted resume"
     assert key_of(1, named[1]) == "name:resume_alex_doe"
     assert key_of(0, _El()) == "ordinal_0"      # nothing to identify it by
+
+
+# ------------------------------------- window scoping (title, not stale pid)
+
+class _Win:
+    def __init__(self, name, pid):
+        self._name, self._pid = name, pid
+
+    @property
+    def CurrentName(self):
+        return self._name
+
+    @property
+    def CurrentProcessId(self):
+        return self._pid
+
+
+class _WinRoot:
+    def __init__(self, windows):
+        self._windows = list(windows)
+
+    def FindAll(self, scope, condition):
+        return _Coll(self._windows)
+
+
+class _WinUia:
+    def CreatePropertyCondition(self, prop, value):
+        return (prop, value)
+
+    def CreateAndCondition(self, left, right):
+        return (left, right)
+
+
+def _window_desc(name, pid):
+    return {"process_id": pid, "ancestors": [
+        {"control_type": locator._WINDOW_CONTROL_TYPE, "name": name}]}
+
+
+def test_window_root_anchors_by_title_when_the_recorded_pid_is_stale():
+    # explorer.exe's pid changes across sessions; the TITLE still anchors the
+    # search, so a folder row is never matched in another folder window.
+    target = _Win("Downloads", 3728)
+    other = _Win("Downloads", 9999)
+    root = _WinRoot([target, other])
+    assert locator._find_window_root(
+        _WinUia(), root, _window_desc("Downloads", 3852)) is target
+
+
+def test_window_root_prefers_the_recorded_pid_on_a_title_tie():
+    first = _Win("Downloads", 1111)
+    wanted = _Win("Downloads", 2222)
+    root = _WinRoot([first, wanted])
+    assert locator._find_window_root(
+        _WinUia(), root, _window_desc("Downloads", 2222)) is wanted
+
+
+def test_window_root_widens_to_the_desktop_without_a_title():
+    # No Window ancestor (desktop icons, taskbar): nothing to anchor, keep root.
+    root = _WinRoot([_Win("Downloads", 1)])
+    assert locator._find_window_root(_WinUia(), root, {"process_id": 1}) is root

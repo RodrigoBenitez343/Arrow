@@ -40,6 +40,11 @@ _WINDOW_CONTROL_TYPE = 50032
 _SCOPE_CHILDREN = 2
 _SCOPE_DESCENDANTS = 4
 
+# UIA control types whose rows carry a POSITIONAL AutomationId inside shell file
+# lists (ListItem = an Explorer row, DataItem = the legacy/desktop view).  See
+# ``element_tiers``: such an id is a row index, never an identity.
+_LIST_ITEM_TYPES = frozenset((50007, 50029))
+
 # A hung UIA provider must never stall the click path: the resolve runs on a
 # short-lived daemon thread and a timeout behaves exactly like "not found".
 _RESOLVE_TIMEOUT_S = 2.0
@@ -100,22 +105,34 @@ def element_tiers(desc):
     ``(property_id, value)`` to AND together.  Only tiers carrying a stable
     signal are used; a bare ControlType match is deliberately NOT offered (the
     first button on screen must never win).
+
+    A purely-numeric AutomationId on a list item is the shell's POSITIONAL row
+    index, not an identity: a virtualised file list (Windows 11 Explorer,
+    DirectUI ``UIItem`` rows) re-numbers rows per materialised block, so the
+    same value lands on a different file after a scroll or an insert.  Such a
+    tier is kept but moved LAST, so the row's Name - the real identity - wins and
+    a recorded click is never re-routed to whatever now sits at that index.
+    Every other element keeps AutomationId first.
     """
     automation_id = str(desc.get("automation_id") or "")
     name = str(desc.get("name") or "")
     class_name = str(desc.get("class_name") or "")
     control_type = desc.get("control_type") or 0
-    tiers = []
+    stable = []
+    positional = []
     if automation_id and control_type:
-        tiers.append(([(_AUTOMATION_ID, automation_id),
-                       (_CONTROL_TYPE, control_type)], "AutomationId+ControlType"))
+        entry = ([(_AUTOMATION_ID, automation_id),
+                  (_CONTROL_TYPE, control_type)], "AutomationId+ControlType")
+        is_positional = (automation_id.isdigit()
+                         and int(control_type) in _LIST_ITEM_TYPES)
+        (positional if is_positional else stable).append(entry)
     if name and control_type:
-        tiers.append(([(_NAME, name), (_CONTROL_TYPE, control_type)],
-                      "Name+ControlType"))
+        stable.append(([(_NAME, name), (_CONTROL_TYPE, control_type)],
+                       "Name+ControlType"))
     if class_name and control_type:
-        tiers.append(([(_CONTROL_TYPE, control_type), (_CLASS_NAME, class_name)],
-                      "ControlType+ClassName"))
-    return tiers
+        stable.append(([(_CONTROL_TYPE, control_type), (_CLASS_NAME, class_name)],
+                       "ControlType+ClassName"))
+    return stable + positional
 
 
 # --------------------------------------------------------------------- UIA
@@ -172,19 +189,6 @@ def _find_window_root(uia, root, desc):
     window name (so two windows of one app do not cross-match); falls back to
     the desktop root, which just widens the search - the tiers still decide.
     """
-    pid = desc.get("process_id")
-    if not pid:
-        return root
-    try:
-        condition = _and_condition(uia, [
-            (_CONTROL_TYPE, _WINDOW_CONTROL_TYPE),
-            (_PROCESS_ID, int(pid)),
-        ])
-        windows = root.FindAll(_SCOPE_CHILDREN, condition)
-    except Exception:
-        return root
-    if windows is None or windows.Length == 0:
-        return root
     want = _window_name_of(desc)
     if not want:
         # No recorded Window ancestor - desktop icons, the desktop list and
@@ -196,16 +200,37 @@ def _find_window_root(uia, root, desc):
         # coordinates. Widen to the desktop root; the identity tiers plus the
         # size/visibility guards still decide.
         return root
+    try:
+        condition = _and_condition(uia, [(_CONTROL_TYPE, _WINDOW_CONTROL_TYPE)])
+        windows = root.FindAll(_SCOPE_CHILDREN, condition)
+    except Exception:
+        return root
+    if windows is None or windows.Length == 0:
+        return root
+    # Anchor by TITLE, not by process id: explorer.exe's pid changes across
+    # sessions, and a stale pid used to make this widen to the desktop root,
+    # where a same-named row in ANOTHER folder window could win (the wrong
+    # file).  The recorded pid only breaks a tie between same-titled windows.
+    pid = desc.get("process_id")
+    same_pid = None
+    by_name = None
     for index in range(windows.Length):
         window = windows.GetElement(index)
         try:
-            if str(window.CurrentName or "") == want:
-                return window
+            name = str(window.CurrentName or "")
+            window_pid = int(window.CurrentProcessId)
         except Exception:
             continue
-    # Recorded title not found (e.g. the page/window renamed itself): widening
-    # beats an arbitrary window of the process, which can exclude the real one.
-    return root
+        if name != want:
+            continue
+        if pid and window_pid == int(pid):
+            same_pid = window
+            break
+        if by_name is None:
+            by_name = window
+    # Recorded title not found (e.g. the window renamed itself): widening beats
+    # an arbitrary window of the process, which can exclude the real one.
+    return same_pid or by_name or root
 
 
 def _visible_at(uia, point, element_rect):
