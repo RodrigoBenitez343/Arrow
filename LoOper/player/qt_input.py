@@ -292,7 +292,12 @@ class InputQuestionDialog(ModernDialog):
         label.setWordWrap(True)
         self.content_layout.addWidget(label)
 
+        self._option_value = None  # value Enter/default resolves to, if any
         if self.kind == "yes_no":
+            # ONE explicit answer per state: the question is a prompt, never a
+            # button of its own.  "Yes"/"No" are the only tappable answers and
+            # Enter confirms the FIRST one (the primary), so a yes/no ask can
+            # never be dismissed with a null value that reads as a cancel.
             row = QHBoxLayout()
             for _text, _val in (("Yes", "yes"), ("No", "no")):
                 b = QPushButton(_text)
@@ -301,6 +306,8 @@ class InputQuestionDialog(ModernDialog):
                 b.setAutoDefault(False)
                 b.clicked.connect(lambda _=False, v=_val: self._pick(v))
                 row.addWidget(b)
+                if self._option_value is None:
+                    self._option_value = _val
             self.content_layout.addLayout(row)
         elif self.kind == "choice" and self.choices:
             # EVERY option must be LISTED and reachable: a long list (countries,
@@ -322,6 +329,8 @@ class InputQuestionDialog(ModernDialog):
                 b.setAutoDefault(False)
                 b.clicked.connect(lambda _=False, v=_val: self._pick(v))
                 vbox.addWidget(b)
+                if self._option_value is None:
+                    self._option_value = _val
             vbox.addStretch()
             area.setWidget(holder)
             self.content_layout.addWidget(area, 1)
@@ -341,17 +350,32 @@ class InputQuestionDialog(ModernDialog):
                 row.addWidget(self._attach_label, 1)
                 self.content_layout.addLayout(row)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        ok_btn = buttons.button(QDialogButtonBox.Ok)
-        ok_btn.setText("OK")
-        ok_btn.setProperty("class", "primary")
-        ok_btn.setDefault(True)
-        ok_btn.setAutoDefault(True)
+        # Option questions (yes/no, choice) are answered by PICKING an option,
+        # so they carry NO accept button: a default OK closed the dialog with
+        # ``_value = None``, so the ask looked answered while the answer was
+        # empty (a null reads as a cancel).  A free-text question keeps OK.
+        option_kind = self.kind in ("yes_no", "choice") and (
+            self.kind == "yes_no" or bool(self.choices))
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Cancel if option_kind
+            else QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        if option_kind:
+            # The box always materialises a standard Ok button; strip it so it
+            # can never take the default and dismiss the ask with no answer.
+            for _std in buttons.buttons():
+                if buttons.buttonRole(_std) == QDialogButtonBox.AcceptRole:
+                    buttons.removeButton(_std)
+        else:
+            ok_btn = buttons.button(QDialogButtonBox.Ok)
+            ok_btn.setText("OK")
+            ok_btn.setProperty("class", "primary")
+            ok_btn.setDefault(True)
+            ok_btn.setAutoDefault(True)
+            buttons.accepted.connect(self.accept)
         cancel_btn = buttons.button(QDialogButtonBox.Cancel)
         cancel_btn.setText("Cancel")
         cancel_btn.setAutoDefault(False)
         cancel_btn.setDefault(False)
-        buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self.content_layout.addWidget(buttons)
 
@@ -394,6 +418,11 @@ class InputQuestionDialog(ModernDialog):
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # An option question answers with the first option (the primary),
+            # never with a null value that reads as "cancelled".
+            if self.kind in ("yes_no", "choice") and self._option_value:
+                self._pick(self._option_value)
+                return
             self.accept()
             return
         super().keyPressEvent(event)

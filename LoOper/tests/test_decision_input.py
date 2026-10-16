@@ -274,6 +274,28 @@ def test_ask_v2_rich_pair_reply_is_unwrapped():
     assert value is None and atts == []
 
 
+def test_choice_parsing_accepts_every_hand_typed_shape():
+    """The ``choices`` field is free text, so the same list arrives as strict
+    JSON, a Python-literal list, a comma list or one-per-line.  Parsing only
+    strict JSON silently produced ZERO options for the others - a 'choice'
+    question with no buttons at all."""
+    h = _make()
+    expect = [{'label': 'Yes, apply', 'value': 'Yes, apply'},
+              {'label': 'No', 'value': 'No'}]
+    for raw in (
+        json.dumps([{'label': 'Yes, apply', 'value': 'Yes, apply'},
+                    {'label': 'No', 'value': 'No'}]),
+        "[{'label': 'Yes, apply', 'value': 'Yes, apply'}, {'label': 'No', 'value': 'No'}]",
+        '["Yes, apply", "No"]',
+        'Yes, apply\nNo',
+    ):
+        got = h._parse_choices({'choices': raw})
+        assert got == expect, (raw, got)
+    # An empty / unset field is simply no choices, never an exception.
+    assert h._parse_choices({}) == []
+    assert h._parse_choices({'choices': '[]'}) == []
+
+
 def test_route_on_answer_yes_no_drives_branch():
     h = _make()
     h.set_variable('_ask_user_callback', lambda q: 'yes')

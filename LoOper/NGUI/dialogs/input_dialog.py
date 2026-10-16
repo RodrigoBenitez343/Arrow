@@ -6,6 +6,10 @@ speaks the user prompt when the agent asks for input in the overlay.
 Built on ``ModernDialog`` — dark theme, scrollable content, drag/resize.
 """
 
+import ast
+import json
+import re
+
 from PyQt5.QtWidgets import (
     QVBoxLayout, QLabel, QTextEdit,
     QDialogButtonBox, QLineEdit, QCheckBox, QGroupBox, QComboBox,
@@ -243,6 +247,46 @@ class InputPropertiesDialog(ModernDialog):
             "speaker_id": cfg.get("tts_speaker_id"),
         })
 
+    def _normalized_choices(self):
+        """The choices field as canonical JSON text.
+
+        The field is free text, so the user may type a JSON list, a
+        Python-literal list, or a plain comma/newline separated list.  Store
+        one canonical JSON list of {'label', 'value'} pairs so every consumer
+        (executor parser, builder allowlist, chain JSON) reads the same shape;
+        an empty field is stored as ``[]``.
+        """
+        text = self.choices_edit.toPlainText().strip()
+        if not text:
+            return "[]"
+        parsed = None
+        for _loader in (json.loads, ast.literal_eval):
+            try:
+                parsed = _loader(text)
+                break
+            except Exception:
+                parsed = None
+        if parsed is None:
+            # Split a newline/pipe block only on those separators (a comma
+            # inside a label survives); a single line is comma split.
+            sep = r"[\n|]+" if re.search(r"[\n|]", text) else r","
+            parsed = [p for p in re.split(sep, text) if p.strip()]
+        if isinstance(parsed, dict):
+            parsed = list(parsed.items())
+        out = []
+        for item in (parsed or []):
+            if isinstance(item, dict):
+                label = str(item.get("label") or item.get("value") or "").strip()
+                value = str(item.get("value") or item.get("label") or "").strip()
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                label = str(item[0]).strip()
+                value = str(item[1] or item[0]).strip()
+            else:
+                label = value = str(item).strip().strip('"\'').strip()
+            if label:
+                out.append({"label": label, "value": value or label})
+        return json.dumps(out, ensure_ascii=False)
+
     def get_config(self):
         """Return the current dialog state as a node config dict."""
         config = self.tts_voice_fields.get_config()
@@ -259,7 +303,7 @@ class InputPropertiesDialog(ModernDialog):
             "decision_model": self.decision_model_combo.currentText().strip(),
             "decision_default": self.decision_default_cb.isChecked(),
             "question_mode": self.question_mode_combo.currentText(),
-            "choices": self.choices_edit.toPlainText(),
+            "choices": self._normalized_choices(),
             "route_on_answer": self.route_answer_cb.isChecked(),
             "accept_text": self.accept_text_cb.isChecked(),
             "accept_images": self.accept_images_cb.isChecked(),

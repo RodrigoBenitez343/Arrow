@@ -223,6 +223,19 @@ class FormFillerFieldsMixin:
         marker = field.get("_ff_tree_sel")
         return ([marker] + list(ladder)) if marker else ladder
 
+    def _ff_identity_selectors(self, field):
+        """The field's OWN attribute rungs - id / name / placeholder / aria-label.
+
+        These pin the control the enumeration actually read; unlike the
+        label-xpath or the bare tag, a live one matches EXACTLY this control and
+        never a sibling.  ``_ff_resolve_target`` compares them against a TREE
+        marker so a WRONG pick (the engine resolved two different questions to
+        the same select) cannot shadow a live identity and aim the write at
+        another question's control.
+        """
+        return [s for s in self._ff_selectors(field or {})
+                if str(s).startswith("[")]
+
     @staticmethod
     def _ff_specific_selectors(sels):
         """Keep only candidates that pinpoint a control; drop generic sweeps.

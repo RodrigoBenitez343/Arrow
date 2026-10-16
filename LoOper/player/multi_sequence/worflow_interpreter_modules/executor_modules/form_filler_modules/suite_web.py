@@ -386,6 +386,27 @@ def test_choice_write_and_readback_collect_across_all_candidates():
         assert "_seen.indexOf(" in js, name
 
 
+def test_ladder_resolution_supports_xpath_rungs():
+    """A control without id/name is identified by an XPath rung
+    (``//label[normalize-space(.)='…']/following::input[1]``).
+    ``querySelectorAll`` THROWS on XPath and the rung silently resolved to
+    nothing, so an unnamed radio/checkbox group had no control to click and the
+    answer never landed (live: 'English level?' A1/B2 answered B2, read back
+    A1 - the answer was never written).  Every in-page resolver must route a
+    rung through ``__wvpQuery`` (XPath-aware) instead of ``querySelectorAll``.
+    """
+    from player.web import actions as web_actions
+    assert "function __wvpQuery(root, sel)" in web_actions.JS_DEEP_SEARCH
+    assert "XPathResult.ORDERED_NODE_SNAPSHOT_TYPE" in web_actions.JS_DEEP_SEARCH
+    # The helper is shared, so every form snippet that carries a ladder MUST go
+    # through it - a bare querySelectorAll(sel) on a rung is the bug.
+    for name in ("JS_SET_CHOICE", "JS_FIELD_STATE", "JS_SET_FIELD",
+                 "JS_ENUMERATE_FORM_FIELDS"):
+        js = getattr(web_actions, name)
+        assert "__wvpQuery(root, sel)" in js or "__wvpDeepAll" in js, name
+        assert "querySelectorAll(sel)" not in js, name
+
+
 def test_settle_gate_probe_is_armed_and_polled():
     from player.web import actions as web_actions
     assert "MutationObserver" in web_actions.JS_SETTLE_ARM

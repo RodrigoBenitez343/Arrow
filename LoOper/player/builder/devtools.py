@@ -1581,20 +1581,142 @@ def _single_input_label(cfg):
     return str(nodes[0].get('label') or '').strip()
 
 
-def _test_chain(ctx, args):
-    """RUN the chain being edited and report what it produced.
+def _selected_node_ids(ctx):
+    """The ids of the canvas nodes the user has selected (never raises).
 
-    The builder's only way to verify its own edits: the CURRENT canvas
-    (unsaved edits included) is serialized, written beside the other chains
-    (so relative chain imports still resolve), and executed through the
-    player.  The run is UNBOUNDED — a real chain can take hours; the only
-    stop is the panel's Stop (Esc).  The report carries the status, every
-    Output node's text and any node errors, so the assistant can judge the
-    result and iterate.
+    The builder's test TARGET: with exactly ONE node selected the panel
+    reports it here, so ``test_chain`` verifies that node instead of the
+    whole chain.
     """
+    try:
+        raw = _resolve_ctx_value(ctx, 'selection_node_ids') or []
+    except Exception:
+        return []
+    ids = []
+    for item in raw:
+        nid = str(getattr(item, 'id', item) or '').strip()
+        if nid and nid not in ids:
+            ids.append(nid)
+    return ids
+
+
+def _config_node_id(cfg):
+    """(node_id, list_key) of the ONE node in a single-node config, else ('','')."""
+    for key in ('sequences', 'conditional_nodes', 'llm_nodes',
+                'chain_import_nodes', 'form_filler_nodes', 'code_nodes',
+                'container_nodes', 'context_nodes', 'input_nodes',
+                'handle_nodes', 'mcp_nodes', 'output_nodes', 'web_sequences'):
+        for node in (cfg.get(key) or []):
+            if isinstance(node, dict):
+                nid = node.get('node_id') or node.get('id')
+                if nid:
+                    return str(nid), key
+    return '', ''
+
+
+def _single_node_config(ctx, node_ref):
+    """A throwaway ONE-node chain config for ``node_ref`` (GUI-marshaled).
+
+    Verifying a single node reuses the node bar's own "run this node" path
+    (``ConfigManager.get_single_node_config``) instead of serializing the
+    whole canvas.  Returns None when the node or config cannot be resolved.
+    """
+    cm = _resolve_ctx_value(ctx, 'config_manager')
+    mgr = _graph_manager(ctx)
+    if cm is None or mgr is None:
+        return None
+
+    def _build():
+        try:
+            node = _resolve_node_ref(mgr, node_ref)
+        except Exception:
+            node = None
+        if node is None:
+            return None
+        builder = getattr(cm, 'get_single_node_config', None)
+        if not callable(builder):
+            return None
+        try:
+            cfg = builder(node)
+        except Exception:
+            return None
+        return cfg if isinstance(cfg, dict) else None
+
+    run = ctx.get('run_on_gui')
+    if callable(run):
+        try:
+            return run(_build)
+        except Exception:
+            return None
+    return _build()
+
+
+def _node_result(executor, node_id):
+    """A single node's output text ('' when it produced none)."""
+    if not node_id:
+        return ''
+    try:
+        from player.agentic_ops.chain_executor import _get_node_output
+    except Exception:
+        _get_node_output = None
+    if _get_node_output is not None:
+        try:
+            val = _get_node_output(executor, node_id)
+        except Exception:
+            val = None
+        if val:
+            return str(val)
+    le = getattr(executor, 'llm_executor', None)
+    for key in ('result', 'llm_output', 'output', 'stdout'):
+        try:
+            val = le.get_variable('node_%s_%s' % (node_id, key)) if le else None
+        except Exception:
+            val = None
+        if val:
+            return str(val)
+    return ''
+
+
+def _test_chain(ctx, args):
+    """RUN the node the user selected — or the whole chain — and report it.
+
+    The builder's only way to verify its own edits.  With exactly ONE node
+    selected (the user's focus) the run is scoped to THAT NODE, built the
+    same way the node bar's "run this node" button builds it; the whole
+    chain runs otherwise — nothing (or several nodes) selected, or an
+    explicit ``scope="chain"`` (a skill IS a whole chain).  The CURRENT
+    canvas (unsaved edits included) is serialized, written beside the other
+    chains (so relative chain imports still resolve), and executed through
+    the player.  The run is UNBOUNDED — a real chain can take hours; the
+    only stop is the panel's Stop (Esc).  The report carries the status, the
+    failure reason, produced output and any node errors, so the assistant
+    can judge the result and iterate.
+    """
+    scope = str(args.get('scope') or '').strip().lower()
+    node_ref = str(args.get('node') or args.get('node_id') or '').strip()
+    if scope != 'chain':
+        if not node_ref:
+            sel = _selected_node_ids(ctx)
+            if len(sel) == 1:
+                node_ref = sel[0]
+        if node_ref:
+            node_cfg = _single_node_config(ctx, node_ref)
+            if isinstance(node_cfg, dict) and node_cfg:
+                node_id, _key = _config_node_id(node_cfg)
+                if node_id:
+                    return _run_test_config(ctx, args, node_cfg, node_id)
     cfg = _serialize_canvas(ctx)
     if not isinstance(cfg, dict):
         return '(test_chain: could not read the canvas)'
+    return _run_test_config(ctx, args, cfg, '')
+
+
+def _run_test_config(ctx, args, cfg, node_id=''):
+    """Serialize one test chain (whole canvas or one node) and run it.
+
+    ``node_id`` non-empty selects the single-node report; else the chain
+    report (status + every Output node + goal verdict).
+    """
     # A TEST must NEVER inject real screen input: run a throwaway COPY with
     # every Input node forced to passthrough (data-only), so verifying a chain
     # can never hijack the user's keyboard.  The live canvas is not touched.
@@ -1657,10 +1779,45 @@ def _test_chain(ctx, args):
             pass
     if error:
         return '(test_chain: run failed: %s)' % error
+    if node_id:
+        return _format_node_report(ok, player, _stop(), bound, node_id)
     goal = str(args.get('goal')
                or ctx.get('state', {}).get('description')
                or cfg.get('description') or '').strip()
     return _format_test_report(cfg, ok, player, _stop(), bound, goal)
+
+
+def _format_node_report(ok, player, stopped, bound, node_id):
+    """The bounded result of ONE node's test run (status + its own output)."""
+    lines = []
+    failure = _chain_failure(player)
+    if stopped:
+        lines.append('test: STOPPED by the user')
+    elif ok is False:
+        lines.append('test: FAILED (the node returned an error)')
+    elif ok is None:
+        lines.append('test: STALLED (execution could not continue)')
+    else:
+        lines.append('test: completed')
+    lines.append('scope: node %s alone (the whole chain was NOT run)'
+                 % node_id)
+    if failure:
+        kind, nid, ntype, reason = failure
+        who = ('%s %s' % (ntype, nid)).strip() or 'the node'
+        lines.append('reason: %s -> %s' % (who, _clip(reason, 500)))
+    for label, value in (bound or {}).items():
+        lines.append('input %s: %s'
+                     % (_clip(str(label), 40),
+                        _clip(' '.join(str(value).split()), 200)))
+    executor = getattr(player, 'workflow_executor', None) if player else None
+    val = _node_result(executor, node_id)
+    if val:
+        lines.append('output %s: %s' % (node_id, _clip(val, 600)))
+    for nid, err in _collect_test_errors(player)[:6]:
+        lines.append('error %s: %s' % (nid, _clip(err, 300)))
+    if not val and not stopped and ok is not False:
+        lines.append('(the node produced no output — check its settings)')
+    return _clip('\n'.join(lines), _TEST_REPORT_CHARS)
 
 
 def _chain_failure(player):

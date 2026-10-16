@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import threading
 
 from player.agentic_ops import SimpleChainRouter
@@ -302,15 +303,6 @@ class BottomActionsToolbar(QWidget):
             choices = list(request.get('choices') or [])
             accepts = dict(request.get('accepts') or {})
             lines = [question]
-            if kind == 'yes_no':
-                lines.append('(Reply yes or no)')
-            elif kind == 'choice' and choices:
-                for i, c in enumerate(choices):
-                    try:
-                        label = c.get('label') or c.get('value')
-                    except Exception:
-                        label = str(c)
-                    lines.append(f"{i + 1}) {label}")
             if accepts.get('images') or accepts.get('documents'):
                 lines.append('(Attach a file by typing or pasting its path)')
             reply = legacy(
@@ -347,7 +339,10 @@ class BottomActionsToolbar(QWidget):
             self._input_ask_event.clear()
             self._input_ask_response = None
             self._input_ask_active = True
-            self._last_ask_meta = dict(meta) if meta else None
+            # The QUESTION is folded into the meta so the option list can still
+            # recover a yes/no question whose ``kind`` was omitted (legacy ask).
+            self._last_ask_meta = dict(meta or {'question': question})
+            self._last_ask_meta.setdefault('question', question)
             self._post_ui(lambda q=question: self._add_chat_bubble(q, False))
             if self._last_ask_meta:
                 self._post_ui(
@@ -380,6 +375,13 @@ class BottomActionsToolbar(QWidget):
                 if label:
                     out.append((label, value))
             return out
+        # A yes/no question whose ``kind`` was lost in transit (legacy ask) is
+        # still a yes/no question: offer the two answers as buttons instead of
+        # leaving the whole question as the only tap target.
+        question = str((meta or {}).get('question') or '')
+        if not (meta or {}).get('kind') and re.search(
+                r'\b(yes\s*/\s*no|yes or no|reply with yes)\b', question, re.I):
+            return [('Yes', 'yes'), ('No', 'no')]
         return []
 
     def _show_ask_options(self, meta):

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import threading
 
 from PyQt5.QtCore import (
@@ -1760,6 +1761,13 @@ class AgentOverlay(QFrame):
                 if label:
                     out.append((label, value))
             return out
+        # A yes/no question whose ``kind`` was lost in transit (legacy ask) is
+        # still a yes/no question: offer the two answers as buttons instead of
+        # leaving the whole question as the only tap target.
+        question = str((meta or {}).get('question') or '')
+        if not (meta or {}).get('kind') and re.search(
+                r'\b(yes\s*/\s*no|yes or no|reply with yes)\b', question, re.I):
+            return [('Yes', 'yes'), ('No', 'no')]
         return []
 
     def _show_ask_options(self, meta):
@@ -2159,16 +2167,12 @@ class AgentOverlay(QFrame):
             kind = str(request.get('kind') or 'text')
             choices = list(request.get('choices') or [])
             accepts = dict(request.get('accepts') or {})
+            # The options are rendered as BUTTONS on both surfaces (this
+            # overlay's ask-options row and the web client's ask row), so the
+            # bubble carries the QUESTION only: flattening the choices back into
+            # the text drew the question and every option a SECOND time as plain
+            # text beside the buttons.
             lines = [question]
-            if kind == 'yes_no':
-                lines.append('(Reply yes or no)')
-            elif kind == 'choice' and choices:
-                for i, c in enumerate(choices):
-                    try:
-                        label = c.get('label') or c.get('value')
-                    except Exception:
-                        label = str(c)
-                    lines.append(f"{i + 1}) {label}")
             if accepts.get('images') or accepts.get('documents'):
                 lines.append('(Attach a file by typing or pasting its path)')
             reply = legacy(
@@ -2217,7 +2221,11 @@ class AgentOverlay(QFrame):
             self._last_ask_question = question
             # None for a legacy text-only ask; a dict drives the inline option
             # buttons on both surfaces and is replayed to a reconnecting client.
-            self._last_ask_meta = dict(meta) if meta else None
+            # The QUESTION is folded in too: the option list falls back to it
+            # when a legacy ask omitted ``kind``, so a yes/no question still
+            # renders Yes/No buttons.
+            self._last_ask_meta = dict(meta or {'question': question})
+            self._last_ask_meta.setdefault('question', question)
             self._post_ui(lambda q=question: self._add_bubble(q, False))
             if self._last_ask_meta:
                 self._post_ui(
@@ -3208,11 +3216,25 @@ class AgentOverlay(QFrame):
             pass
 
     def _web_history(self, limit: int = 60):
-        """Recent bubbles of the active coworker's transcript (oldest first)."""
+        """Recent bubbles of the active coworker's transcript (oldest first).
+
+        The PENDING ask is dropped: ``_web_sync_state`` re-delivers it as its
+        own ``ask`` frame right after this snapshot - that frame is what puts
+        the client in answer mode and rebuilds its option buttons - so leaving
+        the bubble here drew the SAME question TWICE on the phone: once as a
+        plain history bubble, then again with its buttons.
+        """
         try:
-            msgs = self._conversations.get(self._active_chain_id, [])[-limit:]
+            msgs = list(self._conversations.get(self._active_chain_id, [])[-limit:])
         except Exception:
             msgs = []
+        if self._web_ask_active and self._last_ask_question:
+            for i in range(len(msgs) - 1, -1, -1):
+                m = msgs[i]
+                if (not m.get("is_user")
+                        and str(m.get("text") or "") == str(self._last_ask_question)):
+                    del msgs[i]
+                    break
         return [
             {
                 "text": m.get("text") or "",

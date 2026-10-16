@@ -73,6 +73,44 @@ def test_a_choice_list_click_is_the_answer(monkeypatch):
     assert dlg._value == "Yes"
 
 
+def test_yes_no_prompt_has_no_bare_ok_and_enter_answers_yes(monkeypatch):
+    """A yes/no question is answered by PICKING an option.  A default OK button
+    closed the dialog with ``_value = None``, so Enter (or the default button)
+    looked like an answer while the answer was empty - a null reads as a
+    cancel.  Enter must instead resolve to the first option (Yes).
+    """
+    from PyQt5.QtWidgets import QPushButton
+
+    seen = {}
+    _accept_immediately(monkeypatch, seen)
+    qt_input.ask_question({"question": "Proceed?", "kind": "yes_no"})
+
+    dlg = seen["dlg"]
+    labels = [b.text() for b in dlg.findChildren(QPushButton)]
+    assert "Yes" in labels and "No" in labels
+    box = dlg.findChild(QDialogButtonBox)
+    # No accept-role button survives: no OK can take the default and dismiss
+    # the ask with a null value.
+    assert not [b for b in box.buttons()
+                if box.buttonRole(b) == QDialogButtonBox.AcceptRole]
+
+    QTest.keyClick(dlg, Qt.Key_Return)
+    assert dlg._value == "yes"
+
+
+def test_yes_no_prompt_result_payload_is_never_none(monkeypatch):
+    """The yes/no dialog must never hand back ``(None, [])`` on a normal
+    dismissal: that is indistinguishable from Cancel and the node reads it as
+    an empty answer."""
+    seen = {}
+    _accept_immediately(monkeypatch, seen)
+    qt_input.ask_question({"question": "Proceed?", "kind": "yes_no"})
+
+    dlg = seen["dlg"]
+    dlg._pick("yes")
+    assert dlg.result_payload() == ("yes", [])
+
+
 def test_ask_text_prompt_is_always_on_top(monkeypatch):
     seen = {}
     _accept_immediately(monkeypatch, seen)

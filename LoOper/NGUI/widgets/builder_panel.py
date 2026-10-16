@@ -800,6 +800,19 @@ class BuilderPanel(QWidget):
                     continue
             return '\n\n'.join(blocks)
 
+        def _selection_node_ids():
+            """The ids of the nodes the user selected (its test TARGET)."""
+            try:
+                nodes = list(graph_view.node_graph.selected_nodes() or [])
+            except Exception:
+                nodes = []
+            ids = []
+            for node in nodes:
+                nid = getattr(node, 'id', None)
+                if nid:
+                    ids.append(str(nid))
+            return ids
+
         return {
             'graph_manager': lambda: self._gui.call(_graph_manager),
             'config_manager': lambda: self._gui.call(_config_manager),
@@ -813,8 +826,11 @@ class BuilderPanel(QWidget):
             'run_on_gui': self._gui.call,
             'stop': self._stop_event.is_set,
             # The assistant's turn context: the nodes the user selected
-            # (its focus) and the recent exchange tail (its memory).
+            # (its focus), their ids (its test TARGET — a single selection
+            # tests THAT node, not the whole chain) and the recent exchange
+            # tail (its memory).
             'selection_text': lambda: self._gui.call(_selection_text),
+            'selection_node_ids': lambda: self._gui.call(_selection_node_ids),
             'history': list(self._history),
         }
 
@@ -912,12 +928,17 @@ class BuilderPanel(QWidget):
         if kind in ('record_sequence', 'record_web_sequence'):
             self._begin_record_card(str(question or ''), kind)
             return
-        kind_text = {
-            'answer': _("your answer"),
-            'confirm': _("yes / no"),
-        }.get(kind, '')
-        self._append('system', _("%s\n(Reply with %s.)") % (
-            question, kind_text))
+        if kind == 'confirm':
+            # A confirmation is a yes/no QUESTION: the two answers are offered
+            # as buttons, never as a single tap target carrying the whole
+            # question text (which read as a silent default "yes").
+            self._append_card(
+                title=str(question or ''),
+                options=[(_('Yes'), 'yes', True), (_('No'), 'no', False)],
+                on_choice=lambda value, _card: self._resolve_ask(value))
+            return
+        self._append('system', _("%s\n(Reply with your answer.)") % (
+            question,))
 
     def _resolve_ask(self, value):
         """Answer the pending ask (the worker picks it up on its poll)."""
