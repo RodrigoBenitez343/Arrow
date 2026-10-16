@@ -1872,6 +1872,22 @@ class ConfigManager:
                         "orch_use_goal_ledger",
                         bool(llm_data.get("orch_use_goal_ledger", False)),
                     )
+                    node.set_property(
+                        "orch_headless", bool(llm_data.get("orch_headless", False))
+                    )
+                    # Web mode + OCR region: _save_llm_node writes these, so a
+                    # load that skipped them reset Web Mode to the node default
+                    # ("false") and the next save re-wrote that off value - the
+                    # "toggle does not persist across reopen" bug.
+                    node.set_property(
+                        "web_mode", str(llm_data.get("web_mode", False)).lower()
+                    )
+                    node.set_property(
+                        "ocr_region", llm_data.get("ocr_region", "") or ""
+                    )
+                    node.set_property(
+                        "web_ocr_locator", llm_data.get("web_ocr_locator", "") or ""
+                    )
                     try:
                         node.rebuild_orchestrator_ports()
                     except Exception:

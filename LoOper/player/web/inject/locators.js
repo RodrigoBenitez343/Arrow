@@ -364,6 +364,11 @@
         y: Math.round(r.top + window.scrollY),
         w: Math.round(r.width),
         h: Math.round(r.height),
+        // Viewport-relative box (CSS px): the region a web-OCR pick crops to
+        // when the element cannot be re-found, so a miss reads the picked area
+        // instead of the whole page.
+        vx: Math.round(r.left),
+        vy: Math.round(r.top),
         vw: window.innerWidth,
         vh: window.innerHeight,
       };

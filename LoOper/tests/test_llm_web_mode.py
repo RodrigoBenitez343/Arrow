@@ -182,6 +182,49 @@ def test_web_ocr_full_page_when_shadow_target_not_found(monkeypatch, tmp_path):
     assert seen["shape"] == (100, 200, 3)  # uncropped
 
 
+def test_web_ocr_falls_back_to_the_recorded_box_when_not_found(monkeypatch, tmp_path):
+    """A pick whose element cannot be re-found crops to the recorded viewport
+    box instead of OCRing the whole page (the page-wide read pollutes the node)."""
+    import cv2
+
+    img = np.zeros((100, 200, 3), dtype=np.uint8)
+    path = str(tmp_path / "shot.png")
+    cv2.imwrite(path, img)
+
+    class Driver:
+        def execute_script(self, _script):
+            return 2.0  # devicePixelRatio
+
+    # A non-shadow pick (no shadow_hosts) that no longer resolves, but carries
+    # the viewport box the picker recorded.
+    locator = json.dumps({
+        "tag": "div",
+        "text": "Contact info",
+        "viewport": {"vx": 5, "vy": 10, "w": 40, "h": 30, "vw": 1440, "vh": 739},
+    })
+    monkeypatch.setattr(inputs, "_web_driver", lambda: Driver())
+    monkeypatch.setattr(inputs, "_save_web_screenshot", lambda d, el, p: path)
+    monkeypatch.setattr(
+        web_actions, "wait_for_element",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("not found")),
+    )
+
+    from player.computer_vision import TemplateMatching
+
+    seen = {}
+
+    def fake_ocr(min_confidence, screen_cv, stop_flag):
+        seen["shape"] = screen_cv.shape
+        return [{"text": "boxed", "confidence": 1.0}]
+
+    monkeypatch.setattr(TemplateMatching, "ocr_extract_all_text",
+                        staticmethod(fake_ocr))
+
+    assert inputs._web_ocr_input(locator, 0.5, None) == "boxed"
+    # vx/vy/w/h (5,10,40,30) * dpr 2 -> [10,20,80,60]
+    assert seen["shape"] == (60, 80, 3)
+
+
 def test_deep_element_rect_passes_record_and_returns_ints():
     from player.web.events import Locator
 

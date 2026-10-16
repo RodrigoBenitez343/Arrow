@@ -9,6 +9,7 @@ The suite moved next to the code it covers and got split by concern:
         suite_extract.py    extraction prompt, sentinels, yes/no
         suite_fill_flow.py  the node loop (fill / verify / skip / abort)
         suite_scope.py      picked-scope resolution
+        suite_tree.py       Laya-first element resolution (the tree + its fallbacks)
         suite_probe.py      retrieval, ComoRAG hooks, facts vs verbatim
         suite_repair.py     the post-pass
         suite_web.py        JS contracts, writes, the overlay
@@ -35,6 +36,8 @@ from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_repair import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_scope import *  # noqa: F401,F403
+from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
+    form_filler_modules.suite_tree import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_web import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\

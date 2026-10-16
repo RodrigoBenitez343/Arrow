@@ -983,6 +983,12 @@ CHAT_HTML_TEMPLATE = r"""<!DOCTYPE html>
       });
       return out;
     }
+    // A yes/no question whose ``kind`` was lost in transit (legacy ask) still
+    // gets its two answers as BUTTONS: asking it as free text made the whole
+    // question a single tap target that read as a default "yes".
+    if (!kind && /\b(yes\s*\/\s*no|yes or no|reply with yes)\b/i.test(msg.question || "")) {
+      return [{ label: "Yes", value: "yes" }, { label: "No", value: "no" }];
+    }
     return [];
   }
 

@@ -295,3 +295,103 @@ def test_a_branch_label_names_the_control_the_question_means(monkeypatch):
     assert any("Location (city)*" in c for c in calls[0])
     # ...so the pick lands on the field, not the page's 'Search' box.
     assert field["_ff_tree_sel"] == '[data-wvp-ff="6"]'
+
+
+def test_a_marker_that_disagrees_with_a_live_identity_is_refused(monkeypatch):
+    """A live id/name IS the field.  Live: the engine resolved BOTH "What's your
+    english level?*" AND "In which country do you reside?*" to the 'How many
+    years of software/data engineering experience' <select> - a DIFFERENT
+    control.  The marker then aimed the write at that select, the value had no
+    matching option there, and the write aborted ('target unresolved or not
+    editable'); the required <select> stayed empty even though its own id still
+    resolved and the ladder's id rung would have filled it.  A marker that
+    disagrees with a live identity is refused: keep the ladder."""
+    h = _Harness()
+    picked = ("How many years of software/data engineering experience do you "
+              "have?*")
+
+    class _Driver:
+        def __init__(self):
+            self.tree = _payload(_flat((0, -1, True, picked)))
+            self.checked = None
+
+        def execute_script(self, script, *args):
+            if "no-identity" in script:          # the identity check
+                self.checked = list(args)
+                return "differs"
+            return self.tree
+
+    drv = _Driver()
+    h._ff_web_driver = drv
+    _stub_laya(monkeypatch, pick=lambda *a: picked)
+    field = {"id": "_r_9b_", "label": "What's your english level?*",
+             "kind": "select", "tag": "select"}
+
+    # The pick shares the generic 'you/your' term, so the term guard passes it -
+    # only the identity check can refuse it.
+    assert h._ff_resolve_target(field, h._ff_cfg({}), None) == "ladder"
+    assert "_ff_tree_sel" not in field
+    # It ran against the field's OWN attribute rung, never the whole ladder.
+    assert drv.checked[0] == ['[id="_r_9b_"]']
+
+
+def test_a_marker_that_matches_a_live_identity_is_kept(monkeypatch):
+    """The marker is still the FIRST rung when it agrees with the field's live
+    identity - the scored pick and the recorded id ARE the same element."""
+    h = _Harness()
+    picked = "Email address*"
+
+    class _Driver:
+        def __init__(self):
+            self.tree = _payload(_flat((0, -1, True, picked)))
+
+        def execute_script(self, script, *args):
+            return "same" if "no-identity" in script else self.tree
+
+    h._ff_web_driver = _Driver()
+    _stub_laya(monkeypatch, pick=lambda *a: picked)
+    field = {"id": "email", "label": "Email address*", "kind": "text"}
+
+    assert h._ff_resolve_target(field, h._ff_cfg({}), None) == "laya-tree"
+    assert field["_ff_tree_sel"] == '[data-wvp-ff="0"]'
+    assert h._ff_field_selectors(field)[0] == '[data-wvp-ff="0"]'
+
+
+def test_a_pick_is_kept_when_the_field_has_no_attribute_identity(monkeypatch):
+    """The marker is the fallback for a ROTATED id: a field carrying no id/name
+    keeps the pick, so the resolver is never widened into a veto."""
+    h = _Harness()
+    picked = "Comment*"
+
+    class _Driver:
+        def __init__(self):
+            self.tree = _payload(_flat((0, -1, True, picked)))
+            self.checked = 0
+
+        def execute_script(self, script, *args):
+            if "no-identity" in script:
+                self.checked += 1
+                return "differs"
+            return self.tree
+
+    drv = _Driver()
+    h._ff_web_driver = drv
+    _stub_laya(monkeypatch, pick=lambda *a: picked)
+    field = {"label": "Comment*", "kind": "text"}
+
+    assert h._ff_resolve_target(field, h._ff_cfg({}), None) == "laya-tree"
+    assert field["_ff_tree_sel"] == '[data-wvp-ff="0"]'
+    assert drv.checked == 0                     # no identity -> no check at all
+
+
+def test_identity_selectors_are_the_attribute_rungs_only():
+    """Only id/name/placeholder/aria pin the control: the label-xpath and the
+    bare tag can resolve a SIBLING - the label-xpath even matches an unrelated
+    <input> for a <select> field - so they never take part in the veto."""
+    h = _Harness()
+    sels = h._ff_identity_selectors(
+        {"id": "e", "name": "n", "placeholder": "p", "aria_label": "a",
+         "label": "Email", "tag": "input", "type": "text"})
+    assert sels == ['[id="e"]', '[name="n"]', '[placeholder="p"]',
+                    '[aria-label="a"]']
+    assert h._ff_identity_selectors({"label": "x", "tag": "select"}) == []

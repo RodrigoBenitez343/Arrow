@@ -68,13 +68,15 @@ def test_element_pick_overlay_emits_rect_on_click_and_none_on_cancel():
     got = []
     ov = ElementPickOverlay()
     # The click captures the worker's latest hover hit (UIA never runs on the
-    # GUI thread), so publish one the way the worker would.
+    # GUI thread), so publish one the way the worker would.  The pick is decided
+    # on RELEASE: a press with no drag is a click.
     ov._hit = {"rect": (10, 20, 110, 80), "label": "b"}
     ov.picked.connect(got.append)
-    press = QMouseEvent(
-        QEvent.MouseButtonPress, QPointF(5, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier
-    )
-    ov.mousePressEvent(press)
+    ov.mousePressEvent(QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(5, 5), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    assert got == []  # not until release
+    ov.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(5, 5), Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
     assert got == [(10, 20, 110, 80)]
 
     got2 = []
@@ -82,6 +84,30 @@ def test_element_pick_overlay_emits_rect_on_click_and_none_on_cancel():
     ov2.picked.connect(got2.append)
     ov2.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
     assert got2 == [None]
+
+
+def test_element_pick_overlay_emits_the_dragged_region():
+    """Holding and dragging captures the drawn box, not the hovered element, so
+    a custom region no element box expresses can be picked."""
+    from PyQt5.QtCore import QEvent, QPointF, Qt
+    from PyQt5.QtGui import QMouseEvent
+
+    from NGUI.dialogs.trigger_dialogs import ElementPickOverlay
+
+    ov = ElementPickOverlay()
+    ov._hit = {"rect": (999, 999, 1000, 1000), "label": ""}  # must be ignored
+    got = []
+    ov.picked.connect(got.append)
+    ov.mousePressEvent(QMouseEvent(
+        QEvent.MouseButtonPress, QPointF(10, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+    ov.mouseMoveEvent(QMouseEvent(
+        QEvent.MouseMove, QPointF(100, 80), Qt.NoButton, Qt.LeftButton, Qt.NoModifier))
+    ov.mouseReleaseEvent(QMouseEvent(
+        QEvent.MouseButtonRelease, QPointF(100, 80), Qt.LeftButton, Qt.NoButton, Qt.NoModifier))
+    dpr = ov._dpr or 1.0
+    expected = (int(round((10 + ov.x()) * dpr)), int(round((10 + ov.y()) * dpr)),
+                int(round((100 + ov.x()) * dpr)), int(round((80 + ov.y()) * dpr)))
+    assert got == [expected]
 
 
 def test_pick_click_never_runs_uia_on_the_gui_thread():
@@ -105,6 +131,10 @@ def test_pick_click_never_runs_uia_on_the_gui_thread():
     ov.mousePressEvent(
         QMouseEvent(QEvent.MouseButtonPress, QPointF(5, 5),
                     Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    )
+    ov.mouseReleaseEvent(
+        QMouseEvent(QEvent.MouseButtonRelease, QPointF(5, 5),
+                    Qt.LeftButton, Qt.NoButton, Qt.NoModifier)
     )
     assert got == [(1, 2, 31, 42)]
 

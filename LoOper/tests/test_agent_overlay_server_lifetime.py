@@ -218,11 +218,43 @@ def test_sync_state_replays_history_and_pending_ask(overlay):
     overlay._web_sync_state()
 
     history = [p for p in sent if p.get("type") == "history"][0]
-    assert [m["text"] for m in history["messages"]] == [
-        "find jobs", "Can I do something else?",
-    ]
+    # The pending question is NOT in the history: it is delivered by the ask
+    # frame below (which also carries its buttons).  Keeping it in both drew
+    # the SAME bubble twice on the phone.
+    assert [m["text"] for m in history["messages"]] == ["find jobs"]
     assert {"type": "agent_busy"} in sent
     assert {"type": "ask", "question": "Can I do something else?"} in sent
+
+
+def test_rich_ask_does_not_repeat_the_options_as_text(overlay):
+    """The options render as BUTTONS on both surfaces (the overlay's ask row
+    and the web client's ask row), so they must NOT also be flattened into the
+    bubble: live, a required select was asked with its options numbered as
+    plain text beside the buttons - the question and every option showing
+    twice."""
+    captured = {}
+
+    def _legacy(question, meta=None):
+        captured["question"] = question
+        captured["meta"] = meta
+        return "Linkedin"
+
+    overlay._make_ask_user_callback = lambda: _legacy
+    reply = overlay._make_ask_user_v2_callback()({
+        "question": "How did you hear about us?*",
+        "kind": "choice",
+        "choices": [{"label": "Social media", "value": "Social media"},
+                    {"label": "Linkedin", "value": "Linkedin"}],
+    })
+
+    # The bubble is the QUESTION only; the choices travel as options (buttons).
+    assert captured["question"] == "How did you hear about us?*"
+    assert "Social media" not in captured["question"]
+    assert "1)" not in captured["question"]
+    assert captured["meta"]["kind"] == "choice"
+    assert [c["value"] for c in captured["meta"]["choices"]] == [
+        "Social media", "Linkedin"]
+    assert reply["value"] == "Linkedin"
 
 
 def test_plain_text_while_ask_active_is_the_answer(overlay):
