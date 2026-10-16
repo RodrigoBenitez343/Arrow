@@ -1,0 +1,21 @@
+{
+  "name": "looper-phone-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "LoOper Agent Mode phone client — cross-platform Pear/Bare core with thin native shells.",
+  "main": "core/entry.js",
+  "scripts": {
+    "start": "bare core/entry.js",
+    "link:android": "bare-link --preset android --out android/app/src/main/addons core/entry.js",
+    "pack:android": "bare-pack --preset android --linked --out android/app/src/main/assets/app.bundle core/entry.js"
+  },
+  "dependencies": {
+    "b4a": "^1.6.4",
+    "bare-net": "^1.0.0",
+    "hyperdht": "^6.0.0"
+  },
+  "devDependencies": {
+    "bare-link": "^4.0.1",
+    "bare-pack": "^1.0.0"
+  }
+}
