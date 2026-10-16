@@ -60,9 +60,13 @@ class ServerState:
         self.remote_url: str | None = None  # http://<ip>:<port> when an IP is set
         self.handler: Callable[[str], str] | None = None
         self.connected_clients: int = 0
-        # WebSocket channel for sending async responses from worker threads
+        # WebSocket channel for sending async responses from worker threads.
+        # ws_send broadcasts to every connected socket: a single slot used to be
+        # nulled by one client's disconnect, silently dropping messages for a
+        # client that was still connected (e.g. the phone reconnecting).
         self.ws_loop: asyncio.AbstractEventLoop | None = None
         self.ws_send: Callable[[str], None] | None = None
+        self._ws_sockets: list = []
 
 
 # ---------------------------------------------------------------------------
@@ -329,18 +333,27 @@ def _make_handlers(state: ServerState):
     async def handle_websocket(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
+        state._ws_sockets.append(ws)
         state.connected_clients += 1
         logger.info("WebSocket client connected (%d active)", state.connected_clients)
 
-        # Store loop + send callback so worker threads can push responses
+        # Store loop + send callback so worker threads can push responses to
+        # every connected client.
         loop = asyncio.get_event_loop()
         state.ws_loop = loop
 
         async def ws_send(text: str) -> None:
-            try:
-                await ws.send_str(text)
-            except Exception:
-                pass
+            dead = []
+            for sock in list(state._ws_sockets):
+                try:
+                    await sock.send_str(text)
+                except Exception:
+                    dead.append(sock)
+            for sock in dead:
+                try:
+                    state._ws_sockets.remove(sock)
+                except ValueError:
+                    pass
 
         state.ws_send = ws_send
 
@@ -367,9 +380,15 @@ def _make_handlers(state: ServerState):
             elif msg.type == WSMsgType.ERROR:
                 logger.error("WebSocket error: %s", ws.exception())
 
+        try:
+            state._ws_sockets.remove(ws)
+        except ValueError:
+            pass
         state.connected_clients -= 1
-        state.ws_send = None
-        state.ws_loop = None
+        # Only tear down the channel once the LAST client is gone.
+        if not state._ws_sockets:
+            state.ws_send = None
+            state.ws_loop = None
         logger.info("WebSocket client disconnected (%d active)", state.connected_clients)
         return ws
 
