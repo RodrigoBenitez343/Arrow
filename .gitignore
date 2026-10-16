@@ -59,7 +59,14 @@ cmake-build-*/
 *.wixpdb
 *.wixobj
 *.nupkg
-build_pipeline/
+# build_pipeline/: keep the build scripts, spec and requirements; drop the
+# generated installer artifacts (arrow.wxs emitted by generate_wxs.py,
+# arrow.wixpdb, __pycache__).  Globs let new scripts be tracked with no edit.
+build_pipeline/*
+!build_pipeline/*.ps1
+!build_pipeline/*.py
+!build_pipeline/*.spec
+!build_pipeline/*.txt
 .wix/
 *.spec.bak
 
@@ -127,6 +134,9 @@ LoOper/AI/models/*
 !LoOper/AI/models/README.txt
 LoOper/AI/memory_data/
 LoOper/data/
+# Agent-mode HTML artifacts: LoOper/data/artifacts in a dev checkout, or
+# <runtime>/artifacts in a frozen build.  Listed explicitly for clarity.
+LoOper/data/artifacts/
 LoOper/logs/
 LoOper/runtime/
 LoOper/dist/

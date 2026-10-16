@@ -1,0 +1,80 @@
+plugins {
+  id "com.android.application"
+  id "org.jetbrains.kotlin.android"
+}
+
+android {
+  namespace = "to.looper.phone"
+  compileSdk = 35
+  ndkVersion = "27.2.12479018"
+
+  defaultConfig {
+    applicationId = "to.looper.phone"
+    // Raise to 33 if the bare-kit prebuild requires it.
+    minSdk = 26
+    targetSdk = 35
+    versionCode = 1
+    versionName = "1.0"
+  }
+
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  sourceSets {
+    main {
+      // bare-kit prebuild => app/libs/bare-kit/{classes.jar,jni}
+      // bare-link output  => app/src/main/addons/<abi>/lib*.so
+      jniLibs.srcDirs = ["src/main/addons", "libs/bare-kit/jni"]
+    }
+  }
+}
+
+// The cross-platform Bare core lives one level above this Gradle root.
+def clientDir = file("$rootDir/..")
+def isWindows = System.getProperty("os.name").toLowerCase().contains("win")
+
+// npm creates .cmd shims on Windows; Exec needs those, not the shell script.
+def runTool = { String name, List<String> rest ->
+  def bin = new File(clientDir, "node_modules/.bin/" + name + (isWindows ? ".cmd" : ""))
+  def args = [bin.absolutePath] + rest
+  return isWindows ? (["cmd", "/c"] + args) : args
+}
+
+tasks.register("link", Exec) {
+  workingDir clientDir
+  // bare-link 4.x dropped the old --needs flag; the entry point is enough.
+  commandLine(runTool("bare-link", [
+    "--preset", "android",
+    "--out", "android/app/src/main/addons", "core/entry.js"
+  ]))
+}
+
+tasks.register("packApp", Exec) {
+  workingDir clientDir
+  commandLine(runTool("bare-pack", [
+    "--preset", "android", "--linked",
+    "--out", "android/app/src/main/assets/app.bundle", "core/entry.js"
+  ]))
+}
+
+tasks.register("pack") {
+  dependsOn packApp
+}
+
+// Bundle + link addons before every build.
+preBuild.dependsOn link, pack
+
+dependencies {
+  api fileTree(dir: "libs", include: ["bare-kit/classes.jar"])
+  // androidx is not declared by the zxing POM, so the app supplies it
+  // (appcompat pulls androidx.core -> ContextCompat, used by CaptureActivity).
+  implementation "androidx.appcompat:appcompat:1.7.0"
+  // QR scanning for the host key (CaptureActivity + IntentIntegrator).
+  implementation "com.journeyapps:zxing-android-embedded:4.3.0"
+}
