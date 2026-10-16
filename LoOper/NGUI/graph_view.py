@@ -47,6 +47,10 @@ class GraphViewWidget(QWidget):
             self._paste_counter = 0
             # Track last context menu scene position for paste anchoring
             self._last_context_scene_pos = None
+            # Track the last scene position the mouse was over on the canvas:
+            # paste anchors here, which stays correct when paste is triggered
+            # from a toolbar button (the live cursor then sits on the button).
+            self._last_canvas_scene_pos = None
             self.chain_config = {"sequences": [], "conditional_nodes": [], "llm_nodes": [], "chain_import_nodes": [], "form_filler_nodes": [], "code_nodes": [], "container_nodes": [], "context_nodes": [], "input_nodes": [], "handle_nodes": [], "mcp_nodes": [], "web_sequences": []}
             self.sequence_nodes = []
             self.action_nodes = []
@@ -153,6 +157,18 @@ class GraphViewWidget(QWidget):
             # Store reference to the node graph for easy access
             self.node_graph = self.graph_manager.node_graph
             self.graph = self.node_graph  # For backward compatibility
+            # Enable hover tracking on the REAL graphics view so the last
+            # canvas cursor position is recorded (paste anchors there) even
+            # with no button pressed.
+            try:
+                _sv = self._scene_view()
+                if _sv is not None:
+                    _sv.setMouseTracking(True)
+                    _vp = _sv.viewport() if hasattr(_sv, "viewport") else None
+                    if _vp is not None:
+                        _vp.setMouseTracking(True)
+            except Exception as _e:
+                logger.debug(f"Mouse-tracking enable skipped: {_e}")
             # Enable drag-and-drop of node types from the toolbar
             try:
                 self._setup_drag_drop_dnd()
@@ -194,6 +210,37 @@ class GraphViewWidget(QWidget):
         except Exception:
             pass
 
+    def _scene_view(self):
+        """Return the graph view object that can map cursor <-> scene.
+
+        ``self.view`` is the NodeGraphWidget WRAPPER (a bare QWidget) with NO
+        ``mapToScene``; every cursor->scene conversion must go through the real
+        QGraphicsView, which NodeGraphQt exposes as ``node_graph.viewer()``
+        (``NodeViewer``).  Silently using the wrapper made every paste land at
+        the view centre ("random place").
+        """
+        try:
+            ng = getattr(self.graph_manager, "node_graph", None)
+            v = getattr(ng, "viewer", None)
+            v = v() if callable(v) else v
+            if v is not None and hasattr(v, "mapToScene"):
+                return v
+        except Exception:
+            pass
+        v = getattr(self, "view", None)
+        if v is not None and hasattr(v, "mapToScene"):
+            return v
+        if v is not None and hasattr(v, "findChild"):
+            try:
+                from PyQt5.QtWidgets import QGraphicsView
+
+                child = v.findChild(QGraphicsView)
+                if child is not None:
+                    return child
+            except Exception:
+                pass
+        return None
+
     def keyPressEvent(self, event):
         """Handle keyboard events for copy/paste functionality"""
         from PyQt5.QtCore import Qt
@@ -203,12 +250,13 @@ class GraphViewWidget(QWidget):
             self.copy_selected_nodes()
             event.accept()
         elif event.key() == Qt.Key_V and event.modifiers() & Qt.ControlModifier:
-            # Ctrl+V - Paste copied nodes at mouse cursor if possible
+            # Ctrl+V - Paste copied nodes centered on the mouse cursor.
             paste_pos = None
             try:
-                if hasattr(self, "view") and hasattr(self.view, "mapToScene") and hasattr(self.view, "mapFromGlobal"):
-                    local_pos = self.view.mapFromGlobal(QCursor.pos())
-                    scene_point = self.view.mapToScene(local_pos)
+                view = self._scene_view()
+                if view is not None and hasattr(view, "mapFromGlobal"):
+                    local_pos = view.mapFromGlobal(QCursor.pos())
+                    scene_point = view.mapToScene(local_pos)
                     paste_pos = [int(scene_point.x()), int(scene_point.y())]
             except Exception:
                 paste_pos = None
@@ -295,6 +343,18 @@ class GraphViewWidget(QWidget):
                     pass
             elif event.type() == QEvent.MouseMove:
                 try:
+                    # Remember where the mouse is on the canvas so paste can
+                    # anchor there even when invoked from a toolbar button.
+                    _sp = None
+                    if hasattr(event, "scenePos"):
+                        _sp = event.scenePos()
+                    elif hasattr(obj, "mapToScene") and hasattr(event, "pos"):
+                        _sp = obj.mapToScene(event.pos())
+                    if _sp is not None:
+                        self._last_canvas_scene_pos = [int(_sp.x()), int(_sp.y())]
+                except Exception:
+                    pass
+                try:
                     if self._drag_start_pos is not None:
                         delta = event.globalPos() - self._drag_start_pos
                         if delta.manhattanLength() >= 8:
@@ -366,7 +426,10 @@ class GraphViewWidget(QWidget):
             global_pos = self.view.mapToGlobal(pos)
             # Capture scene position for paste anchoring
             try:
-                self._last_context_scene_pos = self.view.mapToScene(pos)
+                _sv = self._scene_view()
+                self._last_context_scene_pos = (
+                    _sv.mapToScene(pos) if _sv is not None else None
+                )
             except Exception:
                 self._last_context_scene_pos = None
             self.context_menu_manager.show_context_menu(global_pos, node)
@@ -782,8 +845,9 @@ class GraphViewWidget(QWidget):
                 return [int(sp.x()), int(sp.y())]
 
             # 3) Fallback to view center mapped to scene
-            if hasattr(self, "view") and hasattr(self.view, "mapToScene"):
-                sp = self.view.mapToScene(self.view.rect().center())
+            _sv = self._scene_view()
+            if _sv is not None:
+                sp = _sv.mapToScene(_sv.rect().center())
                 return [int(sp.x()), int(sp.y())]
 
             # 4) Final fallback: deterministic offset so nodes don't overlap

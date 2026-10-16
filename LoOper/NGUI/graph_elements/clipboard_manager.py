@@ -1,25 +1,86 @@
-import json
 import logging
 
 logger = logging.getLogger(__name__)
 
 class ClipboardManager:
     # Shared clipboard across all GraphViewWidget instances (main graph, expansion dialogs, etc.)
+    # Each entry is a FULL single-node config dict (ConfigManager.get_single_node_config),
+    # so paste restores every property AND rebuilds dynamic ports exactly like loading a chain.
     _shared_clipboard = []
 
     def __init__(self, parent_widget):
         self.parent = parent_widget
 
     @staticmethod
-    def _parse_extract_items(value):
-        """Parse the extract_items value (JSON string or list) into a list."""
-        if isinstance(value, list):
-            return value
+    def _empty_config():
+        """A chain-config skeleton holding every node-category list."""
+        return {
+            "sequences": [],
+            "conditional_nodes": [],
+            "llm_nodes": [],
+            "chain_import_nodes": [],
+            "form_filler_nodes": [],
+            "code_nodes": [],
+            "container_nodes": [],
+            "context_nodes": [],
+            "input_nodes": [],
+            "handle_nodes": [],
+            "mcp_nodes": [],
+            "output_nodes": [],
+            "web_sequences": [],
+        }
+
+    def _scene_view(self):
+        """The parent's cursor<->scene view (NodeGraphQt viewer), if any."""
         try:
-            parsed = json.loads(value or '[]')
-            return parsed if isinstance(parsed, list) else []
+            getter = getattr(self.parent, "_scene_view", None)
+            if callable(getter):
+                return getter()
         except Exception:
-            return []
+            pass
+        v = getattr(self.parent, "view", None)
+        if v is not None and hasattr(v, "mapToScene"):
+            return v
+        return None
+
+    def _resolve_paste_pos(self):
+        """Scene point the pasted group is CENTERED on.
+
+        Preference: the live cursor when it is over the canvas (matches the
+        Ctrl+V gesture), else the last canvas mouse position seen, else the
+        last right-click position, else the view centre.  Returns [x, y] or
+        None.
+        """
+        view = self._scene_view()
+        if view is not None and hasattr(view, "mapFromGlobal") and hasattr(view, "rect"):
+            try:
+                from PyQt5.QtGui import QCursor
+
+                local = view.mapFromGlobal(QCursor.pos())
+                if view.rect().contains(local):
+                    sp = view.mapToScene(local)
+                    return [int(sp.x()), int(sp.y())]
+            except Exception:
+                pass
+        tracked = getattr(self.parent, "_last_canvas_scene_pos", None)
+        if tracked:
+            try:
+                return [int(tracked[0]), int(tracked[1])]
+            except Exception:
+                pass
+        sp = getattr(self.parent, "_last_context_scene_pos", None)
+        if sp is not None:
+            try:
+                return [int(sp.x()), int(sp.y())]
+            except Exception:
+                pass
+        if view is not None and hasattr(view, "rect"):
+            try:
+                sc = view.mapToScene(view.rect().center())
+                return [int(sc.x()), int(sc.y())]
+            except Exception:
+                pass
+        return None
 
     def get_property_whitelist(self, node_type: str):
         # WebSequenceNode ends with "SequenceNode" - it MUST be checked before
@@ -91,281 +152,186 @@ class ClipboardManager:
         return set()
 
     def copy_selected_nodes(self):
+        """Snapshot each selected node with the CANONICAL serializer.
+
+        Uses ConfigManager.get_single_node_config so the copied payload carries
+        every property the save path writes (ports follow from that on paste) -
+        never a hand-maintained whitelist that silently drops fields.
+        """
         ClipboardManager._shared_clipboard.clear()
         ng = self.parent.node_graph
         selected_nodes = ng.selected_nodes()
         if not selected_nodes:
             return
-        selected_ids = {n.id for n in selected_nodes}
+        config_manager = getattr(self.parent, "config_manager", None)
+        if config_manager is None:
+            logger.warning("No config_manager on parent; cannot copy nodes")
+            return
         for node in selected_nodes:
-            node_type = node.type_
-            whitelist = self.get_property_whitelist(node_type)
-            props = {}
-            # Custom properties (from create_property) are nested under 'custom'
-            # by NodeGraphQt's model.to_dict — extract both top-level and custom
-            node_props = node.properties()
-            for key, value in node_props.items():
-                if key in whitelist:
-                    props[key] = value
-            for key, value in node_props.get('custom', {}).items():
-                if key in whitelist:
-                    props[key] = value
-            if node_type.endswith("ChainImportNode") or node_type == "chain_import" or node_type == "chain_import.ChainImportNode":
-                try:
-                    import_cfg = node.get_chain_import_config()
-                    if isinstance(import_cfg, dict):
-                        props = {k: import_cfg.get(k) for k in whitelist}
-                except Exception:
-                    pass
-            elif node_type.endswith("WebSequenceNode") or node_type == "web_sequence" or node_type == "web_sequence.WebSequenceNode":
-                try:
-                    ws_cfg = node.get_web_sequence_config()
-                    if isinstance(ws_cfg, dict):
-                        props = {k: ws_cfg.get(k) for k in whitelist}
-                except Exception:
-                    pass
-            elif node_type.endswith("SequenceNode") or node_type == "sequence" or node_type == "sequence.SequenceNode":
-                try:
-                    seq_cfg = node.get_sequence_config()
-                    if isinstance(seq_cfg, dict):
-                        props = {k: seq_cfg.get(k) for k in whitelist}
-                except Exception:
-                    pass
             try:
-                nx, ny = node.pos()
-            except Exception:
-                nx, ny = 0, 0
-            node_data = {
-                "type": node_type,
-                "name": node.name(),
-                "node_id": node.id,
-                "position": [nx, ny],
-                "properties": props,
-                "connections": [],
-            }
+                config = config_manager.get_single_node_config(node)
+            except Exception as e:
+                logger.warning(f"Failed to serialise node {node} for copy: {e}")
+                continue
+            if not isinstance(config, dict):
+                continue
+            # Record the node's on-canvas size so paste can CENTER the group on
+            # the cursor (positions alone only give each node's top-left).
             try:
-                for out_port in node.output_ports():
-                    for connected_port in out_port.connected_ports():
-                        target_node = connected_port.node()
-                        if target_node and target_node.id in selected_ids:
-                            node_data["connections"].append({
-                                "source_port": out_port.name(),
-                                "target_node_id": target_node.id,
-                                "target_port": connected_port.name(),
-                            })
+                _br = node.view.boundingRect()
+                _w, _h = int(_br.width()), int(_br.height())
             except Exception:
-                pass
-            ClipboardManager._shared_clipboard.append(node_data)
+                _w, _h = 160, 60
+            for _val in config.values():
+                if isinstance(_val, list):
+                    for _nd in _val:
+                        if isinstance(_nd, dict):
+                            _nd["_copy_w"] = _w
+                            _nd["_copy_h"] = _h
+            ClipboardManager._shared_clipboard.append(config)
 
     def paste_copied_nodes(self, paste_pos=None):
+        """Recreate the copied nodes under the cursor.
+
+        Paste is driven through the SAME per-type config loaders the chain
+        loader uses (_create_* + _restore_connections), so every property and
+        every dynamic port (Input true/false, LLM orchestrator tools/brains,
+        conditional loop port, ...) is rebuilt exactly as on a fresh load.
+        """
         if not ClipboardManager._shared_clipboard:
             return
-        try:
-            min_x = min(nd.get("position", [0, 0])[0] for nd in ClipboardManager._shared_clipboard)
-            min_y = min(nd.get("position", [0, 0])[1] for nd in ClipboardManager._shared_clipboard)
-        except Exception:
-            min_x, min_y = 0, 0
+        config_manager = getattr(self.parent, "config_manager", None)
+        if config_manager is None:
+            logger.warning("No config_manager on parent; cannot paste nodes")
+            return
+
+        # Flatten the copied single-node configs into (list_key, node_data) pairs.
+        entries = []
+        for config in ClipboardManager._shared_clipboard:
+            if not isinstance(config, dict):
+                continue
+            for key, value in config.items():
+                if isinstance(value, list):
+                    for node_data in value:
+                        if isinstance(node_data, dict):
+                            entries.append((key, node_data))
+        if not entries:
+            return
+
+        # Anchor the group's top-left corner at the cursor / anchor position.
         if paste_pos is None:
-            try:
-                if getattr(self.parent, "_last_context_scene_pos", None) is not None:
-                    scene_point = self.parent._last_context_scene_pos
-                elif hasattr(self.parent, "view") and hasattr(self.parent.view, "mapToScene"):
-                    scene_point = self.parent.view.mapToScene(self.parent.view.rect().center())
-                else:
-                    raise AttributeError("view.mapToScene not available")
-                paste_pos = [int(scene_point.x()), int(scene_point.y())]
-            except Exception:
-                self.parent._paste_counter = getattr(self.parent, "_paste_counter", 0) + 1
-                base_offset = 100
-                paste_pos = [100 + (self.parent._paste_counter * base_offset), 100 + (self.parent._paste_counter * base_offset)]
+            paste_pos = self._resolve_paste_pos()
+        if paste_pos is None:
+            self.parent._paste_counter = getattr(self.parent, "_paste_counter", 0) + 1
+            base_offset = 100
+            paste_pos = [
+                100 + (self.parent._paste_counter * base_offset),
+                100 + (self.parent._paste_counter * base_offset),
+            ]
         else:
-            paste_pos = [paste_pos[0], paste_pos[1]]
+            paste_pos = [int(paste_pos[0]), int(paste_pos[1])]
 
-        id_mapping = {}
-        new_nodes = []
-        for idx, node_data in enumerate(ClipboardManager._shared_clipboard):
-            node_type = node_data["type"]
-            original_id = node_data["node_id"]
-            rel_x = node_data.get("position", [0, 0])[0] - min_x
-            rel_y = node_data.get("position", [0, 0])[1] - min_y
-            np_x = paste_pos[0] + rel_x + (idx * 10)
-            np_y = paste_pos[1] + rel_y + (idx * 10)
-            new_pos = self.parent.graph_manager._snap_point(np_x, np_y)
+        # Bounding box of the copied group: positions are top-left corners, so
+        # each node's recorded size is added to find the visual CENTRE.
+        try:
+            gx0 = min(nd.get("position", [0, 0])[0] for _, nd in entries)
+            gy0 = min(nd.get("position", [0, 0])[1] for _, nd in entries)
+            gx1 = max(
+                nd.get("position", [0, 0])[0] + nd.get("_copy_w", 160)
+                for _, nd in entries
+            )
+            gy1 = max(
+                nd.get("position", [0, 0])[1] + nd.get("_copy_h", 60)
+                for _, nd in entries
+            )
+        except Exception:
+            gx0 = gy0 = 0
+            gx1 = gy1 = 0
+        centre_x = (gx0 + gx1) / 2.0
+        centre_y = (gy0 + gy1) / 2.0
 
-            new_node = None
+        graph_manager = self.parent.graph_manager
+
+        def _snap(x, y):
             try:
-                # WebSequenceNode ends with "SequenceNode" - must be created as
-                # its own type BEFORE the desktop sequence branch matches.
-                if node_type.endswith("WebSequenceNode") or node_type == "web_sequence" or node_type == "web_sequence.WebSequenceNode":
-                    new_node = self.parent.graph_manager.create_node("web_sequence.WebSequenceNode", pos=new_pos)
-                elif node_type.endswith("SequenceNode") or node_type == "sequence":
-                    new_node = self.parent.graph_manager.create_node("sequence.SequenceNode", pos=new_pos)
-                elif node_type.endswith("ConditionalNode") or node_type == "conditional":
-                    new_node = self.parent.graph_manager.create_node("conditional.ConditionalNode", pos=new_pos)
-                elif node_type.endswith("LLMNode") or node_type == "llm":
-                    new_node = self.parent.graph_manager.create_node("llm.LLMNode", pos=new_pos)
-                elif node_type.endswith("ChainImportNode") or node_type == "chain_import":
-                    new_node = self.parent.graph_manager.create_node("chain_import.ChainImportNode", pos=new_pos)
-                elif node_type.endswith("FormFillerNode") or node_type == "form_filler":
-                    new_node = self.parent.graph_manager.create_node("form_filler.FormFillerNode", pos=new_pos)
-                elif node_type.endswith("CodeNode") or node_type == "code":
-                    new_node = self.parent.graph_manager.create_node("code.CodeNode", pos=new_pos)
-                elif node_type.endswith("ContextNode") or node_type == "context":
-                    new_node = self.parent.graph_manager.create_node("context.ContextNode", pos=new_pos)
-                elif node_type.endswith("InputNode") or node_type == "input":
-                    new_node = self.parent.graph_manager.create_node("input.InputNode", pos=new_pos)
-                elif node_type.endswith("MCPNode") or node_type == "mcp":
-                    new_node = self.parent.graph_manager.create_node("mcp.MCPNode", pos=new_pos)
-                else:
-                    new_node = self.parent.graph_manager.create_node(node_type, pos=new_pos)
+                return list(graph_manager._snap_point(x, y))
             except Exception:
-                continue
-            if new_node is None:
-                continue
+                return [x, y]
 
-            whitelist = self.get_property_whitelist(node_type)
-            applied_keys = []
-            if node_type.endswith("ChainImportNode") or node_type == "chain_import" or node_type == "chain_import.ChainImportNode":
-                cfg = node_data.get("properties", {})
-                try:
-                    chain_file = cfg.get("chain_file", "") or ""
-                    import_mode = cfg.get("import_mode", "full") or "full"
-                    prefix = cfg.get("prefix", "") or ""
-                    loop_count_val = cfg.get("loop_count", 1)
-                    try:
-                        loop_count = int(loop_count_val)
-                    except Exception:
-                        loop_count = int(str(loop_count_val or "1").strip() or 1)
-                    extra_delay_val = cfg.get("extra_delay", 0)
-                    try:
-                        extra_delay = float(extra_delay_val)
-                    except Exception:
-                        extra_delay = float(str(extra_delay_val or "0").strip() or 0)
-                    try:
-                        new_node.set_chain_import_data({
-                            "chain_file": chain_file,
-                            "import_mode": import_mode,
-                            "prefix": prefix,
-                            "loop_count": loop_count,
-                            "extra_delay": extra_delay
-                        })
-                        applied_keys = list(whitelist)
-                    except Exception:
-                        pass
-                    # Data output port config — set explicitly (the paste above
-                    # only restores the file/mode/loop fields).
-                    try:
-                        new_node.set_property(
-                            "emit_data",
-                            "true" if cfg.get("emit_data") else "false",
-                        )
-                        new_node.set_property(
-                            "data_output_nodes",
-                            json.dumps(cfg.get("data_output_nodes") or []),
-                        )
-                    except Exception:
-                        pass
-                except Exception:
-                    pass
-            elif node_type.endswith("WebSequenceNode") or node_type == "web_sequence" or node_type == "web_sequence.WebSequenceNode":
-                cfg = node_data.get("properties", {})
-                try:
-                    ws_config = {
-                        "session_file": cfg.get("session_file", "") or "",
-                        "headless": cfg.get("headless", False),
-                        "speed": cfg.get("speed", 1.0),
-                        "native_actions": cfg.get("native_actions", True),
-                        "loop_count": int(cfg.get("loop_count", 1) or 1),
-                        "extra_delay": float(cfg.get("extra_delay", 1.0) or 1.0),
-                        "extract_items": self._parse_extract_items(cfg.get("extract_items", [])),
-                    }
-                    new_node.set_web_sequence_data(0, ws_config)
-                    applied_keys = list(whitelist)
-                except Exception:
-                    pass
-            elif node_type.endswith("SequenceNode") or node_type == "sequence" or node_type == "sequence.SequenceNode":
-                cfg = node_data.get("properties", {})
-                try:
-                    seq_config = {
-                        "sequence_file": cfg.get("sequence_file", "") or "",
-                        "loop_count": int(cfg.get("loop_count", 1) or 1),
-                        "extra_delay": float(cfg.get("extra_delay", 1.0) or 1.0),
-                        "use_app_opened": cfg.get("use_app_opened", True),
-                        "click_drift_min": float(cfg.get("click_drift_min", 5.0)),
-                        "click_drift_max": float(cfg.get("click_drift_max", 10.0)),
-                    }
-                    new_node.set_sequence_data(0, seq_config)
-                    applied_keys = list(whitelist)
-                except Exception:
-                    for key, value in node_data.get("properties", {}).items():
-                        if key in whitelist:
-                            try:
-                                new_node.set_property(key, value)
-                                applied_keys.append(key)
-                            except Exception:
-                                pass
-            else:
-                for key, value in node_data.get("properties", {}).items():
-                    if key in whitelist:
-                        try:
-                            new_node.set_property(key, value)
-                            applied_keys.append(key)
-                        except Exception:
-                            pass
-
-            # Morph conditional node ports so file-loop conditionals expose
-            # their single 'output' port before connections are restored.
-            if node_type.endswith("ConditionalNode") or node_type == "conditional":
-                try:
-                    new_node.update_loop_port_mode()
-                except Exception:
-                    pass
-
-            base_name = node_data.get("name") or getattr(new_node, "NODE_NAME", "Node")
+        # Build a temporary chain config holding only the copied nodes, with
+        # positions shifted so the group's CENTRE lands on paste_pos.
+        merged = self._empty_config()
+        for key, node_data in entries:
+            node_copy = dict(node_data)
+            node_copy.pop("_copy_w", None)
+            node_copy.pop("_copy_h", None)
             try:
-                new_node.set_name(f"{base_name}_copy")
+                cur_x, cur_y = node_data.get("position", [0, 0])[:2]
+            except Exception:
+                cur_x, cur_y = 0, 0
+            node_copy["position"] = _snap(
+                int(round(paste_pos[0] - centre_x + cur_x)),
+                int(round(paste_pos[1] - centre_y + cur_y)),
+            )
+            merged.setdefault(key, [])
+            merged[key].append(node_copy)
+
+        backup_config = config_manager.chain_config
+        node_map = {}
+        config_manager.chain_config = merged
+        try:
+            config_manager._create_sequence_nodes(node_map)
+            config_manager._create_web_sequence_nodes(node_map)
+            config_manager._create_conditional_nodes(node_map)
+            config_manager._create_llm_nodes(node_map)
+            config_manager._create_chain_import_nodes(node_map)
+            config_manager._create_form_filler_nodes(node_map)
+            config_manager._create_code_nodes(node_map)
+            config_manager._create_container_nodes(node_map)
+            config_manager._create_context_nodes(node_map)
+            config_manager._create_input_nodes(node_map)
+            config_manager._create_handle_nodes(node_map)
+            config_manager._create_mcp_nodes(node_map)
+            config_manager._create_output_nodes(node_map)
+            config_manager._restore_connections(node_map)
+        except Exception as e:
+            logger.error(f"Error rebuilding pasted nodes: {e}")
+        finally:
+            config_manager.chain_config = backup_config
+
+        new_nodes = [n for n in node_map.values() if n is not None]
+        for new_node in new_nodes:
+            # Context/Output nodes persist an internal '_config_node_id' that
+            # the save path writes as the node_id.  A pasted copy inherited the
+            # ORIGINAL id, so saving the chain emitted two nodes with the same
+            # node_id (broken graph on reload).  Re-point each copy at its own
+            # runtime id so every pasted node is self-identifying and unique.
+            #
+            # ONLY nodes that actually declare '_config_node_id' may be written
+            # here, and the write MUST skip the undo stack: NodeGraphQt routes a
+            # command-backed set_property through a QUndoStack redo() callback,
+            # so a NodePropertyError raised there never propagates back to this
+            # try/except - it reaches PyQt's qFatal and ABORTS the app
+            # (0xC0000409).
+            try:
+                _props = new_node.properties()
+                _has_cfg_id = ('_config_node_id' in _props) or (
+                    '_config_node_id' in (_props.get('custom') or {})
+                )
+                if _has_cfg_id:
+                    new_node.set_property(
+                        '_config_node_id', new_node.id, push_undo=False,
+                    )
             except Exception:
                 pass
-
-            id_mapping[original_id] = new_node
-            new_nodes.append(new_node)
-
-        for node_data in ClipboardManager._shared_clipboard:
-            source_new = id_mapping.get(node_data["node_id"])
-            if not source_new:
-                continue
-            # Shared-context clones never restore stored edges into the pasted
-            # copy: their cross-chain link is the runtime identity feed, and any
-            # copied edge would reference ids that belong to the source chain
-            # (reported as dangling by the graph builder).
-            _props = node_data.get("properties", {}) or {}
-            _ntype = str(node_data.get("type", ""))
-            if (
-                (_ntype == "context" or "ContextNode" in _ntype)
-                and (
-                    str(_props.get("shared_context_chain_file") or "").strip()
-                    or str(_props.get("shared_context_node_id") or "").strip()
-                )
-            ):
-                continue
-            for conn in node_data.get("connections", []):
-                target_new = id_mapping.get(conn.get("target_node_id"))
-                if not target_new:
-                    continue
-                try:
-                    self.parent.graph_manager.connect_nodes(
-                        source_new,
-                        target_new,
-                        conn.get("source_port"),
-                        conn.get("target_port"),
-                    )
-                except Exception:
-                    pass
+            try:
+                new_node.set_name(f"{new_node.name()}_copy")
+            except Exception:
+                pass
 
         try:
             self.parent.node_graph.clear_selection()
-            for n in new_nodes:
-                n.set_selected(True)
+            for new_node in new_nodes:
+                new_node.set_selected(True)
         except Exception:
             pass
-
