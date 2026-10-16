@@ -75,6 +75,9 @@ dependencies {
   // androidx is not declared by the zxing POM, so the app supplies it
   // (appcompat pulls androidx.core -> ContextCompat, used by CaptureActivity).
   implementation "androidx.appcompat:appcompat:1.7.0"
+  // WebViewAssetLoader: serve the bundled UI from an https origin
+  // (https://appassets.androidplatform.net), which getUserMedia requires.
+  implementation "androidx.webkit:webkit:1.12.1"
   // QR scanning for the host key (CaptureActivity + IntentIntegrator).
   implementation "com.journeyapps:zxing-android-embedded:4.3.0"
 }

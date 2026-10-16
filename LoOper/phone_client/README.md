@@ -17,9 +17,10 @@ now lives here, `agent_web_server.py` serves only the API (no HTML).
 core/connect.js    dials the host by key, byte-pipes to 127.0.0.1:<port>
 core/entry.js      reads the key from Bare.argv, reports readiness (IPC/stdout)
 android/           Android app: Kotlin bare-kit Worklet + WebView
-  app/src/main/assets/web/index.html   the chat UI (bundled, loads file://)
+  app/src/main/assets/web/index.html   the chat UI (bundled; served over https)
   app/build.gradle          AGP config + `link` / `pack` tasks (wired into preBuild)
   app/src/main/java/...     MainActivity.kt (worklet + WebView + QR scanner)
+                            NotifyService.kt (foreground service + notifications)
   app/src/main/AndroidManifest.xml
 package.json       hyperdht, bare-net, b4a (+ dev bare-link, bare-pack)
 pear.json          Pear app manifest (enables `pear .` on desktop)
@@ -88,9 +89,29 @@ npm start -- <64-char-host-pubkey>     # prints {"type":"ready","port":8081}
 3. It starts a worklet running `core/entry.js` with the pubkey as an argument.
 4. The worklet `dht.connect(pubkey)`s the host and byte-pipes the stream to
    `127.0.0.1:<port>`.
-5. The WebView loads the **bundled** page (`file:///android_asset/web/index.html`),
-   which opens `ws://127.0.0.1:8081/ws` — piped to the host's `/ws` (chat and
-   panels), with `/stt` and `/tts` for voice.
+5. The WebView loads the **bundled** page, served from a secure asset origin
+   (`https://appassets.androidplatform.net/assets/web/index.html` via
+   `WebViewAssetLoader`), which opens `ws://127.0.0.1:8081/ws` — piped to the
+   host's `/ws` (chat and panels), with `/stt` and `/tts` for voice.
+
+## Notifications + background
+
+The app posts **one system notification per agent message / ask prompt** so you
+never have to reopen it to check. To receive messages while the UI is hidden, a
+P2P link must stay up (there is no push server), so once connected the app
+starts a **foreground service** (`NotifyService`) that keeps the worklet + pipe
+alive and shows an ongoing "Connected" notification. Notifications are
+suppressed while the UI is in the foreground (nothing to alert about).
+
+Permissions requested at launch: `RECORD_AUDIO` (voice input) and, on Android
+13+, `POST_NOTIFICATIONS`.
+
+## Voice
+
+- **Text-to-speech**: every agent output (and every ask question) is spoken via
+the host's `/tts`, per message — not only when a run ends.
+- **Speech-to-text**: hold (or tap, during an ask) the mic button; audio is
+captured at the device rate, resampled to 16 kHz, and POSTed to `/stt`.
 
 ## Troubleshooting
 
@@ -105,11 +126,19 @@ npm start -- <64-char-host-pubkey>     # prints {"type":"ready","port":8081}
   auto-detects `%LOCALAPPDATA%\Android\Sdk` when the env var is unset.
 - **`No Gradle found`** — run `Arrow_setup.bat` (installs portable Gradle +
   wrapper), or run `gradle wrapper` in `android/` with any Gradle.
+- **No microphone / voice** — the page must be a secure context for
+  `getUserMedia`; it is served over `https://appassets.androidplatform.net`.
+  If the mic still fails, check logcat tag `LoOperWeb` for `[mic]` lines (they
+  log the exact `getUserMedia` error name).
+- **No notifications** — grant the notification permission (Android 13+), and
+  keep the ongoing "Connected" notification (the foreground service) running.
 
 ## Limits / TODO
 
 - `minSdk = 26`. Raise it in `android/app/build.gradle` if `bare-kit` requires more.
 - Cleartext HTTP is enabled app-wide (`usesCleartextTraffic`) for the loopback hop.
+- The foreground service uses type `dataSync`, which Android 15+ caps at ~6h per
+  day; a permanently-running link would need a `specialUse` declaration.
 - Trust-on-first-use: any key typed is accepted. Add an allow-list check against
   a pinned host key before shipping.
 - iOS shell not built yet — the same `core/` packs as a worklet + `WKWebView`.

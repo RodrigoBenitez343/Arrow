@@ -6,21 +6,30 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup.LayoutParams
+import android.webkit.ConsoleMessage
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.webkit.WebViewAssetLoader
 import com.google.zxing.integration.android.IntentIntegrator
 import to.holepunch.bare.kit.IPC
 import to.holepunch.bare.kit.Worklet
@@ -42,23 +51,32 @@ class MainActivity : Activity() {
   private lateinit var webView: WebView
   private lateinit var status: TextView
   private lateinit var scanButton: Button
+  private lateinit var assetLoader: WebViewAssetLoader
   private val pending = StringBuilder()
+  private var isForeground = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     buildUi()
-    ensureMicPermission()
+    requestRuntimePermissions()
 
     val pubkey = loadPubkey()
     if (pubkey != null) startClient(pubkey) else launchScanner()
   }
 
-  // The web UI records voice via getUserMedia, so the OS-level mic permission
-  // must be granted (WebView's onPermissionRequest grants the web-level one).
-  private fun ensureMicPermission() {
-    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-      requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQ_MIC)
+  // The web UI records voice via getUserMedia and raises per-message
+  // notifications, so the OS-level RECORD_AUDIO (and, on API 33+,
+  // POST_NOTIFICATIONS) permissions must be granted.  WebView's
+  // onPermissionRequest only grants the web-level microphone resource.
+  private fun requestRuntimePermissions() {
+    val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      needed.add(Manifest.permission.POST_NOTIFICATIONS)
     }
+    val missing = needed.filter {
+      checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+    }
+    if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQ_PERMS)
   }
 
   // -- UI --------------------------------------------------------------------
@@ -66,22 +84,40 @@ class MainActivity : Activity() {
   private fun buildUi() {
     val frame = FrameLayout(this)
 
+    assetLoader = WebViewAssetLoader.Builder()
+      .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+      .build()
+
     webView = WebView(this).apply {
       settings.javaScriptEnabled = true
       settings.domStorageEnabled = true
       // Let the bundled page's TTS auto-play and its mic (getUserMedia) record.
       settings.mediaPlaybackRequiresUserGesture = false
-      // The UI is bundled as an asset (file://), so allow it to reach the
-      // loopback pipe (ws://127.0.0.1:8081) for /ws, /stt and /tts.
-      settings.allowFileAccess = true
-      settings.allowFileAccessFromFileURLs = true
-      settings.allowUniversalAccessFromFileURLs = true
-      webViewClient = WebViewClient()
+      // The page is served from an https asset origin and talks to the host
+      // over the loopback pipe (ws://127.0.0.1:8081); loopback is a trustworthy
+      // origin, but allow mixed content so ws:// is never blocked.
+      settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+      // JS bridge so the page can raise one notification per agent message.
+      addJavascriptInterface(Notifier(), "Android")
+      webViewClient = object : WebViewClient() {
+        // Serve the bundled UI assets from the secure asset origin.
+        override fun shouldInterceptRequest(
+          view: WebView?, request: WebResourceRequest?
+        ): WebResourceResponse? {
+          val r = request ?: return super.shouldInterceptRequest(view, request)
+          return assetLoader.shouldInterceptRequest(r.url)
+        }
+      }
       webChromeClient = object : WebChromeClient() {
         // The UI records voice via getUserMedia; WebView denies it unless the
         // app grants the resource here (plus RECORD_AUDIO at the OS level).
         override fun onPermissionRequest(request: PermissionRequest) {
           request.grant(request.resources)
+        }
+        // Surface page console output in logcat for field diagnosis.
+        override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+          Log.i("LoOperWeb", "${msg.message()} @${msg.lineNumber()}")
+          return true
         }
       }
     }
@@ -206,8 +242,13 @@ class MainActivity : Activity() {
         runOnUiThread {
           status.visibility = View.GONE
           scanButton.visibility = View.GONE
-          // The UI is bundled in the APK; it talks to the host over the pipe.
-          webView.loadUrl("file:///android_asset/web/index.html")
+          // Keep the pipe alive in the background so messages — and their
+          // notifications — still arrive while the UI is hidden.
+          ContextCompat.startForegroundService(
+            this, Intent(this, NotifyService::class.java)
+          )
+          // The UI is bundled in the APK, served from the secure asset origin.
+          webView.loadUrl(ASSET_URL)
         }
       }
       line.contains("\"type\":\"error\"") -> {
@@ -223,6 +264,20 @@ class MainActivity : Activity() {
     return bytes
   }
 
+  /**
+   * JS bridge: the bundled page calls Android.notify(title, body) for every
+   * agent message or ask prompt, so the user gets a system notification without
+   * having to keep the app open.  Suppressed while the UI is visible.
+   */
+  inner class Notifier {
+    @JavascriptInterface
+    fun notify(title: String?, body: String?) {
+      Log.i("LoOperWeb", "[bridge] notify fg=$isForeground title=$title")
+      if (isForeground) return
+      NotifyService.postMessage(applicationContext, title ?: "Arrow Agent", body ?: "")
+    }
+  }
+
   // -- Key persistence -------------------------------------------------------
 
   private fun loadPubkey(): String? =
@@ -236,12 +291,16 @@ class MainActivity : Activity() {
 
   override fun onResume() {
     super.onResume()
+    isForeground = true
     worklet?.resume()
   }
 
   override fun onPause() {
     super.onPause()
-    worklet?.suspend()
+    isForeground = false
+    // Deliberately NOT suspending the worklet: the foreground service keeps the
+    // pipe alive so agent messages (and notifications) still arrive in the
+    // background instead of only while the app is open.
   }
 
   override fun onDestroy() {
@@ -255,7 +314,8 @@ class MainActivity : Activity() {
   private companion object {
     const val PREFS = "looper"
     const val KEY = "host_key"
-    const val REQ_MIC = 1
+    const val REQ_PERMS = 1
+    const val ASSET_URL = "https://appassets.androidplatform.net/assets/web/index.html"
     val KEY_RE = Regex("^[0-9a-fA-F]{64}$")
     val PORT_RE = Regex("\"port\"\\s*:\\s*(\\d+)")
     val MSG_RE = Regex("\"msg\"\\s*:\\s*\"([^\"]*)\"")

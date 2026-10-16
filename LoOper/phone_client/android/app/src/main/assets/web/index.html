@@ -254,6 +254,28 @@
   let waitingForAnswer = false;  // true when agent sent an 'ask' prompt
   let askVoiceMode = false;      // true when the mic auto-started to answer an ask
 
+  // ── Android bridge: one system notification per agent message ──
+  // No-op in a plain browser (Android.notify is injected by the Android shell).
+  function notifyAndroid(title, body) {
+    try {
+      if (window.Android && Android.notify) {
+        Android.notify(String(title || "Arrow Agent"), String(body || ""));
+      } else {
+        console.log("[bridge] Android interface missing (typeof=" + (typeof window.Android) + ")");
+      }
+    } catch (e) { console.log("[bridge] notify failed: " + e); }
+  }
+
+  // Strip markdown/code so speech and notifications read naturally.
+  function plainText(s) {
+    return String(s == null ? "" : s)
+      .replace(/```[\s\S]*?```/g, " (code) ")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/[*_>#]+/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   function setStatus(state) {
     dot.className = "dot " + state;
     sendBtn.disabled = (state !== "connected");
@@ -356,7 +378,8 @@
     return out.join("");
   }
 
-  function renderOutput(msg) {
+  function renderOutput(msg, live) {
+    if (live === undefined) live = true;
     var div = document.createElement("div");
     div.className = "msg agent";
     var label = msg.label || "";
@@ -413,6 +436,17 @@
     // are driven by the server's lifecycle frames (agent_busy / agent_done /
     // ask / goal_complete).  Resetting them here used to drop the client out
     // of answer mode whenever an output bubble arrived mid-ask.
+
+    // Voice + notify for agent TEXT outputs (skip image/html/audio cards, and
+    // skip replaying history on reconnect).
+    var mode = msg.mode || "text";
+    if (live && (mode === "text" || mode === "markdown" || mode === "code")) {
+      var spoken = plainText(content || label);
+      if (spoken) {
+        playTts(spoken);
+        notifyAndroid("Arrow", spoken);
+      }
+    }
   }
 
   function renderHistory(list) {
@@ -424,7 +458,7 @@
       if (m.is_user) {
         addMsg(m.text || "", "user");
       } else if ((m.mode || "text") !== "text") {
-        renderOutput({mode: m.mode, content: m.text || "", asset: m.asset || "", label: ""});
+        renderOutput({mode: m.mode, content: m.text || "", asset: m.asset || "", label: ""}, false);
       } else {
         addMsg(m.text || "", "agent");
       }
@@ -482,6 +516,16 @@
   let audioProcessor = null;
   let audioSource = null;
   let pcmChunks = [];
+  let recordSampleRate = 16000;
+
+  // Diagnostic: log the mic-relevant environment (visible via logcat tag LoOperWeb).
+  try {
+    console.log("[probe] secure=" + window.isSecureContext +
+      " mediaDevices=" + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) +
+      " android=" + (typeof window.Android) +
+      " notify=" + !!(window.Android && window.Android.notify) +
+      " origin=" + location.origin);
+  } catch (e) {}
 
   function startRecording(event) {
     if (event) event.preventDefault();
@@ -501,10 +545,15 @@
     pcmChunks = [];
     startInSpectro();
 
+    console.log("[mic] requesting getUserMedia");
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(function(stream) {
         recordingStream = stream;
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        // Use the device's native rate: forcing 16 kHz throws NotSupportedError
+        // on some WebViews.  Resample to 16 kHz for Vosk when encoding the WAV.
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioContext.state === "suspended") { audioContext.resume(); }
+        recordSampleRate = audioContext.sampleRate || 16000;
         audioSource = audioContext.createMediaStreamSource(stream);
         audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
@@ -528,8 +577,10 @@
 
         audioSource.connect(audioProcessor);
         audioProcessor.connect(audioContext.destination);
+        console.log("[mic] recording @ " + recordSampleRate + " Hz, ctx=" + audioContext.state);
       })
       .catch(function(err) {
+        console.log("[mic] getUserMedia failed: " + (err && err.name) + " " + (err && err.message));
         addMsg("Microphone access denied: " + err.message, "agent");
         stopRecording();
       });
@@ -575,9 +626,25 @@
       offset += pcmChunks[i].length;
     }
 
+    // Downsample to Vosk's 16 kHz if the device recorded at another rate.
+    var pcm16 = resampleTo16k(allPcm, recordSampleRate);
+    console.log("[mic] captured " + allPcm.length + " @ " + recordSampleRate +
+      " Hz -> " + pcm16.length + " @ 16000 Hz");
     // Build WAV blob
-    var wavBlob = encodeWav(allPcm, 16000);
+    var wavBlob = encodeWav(pcm16, 16000);
     sendAudioToStt(wavBlob);
+  }
+
+  // Nearest-neighbour downsample to 16 kHz (enough for speech-to-text).
+  function resampleTo16k(pcm, srcRate) {
+    if (!srcRate || srcRate === 16000) return pcm;
+    var ratio = srcRate / 16000;
+    var outLen = Math.max(1, Math.floor(pcm.length / ratio));
+    var out = new Int16Array(outLen);
+    for (var i = 0; i < outLen; i++) {
+      out[i] = pcm[Math.min(pcm.length - 1, Math.floor(i * ratio))];
+    }
+    return out;
   }
 
   function encodeWav(samples, sampleRate) {
@@ -831,6 +898,13 @@
     inputBox.focus();
     agentBusy = true;
     stopBtn.style.display = "inline-block";
+    // Voice + notify: the question is read aloud and pushed as a notification
+    // so the user can answer without watching the app.
+    var q = plainText(msg.question || "");
+    if (q) {
+      playTts(q);
+      notifyAndroid("Arrow — needs an answer", q);
+    }
     // Voice-first: start the mic so the user can answer by speaking.
     beginVoiceAnswer();
   }
@@ -869,7 +943,12 @@
         if (msg.type === "coworkers") { renderCoworkers(msg.coworkers || []); return; }
         if (msg.type === "chains") { renderChains(msg.chains || []); return; }
         if (msg.type === "schedules") { renderSchedules(msg.schedules || []); return; }
-        if (msg.type === "notice") { addMsg(msg.text || "", "agent"); return; }
+        if (msg.type === "notice") {
+          addMsg(msg.text || "", "agent");
+          var nt = plainText(msg.text || "");
+          if (nt) { playTts(nt); notifyAndroid("Arrow", nt); }
+          return;
+        }
         if (msg.type === "goal_complete" && msg.goal_id) {
           addRatingRow(msg.goal_id);
           stopBtn.style.display = "none";
@@ -924,8 +1003,9 @@
       stopBtn.style.display = "none";
       agentBusy = false;
       waitingForAnswer = false;
-      // Auto-play TTS for agent responses
-      playTts(evt.data);
+      // Auto-play TTS + notify for agent responses.
+      var pt = plainText(evt.data);
+      if (pt) { playTts(pt); notifyAndroid("Arrow", pt); }
     };
     ws.onclose = function () {
       setStatus("disconnected");
