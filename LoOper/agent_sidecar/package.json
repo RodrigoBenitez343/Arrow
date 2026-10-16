@@ -1,0 +1,14 @@
+{
+  "name": "looper-agent-sidecar",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Host-side Pear transport for LoOper Agent Mode (hyperdht byte-pipe to the aiohttp server).",
+  "main": "looper-agent-sidecar.js",
+  "scripts": {
+    "start": "node looper-agent-sidecar.js"
+  },
+  "dependencies": {
+    "b4a": "^1.6.4",
+    "hyperdht": "^6.0.0"
+  }
+}

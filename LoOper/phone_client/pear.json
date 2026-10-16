@@ -1,0 +1,6 @@
+{
+  "name": "looper-phone-client",
+  "version": "1.0.0",
+  "main": "core/entry.js",
+  "permissions": []
+}

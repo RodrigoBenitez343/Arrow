@@ -50,7 +50,7 @@ from ..constants import (
 )
 from ..i18n import _
 from ..icons import tabler_qicon
-from .agent_web_server import AgentWebServer, detect_tailscale_ip
+from .agent_web_server import AgentWebServer, start_sidecar
 from .hover_button import HoverGlowButton
 from .memory_graph_panel import MemoryGraphPanel
 from .scheduler_panel import SchedulerPanel
@@ -102,8 +102,8 @@ def _avatar_name(seed: str) -> str:
         idx = sum(ord(ch) for ch in str(seed))
     return _COWORKER_AVATARS[idx % len(_COWORKER_AVATARS)]
 
-# ── Persistent agent-mode remote IP (Tailscale/LAN) ──────────────────────
-_AGENT_IP_KEY = "AGENT_TAILSCALE_IP"
+# ── Persistent agent-mode remote key (Pear pubkey) ──────────────────────
+_AGENT_IP_KEY = "AGENT_PEAR_PUBKEY"
 # Whether the phone-facing agent web server auto-starts (default: on).
 _AGENT_WEB_SERVER_KEY = "AGENT_WEB_SERVER_ENABLED"
 
@@ -122,7 +122,7 @@ def _agent_config_file() -> str:
 
 
 def _load_agent_ip() -> str:
-    """Load the persisted remote IP (empty string when unset)."""
+    """Load the persisted remote-access key (Pear pubkey; empty when unset)."""
     try:
         with open(_agent_config_file(), encoding="utf-8") as fh:
             cfg = json.load(fh)
@@ -132,7 +132,7 @@ def _load_agent_ip() -> str:
 
 
 def _save_agent_ip(ip: str) -> None:
-    """Persist the remote IP, preserving the other config keys."""
+    """Persist the remote-access key (Pear pubkey), preserving other keys."""
     try:
         path = _agent_config_file()
         try:
@@ -315,6 +315,7 @@ class AgentOverlay(QFrame):
         self._web_server = AgentWebServer()
         self._web_server.set_handler(self._handle_web_message)
         self._web_server_started = False
+        self._sidecar_proc = None
         self._server_poll_timer = QTimer(self)
         self._server_poll_timer.setInterval(2000)
         self._server_poll_timer.timeout.connect(self._poll_server_status)
@@ -2912,10 +2913,10 @@ class AgentOverlay(QFrame):
         status_h.addStretch(1)
         pl.addLayout(status_h)
 
-        # ── Remote-access IP (Tailscale/LAN), persisted ──
+        # ── Remote-access key (Pear pubkey), persisted ──
         self._ts_ip_edit = QLineEdit(panel)
         self._ts_ip_edit.setPlaceholderText(
-            _("Remote IP (Tailscale/LAN) \u2014 auto-detect if empty")
+            _("Pear public key \u2014 auto-generated on start")
         )
         self._ts_ip_edit.setText(_load_agent_ip())
         self._ts_ip_edit.setFixedHeight(26)
@@ -2963,40 +2964,50 @@ class AgentOverlay(QFrame):
         return panel
 
     def _on_ts_ip_edited(self):
-        """Persist the typed remote IP and refresh the running server's URL."""
-        ip = self._ts_ip_edit.text().strip()
-        _save_agent_ip(ip)
+        """Persist the typed Pear key and refresh the running server's URL."""
+        pubkey = self._ts_ip_edit.text().strip()
+        _save_agent_ip(pubkey)
         if not self._web_server_started:
             return
-        self._web_server.set_remote_ip(ip)
+        self._web_server.set_peer_key(pubkey)
         state = self._web_server.state
-        if ip:
-            state.remote_url = f"http://{ip}:{self._web_server.actual_port}"
+        if pubkey:
+            state.remote_url = f"pear://{pubkey}"
             self._update_qr_display(state.remote_url)
         else:
             state.remote_url = None
             self._qr_label.clear()
             self._qr_label.hide()
 
-    def _auto_detect_ip_and_refresh(self):
-        """Background Tailscale-IP detection; refresh UI + server when found."""
-        ip = detect_tailscale_ip() or ""
-        if not ip:
-            return
-        self._post_ui(lambda: self._apply_remote_ip(ip))
+    def _launch_sidecar(self):
+        """Spawn the Pear transport sidecar and publish its key once ready.
 
-    def _apply_remote_ip(self, ip: str):
-        """Fill + persist an auto-detected IP and refresh a running server."""
-        self._ts_ip_edit.setText(ip)
-        _save_agent_ip(ip)
+        Replaces the former Tailscale IP auto-detect: the sidecar's Ed25519
+        public key becomes the remote URL (``pear://<pubkey>``) behind the QR.
+        Runs off the UI thread (spawn + handshake), then posts the key back.
+        """
+        port = self._web_server.actual_port
+        if not port:
+            return
+        result = start_sidecar(port)
+        if not result or not result.get("pubkey"):
+            logger.warning("Agent Pear sidecar unavailable - see run.log for the reason")
+            self._post_ui(lambda: self._status_text.setText(
+                _("Pear key unavailable - run Arrow_setup.bat to install the sidecar")))
+            return
+        self._sidecar_proc = result.get("proc")
+        self._post_ui(lambda: self._apply_peer_key(result["pubkey"]))
+
+    def _apply_peer_key(self, pubkey: str):
+        """Persist + display the sidecar's Pear key; refresh a running server."""
+        self._ts_ip_edit.setText(pubkey)
+        _save_agent_ip(pubkey)
         if not self._web_server_started:
             return
-        self._web_server.set_remote_ip(ip)
+        self._web_server.set_peer_key(pubkey)
         state = self._web_server.state
-        if state.remote_url is None and state.local_url:
-            port = state.local_url.rsplit(":", 1)[-1]
-            state.remote_url = f"http://{ip}:{port}"
-            self._update_qr_display(state.remote_url)
+        state.remote_url = f"pear://{pubkey}"
+        self._update_qr_display(state.remote_url)
 
     def _toggle_server_panel(self):
         """Show/hide the server control panel."""
@@ -3059,7 +3070,7 @@ class AgentOverlay(QFrame):
 
     def _start_web_server(self):
         try:
-            self._web_server.set_remote_ip(self._ts_ip_edit.text().strip())
+            self._web_server.set_peer_key(self._ts_ip_edit.text().strip())
             ok = self._web_server.start()
             if not ok:
                 logger.error("Agent web server failed to start")
@@ -3079,12 +3090,11 @@ class AgentOverlay(QFrame):
             )
             self._status_text.setText(_("Starting local server..."))
             self._server_poll_timer.start()
-            # Auto-detect + persist the Tailscale IP when the field is empty,
-            # so the QR works on the very first run without typing anything.
-            if not self._ts_ip_edit.text().strip():
-                threading.Thread(
-                    target=self._auto_detect_ip_and_refresh, daemon=True
-                ).start()
+            # Pear/Bare transport: publish an Ed25519 key so a phone connects
+            # by key instead of an IP.  Runs off the UI thread (spawn + handshake).
+            threading.Thread(
+                target=self._launch_sidecar, daemon=True
+            ).start()
             logger.info("Agent web server started")
         except Exception as e:
             logger.exception("Failed to start web server")
@@ -3096,6 +3106,12 @@ class AgentOverlay(QFrame):
             self._web_server.stop()
         except Exception:
             pass
+        if self._sidecar_proc is not None:
+            try:
+                self._sidecar_proc.terminate()
+            except Exception:
+                pass
+            self._sidecar_proc = None
         self._web_server_started = False
         self._server_btn.setChecked(False)
         self._panel_server_btn.setText(_("Start Server"))
@@ -3140,7 +3156,7 @@ class AgentOverlay(QFrame):
                     )
                 else:
                     self._status_text.setText(
-                        _("Server running locally \u2014 set a remote IP above to share")
+                        _("Server running locally \u2014 wait for the Pear key to share")
                     )
             else:
                 self._status_dot.setStyleSheet(

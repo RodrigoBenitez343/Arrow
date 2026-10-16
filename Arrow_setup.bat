@@ -9,6 +9,10 @@ setlocal
 ::    0b. INSTALL prerequisites up-front: Python 3.11 (winget, else python.org)
 ::        and - when llama.cpp still has to be built - the C++ toolchain
 ::        (CMake + VS Build Tools).  No manual steps for the user.
+::    0c. INSTALL phone-client build prerequisites: Node.js, JDK 17, GitHub CLI,
+::        Gradle, Android Studio, Android SDK command-line tools + platform 35
+::        + NDK 27.2.12479018, and persist JAVA_HOME / ANDROID_HOME.
+::        Set SKIP_PHONE=1 to skip.
 ::    1. create the Python virtual environment and install dependencies
 ::    2. provide the llama.cpp engine: reuse an existing build, else build
 ::       utils\llama.cpp (installing CMake + VS Build Tools when absent), else
@@ -69,6 +73,13 @@ popd
 ::      so nothing is left for the user to install by hand.
 :: ============================================================================
 call :ensure_prereqs
+
+:: ============================================================================
+::  0c. Phone-client build prerequisites (LoOper/phone_client - Pear/Bare app)
+::      Node.js, JDK 17, GitHub CLI, Android SDK 35 + NDK, and persisted
+::      JAVA_HOME / ANDROID_HOME.  Skipped entirely when SKIP_PHONE=1.
+:: ============================================================================
+call :ensure_phone_prereqs
 
 :: ============================================================================
 ::  1. Virtual environment + Python dependencies
@@ -529,7 +540,7 @@ exit /b 0
 ::  (a fresh install only updates the registry, not this process).
 :: ============================================================================
 :refresh_path
-set "PATH=%PATH%;%ROOT%.tools\cmake\bin\;%LocalAppData%\Programs\Python\Python311\;%LocalAppData%\Programs\Python\Python311\Scripts\;C:\Program Files\CMake\bin\;%LocalAppData%\Microsoft\WindowsApps"
+set "PATH=%PATH%;%ROOT%.tools\cmake\bin\;%ROOT%.tools\gradle\bin\;%LocalAppData%\Programs\Python\Python311\;%LocalAppData%\Programs\Python\Python311\Scripts\;C:\Program Files\CMake\bin\;%LocalAppData%\Microsoft\WindowsApps;C:\Program Files\nodejs\;%ProgramFiles%\GitHub CLI\;%LOCALAPPDATA%\Android\Sdk\platform-tools;%LOCALAPPDATA%\Android\Sdk\cmdline-tools\latest\bin"
 exit /b 0
 
 
@@ -690,4 +701,218 @@ if exist "%LLAMA_BIN%\llama-server.exe" (
 ) else (
   echo [llama] Prebuilt extraction failed - llama.cpp unavailable ^(Ollama fallback still works^).
 )
+exit /b 0
+
+
+:: ============================================================================
+::  :ensure_phone_prereqs - everything needed to build LoOper/phone_client (the
+::  cross-platform Pear/Bare Android app): Node.js, JDK 17, GitHub CLI, Gradle,
+::  Android Studio, the Android SDK command-line tools + platform 35 + NDK, and
+::  the project's gradle wrapper, plus persisted JAVA_HOME / ANDROID_HOME.
+::  Idempotent; skipped when SKIP_PHONE=1.
+:: ============================================================================
+:ensure_phone_prereqs
+if defined SKIP_PHONE (
+  echo [phone] SKIP_PHONE set - skipping phone-client prerequisites.
+  exit /b 0
+)
+echo.
+echo [phone] Ensuring phone-client build prerequisites...
+
+set "ANDROID_SDK=%LOCALAPPDATA%\Android\Sdk"
+set "CMDLINE_TOOLS=%ANDROID_SDK%\cmdline-tools\latest\bin"
+set "NDK_VER=27.2.12479018"
+set "PLATFORM_VER=android-35"
+
+call :refresh_path
+
+:: --- Node.js (npm install + bare-link / bare-pack) -------------------------
+where node >nul 2>&1
+if errorlevel 1 (
+  echo [phone] Node.js not found - installing Node.js LTS...
+  call :winget_install "OpenJS.NodeJS.LTS" "Node.js LTS"
+  call :refresh_path
+) else (
+  echo [phone] Node.js present.
+)
+
+:: --- Host sidecar deps (hyperdht/b4a for Agent Mode remote access) --------
+call :ensure_agent_sidecar
+
+:: --- JDK 17 ----------------------------------------------------------------
+call :ensure_jdk17
+
+:: --- GitHub CLI (fetches the bare-kit prebuild during the APK build) -------
+where gh >nul 2>&1
+if errorlevel 1 (
+  echo [phone] GitHub CLI not found - installing...
+  call :winget_install "GitHub.cli" "GitHub CLI"
+  call :refresh_path
+) else (
+  echo [phone] GitHub CLI present.
+)
+
+:: --- Android SDK 35 + NDK --------------------------------------------------
+call :ensure_android_sdk
+
+:: --- Android Studio (IDE - lets you open the project with a GUI) -----------
+if exist "%ProgramFiles%\Android\Android Studio\bin\studio64.exe" (
+  echo [phone] Android Studio present.
+) else (
+  echo [phone] Android Studio not found - installing...
+  call :winget_install "Google.AndroidStudio" "Android Studio"
+  call :refresh_path
+)
+
+:: --- Gradle + the project's gradle wrapper --------------------------------
+call :ensure_gradle
+
+:: --- Persist JAVA_HOME / ANDROID_HOME for later builds ---------------------
+call :persist_phone_env
+exit /b 0
+
+
+:: ---- winget install wrapper ----------------------------------------------
+:winget_install
+where winget >nul 2>&1
+if errorlevel 1 (
+  echo [phone] winget unavailable - install %~2 manually.
+  exit /b 0
+)
+echo [phone] Installing %~2 via winget...
+winget install --id %~1 -e --silent --accept-package-agreements --accept-source-agreements
+exit /b 0
+
+
+:: ---- locate a JDK 17 install (JAVA_HOME or a known vendor dir) -----------
+:find_jdk17
+set "JDK17_HOME="
+if exist "%TEMP%\looper_jdk17.txt" del /q "%TEMP%\looper_jdk17.txt" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$c=@();" ^
+  "if ($env:JAVA_HOME) { $c += $env:JAVA_HOME };" ^
+  "foreach ($b in @('C:\Program Files\Eclipse Adoptium','C:\Program Files\Java','C:\Program Files\Microsoft','C:\Program Files\Zulu')) {" ^
+  "  if (Test-Path $b) { $c += (Get-ChildItem $b -Directory -ErrorAction SilentlyContinue | Where-Object Name -match '17' | ForEach-Object FullName) }" ^
+  "}" ^
+  "$found=$null;" ^
+  "foreach ($h in $c) { $j=Join-Path $h 'bin\java.exe'; if (Test-Path $j) { $v=(& $j -version 2>&1 | Select-Object -First 1); if ($v -match '17') { $found=$h; break } } };" ^
+  "if ($found) { Set-Content -Path (Join-Path $env:TEMP 'looper_jdk17.txt') -Value $found -Encoding ASCII }"
+if exist "%TEMP%\looper_jdk17.txt" set /p JDK17_HOME=<"%TEMP%\looper_jdk17.txt"
+exit /b 0
+
+
+:ensure_jdk17
+call :find_jdk17
+if defined JDK17_HOME (
+  echo [phone] JDK 17 present: %JDK17_HOME%
+  exit /b 0
+)
+echo [phone] JDK 17 not found - installing Eclipse Temurin 17...
+call :winget_install "EclipseAdoptium.Temurin.17.JDK" "Eclipse Temurin 17 (JDK)"
+call :find_jdk17
+exit /b 0
+
+
+:: ---- Android command-line tools + platform 35 + NDK ----------------------
+:ensure_android_sdk
+if not exist "%ANDROID_SDK%" mkdir "%ANDROID_SDK%" >nul 2>&1
+if not exist "%CMDLINE_TOOLS%\sdkmanager.bat" (
+  echo [phone] Android command-line tools missing - downloading...
+  call :getfile "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip" "%TEMP%\cmdline-tools.zip"
+  if not exist "%TEMP%\cmdline-tools.zip" (
+    echo [phone] command-line tools download failed - install Android Studio and add "Android SDK Platform 35" + "NDK %NDK_VER%".
+    exit /b 0
+  )
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$sdk='%ANDROID_SDK%'; New-Item -ItemType Directory -Force -Path $sdk | Out-Null;" ^
+    "$d=Join-Path $env:TEMP 'cmdline_tools'; if (Test-Path $d) { Remove-Item $d -Recurse -Force };" ^
+    "Expand-Archive -Path (Join-Path $env:TEMP 'cmdline-tools.zip') -DestinationPath $d -Force;" ^
+    "$t=Join-Path $sdk 'cmdline-tools'; New-Item -ItemType Directory -Force -Path $t | Out-Null;" ^
+    "$dest=Join-Path $t 'latest'; if (Test-Path $dest) { Remove-Item $dest -Recurse -Force };" ^
+    "Move-Item -Path (Join-Path $d 'cmdline-tools') -Destination $dest"
+)
+if not exist "%CMDLINE_TOOLS%\sdkmanager.bat" (
+  echo [phone] sdkmanager still unavailable - install the Android SDK manually.
+  exit /b 0
+)
+if defined JDK17_HOME set "JAVA_HOME=%JDK17_HOME%"
+echo [phone] Installing Android platform-tools + %PLATFORM_VER% + NDK %NDK_VER% ^(this can take a while^)...
+( for /l %%i in (1,1,60) do @echo y ) | call "%CMDLINE_TOOLS%\sdkmanager.bat" --licenses >nul 2>&1
+call "%CMDLINE_TOOLS%\sdkmanager.bat" "platform-tools" "platforms;%PLATFORM_VER%" "ndk;%NDK_VER%"
+exit /b 0
+
+
+:: ---- host-side Agent Mode sidecar deps (node; hyperdht + b4a) ------------
+:ensure_agent_sidecar
+where node >nul 2>&1
+if errorlevel 1 exit /b 0
+set "SIDECAR_DIR=%ROOT%LoOper\agent_sidecar"
+if not exist "%SIDECAR_DIR%\node_modules\hyperdht" (
+  echo [phone] Installing Agent Mode sidecar deps ^(hyperdht, b4a^)...
+  pushd "%SIDECAR_DIR%"
+  call npm install
+  popd
+)
+exit /b 0
+
+
+:: ---- Gradle: portable install if absent, then materialise the wrapper -----
+:: winget ships no Gradle package, so - like the CMake fallback above - fetch
+:: the official distribution into .tools\gradle and put it on PATH.
+:ensure_gradle
+if defined JDK17_HOME set "JAVA_HOME=%JDK17_HOME%"
+set "GRADLE_VER=8.7"
+set "GRADLE_HOME=%ROOT%.tools\gradle"
+set "ANDROID_PROJ=%ROOT%LoOper\phone_client\android"
+
+where gradle >nul 2>&1
+if not errorlevel 1 goto :gradle_have
+
+if not exist "%GRADLE_HOME%\bin\gradle.bat" (
+  echo [phone] Gradle not found - downloading Gradle %GRADLE_VER% ^(portable^)...
+  call :getfile "https://services.gradle.org/distributions/gradle-%GRADLE_VER%-bin.zip" "%TEMP%\gradle-bin.zip"
+  if exist "%TEMP%\gradle-bin.zip" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$d=Join-Path '%ROOT%.tools' 'gradle_extract'; if (Test-Path $d) { Remove-Item $d -Recurse -Force };" ^
+      "Expand-Archive -Path (Join-Path $env:TEMP 'gradle-bin.zip') -DestinationPath $d -Force;" ^
+      "$sub=Get-ChildItem $d -Directory -Filter 'gradle-*' | Select-Object -First 1;" ^
+      "$t='%GRADLE_HOME%'; if (Test-Path $t) { Remove-Item $t -Recurse -Force };" ^
+      "if ($sub) { Move-Item $sub.FullName $t }"
+  )
+)
+
+:gradle_have
+set "PATH=%PATH%;%GRADLE_HOME%\bin"
+where gradle >nul 2>&1
+if errorlevel 1 (
+  echo [phone] Gradle unavailable - run 'gradle wrapper' in %ANDROID_PROJ% later.
+  exit /b 0
+)
+
+:: Materialise the wrapper so build_phone_apk.ps1 can use .\gradlew.bat.
+if not exist "%ANDROID_PROJ%\gradlew.bat" (
+  echo [phone] Generating the Gradle wrapper in %ANDROID_PROJ%...
+  pushd "%ANDROID_PROJ%"
+  call gradle wrapper
+  popd
+)
+exit /b 0
+
+
+:: ---- persist JAVA_HOME / ANDROID_HOME + USER PATH ------------------------
+:persist_phone_env
+if defined JDK17_HOME (
+  setx JAVA_HOME "%JDK17_HOME%" >nul 2>&1
+  echo [phone] JAVA_HOME -^> %JDK17_HOME%
+)
+setx ANDROID_HOME "%ANDROID_SDK%" >nul 2>&1
+setx ANDROID_SDK_ROOT "%ANDROID_SDK%" >nul 2>&1
+echo [phone] ANDROID_HOME -^> %ANDROID_SDK%
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$add=@((Join-Path '%ANDROID_SDK%' 'platform-tools'),(Join-Path '%ANDROID_SDK%' 'cmdline-tools\latest\bin'));" ^
+  "$cur=[Environment]::GetEnvironmentVariable('Path','User'); if (-not $cur) { $cur='' };" ^
+  "$parts=@($cur -split ';' | Where-Object { $_ -ne '' });" ^
+  "foreach ($p in $add) { if ($parts -notcontains $p) { $parts += $p } };" ^
+  "[Environment]::SetEnvironmentVariable('Path',($parts -join ';'),'User')"
+set "PATH=%PATH%;%ANDROID_SDK%\platform-tools;%CMDLINE_TOOLS%"
 exit /b 0
