@@ -320,6 +320,34 @@ def _save_web_screenshot(driver, element, prefix: str) -> Optional[str]:
         return None
 
 
+def _recorded_viewport_box(driver, web_ocr_locator):
+    """Device-px [x, y, w, h] of the pick's recorded viewport box, or None.
+
+    The picker records a viewport-relative box on every pick.  When the element
+    cannot be re-found (rotated classes, SPA re-render), OCR crops to THIS box
+    so it reads the area the user actually picked - never the whole page, which
+    would feed unrelated text into the node.  None for a legacy locator (no
+    box) so those keep the previous whole-page behaviour.
+    """
+    try:
+        data = web_ocr_locator
+        if isinstance(data, str):
+            data = json.loads(data)
+        vp = (data or {}).get("viewport") or {}
+        vx, vy, w, h = vp.get("vx"), vp.get("vy"), vp.get("w"), vp.get("h")
+        if vx is None or vy is None or not w or not h:
+            return None
+        try:
+            dpr = float(driver.execute_script(
+                "return window.devicePixelRatio || 1;")) or 1.0
+        except Exception:
+            dpr = 1.0
+        return [int(round(vx * dpr)), int(round(vy * dpr)),
+                int(round(w * dpr)), int(round(h * dpr))]
+    except Exception:
+        return None
+
+
 def _web_ocr_input(web_ocr_locator, ocr_confidence: int, stop_flag) -> str:
     """OCR a headless browser screenshot (optionally a picked element's region).
 
@@ -366,6 +394,16 @@ def _web_ocr_input(web_ocr_locator, ocr_confidence: int, stop_flag) -> str:
             except Exception as exc:
                 logger.warning(f"Web OCR: element resolve failed: {exc}")
                 element = None
+
+        # A pick that cannot be re-found falls back to the box the user picked
+        # (recorded viewport rect) - NOT the whole page, which would feed
+        # unrelated text into the node.
+        if element is None and rect is None:
+            rect = _recorded_viewport_box(driver, web_ocr_locator)
+            if rect is None:
+                logger.warning(
+                    "Web OCR: element not found and no recorded box; OCRing full page"
+                )
 
         path = _save_web_screenshot(driver, element, "llm_ocr_web")
         if not path:

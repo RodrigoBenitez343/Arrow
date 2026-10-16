@@ -124,7 +124,10 @@ _PROTOCOL = (
     '(unsaved edits included) and get back a report: a STATUS line '
     '(completed / FAILED / STALLED), a "reason:" line naming the failing '
     'node and WHY, each Output node\'s text, and a "goal (…): MET / NOT '
-    'met/not verified" verdict against the chain\'s goal. A test ALSO '
+    'met/not verified" verdict against the chain\'s goal. When exactly ONE '
+    'node is selected it runs THAT NODE ALONE instead of the whole chain; '
+    'pass {"scope": "chain"} to force the whole chain (a skill IS a whole '
+    'chain). A test ALSO '
     'runs AUTOMATICALLY right after you wire or build the chain (find it '
     'in RESULTS) — always read it. Use test_chain yourself after EVERY '
     'edit. If the status is FAILED or STALLED, read the "reason:" '
@@ -323,14 +326,21 @@ class BuilderAssistant:
         steps = 0
         last_sig = None
         mutated = False       # the chain changed this turn
+        built_skill = False   # a build_skill happened this turn
         tested = False        # a test_chain run happened this turn
         last_ok = None        # verdict of the last test (None = no verdict)
         idle = 0              # consecutive rounds that changed nothing
 
-        def _run_test():
-            """Run test_chain, record its report, return its verdict."""
+        def _run_test(force_chain=False):
+            """Run test_chain, record its report, return its verdict.
+
+            ``force_chain`` runs the WHOLE chain even when one node is
+            selected — used while a skill is built (a skill IS a whole
+            chain); otherwise the test follows the user's selection.
+            """
+            args = {'scope': 'chain'} if force_chain else {}
             try:
-                report = execute_builder_call('test_chain', {}, self._ctx)
+                report = execute_builder_call('test_chain', args, self._ctx)
             except Exception as e:
                 report = '(test_chain failed: %s)' % e
             _step('test: %s' % _clip(' '.join(str(report).split()), 180))
@@ -375,7 +385,7 @@ class BuilderAssistant:
                 # test now and hand the report back so the model fixes what
                 # fails — the loop iterates until the chain passes.
                 if mutated and (not tested or last_ok is False):
-                    last_ok = _run_test()
+                    last_ok = _run_test(force_chain=built_skill)
                     tested = True
                     if last_ok is False and rnd < MAX_ROUNDS - 1:
                         results.append('(the test above FAILED — fix the '
@@ -416,6 +426,8 @@ class BuilderAssistant:
                 if name == 'test_chain':
                     tested = True
                     last_ok = _verdict(result)
+            if 'build_skill' in names:
+                built_skill = True
             if any(name in MUTATING_ACTIONS for name in names):
                 mutated = True
                 idle = 0
@@ -426,7 +438,7 @@ class BuilderAssistant:
             if ('test_chain' not in names
                     and any(name in ('wire', 'build_skill')
                             for name in names)):
-                last_ok = _run_test()
+                last_ok = _run_test(force_chain=built_skill)
                 tested = True
             # A model that only reads (no change for MAX_IDLE_ROUNDS) will
             # never fix anything: stop and hand back to the user.

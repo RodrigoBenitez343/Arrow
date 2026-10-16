@@ -1028,9 +1028,11 @@ class ElementPickOverlay(QDialog):
 
     Hovering spotlights the real element under the cursor - the same UI
     Automation hit-test the recorder overlay uses - and a left click captures
-    its bounding box; ESC or right-click cancels.  The box is in device
-    (physical) pixels, the space ``capture_screen`` normalizes to, so the OCR
-    trigger can crop straight to it.
+    its bounding box; ESC or right-click cancels.  Holding the left button and
+    dragging instead captures the drawn rectangle, so a region no element box
+    expresses can still be picked (a release under ``_DRAG_MIN_PX`` counts as a
+    click).  The box is in device (physical) pixels, the space ``capture_screen``
+    normalizes to, so the OCR trigger can crop straight to it.
 
     The overlay must be the window under the cursor to receive the pick click,
     yet UI Automation must see THROUGH it to report the element beneath.
@@ -1043,11 +1045,16 @@ class ElementPickOverlay(QDialog):
     _VK_ESCAPE = 0x1B
     _GWL_EXSTYLE = -20
     _WS_EX_TRANSPARENT = 0x20
+    # A press+release under this many logical px is a click (pick the hovered
+    # element); anything larger is a drag (the drawn box IS the region).
+    _DRAG_MIN_PX = 6
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._hit = None
         self._done = False
+        self._drag_origin = None
+        self._drag_current = None
         self._dpr = 1.0
         self._hwnd = None
         self._kill = threading.Event()
@@ -1192,14 +1199,42 @@ class ElementPickOverlay(QDialog):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Use the worker's latest hit: never run UIA on the GUI thread.
-            hit = self._hit
-            if hit and hit.get("rect"):
-                l, t, r, b = hit["rect"]
-                self._finish((int(l), int(t), int(r), int(b)))
+            # A press may become a drag, so the pick is decided on RELEASE.  The
+            # element box still comes from the worker's latest hit - UI Automation
+            # never runs on the GUI thread.
+            self._drag_origin = event.pos()
+            self._drag_current = event.pos()
             return
         if event.button() == Qt.RightButton:
             self._finish(None)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_origin is not None and (event.buttons() & Qt.LeftButton):
+            self._drag_current = event.pos()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.LeftButton or self._drag_origin is None:
+            return
+        origin = self._drag_origin
+        current = self._drag_current or event.pos()
+        self._drag_origin = None
+        self._drag_current = None
+        if (abs(current.x() - origin.x()) >= self._DRAG_MIN_PX and
+                abs(current.y() - origin.y()) >= self._DRAG_MIN_PX):
+            # A real drag: the drawn box IS the region, whatever element it sits
+            # on - a free-form area no element box can express.
+            self._finish(self._to_device(
+                min(origin.x(), current.x()), min(origin.y(), current.y()),
+                max(origin.x(), current.x()), max(origin.y(), current.y())))
+            return
+        # No drag: a click picks the hovered element box (the worker's hit).
+        hit = self._hit
+        if hit and hit.get("rect"):
+            l, t, r, b = hit["rect"]
+            self._finish((int(l), int(t), int(r), int(b)))
+        else:
+            self.update()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
@@ -1224,6 +1259,19 @@ class ElementPickOverlay(QDialog):
         return (int(round(l / dpr)), int(round(t / dpr)),
                 int(round(r / dpr)), int(round(b / dpr)))
 
+    def _to_device(self, left, top, right, bottom):
+        """Overlay-local logical box -> (l, t, r, b) device px.
+
+        The inverse of ``_to_logical``: the drawn drag box is in the overlay's
+        logical pixels, while the picked box the consumers expect is device
+        (physical) px.
+        """
+        dpr = self._dpr or 1.0
+        return (int(round((left + self.x()) * dpr)),
+                int(round((top + self.y()) * dpr)),
+                int(round((right + self.x()) * dpr)),
+                int(round((bottom + self.y()) * dpr)))
+
     def paintEvent(self, event):
         painter = QPainter(self)
         # A layered (translucent) window is click-through on fully transparent
@@ -1232,18 +1280,26 @@ class ElementPickOverlay(QDialog):
         # hit-testable for the pick click while staying visually invisible.
         painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
         dim = QColor(0, 0, 0, 110)
-        hit = self._hit
         rect = None
-        if hit and hit.get("rect"):
-            l, t, r, b = self._to_logical(hit["rect"])
-            local = QRect(l - self.x(), t - self.y(), r - l, b - t)
-            if local.width() >= 2 and local.height() >= 2:
-                rect = local
+        label = ""
+        if self._drag_origin is not None and self._drag_current is not None:
+            # A drag in progress: the marquee under the pointer is the region.
+            rect = QRect(self._drag_origin, self._drag_current).normalized()
+            if rect.width() < 2 and rect.height() < 2:
+                rect = None
+        else:
+            hit = self._hit
+            if hit and hit.get("rect"):
+                l, t, r, b = self._to_logical(hit["rect"])
+                local = QRect(l - self.x(), t - self.y(), r - l, b - t)
+                if local.width() >= 2 and local.height() >= 2:
+                    rect = local
+                label = (hit.get("label") or "").strip()
         if rect is None:
             painter.fillRect(self.rect(), dim)
             self._label.hide()
             return
-        # Spotlight: dim everything except the element box, then border it.
+        # Spotlight: dim everything except the picked box, then border it.
         w, h = self.width(), self.height()
         painter.fillRect(QRect(0, 0, w, max(0, rect.top())), dim)
         painter.fillRect(QRect(0, rect.bottom() + 1, w, max(0, h - rect.bottom() - 1)), dim)
@@ -1254,7 +1310,6 @@ class ElementPickOverlay(QDialog):
         pen.setWidth(2)
         painter.setPen(pen)
         painter.drawRect(rect)
-        label = (hit.get("label") or "").strip()
         if label:
             self._label.setText(label)
             self._label.adjustSize()

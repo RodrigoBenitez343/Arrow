@@ -197,12 +197,32 @@ function __wvpRootDoc() {
   } catch (e) {}
   return document;
 }
+// One selector rung -> matched elements inside one root.  A ladder rung can be
+// an XPath (`//label[...]/following::input[1]` - how a control with no id/name
+// is identified); `querySelectorAll` THROWS on it and the rung silently
+// resolved to nothing, so an unnamed radio/checkbox group had no control to
+// click and the answer never landed.  Detect XPath and use `evaluate`.
+function __wvpQuery(root, sel) {
+  if (!root || !sel) return [];
+  var s = String(sel).trim();
+  if (!s) return [];
+  if (s.charAt(0) === '/' || s.charAt(0) === '(') {
+    var doc = (root.ownerDocument || root);
+    try {
+      var it = doc.evaluate(s, root, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+      var xout = [];
+      for (var xi = 0; xi < it.snapshotLength; xi++) xout.push(it.snapshotItem(xi));
+      return xout;
+    } catch (e) { return []; }
+  }
+  try { return Array.prototype.slice.call(root.querySelectorAll(s)); }
+  catch (e) { return []; }
+}
 function __wvpDeepFind(sel, want) {
   var out = null;
   function collect(root, depth) {
     if (out || depth > 12 || !root || !root.querySelectorAll) return;
-    var r = null;
-    try { r = root.querySelectorAll(sel); } catch (e) { return; }
+    var r = __wvpQuery(root, sel);
     if (r.length) { out = r[(want || 0) % r.length]; return; }
     var all = root.querySelectorAll('*');
     for (var j = 0; j < all.length; j++) {
@@ -248,8 +268,7 @@ function __wvpDeepFindAll(selectors) {
     (function (sel) {
       (function collect(root, depth) {
         if (depth > 12 || !root || !root.querySelectorAll) return;
-        var r = null;
-        try { r = root.querySelectorAll(sel); } catch (e) { return; }
+        var r = __wvpQuery(root, sel);
         for (var k = 0; k < r.length; k++) out.push(r[k]);
         var all = root.querySelectorAll('*');
         for (var j = 0; j < all.length; j++) {
@@ -370,8 +389,7 @@ function __wvpDeepAll(sel) {
   var out = [];
   (function collect(root, depth) {
     if (depth > 12 || !root || !root.querySelectorAll) return;
-    var r = null;
-    try { r = root.querySelectorAll(sel); } catch (e) { return; }
+    var r = __wvpQuery(root, sel);
     for (var i = 0; i < r.length; i++) out.push(r[i]);
     var all = root.querySelectorAll('*');
     for (var j = 0; j < all.length; j++) {
@@ -2297,6 +2315,40 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
 })(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4]);
 """
 
+# A TREE marker is the decision engine's PICK and a pick can be WRONG.  Live:
+# two different questions ("What's your english level?*", "In which country do
+# you reside?*") both resolved to the 'How many years of software/data
+# engineering experience' <select>, whose marker then aimed the write at that
+# WRONG control; the value had no matching option there and the write aborted
+# ('target unresolved or not editable') while the field's own id still pointed
+# at the right <select>.  So a marker may only SHADOW the ladder when the
+# field's OWN attribute identity no longer resolves: this compares the marker
+# element with the first identity rung that resolves and answers 'differs' when
+# they are not the same element (the caller then keeps the ladder).  Only a
+# marker that MATCHES a live identity is 'same'; an identity that resolves
+# nothing is 'no-identity' (the rotated-id case the marker exists for).
+JS_FF_MARKER_SAME_AS_IDENTITY = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (identity, marker, scope) {
+  var scopeRoots = __wvpScopeRoots(scope);
+  function onlyOne(sel) {
+    var m = __wvpDeepAll(sel), hit = null, n = 0;
+    for (var i = 0; i < m.length; i++) {
+      if (!(__wvpVisible(m[i]) && __wvpTopmost(m[i]))) continue;
+      if (!__wvpInScope(m[i], scopeRoots)) continue;
+      if (n === 0) hit = m[i];
+      if (++n > 1) return null;
+    }
+    return n === 1 ? hit : null;
+  }
+  var markEl = onlyOne(marker);
+  if (!markEl) return 'no-marker';
+  for (var s = 0; identity && s < identity.length; s++) {
+    var el = onlyOne(identity[s]);
+    if (el) return (el === markEl) ? 'same' : 'differs';
+  }
+  return 'no-identity';
+})(arguments[0], arguments[1], arguments[2]);
+"""
+
 # Read a COMBOBOX's option list, OPENING the control when its popup is not
 # rendered yet.  A typeahead renders its options only once it is OPEN, so the
 # enumerator (which never opens a control) saw none, the model answered free
@@ -2566,8 +2618,7 @@ JS_SET_CHOICE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors,
     var out = [];
     (function collect(root, depth) {
       if (depth > 12 || !root || !root.querySelectorAll) return;
-      var r = null;
-      try { r = root.querySelectorAll(sel); } catch (e) { return; }
+      var r = __wvpQuery(root, sel);
       for (var i = 0; i < r.length; i++) out.push(r[i]);
       var all = root.querySelectorAll('*');
       for (var j = 0; j < all.length; j++) {
@@ -2675,8 +2726,7 @@ JS_FIELD_STATE = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors
     var out = [];
     (function collect(root, depth) {
       if (depth > 12 || !root || !root.querySelectorAll) return;
-      var r = null;
-      try { r = root.querySelectorAll(sel); } catch (e) { return; }
+      var r = __wvpQuery(root, sel);
       for (var i = 0; i < r.length; i++) out.push(r[i]);
       var all = root.querySelectorAll('*');
       for (var j = 0; j < all.length; j++) {

@@ -1,8 +1,9 @@
 """Ask-user v2 through the agent overlay: options render, answers return.
 
-The v2 callback renders yes/no hints and numbered choices into the same chat
-ask channel, mirrors the ask to web clients, and packs the reply into the v2
-response dict (a reply naming an existing file becomes an attachment).
+The v2 callback posts the QUESTION into the chat ask channel and hands the
+options to the surface as ``choices`` (rendered as buttons on the overlay and
+on the web client), mirrors the ask to web clients, and packs the reply into
+the v2 response dict (a reply naming an existing file becomes an attachment).
 
 Run:  python -m pytest LoOper/tests/test_ask_user_v2_overlay.py
 """
@@ -62,13 +63,17 @@ def _last_ask(ov):
     return [p for p in ov._sent if p.get('type') == 'ask'][-1]
 
 
-def test_yes_no_ask_renders_hint_and_desktop_answer_returns(overlay):
+def test_yes_no_ask_renders_buttons_not_a_hint_and_desktop_answer_returns(overlay):
     t, box = _ask_async(overlay, {
         'question': 'Proceed?', 'kind': 'yes_no', 'choices': [],
         'accepts': {'text': True}})
 
-    question = _last_ask(overlay)['question']
-    assert 'Proceed?' in question and 'yes or no' in question
+    ask = _last_ask(overlay)
+    # The bubble is the QUESTION only - Yes/No are rendered as buttons from
+    # ``kind``, so the old '(Reply yes or no)' hint was duplicated text.
+    assert 'Proceed?' in ask['question']
+    assert 'yes or no' not in ask['question']
+    assert ask['kind'] == 'yes_no'
 
     overlay._submit_text('yes')  # desktop answer path
     t.join(timeout=5)
@@ -77,15 +82,27 @@ def test_yes_no_ask_renders_hint_and_desktop_answer_returns(overlay):
     assert box['result'] == {'value': 'yes', 'kind': 'yes_no', 'attachments': []}
 
 
-def test_choice_ask_renders_numbered_options_and_web_answer_returns(overlay):
+def test_legacy_yes_no_ask_still_offers_yes_no_buttons(overlay):
+    """When a caller asks a yes/no question WITHOUT a v2 ``kind`` (legacy
+    channel), the question text must not become the only tap target: the two
+    answers are still offered as Yes/No buttons."""
+    options = overlay._ask_option_list({'question': 'Proceed? (Reply yes or no.)'})
+    assert options == [('Yes', 'yes'), ('No', 'no')]
+
+
+def test_choice_ask_renders_options_not_numbered_text_and_web_answer_returns(overlay):
     t, box = _ask_async(overlay, {
         'question': 'Pick a color', 'kind': 'choice',
         'choices': [{'label': 'Red', 'value': 'r'},
                     {'label': 'Blue', 'value': 'b'}],
         'accepts': {'text': True}})
 
-    question = _last_ask(overlay)['question']
-    assert '1) Red' in question and '2) Blue' in question
+    ask = _last_ask(overlay)
+    # The bubble is the QUESTION only; the choices ride as OPTIONS (the buttons
+    # the overlay and the web client render), never as numbered text as well.
+    assert ask['question'] == 'Pick a color'
+    assert 'Red' not in ask['question'] and 'Blue' not in ask['question']
+    assert [c['value'] for c in ask['choices']] == ['r', 'b']
 
     assert overlay._handle_web_message('b') == 'Answer received.'  # phone path
     t.join(timeout=5)

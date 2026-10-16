@@ -610,6 +610,69 @@ def test_test_chain_without_a_config_manager():
     assert out.startswith('(test_chain: could not read the canvas)')
 
 
+def test_test_chain_runs_only_the_selected_node(monkeypatch, tmp_path):
+    """ONE node selected -> the test runs THAT node (the node bar's own
+    single-node path), never the whole chain."""
+    import sys
+    import types
+    written = {}
+
+    def _play(path, agent_query='', stop_flag=None, run_source='play', **kw):
+        with open(path, encoding='utf-8') as fh:
+            written['cfg'] = json.load(fh)
+        return True, _FakePlayer(_FakeLE({'node_0x1_output': 'NODE OUT'}))
+
+    fake = types.ModuleType('player.multi_sequence_player')
+    fake.play_chain_with_tailcalls = _play
+    monkeypatch.setitem(sys.modules, 'player.multi_sequence_player', fake)
+
+    mgr = _Mgr()
+    node = mgr.create_node('llm.LLMNode', 'brain')
+
+    class _CM2(_CM):
+        def get_single_node_config(self, n):
+            return {'llm_nodes': [{'node_id': n.id, 'label': 'brain'}],
+                    'output_nodes': []}
+
+    ctx = {'graph_manager': mgr,
+           'config_manager': _CM2({'output_nodes': [
+               {'node_id': 'OUT', 'label': 'answer'}]}),
+           'chains_dir': str(tmp_path),
+           'selection_node_ids': lambda: [node.id]}
+    out = execute_builder_call('test_chain', {}, ctx)
+    # The throwaway config carried ONLY the selected node...
+    assert len(written['cfg']['llm_nodes']) == 1
+    assert not written['cfg'].get('output_nodes')
+    # ...and the report names the node scope, not the whole chain.
+    assert 'scope: node %s alone' % node.id in out
+    assert 'output %s: NODE OUT' % node.id in out
+
+
+def test_test_chain_runs_the_whole_chain_for_several_selected(
+        monkeypatch, tmp_path):
+    """Several nodes selected is NOT a single-node focus: run the chain."""
+    _stub_runner(monkeypatch)
+    cfg = {'output_nodes': [{'node_id': 'OUT', 'label': 'answer'}]}
+    ctx = {'config_manager': _CM(cfg), 'chains_dir': str(tmp_path),
+           'selection_node_ids': lambda: ['0x1', '0x2']}
+    out = execute_builder_call('test_chain', {}, ctx)
+    assert 'test: completed' in out
+    assert 'output answer: THE ANSWER' in out
+    assert 'scope: node' not in out
+
+
+def test_test_chain_scope_chain_overrides_a_single_selection(
+        monkeypatch, tmp_path):
+    """The build_skill path forces the whole chain even with one node selected."""
+    _stub_runner(monkeypatch)
+    cfg = {'output_nodes': [{'node_id': 'OUT', 'label': 'answer'}]}
+    ctx = {'config_manager': _CM(cfg), 'chains_dir': str(tmp_path),
+           'selection_node_ids': lambda: ['0x1']}
+    out = execute_builder_call('test_chain', {'scope': 'chain'}, ctx)
+    assert 'output answer: THE ANSWER' in out
+    assert 'scope: node' not in out
+
+
 # --------------------------------------------------------------------------- iterating rounds
 
 
@@ -696,6 +759,43 @@ def test_route_auto_tests_the_chain_after_wiring(monkeypatch, tmp_path):
     monkeypatch.setattr(reasoning, '_generate', _gen)
     out = BuilderAssistant(ctx, settings={'reasoning': True}).route('make it')
     assert 'test: completed' in out['text']
+
+
+def test_route_forces_the_whole_chain_test_when_building_a_skill(
+        monkeypatch, tmp_path):
+    """Building a skill is a WHOLE-chain turn: its auto-test asks for
+    scope=chain even though the node-scoped test is otherwise the default."""
+    monkeypatch.setattr(reasoning, 'gateway_url', lambda: 'http://x')
+    import player.builder.devtools as dt
+    seen = []
+
+    def _exec(name, arguments, ctx):
+        seen.append((name, dict(arguments or {})))
+        if name == 'read_graph':
+            return 'CANVAS'
+        if name == 'build_skill':
+            return 'built skill'
+        if name == 'test_chain':
+            return 'test: completed'
+        return '(ok)'
+
+    monkeypatch.setattr(dt, 'execute_builder_call', _exec)
+    replies = [
+        json.dumps({'reply': 'Building the skill.', 'actions': [
+            {'name': 'build_skill', 'arguments': {'name': 'x', 'steps': []}}]}),
+        json.dumps({'reply': 'Done.', 'actions': []}),
+    ]
+    calls = {'n': 0}
+
+    def _gen(p, s, sys):
+        i = calls['n']
+        calls['n'] += 1
+        return replies[min(i, len(replies) - 1)]
+
+    monkeypatch.setattr(reasoning, '_generate', _gen)
+    BuilderAssistant(_ctx(), settings={'reasoning': True}).route('build a skill')
+    tests = [a for nm, a in seen if nm == 'test_chain']
+    assert tests and all(a.get('scope') == 'chain' for a in tests)
 
 
 def test_route_keeps_iterating_while_the_test_fails(monkeypatch, tmp_path):

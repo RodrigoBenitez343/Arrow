@@ -1,5 +1,8 @@
+import ast
 import os
 import logging
+import re
+
 logger = logging.getLogger(__name__)
 
 
@@ -579,23 +582,55 @@ class InputMixin:
         return self._parse_bool_token(text)
 
     def _parse_choices(self, node_data):
-        """The node's choice list: [{'label': ..., 'value': ...}, ...]."""
+        """The node's choice list: [{'label': ..., 'value': ...}, ...].
+
+        The field is free text in the node dialog, so the stored value is not
+        reliably strict JSON: a JSON list, a Python-literal list (single
+        quotes), a comma/pipe separated line or one-option-per-line all mean
+        the same list of choices.  Parsing only strict JSON left a 'choice'
+        question with NO options (and therefore no buttons) whenever the user
+        typed anything else, so every shape is accepted here.
+        """
         import json as _json
-        try:
-            raw = node_data.get('choices') or '[]'
-            data = _json.loads(raw) if isinstance(raw, str) else raw
-            out = []
-            for item in (data or []):
-                if isinstance(item, dict) and str(item.get('label') or '').strip():
-                    out.append({
-                        'label': str(item.get('label')).strip(),
-                        'value': str(item.get('value') or item.get('label')).strip(),
-                    })
-                elif isinstance(item, str) and item.strip():
-                    out.append({'label': item.strip(), 'value': item.strip()})
-            return out
-        except Exception:
-            return []
+        raw = node_data.get('choices')
+        data = None
+        if isinstance(raw, (list, tuple)):
+            data = list(raw)
+        elif raw is not None:
+            text = str(raw).strip()
+            if text:
+                for _loader in (_json.loads, ast.literal_eval):
+                    try:
+                        data = _loader(text)
+                        break
+                    except Exception:
+                        data = None
+                if data is None:
+                    # Free-form fallback.  A newline/pipe separated block is
+                    # split ONLY on those separators, so a comma INSIDE a label
+                    # ('Yes, apply') is kept; a single-line form is comma split.
+                    sep = r'[\n|]+' if re.search(r'[\n|]', text) else r','
+                    data = [p for p in re.split(sep, text) if p.strip()]
+        if isinstance(data, dict):
+            data = list(data.items())
+        out = []
+        for item in (data or []):
+            if isinstance(item, dict) and str(item.get('label') or '').strip():
+                out.append({
+                    'label': str(item.get('label')).strip(),
+                    'value': str(item.get('value') or item.get('label')).strip(),
+                })
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                # [label, value] pair
+                out.append({'label': str(item[0]).strip(),
+                            'value': str(item[1] or item[0]).strip()})
+            elif isinstance(item, str) and item.strip():
+                # Strip the surrounding quotes a hand-typed JSON-ish entry keeps
+                # (e.g. '"Yes, apply"'), so the button label is not quoted.
+                label = item.strip().strip('"\'').strip()
+                if label:
+                    out.append({'label': label, 'value': label})
+        return out
 
     def _render_question_text(self, question, question_mode, node_data):
         """Serialize a rich question for legacy text-only channels."""

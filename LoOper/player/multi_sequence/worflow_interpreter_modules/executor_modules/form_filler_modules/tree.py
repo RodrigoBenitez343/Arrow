@@ -385,7 +385,33 @@ class FormFillerTreeMixin:
             return "ladder"
         if index < 0:
             return "ladder"
-        field["_ff_tree_sel"] = '[%s="%d"]' % (attr, index)
+        marker = '[%s="%d"]' % (attr, index)
+        # The marker may only SHADOW the field's own identity when that identity
+        # no longer resolves on the live page.  The marker is the ENGINE'S PICK
+        # and a pick can be wrong: live, "What's your english level?*" AND "In
+        # which country do you reside?*" both resolved to the 'How many years of
+        # software/data engineering experience' select, whose marker then aimed
+        # the write at that WRONG <select>.  The value had no matching option
+        # there, so the write aborted ('target unresolved or not editable') and
+        # the required field stayed empty - even though its own id still
+        # resolved, and the ladder's id rung would have filled it correctly.
+        # A live id/name is authoritative; the marker stays the fallback for a
+        # rotated id, which is the case it was built for.
+        driver = getattr(self, "_ff_web_driver", None)
+        verdict = self._ff_marker_vs_identity(
+            driver, web_actions, self._ff_identity_selectors(field),
+            marker, stop_flag)
+        if verdict == "differs":
+            log_block(
+                logger, logging.WARNING, "Form Resolve: %s" % (label or "?"),
+                "Laya picked the %s %r (node %s), but the field's own id/name "
+                "resolves to a DIFFERENT element - keeping the selector ladder "
+                "instead of aiming the write at another question's control"
+                % (node.get("tag") or "control",
+                   str(node.get("label") or "")[:80], index),
+            )
+            return "ladder"
+        field["_ff_tree_sel"] = marker
         field["_ff_tree_gen"] = generation
         log_block(
             logger, logging.INFO, "Form Resolve: %s" % (label or "?"),
@@ -395,3 +421,25 @@ class FormFillerTreeMixin:
                field["_ff_tree_sel"]),
         )
         return "laya-tree"
+
+    def _ff_marker_vs_identity(self, driver, web_actions, identity, marker,
+                               stop_flag):
+        """Whether a TREE marker points at the field's OWN control.
+
+        ``'same'`` / ``'differs'`` / ``'no-identity'`` / ``'no-marker'`` - only
+        ``'differs'`` vetoes the marker.  An unreadable page (no driver, a
+        script error, a halted run) reads as ``''`` and the caller keeps the
+        marker, exactly as before this check existed - the resolver is only ever
+        subtracted here, never widened.
+        """
+        if driver is None or not identity or self._ff_halt(stop_flag):
+            return ""
+        try:
+            res = driver.execute_script(
+                web_actions.JS_FF_MARKER_SAME_AS_IDENTITY,
+                list(identity), marker, self._ff_run_scope(),
+            )
+        except Exception as exc:
+            logger.debug("[FORM][TREE] marker identity check failed: %s", exc)
+            return ""
+        return str(res or "")
