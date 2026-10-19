@@ -12,12 +12,14 @@ import logging
 import os
 import re
 import threading
+import time
 
 from PyQt5.QtCore import (
     QEvent,
     QMetaObject,
     QPoint,
     QPointF,
+    QRect,
     QRectF,
     QSize,
     Qt,
@@ -54,6 +56,7 @@ from .agent_web_server import AgentWebServer, start_sidecar
 from .hover_button import HoverGlowButton
 from .memory_graph_panel import MemoryGraphPanel
 from .scheduler_panel import SchedulerPanel
+from . import ui_motion
 
 # NOTE: AgentExportDialog is imported lazily inside _open_export_dialog().
 # Importing it at module level pulls in NGUI/dialogs/__init__.py, which imports
@@ -177,45 +180,133 @@ def _save_agent_web_enabled(enabled: bool) -> None:
         logger.warning("Agent mode: could not persist web server flag (%s)", exc)
 
 
-class SpectrogramBar(QWidget):
-    """Animated spectrogram for voice input / output activity.
+# ── Voice capture / live spectrum ──────────────────────────────────────
+VOICE_RATE = 16000           # 16 kHz mono PCM16 — what the STT engine expects
+VOICE_BLOCK = 512            # 32 ms per read: smooth enough for a live meter
+VOICE_BANDS = 48             # bars in the spectrogram (low → high frequency)
+VOICE_SILENCE_RMS = 0.008    # below this the room reads as silence, not noise
+MIC_HOLD_MS = 220            # press longer than this = talking, not a mode tap
 
-    Procedural animation (no audio analysis) — it signals that the agent is
-    listening or speaking, mirroring the web client's input/output spectrogram.
+
+def _voice_bands(pcm: bytes):
+    """FFT band levels (0..1, low→high) for one 16 kHz mono PCM16 block.
+
+    Runs on the capture thread, so it must never raise into the UI.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    try:
+        if np is not None:
+            samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+            if samples.size == 0:
+                return None
+            rms = float(np.sqrt(np.mean(samples * samples)))
+            if rms < VOICE_SILENCE_RMS:
+                return [0.0] * VOICE_BANDS
+            spec = np.abs(np.fft.rfft(samples * np.hanning(samples.size)))
+            freqs = np.fft.rfftfreq(samples.size, 1.0 / VOICE_RATE)
+            edges = np.geomspace(120.0, 4000.0, VOICE_BANDS + 1)
+            total = float(spec.sum()) or 1.0
+            loud = min(1.0, rms * 6.0)
+            levels = []
+            for i in range(VOICE_BANDS):
+                sel = (freqs >= edges[i]) & (freqs < edges[i + 1])
+                frac = float(spec[sel].sum()) / total if sel.any() else 0.0
+                # sqrt lifts the quiet top end of the voice band into view,
+                # the loudness term keeps soft speech small and loud speech big
+                levels.append(min(1.0, (frac * 6.0) ** 0.5 * (0.30 + loud)))
+            return levels
+        # No numpy: a flat spectrum scaled by level still shows the real voice.
+        import array
+        buf = array.array("h")
+        buf.frombytes(pcm)
+        if not buf:
+            return None
+        rms = (sum((v / 32768.0) ** 2 for v in buf) / len(buf)) ** 0.5
+        if rms < VOICE_SILENCE_RMS:
+            return [0.0] * VOICE_BANDS
+        level = min(1.0, rms * 6.0)
+        return [level] * VOICE_BANDS
+    except Exception:
+        logger.debug("_voice_bands failed", exc_info=True)
+        return None
+
+
+class SpectrogramBar(QWidget):
+    """Live spectrum of the user's voice while the mic is open.
+
+    The capture thread pushes one FFT frame per audio block
+    (:meth:`push_bands`); the repaint tick only shapes them — fast attack, slow
+    release plus a falling peak line — so speech reads instantly and silence
+    settles instead of freezing.  ``start(realtime=False)`` keeps the procedural
+    pulse used for spoken output, where there is no capture to analyse.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(26)
+        self.setFixedHeight(36)
         self.setMinimumWidth(120)
-        self._levels = [0.0] * 56
+        self._lock = threading.Lock()
+        self._bands = [0.0] * VOICE_BANDS
+        self._shown = [0.0] * VOICE_BANDS
+        self._peak = [0.0] * VOICE_BANDS
         self._phase = 0.0
+        self._procedural = False
+        self._status = ""
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._tick)
         self.hide()
 
-    def start(self):
+    def start(self, realtime=True):
+        self._procedural = not realtime
         self.show()
         if not self._timer.isActive():
             self._timer.start()
 
-    def stop(self):
+    def stop(self, hide_after=True):
         self._timer.stop()
-        self._levels = [0.0] * len(self._levels)
+        with self._lock:
+            self._bands = [0.0] * VOICE_BANDS
+        self._shown = [0.0] * VOICE_BANDS
+        self._peak = [0.0] * VOICE_BANDS
+        self._procedural = False
         self.update()
-        self.hide()
+        if hide_after:
+            self.hide()
+
+    def push_bands(self, levels):
+        """Hand over one analysed audio block (called off the UI thread)."""
+        if not levels:
+            return
+        with self._lock:
+            self._bands = list(levels)
+
+    def set_status(self, text):
+        """Small muted message over the bars (replaces the old status label)."""
+        self._status = str(text or "")
+        self.update()
 
     def _tick(self):
         import math
-        self._phase += 0.25
-        n = len(self._levels)
-        self._levels = self._levels[1:] + [0.0]
-        self._levels[-1] = min(
-            1.0,
-            0.25 + 0.75 * abs(math.sin(self._phase * 1.7))
-            * abs(math.sin(self._phase * 0.5 + n)),
-        )
+        if self._procedural:
+            self._phase += 0.25
+            self._bands = [
+                min(1.0,
+                    0.25 + 0.75 * abs(math.sin(self._phase * 1.7 + i * 0.5))
+                    * abs(math.sin(self._phase * 0.5 + i)))
+                for i in range(VOICE_BANDS)
+            ]
+        with self._lock:
+            bands = list(self._bands)
+        for i in range(VOICE_BANDS):
+            want = bands[i] if i < len(bands) else 0.0
+            cur = self._shown[i]
+            self._shown[i] = want if want > cur else cur * 0.80
+            self._peak[i] = self._shown[i] if self._shown[i] > self._peak[i] \
+                else max(0.0, self._peak[i] - 0.025)
         self.update()
 
     def paintEvent(self, event):
@@ -224,14 +315,32 @@ class SpectrogramBar(QWidget):
             painter.setRenderHint(QPainter.Antialiasing)
             w = float(self.width())
             h = float(self.height())
-            n = max(1, len(self._levels))
+            n = VOICE_BANDS
             bw = max(1.0, w / n)
-            color = QColor(ACCENT_COLOR)
-            for i, level in enumerate(self._levels):
-                bh = max(1.0, level * (h - 2))
+            accent = QColor(ACCENT_COLOR)
+            for i in range(n):
+                level = self._shown[i]
+                bh = max(1.0, level * (h - 8))
+                col = QColor(accent)
+                col.setAlpha(int(70 + 185 * min(1.0, level + 0.12)))
                 painter.fillRect(
-                    QRectF(i * bw + 1, h - bh, max(1.0, bw - 2), bh), color
-                )
+                    QRectF(i * bw + 1, h - bh, max(1.0, bw - 2), bh), col)
+                pk = self._peak[i]
+                if pk > 0.04:
+                    pcol = QColor(accent)
+                    pcol.setAlpha(110)
+                    pen = QPen(pcol)
+                    pen.setWidth(1)
+                    painter.setPen(pen)
+                    y = h - max(2.0, pk * (h - 8))
+                    painter.drawLine(QPointF(i * bw + 1, y),
+                                     QPointF(i * bw + max(1.0, bw - 2), y))
+            if self._status:
+                font = QFont()
+                font.setPixelSize(11)
+                painter.setFont(font)
+                painter.setPen(QColor(255, 255, 255, 140))
+                painter.drawText(QRectF(0, 0, w, h), Qt.AlignCenter, self._status)
             painter.end()
         except Exception:
             pass
@@ -360,6 +469,10 @@ class AgentOverlay(QFrame):
         self._recording = False
         self._mic_thread = None
         self._mic_chunks: list = []
+        # A hold on the mic icon must not also read as a mode-switch tap.
+        self._mic_press_at = 0.0
+        self._mic_hold_consumed = False
+        self._mic_was_voice = False
         self._executing = False
 
         # ── Build UI ──
@@ -531,11 +644,7 @@ class AgentOverlay(QFrame):
         # ── Body: coworker sidebar + scrollable chat area ──
         cont_layout.addWidget(self._build_body(), 1)
 
-        # ── Voice spectrogram (input + output activity) ──
-        self._spectro = SpectrogramBar(container)
-        cont_layout.addWidget(self._spectro)
-
-        # ── Input bar ──
+        # ── Input bar (holds the live voice spectrogram in voice mode) ──
         cont_layout.addWidget(self._build_input_bar())
 
         root.addWidget(container)
@@ -872,23 +981,18 @@ class AgentOverlay(QFrame):
         blayout.setContentsMargins(12, 8, 12, 8)
         blayout.setSpacing(6)
 
-        # ── Chat / voice mode toggle ──
+        # ── Mic icon: tap switches mode, hold listens right away ──
         self._voice_btn = QPushButton(bar)
         self._voice_btn.setCheckable(True)
-        self._voice_btn.setToolTip(_("Switch to voice mode"))
+        self._voice_btn.setToolTip(_("Hold to talk — tap to switch voice mode"))
         self._voice_btn.setCursor(Qt.PointingHandCursor)
         self._voice_btn.setFixedSize(30, 30)
         self._voice_btn.setIcon(self._make_icon_mic(20))
         self._voice_btn.setIconSize(QSize(20, 20))
-        self._voice_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: rgba(255,255,255,0.5);"
-            f"border: 1px solid rgba(255,255,255,0.10); border-radius: 15px; padding: 2px; }}"
-            f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
-            f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
-            f"background-color: rgba(34,211,238,0.10); }} "
-            f"QPushButton:checked:hover {{ background-color: rgba(34,211,238,0.18); }}"
-        )
-        self._voice_btn.clicked.connect(self._toggle_voice_mode)
+        self._apply_mic_style()
+        self._voice_btn.pressed.connect(self._on_mic_pressed)
+        self._voice_btn.released.connect(self._on_mic_released)
+        self._voice_btn.clicked.connect(self._on_voice_btn_clicked)
         blayout.addWidget(self._voice_btn, 0)
 
         self._input_field = QTextEdit(bar)
@@ -905,30 +1009,22 @@ class AgentOverlay(QFrame):
         )
         blayout.addWidget(self._input_field, 1)
 
-        # ── Voice-mode controls (hidden until voice mode is on) ──
-        self._mic_btn = QPushButton(_("Hold to Talk"), bar)
-        self._mic_btn.setToolTip(_("Hold to record, release to transcribe"))
-        self._mic_btn.setCursor(Qt.PointingHandCursor)
-        self._mic_btn.setFixedHeight(30)
-        self._mic_btn.hide()
-        self._mic_btn.pressed.connect(self._start_recording)
-        self._mic_btn.released.connect(self._stop_recording)
-        blayout.addWidget(self._mic_btn, 0)
+        # ── Live voice spectrogram — sits in the typed field's slot and takes
+        # its place while voice mode is on (both stretch, so the bar never jumps) ──
+        self._spectro = SpectrogramBar(bar)
+        blayout.addWidget(self._spectro, 1)
 
-        self._voice_status = QLabel(_("Hold to talk"), bar)
-        self._voice_status.setStyleSheet(
-            f"color: rgba(255,255,255,0.5); font-size: 11px;"
-        )
-        self._voice_status.hide()
-        blayout.addWidget(self._voice_status, 0)
-
-        self._send_btn = QPushButton(_("Send"), bar)
+        # Primary action — same Tabler "send" glyph as the phone client (icon
+        # only, no text label).
+        self._send_btn = QPushButton(bar)
+        self._send_btn.setToolTip(_("Send"))
         self._send_btn.setCursor(Qt.PointingHandCursor)
-        self._send_btn.setFixedSize(50, 30)
+        self._send_btn.setFixedSize(36, 36)
+        self._send_btn.setIcon(tabler_qicon("SEND", 18, "#0B0E12"))
+        self._send_btn.setIconSize(QSize(18, 18))
         self._send_btn.setStyleSheet(
             f"QPushButton {{"
-            f"  background-color: {ACCENT_COLOR}; color: #0a0a0a;"
-            f"  border: 0px; border-radius: 8px; font-size: 11px; font-weight: 700;"
+            f"  background-color: {ACCENT_COLOR}; border: 0px; border-radius: 18px;"
             f"}}"
             f"QPushButton:hover {{ background-color: #4fdcf0; }}"
             f"QPushButton:pressed {{ background-color: #0ea5b7; }}"
@@ -999,11 +1095,61 @@ class AgentOverlay(QFrame):
         self.show()
         self.raise_()
         self.activateWindow()
+        self._animate_entry()
         self._input_field.setFocus()
         # Second attempt after the window is fully shown + activated
         QTimer.singleShot(
             80, lambda: (self.activateWindow(), self._input_field.setFocus())
         )
+
+    def _animate_entry(self):
+        """Unfold into place instead of appearing at full size in one frame."""
+        if not ui_motion.motion_enabled():
+            return
+        if self._embedded:
+            # In-window the parent's layout owns the geometry, so the morph goes
+            # through the widget's own height: the card grows from the compact
+            # bar down to the full panel, then hands the size back to the layout.
+            ui_motion.unfold(self, start_px=COMPACT_HEIGHT)
+            return
+        size = self.size()
+        ui_motion.grow_in(
+            self, QRect(self.x(), self.y(), size.width(), size.height()),
+            on_done=lambda: ui_motion.restore_fixed_size(self, size))
+
+    def _animate_away(self, then=None, into_notch=False):
+        """Fold away on the user's own dismissal, then really hide.
+
+        State changes stay with the caller (stop flags, server, recording) — only
+        the exit is animated, and a fresh show_overlay() cancels it.  The
+        automation/capture hides never come here: a screen read must stay clean.
+        """
+        def _done():
+            self.hide()
+            if then:
+                then()
+        if not self.isVisible() or not ui_motion.motion_enabled():
+            _done()
+            return
+        if self._embedded:
+            ui_motion.fold_away(self, end_px=COMPACT_HEIGHT, on_done=_done)
+            return
+        size = self.size()
+        ui_motion.shrink_away(
+            self, QRect(self.x(), self.y(), size.width(), size.height()),
+            # Collapsing to the notch narrows to a pill on the way, so the panel
+            # reads as folding into it rather than sinking.
+            to_width_ratio=0.55 if into_notch else 1.0,
+            on_done=_done)
+
+    def _swap_column(self, incoming, outgoing):
+        """Morph between the full-column views (transcript ↔ scheduler/graph).
+
+        The outgoing view leaves at once so the incoming one unfolds across the
+        whole column: one movement, and no squeeze below a minimum width.
+        """
+        outgoing.hide()
+        ui_motion.unfold(incoming, start_px=8, axis="x")
 
     def hide_overlay(self):
         """Hide the overlay, stop any running agent loop.
@@ -1016,8 +1162,7 @@ class AgentOverlay(QFrame):
         self._release_pending_asks()
         self._stop_recording()
         self._was_visible_for_automation = False
-        self.hide()
-        self.closed.emit()
+        self._animate_away(then=lambda: self.closed.emit())
 
     # ── Automation hide/restore ──────────────────────────────────────
 
@@ -1106,13 +1251,14 @@ class AgentOverlay(QFrame):
                 self._set_compact_mode(False)
             if show and not self._memory_graph_panel.isHidden():
                 # one view at a time
-                self._memory_graph_panel.hide()
                 self._memory_graph_btn.setChecked(False)
-            self._scheduler_panel.setVisible(show)
-            self._chat_scroll.setVisible(not show)
+                self._memory_graph_panel.hide()
             self._scheduler_btn.setChecked(show)
             if show:
                 self._scheduler_panel.refresh()
+            self._swap_column(
+                self._scheduler_panel if show else self._chat_scroll,
+                self._chat_scroll if show else self._scheduler_panel)
         except Exception:
             logger.exception("_toggle_scheduler: error")
 
@@ -1129,13 +1275,13 @@ class AgentOverlay(QFrame):
                 self._set_compact_mode(False)
             if show and not self._scheduler_panel.isHidden():
                 # one view at a time
-                self._scheduler_panel.hide()
                 self._scheduler_btn.setChecked(False)
-            self._memory_graph_panel.setVisible(show)
-            self._chat_scroll.setVisible(not show)
+                self._scheduler_panel.hide()
             self._memory_graph_btn.setChecked(show)
             if show:
                 self._memory_graph_panel.refresh()
+            self._swap_column(self._memory_graph_panel if show else self._chat_scroll,
+                              self._chat_scroll if show else self._memory_graph_panel)
         except Exception:
             logger.exception("_toggle_memory_graph: error")
 
@@ -1164,16 +1310,14 @@ class AgentOverlay(QFrame):
         """Switch back to main GUI mode — hide overlay, do NOT stop server."""
         self._stop_recording()
         self._was_visible_for_automation = False
-        self.hide()
-        self.closed.emit()
+        self._animate_away(then=lambda: self.closed.emit())
 
     def _collapse_to_dot(self):
         """Collapse overlay back to minimal dot state (stay in agent mode)."""
         self._stop_recording()
         self._was_visible_for_automation = False
         # The phone-facing server keeps running regardless of overlay state.
-        self.hide()
-        self.collapsed.emit()
+        self._animate_away(then=lambda: self.collapsed.emit(), into_notch=True)
 
     # ── Compact / Expand ──────────────────────────────────────────────
 
@@ -1194,7 +1338,7 @@ class AgentOverlay(QFrame):
             # Also hide any open server panel
             self._server_panel.hide()
             self._server_btn.setChecked(False)
-            self.setFixedSize(OVERLAY_WIDTH, COMPACT_HEIGHT)
+            self._resize_to(QSize(OVERLAY_WIDTH, COMPACT_HEIGHT))
             self._expand_btn.setIcon(self._make_icon_chevron(20, up=True))
             self._expand_btn.setToolTip(_("Expand overlay"))
             # Show focus border on input field to indicate "ready to type"
@@ -1207,8 +1351,7 @@ class AgentOverlay(QFrame):
             )
         else:
             self._body.show()
-            self.setFixedSize(EXPANDED_WIDTH, OVERLAY_HEIGHT)
-            self._ensure_within_bounds()
+            self._resize_to(QSize(EXPANDED_WIDTH, OVERLAY_HEIGHT))
             self._expand_btn.setIcon(self._make_icon_chevron(20, up=False))
             self._expand_btn.setToolTip(_("Collapse overlay"))
             # Restore normal style (focus border only on actual focus)
@@ -1229,6 +1372,33 @@ class AgentOverlay(QFrame):
     def _toggle_expand(self):
         """Toggle between compact and expanded mode."""
         self._set_compact_mode(not self._compact)
+
+    def _resize_to(self, size, y=None):
+        """Change the fixed size with a glide (floating only).
+
+        The in-window panel is sized by its parent layout, and a hidden window
+        has nothing to animate — both just take the size.
+        """
+        top = self.y() if y is None else int(y)
+        if (self._embedded or not self.isVisible()
+                or not ui_motion.motion_enabled()):
+            self.setFixedSize(size)
+            if not self._embedded:
+                if y is not None:
+                    self.move(self.x(), top)
+                self._ensure_within_bounds()
+            return
+        ui_motion.to_rect(
+            self, QRect(self.x(), top, size.width(), size.height()),
+            on_done=lambda: self._settle_size(size))
+
+    def _settle_size(self, size):
+        """Re-pin the fixed size a glide ended on, back inside the screen."""
+        ui_motion.restore_fixed_size(self, size)
+        try:
+            self._ensure_within_bounds()
+        except Exception:
+            pass
 
     def _reset_fullscreen(self):
         """Leave fullscreen (if active) and restore the saved window position."""
@@ -1371,54 +1541,110 @@ class AgentOverlay(QFrame):
 
     # ── Voice mode (STT) ─────────────────────────────────────────────
 
-    def _toggle_voice_mode(self, checked=None):
-        """Switch the input bar between chat (typed) and voice mode."""
-        self._voice_mode = self._voice_btn.isChecked()
+    _MIC_STYLE_IDLE = (
+        f"QPushButton {{ background-color: transparent; color: rgba(255,255,255,0.5);"
+        f"border: 1px solid rgba(255,255,255,0.10); border-radius: 15px; padding: 2px; }}"
+        f"QPushButton:hover {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR}; }}"
+        f"QPushButton:checked {{ color: {ACCENT_COLOR}; border-color: {ACCENT_COLOR};"
+        f"background-color: rgba(34,211,238,0.10); }} "
+        f"QPushButton:checked:hover {{ background-color: rgba(34,211,238,0.18); }}"
+    )
+    _MIC_STYLE_RECORD = (
+        f"QPushButton {{ background-color: #ef4444; border: 1px solid #ef4444;"
+        f"border-radius: 15px; padding: 2px; }}"
+        f"QPushButton:hover {{ background-color: #f87171; }}"
+    )
+
+    def _apply_mic_style(self, recording=None):
+        """Quiet mic reads as a chip; open mic goes red."""
+        recording = self._recording if recording is None else bool(recording)
+        self._voice_btn.setStyleSheet(
+            self._MIC_STYLE_RECORD if recording else self._MIC_STYLE_IDLE)
+
+    def _set_voice_status(self, text):
+        """Voice status is drawn inside the spectrogram — no separate wide label."""
+        try:
+            self._spectro.set_status(str(text or ""))
+        except Exception:
+            pass
+
+    def _set_voice_mode(self, on):
+        """Swap the input row between typed text and push-to-talk voice."""
+        self._voice_mode = bool(on)
+        btn = self._voice_btn
+        btn.blockSignals(True)
+        btn.setChecked(self._voice_mode)
+        btn.blockSignals(False)
+        btn.setToolTip(_("Hold to talk \u2014 tap to switch to text mode")
+                       if self._voice_mode else
+                       _("Hold to talk \u2014 tap to switch to voice mode"))
         if self._voice_mode:
             self._input_field.hide()
             self._send_btn.hide()
-            self._mic_btn.show()
-            self._voice_status.setText(_("Hold to talk"))
-            self._voice_status.show()
+            self._spectro.start(realtime=True)
+            self._set_voice_status(_("Hold the mic to talk"))
         else:
-            self._stop_recording()
-            self._mic_btn.hide()
-            self._voice_status.hide()
+            if self._recording:
+                self._stop_recording()
+            self._spectro.stop()
             self._input_field.show()
             self._send_btn.show()
             self._input_field.setFocus()
 
+    def _on_mic_pressed(self):
+        """Holding the mic icon starts listening on the press itself."""
+        self._mic_press_at = time.monotonic()
+        self._mic_hold_consumed = False
+        self._mic_was_voice = self._voice_mode
+        if self._input_ask_active:
+            # The ask already owns the mic (it auto-listens); a hold must not
+            # restart the capture under way.
+            return
+        if not self._voice_mode:
+            self._set_voice_mode(True)
+        self._start_recording()
+
+    def _on_mic_released(self):
+        """Releasing stops the capture and transcribes what was heard."""
+        if (time.monotonic() - self._mic_press_at) * 1000.0 >= MIC_HOLD_MS:
+            self._mic_hold_consumed = True
+        if self._recording:
+            self._stop_recording()
+
+    def _on_voice_btn_clicked(self):
+        """A tap switches mode; a hold was already served by press/release."""
+        if self._mic_hold_consumed:
+            self._mic_hold_consumed = False
+            self._voice_btn.setChecked(self._voice_mode)   # undo the auto-toggle
+            return
+        if self._input_ask_active:
+            self._toggle_ask_recording()
+            return
+        # A tap from text mode already switched on voice mode at the press, so
+        # the matching thing here is to switch back out of it.
+        if self._mic_was_voice:
+            self._set_voice_mode(False)
+        else:
+            self._set_voice_mode(True)
+
     # ── Voice-mode ask answers (talk directly to the question) ───────
 
     def _begin_voice_ask(self):
-        """Switch the mic to tap-to-toggle and start listening.
+        """Auto-listen for a spoken answer; tapping the mic stops and submits.
 
         Runs on the UI thread when an Input node asks a question while voice
-        mode is on: recording starts automatically so the user can answer by
-        speaking; tapping the mic button stops and submits the answer.
+        mode is on: recording starts by itself, so the user only has to speak.
         """
-        try:
-            self._mic_btn.pressed.disconnect(self._start_recording)
-            self._mic_btn.released.disconnect(self._stop_recording)
-        except Exception:
-            pass
-        self._mic_btn.setText(_("Tap to Stop"))
-        self._mic_btn.clicked.connect(self._toggle_ask_recording)
-        self._voice_status.setText(_("Listening\u2026 speak your answer"))
+        if not self._voice_mode:
+            self._set_voice_mode(True)
         self._start_recording()
 
     def _end_voice_ask(self):
-        """Restore hold-to-talk mic behavior after the ask completes."""
-        try:
-            self._mic_btn.clicked.disconnect(self._toggle_ask_recording)
-        except Exception:
-            pass
-        self._mic_btn.setText(_("Hold to Talk"))
-        self._mic_btn.pressed.connect(self._start_recording)
-        self._mic_btn.released.connect(self._stop_recording)
+        """Back to hold-to-talk once the ask is answered."""
         if self._recording:
             self._stop_recording()
-        self._voice_status.setText(_("Hold to talk"))
+        if self._voice_mode:
+            self._set_voice_status(_("Hold the mic to talk"))
 
     def _toggle_ask_recording(self):
         """Tap-to-toggle used while an ask is pending in voice mode."""
@@ -1434,7 +1660,7 @@ class AgentOverlay(QFrame):
         # Allow recording while the chain is asking for input (voice-mode
         # answers) — only block on a genuinely busy agent otherwise.
         if self._executing and not self._input_ask_active:
-            self._voice_status.setText(_("Agent busy \u2014 please wait"))
+            self._set_voice_status(_("Agent busy \u2014 please wait"))
             return
         try:
             import pyaudio  # noqa: F401
@@ -1446,24 +1672,18 @@ class AgentOverlay(QFrame):
 
         self._recording = True
         self._mic_chunks = []
-        try:
-            self._spectro.start()
-        except Exception:
-            pass
-        self._mic_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: #ef4444; color: white; border: 0px;"
-            f"  border-radius: 8px; padding: 0px 14px; font-size: 11px; font-weight: 700;"
-            f"}}"
-        )
-        self._voice_status.setText(_("Listening\u2026"))
+        self._spectro.start(realtime=True)
+        self._apply_mic_style(recording=True)
+        self._set_voice_status(
+            _("Listening\u2026 speak your answer") if self._input_ask_active
+            else _("Listening\u2026"))
         self._mic_thread = threading.Thread(
             target=self._record_worker, daemon=True
         )
         self._mic_thread.start()
 
     def _record_worker(self):
-        """Capture 16 kHz mono PCM16 chunks while recording is active."""
+        """Capture 16 kHz mono PCM16 blocks and feed the live spectrogram."""
         stream = None
         pya = None
         try:
@@ -1472,21 +1692,24 @@ class AgentOverlay(QFrame):
             stream = pya.open(
                 format=pyaudio.paInt16,
                 channels=1,
-                rate=16000,
+                rate=VOICE_RATE,
                 input=True,
-                frames_per_buffer=4096,
+                frames_per_buffer=VOICE_BLOCK,
             )
             while self._recording:
                 try:
-                    data = stream.read(4096, exception_on_overflow=False)
+                    data = stream.read(VOICE_BLOCK, exception_on_overflow=False)
                 except Exception:
                     break
                 if data:
                     self._mic_chunks.append(data)
+                    # Spectrum of exactly what is being recorded, pushed to the
+                    # widget's lock — the UI tick only ever reads it.
+                    self._spectro.push_bands(_voice_bands(data))
         except Exception as e:
             logger.exception("mic recording failed")
             self._post_ui(
-                lambda err=str(e): self._voice_status.setText(
+                lambda err=str(e): self._set_voice_status(
                     _("Mic error: {}").format(err)
                 )
             )
@@ -1508,29 +1731,25 @@ class AgentOverlay(QFrame):
         if not self._recording:
             return
         self._recording = False
-        try:
-            self._spectro.stop()
-        except Exception:
-            pass
+        # Stay visible in voice mode (the row has nothing else in it), hide the
+        # instant the bar is back to typing.
+        self._spectro.stop(hide_after=not self._voice_mode)
+        if self._voice_mode:
+            self._set_voice_status(_("Hold the mic to talk"))
+        self._apply_mic_style(recording=False)
         if self._mic_thread:
             self._mic_thread.join(timeout=3)
             self._mic_thread = None
 
         chunks = self._mic_chunks
         self._mic_chunks = []
-        self._mic_btn.setStyleSheet(
-            f"QPushButton {{ background-color: transparent; color: {ACCENT_COLOR};"
-            f"border: 1px solid {ACCENT_COLOR}; border-radius: 8px;"
-            f"padding: 0px 14px; font-size: 11px; font-weight: 600; }}"
-            f"QPushButton:hover {{ background-color: rgba(34,211,238,0.12); }}"
-        )
 
         # ~100 ms of audio = treat as no capture (accidental tap)
         if not chunks or sum(len(c) for c in chunks) < 3200:
-            self._voice_status.setText(_("No audio captured"))
+            self._set_voice_status(_("No audio captured"))
             return
 
-        self._voice_status.setText(_("Transcribing\u2026"))
+        self._set_voice_status(_("Transcribing\u2026"))
         pcm = b"".join(chunks)
         threading.Thread(
             target=self._transcribe_worker, args=(pcm,), daemon=True
@@ -1548,7 +1767,8 @@ class AgentOverlay(QFrame):
 
     def _on_transcription_done(self, result: dict):
         """Apply the transcription result (UI thread)."""
-        self._voice_status.setText(_("Hold to talk"))
+        if self._voice_mode:
+            self._set_voice_status(_("Hold the mic to talk"))
         if result.get("error"):
             self._add_bubble(
                 _("Voice input error: {}").format(result["error"]), False
@@ -1556,7 +1776,7 @@ class AgentOverlay(QFrame):
             return
         text = (result.get("text") or "").strip()
         if not text:
-            self._voice_status.setText(_("No speech detected \u2014 try again"))
+            self._set_voice_status(_("No speech detected \u2014 try again"))
             return
         self._submit_text(text)
 
@@ -1945,6 +2165,11 @@ class AgentOverlay(QFrame):
         bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         align = Qt.AlignRight if is_user else Qt.AlignLeft
         self._chat_layout.addWidget(bubble, 0, align)
+        # A bubble materialising at full size is the other half of the flicker;
+        # it pushes the transcript open instead.  HTML artifacts are skipped:
+        # their web view is a native child that resizes badly mid-animation.
+        if mode != 'html':
+            ui_motion.unfold(bubble, start_px=8)
 
     def _render_html_artifact(self, bubble, layout, text, path, max_width):
         """Render an interactive HTML artifact in a live web view.
@@ -2068,13 +2293,31 @@ class AgentOverlay(QFrame):
             logger.exception("agent_overlay: degrade artifact bubble failed")
 
     def _pulse_output_spectro(self, text: str):
-        """Animate the spectrogram while spoken output plays (estimated)."""
+        """Animate the spectrogram while spoken output plays (estimated).
+
+        The row has one slot for it, so typing steps aside for the duration.
+        """
         try:
             est_ms = min(20000, max(1500, int(len(str(text or "")) * 65)))
-            self._spectro.start()
-            QTimer.singleShot(est_ms, self._spectro.stop)
+            if not self._voice_mode:
+                self._input_field.hide()
+                self._send_btn.hide()
+            self._spectro.start(realtime=False)
+            QTimer.singleShot(est_ms, self._restore_input_row)
         except Exception:
             pass
+
+    def _restore_input_row(self):
+        """End the output pulse: animation away, typing slot back."""
+        if self._recording:
+            return                      # the mic took the slot over, leave it
+        try:
+            self._spectro.stop(hide_after=not self._voice_mode)
+            if not self._voice_mode:
+                self._input_field.show()
+                self._send_btn.show()
+        except Exception:
+            logger.debug("_restore_input_row failed", exc_info=True)
 
     def _make_bubble_label(self, text: str, max_width: int, plain: str = None):
         label = QLabel(text, self._chat_container)
@@ -3010,15 +3253,15 @@ class AgentOverlay(QFrame):
         self._update_qr_display(state.remote_url)
 
     def _toggle_server_panel(self):
-        """Show/hide the server control panel."""
+        """Show/hide the server control panel — it unfolds out of the header."""
         visible = self._server_panel.isVisible()
         # If in compact mode, expand first so the panel has room
         if self._compact:
             self._set_compact_mode(False)
             # Re-check visibility after expand (panel was hidden by compact mode)
             visible = False
-        self._server_panel.setVisible(not visible)
-        self._server_btn.setChecked(not visible)
+        show = not visible
+        self._server_btn.setChecked(show)
 
         if self._embedded:
             # In-window the overlay FILLS its parent, so it must stay
@@ -3034,9 +3277,10 @@ class AgentOverlay(QFrame):
                 self.setMaximumSize(16777215, 16777215)
             except Exception:
                 pass
+            self._morph_server_panel(show)
             return
 
-        if not visible:
+        if show:
             # Panel just became visible — bump overlay height to fit it,
             # adjusting Y so it stays within the screen bounds.
             new_h = OVERLAY_HEIGHT + SERVER_PANEL_HEIGHT
@@ -3046,11 +3290,22 @@ class AgentOverlay(QFrame):
                 y = self.y()
                 if y + new_h > geo.bottom():
                     y = max(geo.top(), geo.bottom() - new_h)
-                self.setGeometry(self.x(), y, OVERLAY_WIDTH, new_h)
+                self._resize_to(QSize(OVERLAY_WIDTH, new_h), y=y)
             else:
-                self.setFixedSize(OVERLAY_WIDTH, new_h)
+                self._resize_to(QSize(OVERLAY_WIDTH, new_h))
         else:
-            self.setFixedSize(OVERLAY_WIDTH, OVERLAY_HEIGHT)
+            self._resize_to(QSize(OVERLAY_WIDTH, OVERLAY_HEIGHT))
+        self._morph_server_panel(show)
+
+    def _morph_server_panel(self, show: bool):
+        """Accordion the panel's own height, so the chat gives up / takes back
+        the space as it moves instead of the panel blinking in."""
+        if show:
+            ui_motion.unfold(self._server_panel, start_px=8,
+                             target_px=SERVER_PANEL_HEIGHT)
+        else:
+            ui_motion.fold_away(self._server_panel, end_px=8,
+                                on_done=self._server_panel.hide)
 
     def _autostart_web_server(self):
         """Start the phone server on launch when the user left it enabled."""

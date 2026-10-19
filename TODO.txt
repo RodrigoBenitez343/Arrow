@@ -1,0 +1,379 @@
+Using Arrow's data to train a task-tuned model: what actually works
+Your loop — audit in Arrow → validate → train → deploy back into Arrow — is sound, and Arrow is unusually well-positioned for it because the runtime is simultaneously the data generator, the verifier, and the deployment target. But the framing "train a quantized MoE to replicate all things the workflows do" hides a fork in the road that determines whether this works or collapses into a very expensive way to relearn clicks.
+
+Reframe the target: don't train the executor, train the router
+Arrow's deterministic paths are already executed by chains. A chain is a symbolic program; replaying it is not a modeling problem. If a path is truly deterministic, the learned-chain freeze (§11.3) already captures it more reliably than any model could — and freezing is cheaper, inspectable, and reversible.
+
+What a model is actually needed for in Arrow is the three fuzzy seams the runtime already isolates:
+
+Picker — given a goal and the runtime-derived descriptions of wired workers, choose the next worker (or DONE/ASK). Contract: one token. (§11.2)
+
+Scoper — turn goal + progress + observed state into ONE imperative instruction for the chosen worker. Contract: one short sentence. (§11.2)
+
+Slot extraction — pull a single parameter (query, item, filter) out of the scoped step into an agent_modifiable Input. Contract: one field. (§11.2)
+
+These are exactly the places Arrow already uses small models for, already shapes for 1–4B models ("small-model discipline"), and already grades with Laya verdicts. Train these heads to imitate the orchestrator's decisions — not the clicks. The execution layer stays chains. This is also what makes the training data auditable: every sample is (state → one decision), and the decision is verifiable by re-running the downstream chain and reading the existing ok verdict.
+
+What Arrow already gives you — the training substrate
+Arrow artifact	Training use	Status
+chains/learned/*.json — routing.examples[] + steps[] + chain_file order	Gold. A (verbatim request → composition program) supervised pair, already in the right shape	Exists
+Orchestrator trace — per-step pick, scoped instruction, worker, result, ok verdict, state digest, handback markers	(state, action, reward) trajectories with step-level labels	Published on trace port; persistence into run_memory.db must be confirmed/extended
+run_memory.db — every chain run, node execution, chat turn	Event stream to reconstruct trajectories; chat-turn data for the scoper	Exists
+context.db — per-chain+node turns	Conversation-side fine-tuning; long-horizon context	Exists
+Plan projection shadow (directive → worker: line …)	Labels for a router/reranker: matched vs UNMATCHED directives	Log-only today; make it structured
+Derived action graph (coverage, entity lines, imports)	Per-worker capability description — cleaner than raw prose	Log-only today; make it structured
+Laya ok verdicts (per step, and the done-probe)	Reward signal at step granularity for rejection sampling and eval	Exists; runs as a burst resource
+web_sequences/*.json, sequences/*.json	Tool schemas and atomic action shapes (the "hands") for structured-output training	Exists
+logs/session_*.md, automation.log	Human audit; not machine-clean	Needs structured format for training
+The single most valuable realization: chains/learned/*.json is already a supervised instruction-tuning dataset whose labels are programs, not prose. That file plus its routing.examples is your seed corpus.
+
+The gaps you must close before training
+Training on today's logs will fail for four specific reasons; fix these first.
+
+Full decision records are not persisted. The trace is published on a port and rendered in logs; it must be written as structured rows (goal, state digest, picker choice, scoped text, worker, result, verdict ok, stop reason, handback markers) keyed by run id. Without this, you have summaries, not trajectories. This is a small change to the orchestrator's ops module — write the same dict that goes on trace into a decisions table in run_memory.db.
+
+LLM-node prompts/responses aren't captured structurally. The logs have titled blocks; that's human-readable, not trainable. For the scoper and slot extractor, you need the exact prompt, sampler settings, model id, raw response, parsed decision, and outcome. Add a structured inference log to the gateway (AI/api.py) with the same run id.
+
+No stable train/val split across task families. Learned chains rebuild per goal (one artifact per goal, §11.3), so file paths are stable but content drifts. Hash the composition (the ordered chain_file list + step descriptions) to get stable program labels, and split by program hash, not by timestamp.
+
+The verifier is a model, not ground truth. Laya verdicts are excellent labels because they're cheap and consistent, but they're not oracle truth. Keep a small human-audited slice (say 5%) as a calibration set; if Laya disagrees with humans on the calibration slice, the reward signal needs a floor or an LLM fallback per your §10.4 doctrine.
+
+The data pipeline
+text
+run_memory.db ──┐
+decisions  ─────┼──► join by run_id ──► trajectory builder ──► sample builder ──► filter ──► train/val
+context.db ─────┤                          │                        │
+learned/*.json ─┘                          │                        ├─ PICKER: (goal + worker menu) → token
+                                            │                        ├─ SCOPER: (goal + progress + state) → instruction
+                                            └─ only runs that ended    └─ SLOT: (instruction + label) → value
+                                               `done` (never after
+                                               ESC/stop) and whose
+                                               every step verified True
+Filtering rules, drawn directly from your own freeze gates (§11.3) so the dataset matches what the runtime considers "a good run":
+
+Drop runs stopped by ESC or that ended blocked.
+
+Keep only runs where every step verified True and the run ended done. This is exactly the freeze criterion; reuse it.
+
+Drop single-step runs for the picker sample (a single step is the library chain, no routing lesson).
+
+Deduplicate by program hash; cap per-goal samples (≤5 routing examples already is the artifact-level cap — mirror it at sample level).
+
+Keep UNMATCHED plan-projection lines as negative samples for the router (a directive no wired worker serves) — your docs already treat them as a funnel metric; they're labels too.
+
+Format for the router sample, deliberately matching the runtime contract so the trained model drops in without a prompt rewrite:
+
+text
+system: worker menu (runtime-derived descriptions + [inputs: …] + [tools: …])
+user:   the goal text (verbatim from routing.examples)
+assistant: worker number (or DONE / ASK)     ← one token
+Format for the scoper sample:
+
+text
+system: scoper role
+user:   goal + progress + state digest
+assistant: "Your next step: …"                ← one short imperative
+Keep the prompt templates byte-identical to the runtime's, or you'll train a model that behaves differently from the one you ship.
+
+Training: dense small base + LoRA adapters, not a sparse MoE
+Be honest about the MoE ask. Training a sparse MoE from scratch is a multi-million-dollar effort; the small quantized MoEs that exist (Qwen1.5-MoE-A2.7B, Qwen3-30B-A3B, Phi-3.5-MoE) are either too large for your consumer target or poorly supported for QLoRA-on-experts in llama.cpp. At 1–4B scale, dense + LoRA is the right tool, and it matches Arrow's own small-model discipline.
+
+But you can still get the conditional-capacity benefit — by building the mixture out of adapters instead of experts:
+
+One base model (a dense 1.5–4B that llama.cpp already runs well; the one your orchestrator picker and scoper use today is the natural candidate).
+
+One LoRA adapter per task family — e.g. router_linkedin, router_jobsearch, scoper_generic, slot_generic. Each adapter is small (tens of MB), hot-swappable in llama.cpp, individually auditable, and individually revertible.
+
+The router is the adapter selection itself — which is exactly what your orchestrator picker already is. So "MoE" = base + N adapters + picker, all three of which you already have, minus the training.
+
+This is strictly more auditable than a true sparse MoE: you can diff two adapters, ship a new one for one family without touching the others, and roll back at adapter granularity. It's also the only version of the idea that llama.cpp supports cleanly today.
+
+If you insist on a true small MoE base later, the pipeline above is unchanged — QLoRA on attention (not experts) is the safe adaptation, and you re-quantize to GGUF at the end. But treat that as phase 3, not phase 1.
+
+The audit / validation loop inside Arrow
+This is where your instinct is exactly right, and Arrow is already built for it. Don't invent a parallel evaluation harness — use the runtime's own signals:
+
+Dry-run replay. Add a mode to the orchestrator that does not dispatch, but instead asks the candidate model for the pick + scope on a held-out goal set, and compares against the recorded program (or against the same Laya verdicts the live run would have produced). This is a read-only run of the existing picker path with the model swapped.
+
+Promotion gate. Only promote an adapter if, on the held-out set, it matches or beats the baseline on: steps verified True / total steps, plan projection matched directives / total directives, and end-to-end done rate. These are already the metrics your shadows and freeze gates compute.
+
+Canary. Wire the new adapter to a subset of task families, keep the old picker for the rest; the picker=laya vs picker=llm split in §11.2 is a ready template for A/B routing. ESC and the stop flag remain the human override.
+
+Human slice. Your §10.4 doctrine already says Laya is optional and every consumer falls back to LLM. Keep that property for the trained model: if the adapter's output fails the parse contract, fall back — never a silent behavior change.
+
+The audit story writes itself: every training sample is a row in run_memory.db, every label is a Laya verdict that can be recomputed, and every promoted adapter is a file in the model dir with a provenance record (which runs, which program hashes, which held-out score). That is a better audit story than most fine-tuning pipelines have.
+
+Deployment back into Arrow
+Three concrete integration points, in increasing scope:
+
+LoRA adapters loaded by llama-server — llama.cpp supports per-request LoRA; load the adapter for the active task family alongside the base GGUF. No GGUF re-quantization, no swap of the base, instant rollback. This is the right first ship.
+
+Merged + re-quantized GGUF for the exported standalone agent (§17.1), where you want one artifact, no adapter loading, and ARROW_DIRECT_ENGINE=1 fidelity. Do this only after an adapter has earned promotion on the held-out set.
+
+BYOK path unchanged — the trained model is just another local engine option in engine_options.py; selecting it persists as a llamacpp:<adapter>-style prefix the gateway already dispatches (§10.7). No new chain field needed, same as your BYOK design.
+
+Honest caveats
+Data volume. One run = one routing sample. You need hundreds to low thousands per task family to beat a good prompt on a 1–4B model. The teach ladder and demonstrated web routines (§12.2) multiply this — a single demonstrated routine can be paired with paraphrased goals — but paraphrasing risks training on your synthetic distribution. Prefer running Arrow in a shadow mode against a curated goal list and keeping only verified runs (rejection sampling), which is exactly what your freeze gate already does.
+
+Verifier circularity. Laya grades both the training labels and the eval. If Laya is systematically wrong on a family, training amplifies it. The 5% human calibration slice is not optional.
+
+Catastrophic forgetting on the base. Adapter-per-family avoids this; a single merged fine-tune does not. Stay adapter-first.
+
+The scoper is the hardest head. Its output is free text and its correctness is only observable downstream. Train it last, on the largest verified subset, and evaluate it with end-to-end done rate, not text similarity.
+
+Don't train the executor. The moment a training sample asks the model to emit a click sequence, you've replaced a symbolic program with a hallucination risk and lost the audit property that makes Arrow worth using.
+
+A phased plan
+Instrument (weeks, no ML): persist the full orchestrator decision record and structured gateway inference logs; export a decisions view from run_memory.db. Confirm learned/*.json parses to (request, program) pairs at scale.
+
+Seed dataset: learned chains + verified orchestrator traces → picker and slot-extractor samples. Train a QLoRA on the dense base the runtime already uses; deploy as a llama.cpp adapter; gate with dry-run replay + promotion threshold.
+
+Expand: add scoper samples as verified runs accumulate; add plan-projection negatives; add per-family adapters.
+
+Only then, if conditional capacity is provably the bottleneck, consider a true small MoE base — with the same pipeline and the same gates.
+
+The reframe is the whole answer: Arrow's deterministic paths don't need a model to replicate them — they need a model that chooses and scopes them well. Train that, audit it with the verdicts Arrow already emits, ship it as a hot-swappable adapter, and you get the MoE-like conditional capacity you're after without training a sparse MoE or relearning clicks.
+
+if we create a graph of emebddings, could laya use it to do things more mecanically overtime?
+The user is asking a deep architectural question: if they create a graph of embeddings (presumably from Arrow's execution traces, learned chains, action graphs, context), could Laya — Arrow's embedded System-1 decision engine (ModernBERT-large, typed noul/choice/score questions, single encoder pass) — use it to do things "more mechanically over time"?
+
+Let me parse what they mean by "mechanically":
+
+More deterministic, less inference
+
+More pattern-matching on structure rather than semantic reasoning
+
+Faster, cheaper, more reliable decisions
+
+Crystallizing repeated decisions into fixed paths
+
+This is essentially asking: can a graph of embeddings become a "cerebellum" that Laya consults mechanically? Can repeated Laya verdicts + execution traces form an embedding graph that, over time, turns fuzzy decisions into deterministic lookups?
+
+Let me think carefully about what Arrow already has:
+
+Laya — ModernBERT-large, typed decisions (noul/choice/score), one encoder pass, ~2s/verdict on 12 threads, burst resource. It answers things like "does this text satisfy this criterion", "which worker fits", "is the goal answerable".
+
+Graph RAG (AI/graph_rag.py) — nano-graphrag lineage, over stored context. "surfaces relevant past knowledge to reasoning nodes and records execution fragments so the agent can reason about what happened."
+
+ComoRAG — probe-driven retrieval over embedding space as "detached sparse attention layer".
+
+Learned chains — frozen composition-only artifacts with routing.examples. Deterministic, scorer-free matching (by the plan/coverage check).
+
+Derived action graph (action_graph.py) — per chain file, typed graph from what executor reads. Content-hash cached.
+
+Plan projection shadow — directive → worker line matching, log-only.
+
+Freeze loop — verified runs → learned chains.
+
+Activity timeline (run_memory.db) — every run, node, chat turn, schedule.
+
+So the question is: could we build an embedding graph (nodes = states/goals/directives/workers; edges = co-occurrence, sequence, verified transitions) and let Laya query it mechanically — i.e., not by re-encoding the query with the LLM each time, but by graph lookup / nearest-neighbor in the embedding graph?
+
+Key insight: Laya is a scorer (does A satisfy B?). An embedding graph gives you retrieval and caching. The question is whether retrieval can replace scoring for repeated cases, and whether the graph structure can augment scoring for novel-but-adjacent cases.
+
+The answer is yes, in a specific and disciplined form. Let me build the argument.
+
+What "mechanically" means operationally:
+
+Zero encoder passes for known cases → graph lookup returns a cached verdict + confidence
+
+One encoder pass only for graph misses or ambiguous cases
+
+The graph grows monotonically from verified runs (freeze gate is the trust boundary)
+
+Edges become "learned transitions" — the graph is the cerebellum, Laya is the cortex
+
+What's actually being asked: Can we move from "Laya scores each query against each candidate" (O(n) encoder passes per decision) to "Laya embeds once, then walks the graph" (O(1) encoder pass, O(graph walk) for decision)?
+
+This is a legitimate Systems-1-to-Systems-0 migration. The embedding graph is the memory; Laya is the query interface; the graph structure is the compiled decision.
+
+Concrete design:
+
+Layer 1 — Decision memory graph (what Arrow almost has):
+
+Nodes: (goal text, state digest hash, directive text, worker id, verdict, confidence, run_id)
+
+Edges: sequence (step i → step i+1), co-occurrence (same run), worker-transition (worker A → worker B in verified runs), goal-cluster (embeddings close enough)
+
+Built from run_memory.db + decisions + Laya verdicts
+
+This is essentially what graph_rag.py does but with decision semantics, not knowledge semantics
+
+Layer 2 — Mechanical lookup (the "more mechanical over time" part):
+
+For a new (goal, state) pair: embed goal once, find nearest node(s) in graph
+
+If exact/near-exact match on (goal, directive, state) with high-confidence verdict → return cached verdict, skip Laya forward. This is the "mechanical" part.
+
+If adjacent (goal cluster matches but state differs) → retrieve candidate workers + verdict priors, then run one Laya forward with a reduced candidate set (the graph narrowed it from N to k)
+
+If miss → full Laya forward as today
+
+Layer 3 — Laya's role evolves:
+
+Today: Laya scores every decision forward
+
+With graph: Laya scores (a) novel states, (b) ambiguous graph neighborhoods, (c) calibration samples for drift detection
+
+Over time, the graph absorbs the "easy" decisions and Laya's compute is spent on the frontier — exactly Systems-1 becoming System-0 for known paths
+
+Why this works architecturally in Arrow:
+
+The freeze gate (§11.3) is already the trust boundary for what enters the graph: verified, ended-done, multi-step runs. Reuse it.
+
+The chains port gate already demonstrates "score candidate chains, argmax wins" with an object-confirmation rule — the graph is the neighborhood version of the same idea (candidates come from graph neighbors instead of all wired chains).
+
+The plan projection shadow already computes directive → worker: line (shared: …) | UNMATCHED — that's a graph edge being computed on every run, log-only. Making it persistent is the graph.
+
+routing.examples on learned chains is already a small embedding graph seed.
+
+Laya is a burst resource (§10.4, LOOPER_LAYA_KEEP_ALIVE_SECONDS, released before llama-server start). Reducing Laya forwards is directly aligned with the burst economics — fewer bursts, more mechanical lookups.
+
+The plan projection matched count is already the funnel metric — with the graph, it becomes the hit rate metric: how often does the graph serve a decision without a forward?
+
+What "more mechanical" means precisely in the limit:
+
+Consider the sequence of a task family's lifecycle:
+
+First run: picker=laya, full candidate set, every forward is a real encoder pass. Graph is empty. Expensive.
+
+5th verified run: graph has a clique of (goal, worker, verdict). New similar goal hits the clique, Laya forward on k=3 candidates instead of N=8.
+
+20th verified run: dominant path is a fixed node sequence with high-confidence verdicts. New goal in family hits the path, returns the sequence mechanically (zero forwards). Laya only verifies the first step and samples 1/10 for drift.
+
+Freeze promotes the graph path to a learned chain (existing mechanism). The graph path becomes a structural fast path on the chains port — which is exactly the deterministic chain gate's "learned artifact first" rung.
+
+The graph itself becomes an artifact — inspectable, diffable, versioned. New task family starts fresh; old families get cheaper.
+
+This is the "mechanical over time" story: the graph is the compiled form of repeated Laya decisions, and freeze compiles the graph into a chain. Two compilation layers, same trust boundary.
+
+Caveats and failure modes:
+
+Distribution shift / drift. Goals evolve. A graph clique that was correct 50 runs ago may be stale. Need: (a) TTL or confidence decay on edges, (b) Laya re-samples on a schedule to detect drift, (c) the calibration slice from the previous answer (5% human audit) catches silent drift.
+
+Graph explosion. Every verified run adds nodes. Need deduplication by (goal embedding hash, state hash, directive hash) — not raw text. The content-hash cache in action_graph.py is the template.
+
+Embedding space coherence. ComoRAG uses the embedding space as a "detached sparse attention layer" — but for decision retrieval, the embedding must be over (goal + state + candidates) jointly, not just goal. If the embedding space conflates "navigate to linkedin" and "go to linkedin.com" it's fine; if it conflates "click messages" with "click network" it's fatal. The embedding must be the same one Laya uses for its encoder pass — or at least audited against Laya's verdicts on the calibration slice. Divergent embedding spaces = graph serves decisions Laya would refuse.
+
+The "mechanical" trap. Mechanical = fast but dumb. A graph that memorizes without validating will serve wrong decisions confidently. The freeze gate exists precisely because unverified runs can lie (§11.3: "a failed web sequence reported success, Laya verified it True, and the loop closed as done"). The graph must have the same gate: only verified runs enter, and any node/edge can be evicted if the downstream verifier disagrees on a sample.
+
+Negative edges matter. The plan projection UNMATCHED lines are negative labels — a directive no worker serves. A graph that only stores positive edges will hallucinate a worker. Store negatives and use them to short-circuit: if the new directive has a nearest-neighbor UNMATCHED with high confidence, return ASK/UNMATCHED without a forward. This is already in the data pipeline from the previous answer.
+
+The MoE connection. This is where the previous answer's adapter-per-family idea connects: the graph's clusters are the natural adapter-selection boundaries. A graph cluster with sufficient verified volume becomes an adapter training set. So: graph serves mechanically, adapter serves the frontier, Laya serves the novel. Three-tier Systems-1.
+
+Latency isn't the only win. The bigger win is auditability: a graph lookup with a cached verdict is a citation — "this decision was made because it matched run #4721 on 2026-10-03, which was verified." Laya forwards are opaque scorer passes. The graph makes the mechanical path more auditable than the fuzzy path, which is exactly Arrow's doctrine (§19.1, §19.13).
+
+Answer structure:
+
+I'll organize as:
+
+Short answer: yes, but "mechanically" needs a precise definition — it's three layers: embedding-graph lookup, reduced-candidate Laya, full Laya. The graph is the compiled memory of Laya's past verdicts.
+
+What the graph is made of (nodes, edges, from which Arrow artifacts)
+
+How Laya uses it — the mechanical ladder (cache hit → neighborhood → full forward)
+
+Why this is aligned with Arrow's existing doctrine (burst economics, freeze gate as trust boundary, plan projection as already-computed edges)
+
+The failure modes to guard (drift, embedding coherence, negative edges, the mechanical trap)
+
+The connection to freeze and to the adapter plan — the three-tier story
+
+The honest limits: what stays irreducible (novel states, compound directives, scope integrity)
+
+Length: this is a substantive architectural question in a deep technical conversation. The user is clearly sophisticated (they're building/training on Arrow). Should be substantial but not bloated. Maybe 800-1200 words with structure. Previous answers were long; this one can be a bit tighter because it's a more focused question, but it deserves real depth.
+
+Let me write it.
+
+Yes — if "mechanically" means compiled, not memorized
+The short answer: an embedding graph can turn Laya from a scorer that runs on every decision into a cache-and-narrow interface over its own past verdicts. Over time, more decisions get served by graph lookup and fewer by encoder forward. That's the mechanical migration — Systems-1 becoming Systems-0 for paths the graph has already compiled. But it only works if the graph is built on Arrow's existing trust boundary (the freeze gate) and if "mechanical" is defined as retrieval + narrowed scoring, not memorization without verification.
+
+Here's the design that actually fits Arrow.
+
+What the graph is made of
+Not a generic knowledge graph — a decision memory graph, built from artifacts you already produce:
+
+Node	Source	Key
+State	goal text + state digest hash	embedding of (goal ⊕ digest)
+Directive	scoped instruction	embedding of directive
+Worker	chain id / node id	worker fingerprint
+Verdict	Laya ok + confidence + criterion	(state, worker) → verdict
+Edge	Meaning	Source
+sequence	step i ran before step i+1 in a verified run	trace, joined by run_id
+served	(directive → worker) with verdict True	plan projection + trace
+refused	(directive → worker) with verdict False	plan projection + trace
+unmatched	directive with no worker (the UNMATCHED lines)	plan projection shadow
+handback	sub-brain returned [ORCH-REMAINING]	trace outcome
+Every edge carries provenance: run id, timestamp, program hash, Laya model version, verdict confidence. That's what makes the graph auditable — it's a citation graph, not a weights blob.
+
+You already compute most of these edges every run and throw them away: the plan projection is literally directive → worker: line (shared: …) | UNMATCHED (§11.7), logged at INFO and silenced with LOOPER_ORCH_GRAPH=off. Persisting it is the graph.
+
+How Laya uses it — the mechanical ladder
+The point is to reduce Laya forwards (aligned with its burst economics, §10.4 — the daemon unloads after LOOPER_LAYA_KEEP_ALIVE_SECONDS and is killed before llama-server starts) without reducing auditability. Three rungs, checked in order:
+
+Rung 1 — cache hit (zero forwards). Embed the incoming (goal, state) once. Find nearest graph node. If the neighborhood has a served edge with (a) verdict True, (b) confidence above a floor, (c) timestamp within a TTL, and (d) the directive's named objects match the edge's — return the worker mechanically, skip Laya entirely. This is the "more mechanical over time" path: a task family that has run 20 verified times hits here.
+
+Rung 2 — narrowed forward (one forward, k candidates). If the graph neighborhood is adjacent but not exact — same goal cluster, different state, or confidence below floor — use the graph to narrow the candidate set from all wired workers to the graph's k nearest, then run one Laya forward against k candidates instead of N. This is the same trick as the chains-port gate's object-confirmation rule (§11.3), except the candidate pool comes from the graph neighborhood rather than every wired chain.
+
+Rung 3 — full forward (today's behavior). No neighborhood. Novel state. Run the full Laya forward against every candidate. This is the frontier — where the graph is still being written.
+
+The graph is the compiled form of repeated Laya decisions; Laya is the compiler that grows it. That's the mechanical story: every verified run adds edges, every added edge shifts future decisions from Rung 3 toward Rung 1.
+
+Why this is aligned with Arrow's existing doctrine, not bolted on
+Four properties make this a natural extension rather than a new subsystem:
+
+The freeze gate is already the trust boundary (§11.3): verified, ended-done, multi-step runs. The graph inherits the exact same gate — only verified runs enter. An unverified run can't write an edge. This is what prevents the "mechanical trap" where a graph memorizes a run that only reported success (your docs' own case: "a failed web sequence reported success, Laya verified it True, and the loop closed as done").
+
+The freeze loop and the graph are two compilation layers of the same signal. Freeze compiles a verified trace into a learned_*.json (composition-only, one chain_import per step). The graph compiles the same trace into edges. They should share the exact same predicate: a run that would freeze also writes edges. A graph clique that stabilizes becomes a freeze candidate; a freeze becomes a graph shortcut. LOOPER_LEARN=off should turn both off together, keeping the byte-identical off state (§19.5).
+
+The plan projection is already the graph edge, computed on every run. §11.7's shadow block — directive -> worker: line (shared: …) | UNMATCHED and (projection: k/n directive(s) matched at least one action line) — is a graph write in disguise. Making it structured and persistent is a small change to action_graph.py and the orchestrator's ops module, not a new pipeline.
+
+routing.examples on learned chains is the seed graph. Every learned artifact carries ≤5 verbatim successful requests (routing.examples) plus steps[] with step descriptions. Those are (goal → program) edges. The decision graph is what routing.examples would be if it accumulated across runs instead of being capped per artifact.
+
+The calm version of the claim: the embedding graph is the persistent form of the routing signal Arrow already computes and discards.
+
+What Laya actually gains — three distinct capabilities
+"Mechanical over time" is three separate things, and it's worth separating them because they have different failure modes:
+
+(a) Retrieval as candidate pruning. The most defensible gain. Laya's forward is O(candidates). The graph narrows candidates to the neighborhood. This is a pure efficiency win with no correctness claim — if the graph is wrong about the neighborhood, Rung 2 simply falls back to Rung 3. Safe.
+
+(b) Verdict caching. The mechanical rung. Faster, but correctness is now coupled to graph freshness. Needs TTL, confidence decay, and periodic re-sampling (§ below). Medium risk.
+
+(c) Structural memory for compound directives. The hardest and most interesting gain. Your §11.3 documents the compound-directive failure mode — a 40-page goal riding into every instance, scope integrity refusing a scope that drops an action, a handback list [ORCH-REMAINING] advancing the parent past the accomplished prefix. A graph of directive sequences (not just directive → worker) can serve a whole validated sub-sequence as one structural unit — which is precisely what the frozen learned chain does, but at the graph level and inspectable before freeze. This is where the graph earns its keep: compound directives are sequences, and sequences are paths in a graph.
+
+So the mechanical migration is really: Rung 1 serves single-step decisions mechanically; graph paths serve compound directives structurally; freeze compiles the stable paths into chains; Laya spends its forwards on the novel remainder.
+
+The failure modes you must guard
+The graph turns Laya's stateless scoring into stateful memory, and stateful memory has failure modes stateless scorers don't:
+
+Distribution drift. A graph clique that was correct 50 runs ago may be stale as goals and UIs evolve. TTL or confidence decay on edges, plus scheduled Laya re-sampling on a fraction of Rung 1 hits — the same 5% human-calibration slice from the training plan catches silent drift, and the same slice should feed the graph's eviction policy.
+
+Embedding-space coherence. The embedding that clusters the graph must be the same encoder Laya scores with, or at least audited against Laya's verdicts on the calibration slice. If the graph embedding conflates "click messages" and "click network" while Laya distinguishes them, the graph will serve decisions Laya would refuse. Don't build the graph on a different embedding model than the scorer — that's the most tempting and most dangerous shortcut.
+
+Negative edges are load-bearing. A graph that only stores positive edges will hallucinate a worker for a directive no worker serves. The plan projection's UNMATCHED lines are exactly the negative labels: store them, and use a high-confidence unmatched neighborhood to short-circuit to ASK without a forward. This is already in the dataset plan; it must also be in the graph.
+
+The mechanical trap. "Mechanical" is fast but dumb, and Arrow's doctrine (§19.1) is neuro-symbolic by construction: AI only where fuzzy judgment adds value, every touchpoint with a symbolic fallback or fail-closed default. The graph's Rung 1 must be a fallback, not a replacement — Laya is one graph miss away, and the human calibration slice is one drift signal away. Anything that lets the graph serve a decision Laya would have refused, without the calibration check, breaks the doctrine.
+
+Graph explosion. Every verified run adds nodes and edges. Deduplicate by (goal embedding hash, state hash, directive hash) — the content-hash cache in action_graph.py is the template — and cap per-goal-cluster density. The learned-chain freeze already enforces "one artifact per goal" (§11.3); the graph should enforce a cluster-level analogue.
+
+The three-tier story this completes
+Connect this to the adapter plan from the previous answer and a clean architecture falls out:
+
+Tier	Serves	Cost	Compilation
+Graph	known paths, mechanical	graph walk, zero forwards	every verified run
+Adapter	frontier of a task family	one small model forward	when a cluster stabilizes
+Base + Laya	novel states, compound directives	one full forward	never (that's the point)
+The graph's clusters are the natural adapter-selection boundaries: a graph cluster with sufficient verified volume is an adapter training set, and the graph's cluster id is the adapter id. So the MoE-like conditional capacity you asked about last time isn't a sparse MoE at all — it's graph cluster → adapter → base, with the orchestrator picker as the top-level router. Three tiers, all auditable, all reversible, all already in the runtime minus the graph persistence.
+
+The honest limit
+What the graph cannot make mechanical:
+
+Novel states where nothing nearby exists — Laya forward is irreducible.
+
+Compound directives that need scoping — the scoper's job is turning goal + progress + state into one instruction, and that's a generative step no retrieval can replace. Graph paths can serve validated compound sequences; they cannot scope a new one.
+
+Scope integrity (§11.2): "a scope that silently DROPS one of a compound directive's actions is refused" — that refusal is a structural check, not a retrieval. The graph can only serve paths that already passed it.
+
+Handback semantics ([ORCH-REMAINING], the two-way contract): these are protocol edges, and a graph can store them but only Laya's verdict and the parent's structural advance can interpret them.
+
+So the crisp answer: the graph makes Laya's candidate selection and verdict recall mechanical, and makes compound directives structural paths. It does not make the scoper mechanical, and it must not make the verifier mechanical. That's the right division of labor, and it's the one Arrow's doctrine already draws.

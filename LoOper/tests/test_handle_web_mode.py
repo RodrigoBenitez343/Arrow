@@ -57,7 +57,10 @@ class _FakeDriver:
         return self.candidates
 
     def scan_args(self):
-        return [args for script, args in self.scripts if args]
+        # The candidate scan passes a single limit; the pointer glide's geometry
+        # probes (element / selector ladder) are not page scans.
+        return [args for script, args in self.scripts
+                if len(args) == 1 and isinstance(args[0], int)]
 
 
 class _FakeClickHandler:
@@ -120,7 +123,7 @@ def _install(monkeypatch, candidates=_CANDIDATES, laya_pick=None, click_ok=True)
                         lambda state, instructions, criteria: laya_pick)
     monkeypatch.setitem(web_handlers.HANDLERS, "click", clicks)
     monkeypatch.setattr(web_exec_overlay, "enable", lambda d: None)
-    monkeypatch.setattr(web_exec_overlay, "mark", lambda d, e, act: None)
+    monkeypatch.setattr(web_exec_overlay, "mark", lambda d, e, act, *rest: None)
     return driver, clicks
 
 

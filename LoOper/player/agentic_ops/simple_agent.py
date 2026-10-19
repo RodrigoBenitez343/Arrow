@@ -241,8 +241,11 @@ class SimpleChainRouter:
 
         # Return the execution result directly — this contains context node
         # content from the system chain's own LLM nodes, not a separate
-        # SmolLM3 chat response.
-        return result or "System chain completed."
+        # SmolLM3 chat response.  An empty result means the chain's outputs
+        # were already shown mid-run (the output-node callback path); never
+        # fabricate a success line here — the overlay already rendered what
+        # actually happened.
+        return result or ""
 
     def shutdown(self) -> None:
         pass

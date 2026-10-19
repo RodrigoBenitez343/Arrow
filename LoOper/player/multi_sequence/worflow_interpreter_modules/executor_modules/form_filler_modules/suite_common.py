@@ -12,12 +12,32 @@ from .common import (
     _ff_pool_corrections,
     _ff_render_corrections,
     _ff_split_corrections,
+    _ff_split_pool,
     _split_list,
     _strip_think,
 )
 from ._test_support import (
     _Harness,
 )
+
+
+def test_the_nodes_own_output_row_is_not_source_material():
+    """A field's ANSWER can never be a question - and never ANOTHER question.
+    The node's own per-field summary row (`[form_filler] {'fields': [{'label':
+    ..., 'value': <question>}]}`) rides the pool when the chain wires the
+    node's output back through a Context node, and retrieved as evidence it
+    made the model answer a field with a DIFFERENT field's question (live).
+    The row stays in the pool - the prior-pass statuses are read from it - but
+    it must never reach the material a probe retrieves."""
+    pool = (
+        "## Documents\n# Resume\n7+ years of ML experience.\n"
+        "[form_filler] {'mode': 'web', 'fields': [{'label': 'Which option "
+        "best describes your experience with AWS?', 'value': 'Which option "
+        "best describes your experience with AWS?'}]}\n"
+    )
+    split = _ff_split_pool(pool)
+    assert "form_filler" not in split["documents"]
+    assert "7+ years of ML experience." in split["documents"]
 
 
 def test_learned_answers_round_trip_through_the_pool_block():

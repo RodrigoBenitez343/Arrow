@@ -643,6 +643,15 @@ def test_a_choice_options_text_is_its_own_not_the_group_question():
     assert "t.length <= 400" in fg
     # The group's question can be the block ABOVE the group container.
     assert "function prevBlockText(node)" in enum_js
+    # aria-label is a FALLBACK, never the first rail: LinkedIn Easy Apply sets
+    # the GROUP'S QUESTION as the aria-label of EVERY option input, so returning
+    # aria-label first made every option the question and the list collapse to
+    # one entry that WAS the question (live regression of this test).
+    assert "if (al) return al;" not in fg
+    assert "var ariaFallback = '';" in fg
+    assert "if (ariaFallback) return ariaFallback;" in fg
+    # ...and a sibling that is itself a control carries its OWN option text.
+    assert "isControlNode(c)" in fg
 
 
 def test_readback_of_a_hidden_radio_uses_the_shared_click_target():

@@ -33,6 +33,8 @@ import subprocess
 import tempfile
 import time
 
+from ....human_cursor import glide_os_cursor
+
 logger = logging.getLogger(__name__)
 
 
@@ -589,11 +591,17 @@ class HandleMixin:
         )
         try:
             # Box the element about to be hit (the same execution overlay a
-            # web node shows); purely cosmetic — never fail the click on it.
+            # web node shows) and walk the real pointer onto it, so a web
+            # Handle click reads like a desktop one.  Purely cosmetic - never
+            # fail the click on it.
+            geometry = web_actions.target_geometry(driver, event)
             exec_overlay.enable(driver)
             exec_overlay.mark(
-                driver, event, "handle: %s" % picked['label']
+                driver, event, "handle: %s" % picked['label'], geometry
             )
+            point = (geometry or {}).get("point")
+            if point:
+                glide_os_cursor(point[0], point[1])
         except Exception:
             pass
         try:
@@ -1103,11 +1111,13 @@ class HandleMixin:
                 ah.bot.human_click(button="left")
             else:
                 import pyautogui
-                pyautogui.moveTo(x, y, duration=0.2)
+                # Same curved glide the bot uses - a straight 0.2s hop is the
+                # teleport look this is here to avoid.
+                glide_os_cursor(x, y)
                 pyautogui.click(x, y)
         else:
             import pyautogui
-            pyautogui.moveTo(x, y, duration=0.2)
+            glide_os_cursor(x, y)
             pyautogui.click(x, y)
 
     def _handle_drag(self, src, dst, stop_flag):

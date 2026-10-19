@@ -51,6 +51,25 @@ JS_EXEC_MARK = A.JS_DEEP_SEARCH + """return (function (selectors, index, act) {
 """
 
 
+# Draw a mark for a rect the CALLER already resolved (the element the action
+# will actually hit) instead of re-running the in-page search here.
+JS_EXEC_MARK_RECT = """try {
+  if (typeof window.__wvpExecMark === 'function')
+    window.__wvpExecMark({x: arguments[0][0], y: arguments[0][1],
+                          w: arguments[0][2], h: arguments[0][3]},
+                         arguments[2], arguments[1]);
+} catch (e) {}"""
+
+
+def _caption(event) -> str:
+    """Short "tag \"text\"" caption for a pre-resolved mark."""
+    loc = getattr(event, "locator", None)
+    try:
+        return loc.describe() if loc is not None else ""
+    except Exception:
+        return ""
+
+
 def enable(driver) -> None:
     """Turn the overlay ON for this document and every future one."""
     payload = _payload()
@@ -100,8 +119,25 @@ def disable(driver) -> None:
         pass
 
 
-def mark(driver, event, act: str) -> None:
-    """Box the element *event* is about to act on.  Best-effort."""
+def mark(driver, event, act: str, geometry=None) -> None:
+    """Box the element *event* is about to act on.  Best-effort.
+
+    ``geometry`` (``actions.target_geometry``) is the element ALREADY resolved
+    the way the action will resolve it.  Pass it whenever it is available: the
+    in-page search below only sees the recorded CSS ladder, so on a page whose
+    recorded css ALSO matches a sibling (a "Back" button where "Next" used to
+    sit) it boxes that lookalike while the click lands on the real target.
+    """
+    if geometry:
+        rect = geometry.get("rect")
+        if rect:
+            try:
+                driver.execute_script(
+                    JS_EXEC_MARK_RECT, [float(v) for v in rect],
+                    str(act or ""), _caption(event))
+                return
+            except Exception as exc:
+                logger.debug("Web execution mark (resolved) failed: %s", exc)
     selectors = A._css_selectors(event)
     index = getattr(event.locator, "index", None) if event.locator else None
     if not isinstance(index, int):

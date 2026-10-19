@@ -13,6 +13,7 @@ treated as empty — it must never crash the agent.
 import json
 import logging
 import os
+import sys
 import time
 import uuid
 
@@ -20,12 +21,55 @@ logger = logging.getLogger(__name__)
 
 
 def _default_path() -> str:
+    # Frozen builds: the ledger lives in the durable runtime dir (like logs /
+    # context.db), never inside the bundle — an install-dir write is lost on
+    # update and fails outright on a read-only install.
+    try:
+        if getattr(sys, "frozen", False):
+            from AI.runtime_paths import get_runtime_dir
+            return os.path.join(get_runtime_dir(), "agent_goals.json")
+    except Exception:
+        pass
     here = os.path.dirname(os.path.abspath(__file__))
     return os.path.normpath(os.path.join(here, "..", "..", "data", "agent_goals.json"))
 
 
+def _seed_from_bundle(path: str) -> None:
+    """One-shot: adopt a goal ledger shipped INSIDE the frozen bundle.
+
+    Old builds packaged the ledger at ``_MEIPASS/data/`` (or LoOper/data) while
+    the resolver pointed elsewhere — the packaged goals were never read.  Copy
+    the bytes once so a migrated install keeps its shipped goals.
+    """
+    if os.path.exists(path):
+        return
+    try:
+        meipass = getattr(sys, "_MEIPASS", None)
+        if not meipass:
+            return
+        for cand in ("data/agent_goals.json", "LoOper/data/agent_goals.json"):
+            src = os.path.join(meipass, cand)
+            if not os.path.exists(src):
+                continue
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp = path + ".tmp"
+            with open(src, "r", encoding="utf-8") as f:
+                raw = f.read()
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(raw)
+            os.replace(tmp, path)
+            return
+    except Exception:
+        pass
+
+
 def _path() -> str:
-    return os.environ.get("LOOPER_GOAL_LEDGER") or _default_path()
+    env = os.environ.get("LOOPER_GOAL_LEDGER")
+    if env:
+        return env
+    path = _default_path()
+    _seed_from_bundle(path)
+    return path
 
 
 def load_goals() -> list:
@@ -102,6 +146,23 @@ def update_goal(goal_id: str, **fields) -> bool:
     return found
 
 
-def record_activation(goal_id: str, trace: list, status: str) -> bool:
-    """Persist one activation's outcome (trace + status) for a goal."""
-    return update_goal(goal_id, trace=list(trace or []), status=str(status or "open"))
+def record_activation(goal_id: str, trace: list, status: str, **fields) -> bool:
+    """Append one activation's steps and outcome (status + fields) for a goal.
+
+    The trace is APPENDED (bounded to the newest 200 entries), never replaced —
+    the ledger's whole point is accumulated progress across activations.
+    """
+    goals = load_goals()
+    for g in goals:
+        if isinstance(g, dict) and g.get("id") == goal_id:
+            merged = list(g.get("trace") or [])
+            merged.extend(trace or [])
+            # ponytail: bounded history; an unbounded file re-bloats the ledger
+            g["trace"] = merged[-200:]
+            g["status"] = str(status or "open")
+            g["updated_at"] = time.time()
+            for k, v in (fields or {}).items():
+                g[k] = v
+            save_goals(goals)
+            return True
+    return False

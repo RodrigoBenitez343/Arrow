@@ -312,6 +312,40 @@ class FormFillerWebMixin:
         except Exception as exc:
             logger.debug("[FORM] Execution overlay mark failed: %s", exc)
 
+    def _ff_glide(self, driver, field, selectors=None):
+        """Walk the OS pointer to the field the fill is about to touch.
+
+        The desktop substrate clicks through the bot, which already travels a
+        human path; the web substrate touched fields purely in the page, so a
+        form fill read as a teleport.  Uses the SAME selector ladder the write
+        uses, so the pointer lands on the control that is actually written -
+        never on a sibling the recorded identity happens to match.  Purely
+        visual and best-effort: the write itself is unchanged.
+        """
+        if driver is None:
+            return
+        try:
+            from .....human_cursor import glide_os_cursor, moves_enabled
+            from .....web import actions as web_actions
+        except Exception as exc:
+            logger.debug("[FORM] Cursor glide unavailable: %s", exc)
+            return
+        if not moves_enabled():
+            return
+        try:
+            geometry = web_actions.deep_geometry(
+                driver,
+                selectors if selectors is not None
+                else self._ff_field_selectors(field),
+                int(field.get("type_index") or 0),
+            )
+        except Exception as exc:
+            logger.debug("[FORM] Field geometry unavailable: %s", exc)
+            return
+        point = (geometry or {}).get("point")
+        if point:
+            glide_os_cursor(point[0], point[1])
+
     def _ff_mark_processing(self, field, label):
         """Name the field being WORKED ON in the overlay (best-effort).
 
@@ -350,6 +384,9 @@ class FormFillerWebMixin:
             "form: %s" % (field.get("label") or field.get("id") or ""),
             selectors=selectors,
         )
+        # Walk the real pointer onto the control, exactly like a desktop fill's
+        # click does before it types.
+        self._ff_glide(driver, field, selectors=selectors)
         try:
             if kind in ("choice", "switch"):
                 ok = driver.execute_script(

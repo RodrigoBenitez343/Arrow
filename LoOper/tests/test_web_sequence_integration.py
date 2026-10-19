@@ -1704,7 +1704,7 @@ def test_entity_cursor_advances_when_only_the_widened_kind_matches(monkeypatch):
 
     monkeypatch.setattr(exec_overlay, "enable", lambda d: None)
     monkeypatch.setattr(exec_overlay, "disable", lambda d: None)
-    monkeypatch.setattr(exec_overlay, "mark", lambda d, e, a: None)
+    monkeypatch.setattr(exec_overlay, "mark", lambda d, e, a, *rest: None)
     monkeypatch.setattr(web_engine.ReplayEngine, "_pause", lambda self, *a, **k: None)
     monkeypatch.setattr(web_actions, "switch_to_window_ordinal",
                         lambda d, o, **k: False)

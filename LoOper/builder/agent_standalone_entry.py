@@ -233,6 +233,13 @@ class StandaloneAgentApp(QObject):
         self._overlay.hide()
         self._dot = AgentDot()
         self._dot.hide()
+        # Leave every screen read out of the picture - the arrow rides the cursor
+        # and must never land in a capture.
+        try:
+            from player.execution_overlay_bus import bus as _bus
+            _bus.extra_capture_hooks.append(self._dot.hide_for_capture)
+        except Exception:
+            pass
 
         # No main window to minimize/restore during automation
         self._overlay.set_window_manager(None, None)
@@ -335,7 +342,6 @@ class StandaloneAgentApp(QObject):
             if self._overlay.isVisible():
                 self._overlay._collapse_to_dot()
             else:
-                self._dot.hide()
                 cursor = QCursor.pos()
                 self._overlay.show_overlay(
                     cursor.x() - self._overlay.width() // 2,
@@ -361,16 +367,14 @@ class StandaloneAgentApp(QObject):
         self._app.quit()
 
     def _on_execution_state(self, executing: bool):
-        """Toggle dot appearance between idle (teal) and executing (red)."""
+        """Recolour the cursor arrow between idle (teal) and executing (red).
+
+        The arrow is the persistent cursor indicator in a standalone agent, so
+        it stays on screen across runs (it blanks itself for screen reads).
+        """
         self._dot.set_execute_mode(executing)
-        if executing:
-            # Show red dot during chain execution (overlay hides for automation)
-            if not self._dot.isVisible():
-                self._dot.show()
-        else:
-            # Execution finished — hide dot, overlay shows response again
-            if self._dot.isVisible():
-                self._dot.hide()
+        if not self._dot.isVisible():
+            self._dot.show()
 
     # ── Run ───────────────────────────────────────────────────────
 
