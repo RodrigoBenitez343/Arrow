@@ -18,7 +18,7 @@ the float treatment of the graph's floating bars and the dialogs.
 import logging
 import threading
 
-from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
+from PyQt5.QtCore import QRect, Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
                              QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget)
@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (QApplication, QFrame, QGraphicsDropShadowEffect,
 from ..constants import ACCENT_COLOR, DANGER_COLOR, TEXT_COLOR, TEXT_MUTED
 from ..i18n import _
 from ..icons import tabler_qicon
+from . import ui_motion
 from .hover_button import HoverGlowButton
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,55 @@ class AgentNotch(QWidget):
                       geo.top() + NOTCH_TOP_MARGIN)
         except Exception:
             logger.exception("AgentNotch.reposition failed")
+
+    # ── Summon / retreat (morph only — state stays with the caller) ────
+
+    def _pill_rect(self, rect):
+        """The collapsed form of the bar: a short pill on the same centre x.
+
+        The layout's own minimum wins if the pill is asked for narrower, so the
+        morph never clips the avatar/buttons it starts from.
+        """
+        pill_w = max(140, rect.width() // 4)
+        return QRect(rect.center().x() - pill_w // 2, rect.y(),
+                     pill_w, rect.height())
+
+    def summon(self):
+        """Grow out of a pill into the full bar.
+
+        Show first, animate second: the notch must exist as soon as it is
+        summoned, the motion only dresses the arrival.
+        """
+        self.reposition()
+        rect = self.geometry()
+        self.show()
+        self.raise_()
+        if not ui_motion.motion_enabled():
+            return
+        ui_motion.morph_from(self, self._pill_rect(rect), rect,
+                             on_done=lambda: ui_motion.restore_fixed_size(
+                                 self, rect.size()))
+
+    def retreat(self, then=None):
+        """Fold back into a pill, then hide.
+
+        The capture path never comes here (hide_for_capture/_hide_now stay
+        instant); this is only for the user dismissing the notch.
+        """
+        rect = self.geometry()
+
+        def _done():
+            ui_motion.restore_fixed_size(self, rect.size())
+            self.hide()
+            if then:
+                then()
+
+        if (not self.isVisible() or self._capture_hidden
+                or not ui_motion.motion_enabled()):
+            _done()
+            return
+        ui_motion.to_rect(self, self._pill_rect(rect),
+                          duration=ui_motion.AWAY_MS, on_done=_done)
 
     # ── Capture hiding (the agent must never see the notch) ────────────
 

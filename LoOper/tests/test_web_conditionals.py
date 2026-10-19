@@ -22,6 +22,8 @@ _SHADOW_HARNESS = Path(__file__).parent / "js" / "recorder_shadow_drain_harness.
 _OVERLAY_HARNESS = Path(__file__).parent / "js" / "recorder_overlay_lifecycle_harness.js"
 _ENTITY_CURSOR_HARNESS = Path(__file__).parent / "js" / "entity_cursor_harness.js"
 _LABEL_LOOKUP_HARNESS = Path(__file__).parent / "js" / "label_lookup_harness.js"
+_OPTION_LABEL_HARNESS = Path(__file__).parent / "js" / "option_label_harness.js"
+_MARKER_IDENTITY_HARNESS = Path(__file__).parent / "js" / "marker_identity_harness.js"
 _LABEL_CAPTURE_HARNESS = Path(__file__).parent / "js" / "label_capture_harness.js"
 _SHADOW_PROBE_HARNESS = Path(__file__).parent / "js" / "shadow_probe_harness.js"
 _POINTER_DISPATCH_HARNESS = Path(__file__).parent / "js" / "pointer_dispatch_harness.js"
@@ -1218,6 +1220,54 @@ def test_web_label_lookup_js():
     assert data["missOk"] is True
     assert data["emptyOk"] is True
     assert data["byIdOk"] is True       # descends into the shadow root
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_web_choice_option_label_prefers_the_option_text_over_the_group_question():
+    """actions.JS_FOREGROUND.__wvpOptionLabel: a radio option's aria-label is
+    NOT always its own text.  LinkedIn Easy Apply sets the GROUP'S QUESTION as
+    the aria-label of EVERY option input (the visible option text is a plain
+    block beside the input, and the input's own label[for] is the empty radio
+    circle).  Resolved aria-label-first, every option became the question,
+    _ff_merge_choices deduped the list to ONE entry that WAS the question, and a
+    multi-choice field was written with the question as its answer.  The option's
+    OWN text must win; aria-label only stands for an ARIA-only widget, and a
+    sibling that is itself a control is never this option's text."""
+    proc = subprocess.run(
+        ["node", str(_OPTION_LABEL_HARNESS)], capture_output=True, text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert data["ownTextOk"]         # the option's own text, not the question
+    assert data["siblingOk"]         # every option of the group resolves
+    assert data["noQuestionOk"]      # the question never leaks in as an option
+    assert data["ariaOk"]            # an ARIA-only widget still uses aria-label
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_web_marker_identity_accepts_a_group_control_and_refuses_a_foreign_pick():
+    """actions.JS_FF_MARKER_SAME_AS_IDENTITY: a MERGED radio/checkbox group is
+    ONE question carried by N controls, so its identity ladder
+    (`input[name=..]`) matches the WHOLE group - never a single element.  The
+    guard used to demand a UNIQUE match, so a group could never confirm its own
+    marker: it answered 'no-identity' and ANY pick survived, including ANOTHER
+    question's control (live: the ML-experience question resolved to the salary
+    textarea, the answer was written there, the read-back echoed it and the
+    field was reported filled).  The marker must be accepted when it IS one of
+    the identity's controls and refused otherwise - counting a control whose
+    LABEL is the visible thing (a styled radio hides the real input)."""
+    proc = subprocess.run(
+        ["node", str(_MARKER_IDENTITY_HARNESS)], capture_output=True,
+        text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert data["sameVisible"]        # the marker IS one of the group
+    assert data["differsFromOther"]   # ...or it is another question's control
+    assert data["noIdentity"]         # rotated id: never a veto
+    assert data["sameHidden"]         # the same, with the input hidden
+    assert data["differsHidden"]      # behind its label (the shipped shape)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

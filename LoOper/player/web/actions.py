@@ -723,8 +723,14 @@ function __wvpClickTarget(el) {
  * and adopts the group's QUESTION: every option then reads as the question and
  * the write can never match the answer (verified live: two of four
  * questionnaire groups returned the question for ALL three options).  The
- * option text therefore comes from the control's OWN label / aria-label /
- * adjacent text / value - never an ancestor's question block.
+ * option text therefore comes from the control's OWN rendered text (its
+ * driving label, a wrapping label, or its adjacent text block), falling back
+ * to aria-label / value ONLY when the control shows no text of its own - never
+ * an ancestor's question block.  aria-label is deliberately LAST: some forms
+ * label EVERY option of a group with the GROUP'S OWN QUESTION (LinkedIn Easy
+ * Apply sets the question as each option input's aria-label), so trusting
+ * aria-label first offered the question as the only option and the whole list
+ * collapsed to one entry that WAS the question.
  */
 function __wvpOptionLabel(el) {
   function clean(x) {
@@ -741,10 +747,24 @@ function __wvpOptionLabel(el) {
     }
     return clean(node.innerText || node.textContent);
   }
-  try {
-    var al = clean(el.getAttribute('aria-label'));
-    if (al) return al;
-  } catch (e) {}
+  // A sibling that is ITSELF a control (the next option's own input, or a
+  // role=radio / checkbox / switch widget) carries its OWN option text, so it
+  // is never THIS option's text - without this guard a name-less choice group
+  // adopted the NEXT option's text for every control.
+  function isControlNode(n) {
+    try {
+      var tg = (n.tagName || '').toLowerCase();
+      if (tg === 'input' || tg === 'select' || tg === 'textarea') return true;
+      var rl = (n.getAttribute('role') || '').toLowerCase();
+      return rl === 'radio' || rl === 'checkbox' || rl === 'switch';
+    } catch (e) { return false; }
+  }
+  // The control's aria-label is a FALLBACK, never the first rail: some forms
+  // (LinkedIn Easy Apply) set the GROUP'S QUESTION as the aria-label of every
+  // option input, so returning it first made every option read as the question
+  // and the whole list collapse to one entry that WAS the question.
+  var ariaFallback = '';
+  try { ariaFallback = clean(el.getAttribute('aria-label')); } catch (e) {}
   try {
     if (el.id) {
       var lb = document.querySelector('label[for="' + __wvpCssEsc(el.id) + '"]');
@@ -781,6 +801,7 @@ function __wvpOptionLabel(el) {
         // option's text.
         if (c.nodeType === 1 && c.querySelector
             && c.querySelector('input,select,textarea')) continue;
+        if (c.nodeType === 1 && isControlNode(c)) continue;
         var t = (c.nodeType === 3)
           ? clean(c.nodeValue)
           : clean(c.innerText || c.textContent);
@@ -789,6 +810,9 @@ function __wvpOptionLabel(el) {
       }
     }
   } catch (e) {}
+  // The control shows no text of its own: aria-label (an ARIA-only widget) is
+  // the last textual rail before the raw value.
+  if (ariaFallback) return ariaFallback;
   return clean(el.getAttribute('value'));
 }
 /**
@@ -2328,22 +2352,39 @@ JS_SET_FIELD = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (selectors, 
 # marker that MATCHES a live identity is 'same'; an identity that resolves
 # nothing is 'no-identity' (the rotated-id case the marker exists for).
 JS_FF_MARKER_SAME_AS_IDENTITY = JS_DEEP_SEARCH + JS_FOREGROUND + """return (function (identity, marker, scope) {
+  // A control counts when it OR its LABEL is visible and on top: a styled
+  // radio/checkbox hides the REAL input behind its label, so an on-box test on
+  // the raw element alone dropped every option of a merged group - the group's
+  // identity then matched NOTHING, the check answered 'no-identity', and a
+  // WRONG marker (another question's control) stayed in place.
   var scopeRoots = __wvpScopeRoots(scope);
-  function onlyOne(sel) {
-    var m = __wvpDeepAll(sel), hit = null, n = 0;
+  function hits(sel) {
+    var m = __wvpDeepAll(sel), out = [];
     for (var i = 0; i < m.length; i++) {
-      if (!(__wvpVisible(m[i]) && __wvpTopmost(m[i]))) continue;
       if (!__wvpInScope(m[i], scopeRoots)) continue;
-      if (n === 0) hit = m[i];
-      if (++n > 1) return null;
+      if (__wvpVisible(m[i]) && __wvpTopmost(m[i])) { out.push(m[i]); continue; }
+      var lb = __wvpLabelOf(m[i]);
+      if (lb && lb !== m[i] && __wvpVisible(lb) && __wvpTopmost(lb)) {
+        out.push(m[i]);
+      }
     }
-    return n === 1 ? hit : null;
+    return out;
   }
-  var markEl = onlyOne(marker);
-  if (!markEl) return 'no-marker';
+  var marks = hits(marker);
+  if (marks.length !== 1) return 'no-marker';
+  var markEl = marks[0];
   for (var s = 0; identity && s < identity.length; s++) {
-    var el = onlyOne(identity[s]);
-    if (el) return (el === markEl) ? 'same' : 'differs';
+    // The field's identity may match SEVERAL controls at once: a merged
+    // radio/checkbox group is ONE question with N controls, and its ladder
+    // (`input[name=..]`) resolves the whole group.  The marker must therefore
+    // be ONE OF that selector's matches, not its only match - otherwise a
+    // group can never confirm its own marker and any pick survives.
+    var els = hits(identity[s]);
+    if (!els.length) continue;
+    for (var j = 0; j < els.length; j++) {
+      if (els[j] === markEl) return 'same';
+    }
+    return 'differs';
   }
   return 'no-identity';
 })(arguments[0], arguments[1], arguments[2]);
@@ -3928,6 +3969,155 @@ def deep_element_rect(driver, event: Event) -> Optional[list[int]]:
         return [int(rect["x"]), int(rect["y"]), int(rect["w"]), int(rect["h"])]
     except Exception:
         return None
+
+
+# Element geometry as [left, top, w, h, client_x, client_y, dpr]: the viewport
+# box in CSS px (what the in-page execution overlay draws with) PLUS the
+# window's client-area origin on screen.  One element produces both, so a
+# caller can never box one element while pointing the pointer at another.
+JS_ELEMENT_GEOMETRY = """
+return (function (el) {
+  if (!el || !el.getBoundingClientRect) return null;
+  var r = el.getBoundingClientRect();
+  if (!r || r.width <= 0 || r.height <= 0) return null;
+  var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+  var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  if (cx < 0 || cy < 0 || cx > vw || cy > vh) return null;  // not on screen
+  return [r.left, r.top, r.width, r.height,
+          window.screenX + (window.outerWidth - window.innerWidth) / 2,
+          window.screenY + (window.outerHeight - window.innerHeight),
+          window.devicePixelRatio || 1];
+})(arguments[0]);
+"""
+
+# Same reply for a target WebDriver cannot reach (shadow root / shadow-hosted
+# frame), resolved by the shadow-piercing search.  A frame's rect is relative to
+# ITS viewport, so the box is carried up the frame chain to the top document -
+# the overlay and the pointer both live there.  null when the element is not on
+# screen: there is nothing to box or walk to.
+JS_DEEP_GEOMETRY = JS_DEEP_SEARCH + """return (function (selectors, index, text, label) {
+  var el = null;
+  try { el = __wvpDeepFindAny(selectors, index); } catch (e) { el = null; }
+  if (!el && label) { try { el = __wvpDeepFindLabel(label); } catch (e) {} }
+  if (!el && text) { try { el = __wvpDeepFindText(text); } catch (e) {} }
+  if (!el || !el.getBoundingClientRect) return null;
+  var r = el.getBoundingClientRect();
+  if (!r || r.width <= 0 || r.height <= 0) return null;
+  var left = r.left, top = r.top, doc = el.ownerDocument;
+  while (doc && doc.defaultView && doc.defaultView !== window) {
+    var frame = null;
+    try { frame = doc.defaultView.frameElement; } catch (e) { frame = null; }
+    if (!frame) break;
+    var fr = frame.getBoundingClientRect();
+    left += fr.left; top += fr.top;
+    doc = frame.ownerDocument;
+  }
+  var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+  var cx = left + r.width / 2, cy = top + r.height / 2;
+  if (cx < 0 || cy < 0 || cx > vw || cy > vh) return null;
+  return [left, top, r.width, r.height,
+          window.screenX + (window.outerWidth - window.innerWidth) / 2,
+          window.screenY + (window.outerHeight - window.innerHeight),
+          window.devicePixelRatio || 1];
+})(arguments[0], arguments[1], arguments[2], arguments[3]);
+"""
+
+
+def _geometry_reply(geometry: Any) -> Optional[dict[str, Any]]:
+    """``{"rect", "point"}`` from a geometry reply, or None when unusable.
+
+    ``rect`` is the CSS-px viewport box (in-page overlay units); ``point`` is
+    the element's center in PHYSICAL screen pixels - the OS pointer's units.
+    """
+    try:
+        left, top, width, height, origin_x, origin_y, dpr = (
+            float(v) for v in geometry[:7])
+    except Exception:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    dpr = dpr or 1.0
+    return {
+        "rect": [left, top, width, height],
+        "point": ((origin_x + left + width / 2.0) * dpr,
+                  (origin_y + top + height / 2.0) * dpr),
+    }
+
+
+def deep_geometry(driver, selectors, index: int = 0,
+                  text: Optional[str] = None,
+                  label: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Geometry of a target resolved IN THE PAGE (shadow-piercing search).
+
+    The selector-ladder counterpart of :func:`target_geometry`, for a caller
+    that holds selectors + an ordinal rather than a recorded Event (the form
+    filler's runtime field identity).
+    """
+    if not selectors and not text and not label:
+        return None
+    try:
+        geometry = driver.execute_script(
+            JS_DEEP_GEOMETRY, selectors or [], int(index or 0),
+            text or None, label or None)
+    except Exception as exc:
+        logger.debug("deep_geometry failed: %s", exc)
+        return None
+    return _geometry_reply(geometry)
+
+
+def target_geometry(driver, event: Event,
+                    timeout: float = 1.0) -> Optional[dict[str, Any]]:
+    """Geometry of the element *event* will ACTUALLY act on.
+
+    Native ladder first - the same identity-agreeing resolution the handlers
+    run - so a page whose recorded css now ALSO matches a sibling (a "Back"
+    button sitting where "Next" was) still reports the element the click will
+    land on instead of that lookalike: the overlay box and the pointer walk
+    have to agree with the action, or the run looks wrong even though it is
+    right.  The shadow-piercing search is the fallback for a target WebDriver
+    cannot reach (shadow root / shadow-hosted frame).
+
+    ``timeout`` bounds the native pass: the action runs its own (longer) wait
+    immediately after, so a late-rendering element must not pay the ladder
+    twice - it just falls back to the in-page box for that one action.
+    A browser-chrome click carries its own recorded screen position.
+    """
+    ctx = getattr(event, "context", None) or {}
+    if ctx.get("screen_x") is not None and ctx.get("screen_y") is not None:
+        try:
+            return {"rect": None,
+                    "point": (float(ctx["screen_x"]), float(ctx["screen_y"]))}
+        except (TypeError, ValueError):
+            pass
+    loc = getattr(event, "locator", None)
+    if loc is None:
+        return None
+    # A frame-nested target keeps the in-page box: WebDriver measures it INSIDE
+    # the frame, where the window origin is the frame's, not the browser's - so
+    # the (frame-translated) deep search is the more accurate source there.
+    has_frame_scope = bool(getattr(event, "frame_path", None)) or \
+        bool(getattr(event, "frame_index_path", None))
+    element = None
+    if not has_frame_scope:
+        try:
+            element = resolve_element(driver, event, max(0.2, float(timeout)))
+        except Exception:
+            element = None
+    if element is not None:
+        _scroll_into_view(driver, element)  # box/pointer need it on screen
+        try:
+            geometry = driver.execute_script(JS_ELEMENT_GEOMETRY, element)
+        except Exception as exc:
+            logger.debug("target_geometry (native) failed: %s", exc)
+            geometry = None
+        reply = _geometry_reply(geometry) if geometry else None
+        if reply:
+            return reply
+    return deep_geometry(
+        driver, _css_selectors(event),
+        getattr(loc, "index", 0) or 0,
+        getattr(loc, "text", None),
+        getattr(loc, "label_text", None))
 
 
 # Shadow-piercing text read of a target: label first (a form field's portable

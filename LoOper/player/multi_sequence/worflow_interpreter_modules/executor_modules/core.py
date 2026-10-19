@@ -156,6 +156,10 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         # stall, error, or normal completion).
         _mcp_cleanup_enter()
         self._cleanup_done = False  # reset for this execution
+        # An orchestrator whose goal ended unfulfilled with no 'route' handoff
+        # wired must fail the run — silently reporting success hides the honest
+        # stop reason from the caller (and the agent repeats the dead end).
+        self._orchestrator_unfulfilled = False
         try:
             self.action_handlers = action_handlers
         except Exception:
@@ -244,6 +248,13 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     # conditional loop should iterate again.
                     if self._maybe_loop_graph_conditional(completed_nodes, stop_flag):
                         continue
+                    if getattr(self, '_orchestrator_unfulfilled', False):
+                        logger.warning(
+                            "Workflow completed but an orchestrator goal was "
+                            "not fulfilled (no 'route' handoff wired) — "
+                            "reporting failure")
+                        self._cleanup_run_context()
+                        return False
                     logger.info("Workflow execution completed successfully")
                     self._cleanup_run_context()
                     return True
@@ -362,6 +373,13 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     # conditional loop should iterate again.
                     if _auto_completed and self._maybe_loop_graph_conditional(completed_nodes, stop_flag):
                         continue
+                    if getattr(self, '_orchestrator_unfulfilled', False):
+                        logger.warning(
+                            "Workflow completed but an orchestrator goal was "
+                            "not fulfilled (no 'route' handoff wired) — "
+                            "reporting failure")
+                        self._cleanup_run_context()
+                        return False
                     logger.info("Workflow execution completed successfully")
                     self._cleanup_run_context()
                     return True
@@ -567,6 +585,9 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                             _orch_fulfilled = (_orch_node.get('data') or {}).get('_orchestrator_fulfilled')
                         if _orch_fulfilled is not None:
                             conditional_result = bool(_orch_fulfilled)
+                        if (_orch_fulfilled is False
+                                and not self._is_branch_source(node)):
+                            self._orchestrator_unfulfilled = True
                 else:
                     success = self._execute_llm_node(node, stop_flag, action_handlers) is not None
             elif node['type'] == 'tts':
@@ -602,6 +623,9 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                         _orch_fulfilled = (node.get('data') or {}).get('_orchestrator_fulfilled')
                     if _orch_fulfilled is not None:
                         conditional_result = bool(_orch_fulfilled)
+                if (success and _orch_fulfilled is False
+                        and not self._is_branch_source(node)):
+                    self._orchestrator_unfulfilled = True
             elif node['type'] == 'handle':
                 success = self._execute_handle_node(node, stop_flag) is not None
             elif node['type'] == 'form_filler':

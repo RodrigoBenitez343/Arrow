@@ -15,6 +15,7 @@ from ..constants import (DARK_GREY, MEDIUM_GREY, LIGHT_GREY, TEXT_COLOR, TEXT_SE
 import os
 
 from ..icons import tabler_qicon
+from ..widgets.ui_motion import morph_window
 
 
 _USER_GUIDE_TOPIC_TO_HEADING = {
@@ -95,6 +96,12 @@ class UserGuideDialog(QDialog):
                 return f.read()
         except Exception:
             return "docs/USER_GUIDE.md not found."
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Same arrival morph as the config dialogs (queued, so the window is
+        # already on screen at its final size before it grows into place).
+        QTimer.singleShot(0, lambda: morph_window(self))
 
 # ---------------------------------------------------------------------------
 # Hover help: the green element picker for dialog controls
@@ -690,6 +697,14 @@ class ModernDialog(QDialog):
             QTimer.singleShot(0, self._fit_to_content)
         else:
             QTimer.singleShot(0, lambda: self._clamp_and_center())
+        # Arrival morph, queued AFTER the fit above so it animates into the rect
+        # the fit decided (a dialog that pops at full size is the graph-mode
+        # flicker).  A later re-fit wins: the morph yields to it.
+        QTimer.singleShot(0, self._morph_arrival)
+
+    def _morph_arrival(self):
+        """Grow into place on every show — one morph per appearance."""
+        morph_window(self)
 
     def _available_geometry(self):
         """Screen area (minus the taskbar) this dialog may occupy."""

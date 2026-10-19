@@ -752,6 +752,14 @@ class FormFillerNodeMixin:
             # never runs for a question the pool already tagged correct.
             learned, _learned_key = self._ff_learned_match(
                 label, learned_answers, cfg)
+            # A record whose VALUE is its own question is NOT an answer: it is
+            # the echo an earlier run learned when it wrote a question into the
+            # field (the option list had collapsed to the question).  Reusing it
+            # kept every later run writing the question back - so a self-answer
+            # is treated as NO record and the field is answered afresh.
+            if learned and (_ff_norm(learned).strip("*? .:")
+                            == _ff_norm(label).strip("*? .:")):
+                learned, _learned_key = "", ""
             # CONFIDENCE GATE - a stored answer is reused VERBATIM only when it
             # is a CONFIDENT match AND a semantic verdict (when available) does
             # not say it fails this field.  A low-confidence or rejected record
@@ -964,6 +972,29 @@ class FormFillerNodeMixin:
                     )
                     value = _full
 
+            # 3b-bis. INVARIANT: a CHOICE control can only HOLD one of the
+            # page's OWN options.  A value that is not one of them - a question
+            # the pool echoed back, a poisoned learned record, a prose reply -
+            # has NO control to land in: the write aims at whatever the ladder
+            # (or a hijacked marker) resolves, the read-back then echoes what
+            # was written, the field is reported "filled" while the page holds
+            # nonsense, and that value is LEARNED so every later run replays it
+            # (live: a multi-choice field written with its own question, and
+            # with ANOTHER question's text).  Snap it onto an option; when none
+            # fits, leave the field ALONE.
+            if options and kind == "choice":
+                if not _ff_option_exact(value, options):
+                    _snap = _ff_option_match(value, options)
+                    if not _snap:
+                        results.append({"id": field.get("id"), "label": label,
+                                        "value": "", "status": "skipped"})
+                        self._ff_log_field(
+                            field, label, cfg, "skipped", options=options,
+                            note=("the answer %r is not one of this field's "
+                                  "options - left unchanged" % value))
+                        continue
+                    value = _snap
+
             # 3c-pre. A LIST-BACKED field the page ALREADY holds the SAME
             # answer for is left alone: re-writing an identical option costs a
             # write + a re-ask for nothing, and a big country select would churn.
@@ -1037,6 +1068,14 @@ class FormFillerNodeMixin:
                                 or not self._ff_choice_landed(landed, value,
                                                               options)):
                             wrote = False
+                    elif options and kind == "choice":
+                        # Nothing was re-asked AND the option never landed: a
+                        # choice holding none of its own options is NOT filled.
+                        # An empty read-back must never be reported as success -
+                        # a hijacked marker can aim the write at another
+                        # question's free-text control, which accepts anything
+                        # and reads back exactly what was written.
+                        wrote = False
 
             status = "filled" if wrote else "failed"
             _res = {"id": field.get("id"), "label": label,
@@ -1111,6 +1150,16 @@ class FormFillerNodeMixin:
                 if (_st not in ("filled", "repaired", "skipped") or not _val
                         or _lab.startswith("field_")
                         or _val.upper() == "N/A"):
+                    continue
+                # A CHOICE field can only hold one of its OWN options, so an
+                # off-list value is NOT an answer to learn: caching one (the
+                # question the pool echoed back, a prose reply) taught the node
+                # a WRONG answer that every later run reused verbatim - the loop
+                # that kept writing a question into the field.
+                _fld = field_map.get(_r.get("id")) or {}
+                _fopts = _fld.get("options") or []
+                if (_fopts and (_fld.get("kind") or "").lower() == "choice"
+                        and not _ff_option_exact(_val, _fopts)):
                     continue
                 _k = _ff_norm(_lab).strip("*? .:")
                 if _k and _k not in _known:

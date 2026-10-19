@@ -34,6 +34,12 @@ os.environ["LOOPER_RUN_MEMORY"] = "off"
 # Laya verdict monkeypatch the hook/primitive (or set LOOPER_LAYA) per-test.
 os.environ["LOOPER_LAYA"] = "off"
 
+# Web replay glides the OS pointer to each action's target (player/web/engine.py)
+# so a real run reads like a desktop sequence.  A fake-driver replay must never
+# touch the developer's mouse: parked by default, tests that exercise the glide
+# patch it or clear this per-test.
+os.environ["LOOPER_OS_CURSOR"] = "off"
+
 # ---------------------------------------------------------------------------
 # GGUF binary builders (used by test_gguf_model_info.py)
 # ---------------------------------------------------------------------------

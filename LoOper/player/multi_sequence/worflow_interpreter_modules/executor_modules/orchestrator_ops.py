@@ -279,6 +279,20 @@ def _orchestrator_objects(text, generic=frozenset()):
     return key
 
 
+def _orchestrator_word_overlap(a, b):
+    """Sub-word object match: 'google' names 'searchgoogle' (and vice versa).
+
+    Filenames arrive as one fused word ('searchgoogle.json') while the step
+    names its objects separately; a strict token intersection declines the
+    right chain.  Min length 4 keeps glue ('new', 'com') out of routing.
+    """
+    for g in (a or frozenset()):
+        for s in (b or frozenset()):
+            if len(g) >= 4 and (g in s or s in g):
+                return True
+    return False
+
+
 _ORCH_GLOSS_RE = re.compile(r'\([^)]*\)')
 
 
@@ -780,6 +794,39 @@ class OrchestratorMixin:
 
     # ------------------------------------------------------------------ entry
 
+    def _orchestrator_stop_text(self, goal, stop_reason):
+        """The run's own verdict, human-readable: what stopped and why.
+
+        Replaces the bare 'The goal could not be advanced.' fallback — a goal
+        that fails without naming the worker, the step, or the gate reason
+        reads as a crash, and the agent repeats the same dead end next turn.
+        """
+        _goal = str(goal or '').strip()
+        _note = str(getattr(self, '_orch_last_note', '') or '').strip()
+        if stop_reason == 'done':
+            return f"Done: {_goal}"
+        if stop_reason == 'no_worker':
+            return (
+                f"The goal could not be advanced ('{_goal}'). "
+                "No worker served it"
+                + (f": {_note}." if _note else ".")
+                + " Wire a brain or describe the chains on the port."
+            )
+        if stop_reason == 'no_progress':
+            return (
+                f"The goal could not be advanced ('{_goal}'): the same "
+                "worker produced the identical result twice. Change the "
+                "step or wire another brain."
+            )
+        if stop_reason == 'blocked':
+            return (f"Blocked on '{_goal}': the goal needs input the loop "
+                    "cannot supply (answer the ask-user prompt to resume).")
+        if stop_reason == 'cap':
+            return (f"The goal could not be advanced ('{_goal}'): the step "
+                    "cap was reached.")
+        return (f"The goal could not be advanced ('{_goal}'; "
+                f"stop reason: {stop_reason}).")
+
     def _execute_orchestrator_node(self, node, stop_flag):
         """Run the orchestrator loop; returns the next node id (or None/__done__)."""
         node_data = node.get('data', {}) or {}
@@ -793,6 +840,10 @@ class OrchestratorMixin:
             node_data.get('web_mode'))
         self._orchestrator_headless = _orchestrator_truthy(
             node_data.get('headless'))
+        # Last decline note from the direct-chain gate: rides into the final
+        # text when this activation stops unfulfilled (see
+        # _orchestrator_stop_text), so the user learns WHY nothing ran.
+        self._orch_last_note = ''
         try:
             max_steps = int(node_data.get('max_steps', _DEFAULT_MAX_STEPS) or _DEFAULT_MAX_STEPS)
         except Exception:
@@ -1562,7 +1613,7 @@ class OrchestratorMixin:
         if not final_text:
             final_text = self._orchestrator_render_trace(trace)
             if not final_text:
-                final_text = "The goal could not be advanced."
+                final_text = self._orchestrator_stop_text(goal, stop_reason)
         if _handback:
             try:
                 final_text += (f"\n{_ORCH_REMAINING_MARKER} "
@@ -1620,8 +1671,17 @@ class OrchestratorMixin:
                 _status = {
                     'done': 'done',
                     'blocked': 'blocked',
+                    'no_worker': 'blocked',
+                    'no_progress': 'blocked',
+                    'cap': 'blocked',
+                    'unserved': 'blocked',
+                    'unparseable': 'blocked',
                 }.get(stop_reason, 'open')
-                _ledger.record_activation(_ledger_goal.get('id'), trace, _status)
+                _ledger.record_activation(
+                    _ledger_goal.get('id'), trace, _status,
+                    stop_reason=stop_reason,
+                    last_error=self._orchestrator_stop_text(goal, stop_reason),
+                )
             except Exception as e:
                 logger.warning("[ORCH] goal ledger write-back failed: %s", e)
         # Compile a verified successful run into a deterministic chain
@@ -2804,6 +2864,8 @@ class OrchestratorMixin:
                 "[ORCH] Direct-chain gate: every chain on the port was used "
                 "in this activation — falling back to the brain loop",
             )
+            self._orch_last_note = (
+                'every chain on the port was already used in this activation')
             return None
         try:
             from AI import laya_client as _lc
@@ -2820,6 +2882,9 @@ class OrchestratorMixin:
                     logger.info(
                         "[ORCH] Direct-chain gate: Laya not ready (%s) — "
                         "falling back to the brain loop", _lc.status())
+                    self._orch_last_note = (
+                        f'the Laya routing engine was not ready '
+                        f'({_lc.status()})')
                     return None
         except Exception:
             return None
@@ -2866,15 +2931,20 @@ class OrchestratorMixin:
                 logger.info(
                     "[ORCH] Direct-chain gate: Laya read failed on %s — "
                     "falling back to the brain loop", c['name'])
+                self._orch_last_note = (
+                    f'the Laya routing engine failed while scoring '
+                    f"chain '{c['name']}'")
                 return None  # engine died mid-read — never a guess
-            named = ((goal_key
-                      & _orchestrator_directive_key(signal, generic))
-                     - ambient)
-            scored.append((len(named), p, c))
+            sig_key = (_orchestrator_directive_key(signal, generic) - ambient)
+            named = (goal_key - ambient) & sig_key
+            scored.append((len(named), p, c, sig_key))
         if not scored:
             logger.info(
                 "[ORCH] Direct-chain gate: no chain scored (no readable "
                 "signal on the port) — falling back to the brain loop")
+            self._orch_last_note = (
+                'no chain on the port carries a description or routing '
+                'examples')
             return None
         # The step's OWN objects decide who MAY serve it, the scorer decides
         # WHO does: of the candidates whose human description names at least
@@ -2890,17 +2960,25 @@ class OrchestratorMixin:
         # otherwise no chain demonstrably serves this step and the gate
         # declines — a miss costs one brain round, a false positive runs the
         # wrong chain (bias strict).
-        named = [item for item in scored if item[0]]
+        # Bias strict, with one concession: sub-word overlap counts, because
+        # a filename fuses the object ('searchgoogle.json' serves 'search on
+        # google').  The scorer still decides WHO serves (floor + margin).
+        named = [item for item in scored
+                 if item[0] or _orchestrator_word_overlap(
+                     (goal_key - ambient), item[3])]
         if (goal_key - ambient) and not named:
             logger.info(
                 "[ORCH] Direct-chain gate: no chain names %s of the step — "
                 "falling back to the brain loop",
                 ', '.join(sorted(goal_key - ambient)[:6]),
             )
+            self._orch_last_note = (
+                "no chain's description names the step's objects ("
+                + ', '.join(sorted(goal_key - ambient)[:6]) + ')')
             return None
         pool = named or scored
         pool.sort(key=lambda item: -item[1])
-        top_named, top_p, top_c = pool[0]
+        top_named, top_p, top_c = pool[0][:3]
         second_named = pool[1][0] if len(pool) > 1 else 0
         second_p = pool[1][1] if len(pool) > 1 else 0.0
         # A richer description CONFIRMS the pick and the runner-up's proximity
@@ -2924,6 +3002,9 @@ class OrchestratorMixin:
                 top_c['name'], top_p, second_p, top_p - second_p,
                 top_named, second_named,
             )
+            self._orch_last_note = (
+                f"chain '{top_c['name']}' was not convincing "
+                f'(score {top_p:.3f}, floor {_CHAIN_GATE_MIN})')
             return None
         logger.info(
             "[ORCH] Direct-chain gate: next step is %s (p=%.3f, margin %.3f%s)",

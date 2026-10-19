@@ -210,6 +210,26 @@ def _ff_split_corrections(text):
     return clean.strip(), pairs
 
 
+# THIS node's own per-field summary row: `[<key>] {'mode': ..., 'fields': [...]}`.
+# It rides the pool whenever the chain wires the node's output back through a
+# Context node, and it is NOT source material - retrieved as evidence it makes
+# the model answer a field with ANOTHER field's text (live: one question
+# returned as the answer to a different question, and a question echoed back as
+# its own answer once a bad value had been learned).  The rows stay IN the pool
+# (the prior-pass statuses are read from them, see `_ff_prior_from_pool`); they
+# are only kept OUT of the material a probe may retrieve.
+_FF_OWN_ROW_RE = re.compile(
+    r"^\s*\[[^\]\n]{1,120}\]\s*[\{\[].*['\"]fields['\"]", re.MULTILINE)
+
+
+def _ff_strip_own_output(text):
+    """Drop THIS node's own summary rows from the material a probe retrieves."""
+    return "\n".join(
+        ln for ln in str(text or "").splitlines()
+        if not _FF_OWN_ROW_RE.match(ln)
+    ).strip()
+
+
 def _ff_split_pool(text):
     """Split a Context node's served pool into learned vs the rest.
 
@@ -233,6 +253,9 @@ def _ff_split_pool(text):
         before, after = body.split(_FF_DOCS_HEADER, 1)
         documents = after.strip()
         context = before.strip()
+    # The node's OWN output is not a document: see _FF_OWN_ROW_RE.
+    documents = _ff_strip_own_output(documents)
+    context = _ff_strip_own_output(context)
     return {
         "documents": documents,
         "context": context,

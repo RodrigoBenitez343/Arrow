@@ -112,6 +112,90 @@ def test_already_filled_field_is_skipped_by_the_harness():
     assert summary["fields"][0]["value"] == "+54 11 5494 0148"
 
 
+def test_a_choice_never_keeps_an_answer_that_is_not_one_of_its_options():
+    """A CHOICE control can only HOLD one of the page's OWN options.  A value
+    that is not one of them - a question the pool echoed back, a poisoned
+    learned record, a prose reply - has NO control to land in: it was written,
+    the read-back echoed it, the field was reported "filled" while the page
+    held nonsense, and that value was LEARNED so every later run replayed it
+    (live: a multi-choice field written with its own question, and with
+    ANOTHER question's text).  Snap it onto an option or leave the field."""
+    question = ("Which option best describes your experience with AWS and "
+                "Machine Learning?")
+    h = _Harness()
+    # The RENDERED shape the enumerator hands over: ONE control per option,
+    # each carrying its own option text as `label` and the group question.
+    _wire(h, fields=[
+        {"id": "f0", "label": "I use AWS services daily",
+         "question": question + "*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g1", "group": "n:g1",
+         "index": 0, "type_index": 0},
+        {"id": "f1", "label": "I never used AWS",
+         "question": question + "*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g1", "group": "n:g1",
+         "index": 1, "type_index": 1},
+    ])
+    # The extraction hands back the QUESTION itself.
+    h._ff_extract = lambda *a, **k: question
+    h._execute_form_filling_node(_node(), None)
+    summary = json.loads(h.get_variable("node_ff1_output"))
+    assert len(summary["fields"]) == 1          # the group merged to ONE field
+    assert summary["fields"][0]["status"] == "skipped"
+    assert summary["fields"][0]["value"] == ""
+    assert h.writes == []              # nothing was written into the field
+    assert h._ff_new_learned == []     # ...and nothing was learned from it
+
+
+def test_a_choice_off_list_answer_is_snapped_onto_a_real_option():
+    """The answer only has to MEAN an option: a short label (before ':' or
+    '(') or containment maps onto the page's OWN option text, so the write
+    still lands on a real control."""
+    h = _Harness()
+    _wire(h, fields=[
+        {"id": "f0", "label": "Básico: conozco la sintaxis",
+         "question": "English level*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g2", "group": "n:g2",
+         "index": 0, "type_index": 0},
+        {"id": "f1", "label": "Avanzado: creo y despliego modelos",
+         "question": "English level*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g2", "group": "n:g2",
+         "index": 1, "type_index": 1},
+    ], reads=["Básico: conozco la sintaxis"])
+    h._ff_extract = lambda *a, **k: "Básico"
+    h._execute_form_filling_node(_node(), None)
+    assert h.writes == [("f0", "Básico: conozco la sintaxis")]
+
+
+def test_a_learned_record_holding_its_own_question_is_not_reused():
+    """A record whose VALUE is the field's OWN question is not an answer: the
+    pre-fix runs learned exactly that (they wrote the question into the field
+    once the option list had collapsed to it), and reusing it kept every later
+    run replaying the question.  Such a record is ignored and the field is
+    answered afresh."""
+    question = ("Which option best describes your experience with AWS and "
+                "Machine Learning?")
+    h = _Harness()
+    _wire(h, fields=[
+        {"id": "f0", "label": "I use AWS services daily",
+         "question": question + "*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g3", "group": "n:g3",
+         "index": 0, "type_index": 0},
+        {"id": "f1", "label": "I never used AWS",
+         "question": question + "*", "kind": "choice", "type": "radio",
+         "tag": "input", "name": "g3", "group": "n:g3",
+         "index": 1, "type_index": 1},
+    ], reads=["I use AWS services daily"])
+    # The POOL carries the poisoned record: label -> the question itself.
+    from .common import _ff_render_corrections
+    h._ff_gather_source_text = lambda node: _ff_render_corrections(
+        [(question + "*", question)])
+    h._ff_probe = lambda *a, **k: "7+ years of ML experience with AWS."
+    h._ff_extract = lambda *a, **k: "I use AWS services daily"
+    h._execute_form_filling_node(_node(), None)
+    assert h.writes == [("f0", "I use AWS services daily")]
+    assert question not in [w[1] for w in h.writes]
+
+
 def test_a_combo_holding_the_answer_is_committed_not_skipped():
     """Holding a typeahead's option TEXT is not a COMMITTED selection: the
     widget validates against its OWN list, so the form can look filled and

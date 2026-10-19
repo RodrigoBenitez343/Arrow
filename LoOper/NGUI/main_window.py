@@ -67,6 +67,7 @@ from .widgets.agent_overlay import AgentOverlay
 from .widgets.agent_dot import AgentDot
 from .widgets.agent_notch import AgentNotch
 from .widgets.code_node_panel import CodeNodePanel
+from .widgets import ui_motion
 
 # Unified telemetry (see logging_setup.py): records propagate to the root
 # dispatch — colorized console + logs/automation.log + per-session md log.
@@ -258,12 +259,26 @@ class MainWindow(QMainWindow):
                 from player.execution_overlay_bus import bus as _exec_bus
                 _exec_bus.extra_capture_hooks.append(
                     self._agent_notch.hide_for_capture)
+                # The cursor arrow rides the click point, so it must also leave
+                # the screen for every read (replay matching, agent captures).
+                _exec_bus.extra_capture_hooks.append(
+                    self._agent_dot.hide_for_capture)
             except Exception:
-                logger.exception("Could not register the notch capture hook")
+                logger.exception("Could not register the agent capture hooks")
             logger.debug("AgentNotch created")
+
+            # One poll owns the cursor arrow's visibility: shown while the app is
+            # recording, replaying, or showing an agent surface (overlay/notch).
+            # Polling is deliberate - the run-end hooks fire on worker threads
+            # where QTimer.singleShot never lands, so a one-shot hide would leak.
+            self._agent_dot_timer = QTimer(self)
+            self._agent_dot_timer.setInterval(150)
+            self._agent_dot_timer.timeout.connect(self._poll_agent_dot)
+            self._agent_dot_timer.start()
 
             self._agent_mode_active = False
             self._notch_active = False   # the compact notch is the active agent UI
+            self._agent_executing = False  # a chain run started from the agent
             self._overlay_was_visible = False
             self._dot_was_visible = False
             self._notch_was_visible = False
@@ -459,8 +474,8 @@ class MainWindow(QMainWindow):
         """Top-bar cluster on the LEFT — where the menus used to be.
 
         Holds the mode switch, the graph's auxiliary controls (scheduler, AI
-        settings) and the agent-mode controls (collapse-to-notch plus the panel's
-        own action buttons, lifted out of the panel header).
+        settings) and the agent-mode controls (the panel's own action buttons,
+        lifted out of the panel header).
         """
         from PyQt5.QtWidgets import QHBoxLayout, QWidget
 
@@ -491,14 +506,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self._graph_aux)
 
         # Agent-mode controls (shown only while the panel is open).
+        # No collapse-to-notch button here: the overlay header already carries
+        # its own collapse button at the top-right, so a second one in the top
+        # bar was redundant.
         self._agent_nav = QWidget(bar)
         nav_lay = QHBoxLayout(self._agent_nav)
         nav_lay.setContentsMargins(0, 0, 0, 0)
         nav_lay.setSpacing(2)
-        self._agent_notch_btn = self._make_top_button(
-            self._agent_nav, "CHEVRON_UP", _("Collapse to the agent notch"),
-            self.collapse_agent_to_notch)
-        nav_lay.addWidget(self._agent_notch_btn)
         try:
             overlay = getattr(self, '_agent_overlay', None)
             actions = overlay.detach_header_actions() if overlay else None
@@ -548,6 +562,34 @@ class MainWindow(QMainWindow):
                 btn.setIcon(_tabler_qicon("MESSAGE_2", 16))
                 btn.setToolTip(_("Agent mode"))
         self._relayout_top_bar()
+
+    def _agent_dot_live(self) -> bool:
+        """True while a recording, a replay, or an agent surface is on screen."""
+        if getattr(self, '_agent_mode_active', False):
+            return True
+        rec = getattr(self, '_recording_overlay', None)
+        if rec is not None and not rec._stop.is_set():
+            return True
+        ex = getattr(self, '_execution_overlay', None)
+        if ex is not None and not ex._stop.is_set():
+            return True
+        return False
+
+    def _poll_agent_dot(self):
+        """Keep the cursor arrow shown iff the app is recording, replaying, or
+        showing an agent surface (overlay / notch)."""
+        dot = getattr(self, '_agent_dot', None)
+        if dot is None:
+            return
+        if not self._agent_dot_live():
+            if dot.isVisible():
+                dot.hide()
+            return
+        ex = getattr(self, '_execution_overlay', None)
+        playing = ex is not None and not ex._stop.is_set()
+        dot.set_execute_mode(bool(getattr(self, '_agent_executing', False) or playing))
+        if not dot.isVisible():
+            dot.show()
 
     def open_logs(self):
         """Open the session-log browser (search + level filters)."""
@@ -767,29 +809,24 @@ class MainWindow(QMainWindow):
             pass
         panel.show()
         panel.raise_()
-        try:
-            from PyQt5.QtCore import QEasingCurve, QPropertyAnimation
-            from PyQt5.QtWidgets import QGraphicsOpacityEffect
-            panel.setGraphicsEffect(None)
-            eff = QGraphicsOpacityEffect(panel)
-            eff.setOpacity(0.0)
-            panel.setGraphicsEffect(eff)
-            anim = QPropertyAnimation(eff, b'opacity', panel)
-            anim.setDuration(160)
-            anim.setStartValue(0.0)
-            anim.setEndValue(1.0)
-            anim.setEasingCurve(QEasingCurve.OutCubic)
-            anim.finished.connect(lambda: panel.setGraphicsEffect(None))
-            anim.start(QPropertyAnimation.DeleteWhenStopped)
-            self._studio_fade_anim = anim
-        except Exception:
-            pass
+        # The studio used to fade in; it now unfolds across the canvas instead
+        # (one movement, and the graph it replaces never shows through).
+        ui_motion.unfold(panel, start_px=8, axis="x")
         action = getattr(self, '_code_studio_action', None)
         if action is not None:
             action.setChecked(True)
 
     def _hide_code_studio(self):
-        """Collapse the studio back to the graph (restores the canvas)."""
+        """Fold the studio back to the graph (restores the canvas)."""
+        panel = getattr(self, 'code_panel', None)
+        if panel is not None and panel.isVisible():
+            ui_motion.fold_away(panel, end_px=8, axis="x",
+                                on_done=self._restore_graph_after_studio)
+        else:
+            self._restore_graph_after_studio()
+
+    def _restore_graph_after_studio(self):
+        """Bring the canvas back — runs once the studio has folded away."""
         panel = getattr(self, 'code_panel', None)
         if panel is not None:
             panel.hide()
@@ -855,6 +892,7 @@ class MainWindow(QMainWindow):
         overlay._set_compact_mode(False)
         overlay.show()
         overlay.raise_()
+        overlay._animate_entry()
         self._notch_active = False   # the maximized panel is the agent UI now
         try:
             overlay._input_field.setFocus()
@@ -864,9 +902,8 @@ class MainWindow(QMainWindow):
         self._sync_agent_mode_button()
         self._overlay_was_visible = False
         self._dot_was_visible = False
-        dot = getattr(self, '_agent_dot', None)
-        if dot is not None:
-            dot.hide()
+        # The cursor arrow stays on screen in agent mode (overlay included).
+        self._poll_agent_dot()
         if hasattr(self, '_toggle_agent_action'):
             self._toggle_agent_action.setChecked(True)
         logger.info("Agent mode entered (in-window overlay)")
@@ -881,7 +918,7 @@ class MainWindow(QMainWindow):
         # The graph UI and the agent UI are never shown at the same time.
         notch = getattr(self, '_agent_notch', None)
         if notch is not None:
-            notch.hide()
+            notch.retreat()
         nav = getattr(self, '_agent_nav', None)
         if nav is not None:
             nav.hide()
@@ -899,6 +936,8 @@ class MainWindow(QMainWindow):
         self._agent_mode_active = False
         self._notch_active = False
         self._sync_agent_mode_button()
+        # Leaving agent mode drops the cursor arrow (unless a run is still live).
+        self._poll_agent_dot()
         if hasattr(self, '_toggle_agent_action'):
             self._toggle_agent_action.setChecked(False)
         logger.info("Agent mode exited (back to builder)")
@@ -1130,9 +1169,7 @@ class MainWindow(QMainWindow):
             notch.set_chain_avatar(name)
         except Exception:
             pass
-        notch.reposition()
-        notch.show()
-        notch.raise_()
+        notch.summon()   # repositions and drops in from the screen edge
         self._agent_mode_active = True
         self._notch_active = True
         self._sync_agent_mode_button()
@@ -1150,14 +1187,17 @@ class MainWindow(QMainWindow):
         if overlay is not None:
             overlay._was_visible_for_automation = False
             overlay._keep_web_server = True
-            overlay.hide()
+        # Notch up first: the panel leaves with the window minimize, so hiding
+        # it before the notch was ready is what showed a blank frame.
         self._show_agent_notch()
+        if overlay is not None:
+            overlay.hide()
 
     def _on_notch_clicked(self):
         """Notch clicked — open the full in-window agent panel."""
         notch = getattr(self, '_agent_notch', None)
         if notch is not None:
-            notch.hide()
+            notch.retreat()
         # The in-window panel needs the main window on screen (the notch floats
         # even while the app is minimized), so restore it first.
         try:
@@ -1191,35 +1231,22 @@ class MainWindow(QMainWindow):
                 logger.exception("_on_notch_submitted: dispatch failed")
 
     def _on_execution_state(self, executing: bool):
-        """Toggle dot/notch appearance between idle (cyan) and executing (red)."""
+        """Reflect agent execution on the notch; the cursor arrow follows suit."""
+        self._agent_executing = bool(executing)
         notch = getattr(self, '_agent_notch', None)
         if notch is not None:
             notch.set_execute(executing)
-        dot = getattr(self, '_agent_dot', None)
-        if not dot:
-            return
-        dot.set_execute_mode(executing)
-        if executing:
             # The compact notch is the agent UI in use: keep IT on screen during
-            # the run instead of replacing it with the cursor dot.  _notch_active
-            # is set while the notch is the active agent UI (it survives the
-            # per-capture hide); _notch_was_visible covers a graph run started
-            # while the notch was up.
-            if notch is not None and (self._notch_active or self._notch_was_visible):
+            # the run.  _notch_active is set while the notch is the active agent
+            # UI (it survives the per-capture hide); _notch_was_visible covers a
+            # graph run started while the notch was up.
+            if executing and (self._notch_active or self._notch_was_visible):
                 if not notch.isVisible():
                     notch.reposition()
                     notch.show()
                 notch.raise_()
-                if dot.isVisible():
-                    dot.hide()
-                return
-            # Show red dot during chain execution (overlay hides for automation)
-            if self._agent_mode_active and not dot.isVisible():
-                dot.show()
-        else:
-            # Execution finished — hide dot, automation_restore shows overlay with response
-            if dot.isVisible():
-                dot.hide()
+        # The arrow itself is owned by the visibility poll (_poll_agent_dot).
+        self._poll_agent_dot()
 
     def _on_overlay_collapsed(self):
         """Overlay collapsed by its header button."""
@@ -1235,9 +1262,13 @@ class MainWindow(QMainWindow):
                 dot.show()
 
     def _hide_agent_overlay(self):
-        """Hide overlay/dot before chain execution (record what was visible)."""
+        """Hide the agent overlay before chain execution (record what was visible).
+
+        The cursor arrow is deliberately NOT hidden: the visibility poll keeps
+        it on screen through recording and replay (it is the "app is working"
+        cue), and it blanks itself for every screen read instead.
+        """
         overlay = getattr(self, '_agent_overlay', None)
-        dot = getattr(self, '_agent_dot', None)
         notch = getattr(self, '_agent_notch', None)
         self._overlay_was_visible = False
         self._dot_was_visible = False
@@ -1248,9 +1279,6 @@ class MainWindow(QMainWindow):
         if overlay and overlay.isVisible():
             self._overlay_was_visible = True
             overlay.hide()
-        elif dot and dot.isVisible():
-            self._dot_was_visible = True
-            dot.hide()
     
     def new_chain(self):
         """Clears the graph to start a new chain."""
@@ -1733,6 +1761,11 @@ class MainWindow(QMainWindow):
             #                    template the replayer matches on.
             rec_stop = threading.Event()
             rec_mouse_down = threading.Event()
+            # The cursor arrow sits on the click point, so it must stay blank
+            # while a button is held (the click template is cropped on release).
+            _dot = getattr(self, '_agent_dot', None)
+            if _dot is not None:
+                _dot.set_suppress_event(rec_mouse_down)
 
             element_provider = None
             overlay = None
@@ -2041,7 +2074,8 @@ class MainWindow(QMainWindow):
             self._exec_stop = None
         if self._notch_was_visible:
             # Compact agent mode was on screen (kept up through the run): keep the
-            # notch on top instead of restoring the builder or the cursor dot.
+            # notch on top instead of restoring the builder.  The cursor arrow
+            # stays too - the visibility poll keeps it while agent UI is up.
             self._notch_was_visible = False
             notch = getattr(self, '_agent_notch', None)
             if notch is not None:
@@ -2049,9 +2083,7 @@ class MainWindow(QMainWindow):
                     notch.reposition()
                     notch.show()
                 notch.raise_()
-            dot = getattr(self, '_agent_dot', None)
-            if dot is not None and dot.isVisible():
-                dot.hide()
+            self._poll_agent_dot()
             return
 
         if self._overlay_was_visible:
@@ -2067,14 +2099,13 @@ class MainWindow(QMainWindow):
                     QTimer.singleShot(50, overlay._input_field.setFocus)
                 except Exception:
                     pass
+            self._poll_agent_dot()
             return
 
         if self._dot_was_visible:
-            # Minimal dot was active — restore dot, keep main window minimized
+            # Legacy collapsed-dot state: the arrow is owned by the poll.
             self._dot_was_visible = False
-            dot = getattr(self, '_agent_dot', None)
-            if dot and not dot.isVisible():
-                dot.show()
+            self._poll_agent_dot()
             return
 
         # Main graph mode — restore main window
@@ -2090,6 +2121,7 @@ class MainWindow(QMainWindow):
             ss = app.styleSheet()
             app.setStyleSheet("")
             app.setStyleSheet(ss)
+        self._poll_agent_dot()
         self.update()
     
     def _handle_recording_error(self, error_msg):
