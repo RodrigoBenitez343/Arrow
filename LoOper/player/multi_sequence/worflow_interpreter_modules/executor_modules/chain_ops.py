@@ -314,6 +314,16 @@ class ChainImportMixin:
                         "Failed to export parent shared context: %s", _scx_err,
                     )
 
+                # Web browser settings do NOT propagate on their own: without
+                # this relay an imported chain falls to the durable-profile
+                # launch path, which used to quit the shared browser at its end
+                # - recording then had to spawn a SECOND instance.  A parent on
+                # the shared scope keeps the child on it (and leaves the browser
+                # open); a fully isolated parent stays isolated in the child.
+                _parent_se = getattr(self, 'sequence_executor', None)
+                _parent_web_key = (getattr(_parent_se, 'web_chain_key', None)
+                                   or getattr(_parent_se, 'web_profile_key', None))
+                _parent_isolated = bool(getattr(_parent_se, 'web_isolated', False))
                 imported_player = MultiSequencePlayer(
                     chain_config,
                     chain_file_path=resolved_chain_path,
@@ -323,6 +333,9 @@ class ChainImportMixin:
                     ask_user_v2_callback=_ask_v2_cb,
                     llamacpp_server_url=_llama_url,
                     on_output_ready=_output_cb,
+                    web_chain_key=_parent_web_key,
+                    web_isolated=_parent_isolated and not _parent_web_key,
+                    keep_web_browser=True,
                 )
                 
                 # Apply sandbox context if configured

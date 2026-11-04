@@ -4,6 +4,9 @@ import os
 import time
 import uuid
 from collections import OrderedDict
+from contextlib import nullcontext
+
+from ....execution_overlay_bus import bus as _screen_bus
 
 from .dependencies import DependenciesMixin
 from .sequence_ops import SequenceMixin
@@ -89,6 +92,43 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
         # but we reset the initialization flags to ensure checks happen if needed.
         # actually, keeping runtime initialized is better for performance.
         logger.info("WorkflowExecutor state reset")
+
+    # ── Screen access ────────────────────────────────────────────────────
+    # Only nodes that READ or DRIVE the physical desktop may take this app off
+    # screen.  Every node that only thinks (LLM, orchestrator, code, web,
+    # context, output ...) keeps the window up, so the user watches progress
+    # instead of a vanished app.
+    _SCREEN_NODE_TYPES = ('sequence', 'handle')
+    _NO_SCREEN_TRIGGERS = (
+        'code', 'code_conditional', 'python',
+        'llm', 'llm_conditional', 'llm_condition', 'ai_conditional',
+    )
+
+    def _node_needs_screen(self, node):
+        """True when running *node* reads or drives the physical screen."""
+        ntype = node.get('type')
+        if ntype in self._SCREEN_NODE_TYPES:
+            return True
+        data = node.get('data') or {}
+        if ntype == 'form_filler':
+            # The web twin drives the page's DOM; only desktop mode uses UIA.
+            return str(data.get('mode') or 'web').strip().lower() == 'desktop'
+        if ntype == 'conditional':
+            # Web and code/LLM conditions route on the browser or model output;
+            # presence/absence/OCR/layout read the desktop screen.
+            if self._is_web_conditional(data):
+                return False
+            trigger = str(
+                data.get('trigger_type') or data.get('condition_type') or 'presence'
+            ).strip().lower()
+            return trigger not in self._NO_SCREEN_TRIGGERS
+        return False
+
+    def _screen_guard(self, node):
+        """Context manager: hide the app while *node* needs the real screen."""
+        if self._node_needs_screen(node):
+            return _screen_bus.screen_access()
+        return nullcontext()
 
     def execute_workflow(self, stop_flag=None, action_handlers=None, chain_file=None, on_node_failed=None, on_output_ready=None, chain_identity=None):
         """
@@ -523,7 +563,8 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
             is_file_loop = False
             
             if node['type'] == 'sequence':
-                success = self._execute_sequence_node(node, stop_flag) is not None
+                with self._screen_guard(node):
+                    success = self._execute_sequence_node(node, stop_flag) is not None
             elif node['type'] == 'web_sequence':
                 success = self._execute_web_sequence_node(node, stop_flag) is not None
             elif node['type'] == 'conditional':
@@ -551,22 +592,26 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                 # must be checked BEFORE condition_type so they don't fall through
                 # to _execute_conditional_loop which requires a sequence_file and
                 # would return False, routing execution down the wrong branch.
-                if is_graph_loop:
-                    # Graph-based conditional loop: evaluate the condition now;
-                    # loop-back is managed by _maybe_loop_graph_conditional() when
-                    # the branch completes.
-                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
-                    if current_node_id not in self._graph_loop_state:
-                        max_loops = int(conditional_data.get('max_loops', 10))
-                        self._graph_loop_state[current_node_id] = {
-                            'max_iterations': max_loops,
-                            'iteration': 1,
-                        }
-                        logger.info(f"Graph loop started: {loop_type}, max_iterations: {max_loops}")
-                elif condition_type in ('loop', 'while_present', 'until_present', 'while_absent', 'until_absent'):
-                    conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
-                else:
-                    conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
+                # Visual conditions re-read the screen for their whole wait (and
+                # a file loop drives a child sequence), so the app stays hidden
+                # for the node instead of flickering per read.
+                with self._screen_guard(node):
+                    if is_graph_loop:
+                        # Graph-based conditional loop: evaluate the condition now;
+                        # loop-back is managed by _maybe_loop_graph_conditional() when
+                        # the branch completes.
+                        conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
+                        if current_node_id not in self._graph_loop_state:
+                            max_loops = int(conditional_data.get('max_loops', 10))
+                            self._graph_loop_state[current_node_id] = {
+                                'max_iterations': max_loops,
+                                'iteration': 1,
+                            }
+                            logger.info(f"Graph loop started: {loop_type}, max_iterations: {max_loops}")
+                    elif condition_type in ('loop', 'while_present', 'until_present', 'while_absent', 'until_absent'):
+                        conditional_result = self._execute_conditional_loop(conditional_data, stop_flag)
+                    else:
+                        conditional_result = self._evaluate_conditional(conditional_data, stop_flag, node.get('inputs', []))
                 success = True  # Conditional evaluation always succeeds
                 logger.info(f"Conditional evaluation result: {conditional_result}")
                 # Store the result in the node for later reference
@@ -627,9 +672,11 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                         and not self._is_branch_source(node)):
                     self._orchestrator_unfulfilled = True
             elif node['type'] == 'handle':
-                success = self._execute_handle_node(node, stop_flag) is not None
+                with self._screen_guard(node):
+                    success = self._execute_handle_node(node, stop_flag) is not None
             elif node['type'] == 'form_filler':
-                success = self._execute_form_filling_node(node, stop_flag) is not None
+                with self._screen_guard(node):
+                    success = self._execute_form_filling_node(node, stop_flag) is not None
             elif node['type'] == 'mcp':
                 success = self._execute_mcp_node(node, stop_flag) is not None
             elif node['type'] == 'output':

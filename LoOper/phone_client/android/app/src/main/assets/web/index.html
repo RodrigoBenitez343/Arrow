@@ -39,6 +39,9 @@
   .msg .time{font-size:0.6rem;opacity:.3;margin-top:6px;text-align:right}
   .msg.agent .time{text-align:left}
   .msg.agent.typing{opacity:.6}
+  /* startup self-test report (plain monospace, PASS/FAIL per line) */
+  .msg.selftest{white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;line-height:1.55;border-left:3px solid #22c55e}
+  .msg.selftest.bad{border-left-color:#ef4444}
   /* input area */
   .input-area{padding:8px 16px 16px;flex-shrink:0;display:flex;flex-direction:column;gap:6px}
   .input-row{display:flex;gap:8px;align-items:flex-end}
@@ -539,6 +542,13 @@
       addMsg("Please wait for the agent to finish before recording.", "agent");
       return;
     }
+    // WebView re-checks the OS mic grant when it hands the mic out, so ask for
+    // it up front instead of racing the permission dialog inside getUserMedia.
+    if (window.Android && Android.micGranted && !Android.micGranted()) {
+      try { Android.requestMic(); } catch (e) {}
+      addMsg("Microphone permission needed \u2014 allow it for Arrow, then hold the mic again.", "agent");
+      return;
+    }
     isRecording = true;
     micBtn.classList.add("recording");
     recordingIndicator.style.display = "flex";
@@ -546,8 +556,15 @@
     startInSpectro();
 
     console.log("[mic] requesting getUserMedia");
+    audioPathBegin();
     navigator.mediaDevices.getUserMedia({ audio: true })
       .then(function(stream) {
+        // The user released before the prompt was answered: drop the stream
+        // instead of rebuilding a pipeline nobody will stop.
+        if (!isRecording) {
+          stream.getTracks().forEach(function(t) { t.stop(); });
+          return;
+        }
         recordingStream = stream;
         // Use the device's native rate: forcing 16 kHz throws NotSupportedError
         // on some WebViews.  Resample to 16 kHz for Vosk when encoding the WAV.
@@ -580,9 +597,19 @@
         console.log("[mic] recording @ " + recordSampleRate + " Hz, ctx=" + audioContext.state);
       })
       .catch(function(err) {
-        console.log("[mic] getUserMedia failed: " + (err && err.name) + " " + (err && err.message));
-        addMsg("Microphone access denied: " + err.message, "agent");
-        stopRecording();
+        var name = (err && err.name) || "Error";
+        console.log("[mic] getUserMedia failed: " + name + " " + (err && err.message));
+        isRecording = false;
+        micBtn.classList.remove("recording");
+        recordingIndicator.style.display = "none";
+        stopInSpectro();
+        audioPathEnd();
+        if (name === "NotAllowedError" && window.Android && Android.openAppSettings) {
+          addMsg("Microphone blocked (" + name + "). Enable Microphone for Arrow in Settings and retry.", "agent");
+          try { Android.openAppSettings(); } catch (e) {}
+        } else {
+          addMsg("Microphone unavailable (" + name + "): " + ((err && err.message) || ""), "agent");
+        }
       });
   }
 
@@ -609,6 +636,8 @@
       recordingStream.getTracks().forEach(function(t) { t.stop(); });
       recordingStream = null;
     }
+    // Give the audio path back now that the capture is over.
+    audioPathEnd();
     stopInSpectro();
 
     if (pcmChunks.length === 0) {
@@ -700,7 +729,8 @@
         }
       })
       .catch(function(err) {
-        addMsg("STT request failed: " + err.message, "agent");
+        addMsg("STT request failed: " + ((err && err.message) || err) +
+          " (loopback /stt unreachable: host running? CORS blocked?)", "agent");
       });
   }
 
@@ -922,6 +952,253 @@
     stopBtn.style.display = "inline-block";
   }
 
+  // ── Startup self-test (notifications + audio input) ──
+
+  // Runs once the host link is up.  Every check reports PASS/FAIL with the
+  // reason, so a broken permission is visible in the app instead of showing up
+  // later as a silent "permission denied".  Logcat tag LoOperWeb mirrors it.
+
+  var selfTestRan = false;
+  var selfTestDiv = null;
+
+  // Take/give back the native audio path around a capture.  WebView cannot
+  // start AudioRecord on every device without MODIFY_AUDIO_SETTINGS + a mode
+  // switch (NotReadableError), and MODE_IN_COMMUNICATION can make some devices
+  // hand back digital silence instead, so the mode is part of the test.
+  var AUDIO_MODE_NORMAL = 0;        // AudioManager.MODE_NORMAL
+  var AUDIO_MODE_COMM = 3;          // AudioManager.MODE_IN_COMMUNICATION
+  var audioMode = AUDIO_MODE_COMM;  // preferred mode, corrected by the self-test
+
+  function audioModeName(m) {
+    return m === AUDIO_MODE_COMM ? "IN_COMMUNICATION" : "NORMAL";
+  }
+
+  function audioPathBegin(mode) {
+    var m = (mode === undefined) ? audioMode : mode;
+    try { if (window.Android && Android.micBegin) Android.micBegin(m); } catch (e) {}
+  }
+
+  function audioPathEnd() {
+    try { if (window.Android && Android.micEnd) Android.micEnd(); } catch (e) {}
+  }
+
+  // One capture attempt: resolve {ok, name, detail}.
+  var SILENT_PEAK = 0.0005;  // below this a real mic noise floor would not sit
+
+  function dbfs(v) {
+    return v > 0 ? (20 * Math.log10(v)).toFixed(1) + " dBFS" : "-inf dBFS";
+  }
+
+  function captureAudio(ms) {
+    return new Promise(function (resolve) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        resolve({ ok: false, name: "Unsupported", detail: "getUserMedia not available" });
+        return;
+      }
+      var done = false;
+      var guard = setTimeout(function () {
+        if (done) return;
+        done = true;
+        resolve({ ok: false, name: "Timeout", detail: "getUserMedia never answered (no prompt, no error)" });
+      }, (ms || 1200) + 4000);
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        var ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") { try { ctx.resume(); } catch (e) {} }
+        var track = stream.getAudioTracks()[0] || null;
+        var src = ctx.createMediaStreamSource(stream);
+        var proc = ctx.createScriptProcessor(4096, 1, 1);
+        var peak = 0, blocks = 0;
+        proc.onaudioprocess = function (e) {
+          var d = e.inputBuffer.getChannelData(0);
+          blocks++;
+          for (var i = 0; i < d.length; i++) {
+            var v = Math.abs(d[i]);
+            if (v > peak) peak = v;
+          }
+        };
+        src.connect(proc);
+        proc.connect(ctx.destination);
+        setTimeout(function () {
+          if (done) return;
+          done = true;
+          clearTimeout(guard);
+          try { proc.disconnect(); } catch (e) {}
+          try { src.disconnect(); } catch (e) {}
+          try { ctx.close(); } catch (e) {}
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          var detail = "blocks=" + blocks + " peak=" + peak.toFixed(4) +
+            " (" + dbfs(peak) + ") rate=" + (ctx.sampleRate || 0) + "Hz" +
+            " track=" + (track
+              ? ("muted=" + track.muted + " enabled=" + track.enabled + " label=" + track.label)
+              : "none");
+          if (blocks === 0) {
+            resolve({ ok: false, name: "NoCallbacks", detail: detail + " (AudioContext not running)" });
+          } else if (peak <= SILENT_PEAK) {
+            resolve({ ok: false, name: "Silent", detail: detail + " (all samples ~0)" });
+          } else {
+            resolve({ ok: true, name: "OK", detail: detail });
+          }
+        }, ms || 1200);
+      }).catch(function (err) {
+        if (done) return;
+        done = true;
+        clearTimeout(guard);
+        resolve({
+          ok: false,
+          name: (err && err.name) || "Error",
+          detail: ((err && err.name) || "Error") + ": " + ((err && err.message) || "")
+        });
+      });
+    });
+  }
+
+  function attemptAudio(mode, ms) {
+    audioPathBegin(mode);
+    return captureAudio(ms).then(function (res) {
+      audioPathEnd();
+      res.detail = "mode=" + audioModeName(mode) + " " + res.detail;
+      console.log("[selftest] audio mode=" + audioModeName(mode) + ": " + res.name + " | " + res.detail);
+      return res;
+    });
+  }
+
+  function testAudioInput(ms) {
+    var first = audioMode;
+    var second = (first === AUDIO_MODE_COMM) ? AUDIO_MODE_NORMAL : AUDIO_MODE_COMM;
+    return attemptAudio(first, ms).then(function (res) {
+      if (res.ok) return res;
+      // Try the other audio mode: NotReadableError and all-zero samples are both
+      // mode/route problems, and one of the two modes fits every device seen.
+      return new Promise(function (r) { setTimeout(r, 600); }).then(function () {
+        return attemptAudio(second, ms);
+      }).then(function (retry) {
+        retry.detail += " [after " + audioModeName(first) + " gave " + res.name + "]";
+        if (retry.ok) {
+          audioMode = second;
+          retry.detail += " [using " + audioModeName(second) + " for the mic]";
+        }
+        return retry;
+      });
+    });
+  }
+
+  // Reachability + CORS probe for the loopback host API.  A cross-origin block
+  // shows up as fetch() rejecting with "Failed to fetch" (what STT hit).
+  function checkHostApi() {
+    return fetch("http://127.0.0.1:8081/status", { cache: "no-store", mode: "cors" })
+      .then(function (r) {
+        return r.text().then(function (t) {
+          return { ok: r.ok, detail: "status=" + r.status + " body=" + t.slice(0, 60) };
+        });
+      })
+      .catch(function (err) {
+        return {
+          ok: false,
+          detail: "fetch failed: " + ((err && err.message) || err) +
+            " (CORS/mixed-content block, or host not running)"
+        };
+      });
+  }
+
+  function renderSelfTest(lines, passed) {
+    if (selfTestDiv && selfTestDiv.parentNode) { selfTestDiv.parentNode.removeChild(selfTestDiv); }
+    var div = document.createElement("div");
+    div.className = "msg agent selftest" + (passed ? "" : " bad");
+    div.textContent = "Self-test " + (passed ? "PASSED" : "FAILED") + "\n" + lines.join("\n");
+    var btn = document.createElement("button");
+    btn.className = "mini";
+    btn.textContent = "Re-test";
+    btn.style.cssText = "margin-top:8px;font-size:.68rem";
+    btn.onclick = function () { selfTestRan = false; runSelfTest(); };
+    var time = document.createElement("div");
+    time.className = "time";
+    time.textContent = new Date().toLocaleTimeString();
+    div.appendChild(btn);
+    div.appendChild(time);
+    messages.appendChild(div);
+    selfTestDiv = div;
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function runSelfTest() {
+    if (selfTestRan) return;
+    selfTestRan = true;
+    var lines = [];
+    var passed = true;
+    function check(ok, name, detail) {
+      if (!ok) passed = false;
+      lines.push((ok ? "PASS  " : "FAIL  ") + name + (detail ? "\n        " + detail : ""));
+    }
+
+    // ── environment (the things that silently disable both features) ──
+    check(window.isSecureContext === true, "secure context", "origin=" + location.origin);
+    check(!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+      "mediaDevices.getUserMedia", navigator.mediaDevices ? "present" : "missing");
+    check(!!(window.Android && Android.notify), "Android JS bridge",
+      window.Android ? "present" : "missing (not the Arrow app?)");
+
+    // ── notifications ──
+    if (window.Android && Android.notificationState) {
+      var st = {};
+      try { st = JSON.parse(Android.notificationState()); } catch (e) { st = {}; }
+      check(st.permission === true, "notification permission", "granted=" + st.permission);
+      check(st.enabled === true && st.channelBlocked !== true, "notification channel",
+        "osEnabled=" + st.enabled + " channel=" + st.channel +
+        " exists=" + st.channelExists + " blocked=" + st.channelBlocked);
+      var posted = false;
+      try { posted = Android.postTestNotification(); } catch (e) { posted = false; }
+      check(posted === true, "test notification posted",
+        posted ? "check your notification shade" : "not posted: permission or channel blocked");
+    } else {
+      check(false, "notification API", "notificationState() missing from the bridge");
+    }
+
+    // ── audio input (same getUserMedia path the mic button uses) ──
+    var mic = {};
+    try { if (window.Android && Android.micState) mic = JSON.parse(Android.micState()); } catch (e) { mic = {}; }
+    var micGranted = mic.granted !== false;
+    check(micGranted, "microphone permission",
+      micGranted ? "granted" : "denied - Settings > Permissions > Microphone");
+    check(mic.modifyAudioSettings !== false, "audio settings permission",
+      "MODIFY_AUDIO_SETTINGS=" + mic.modifyAudioSettings + " audioMode=" + mic.mode);
+    if (!micGranted && window.Android && Android.requestMic) {
+      try { Android.requestMic(); } catch (e) {}
+    }
+
+    // Native probe first: a plain AudioRecord, no WebView involved.  Its result
+    // says whether a failure lives in the mic/route or in the WebView capture.
+    var nativeProbe = {};
+    if (window.Android && Android.nativeMicProbe) {
+      try { nativeProbe = JSON.parse(Android.nativeMicProbe()); } catch (e) { nativeProbe = {}; }
+      check(nativeProbe.started === true && nativeProbe.peak > SILENT_PEAK,
+        "native microphone (AudioRecord)",
+        nativeProbe.started
+          ? ("samples=" + nativeProbe.samples + " peak=" + nativeProbe.peak)
+          : ("failed: " + (nativeProbe.error || "unknown")));
+    } else {
+      check(false, "native microphone probe", "nativeMicProbe() missing from the bridge");
+    }
+    renderSelfTest(lines.concat(["      probing host API + capturing 1.2 s of audio ..."]), passed);
+
+    Promise.all([checkHostApi(), testAudioInput(1200)]).then(function (out) {
+      var api = out[0];
+      var res = out[1];
+      check(api.ok, "host API reachable (/status)", api.detail);
+      var verdict = "";
+      if (!res.ok && res.name === "Silent") {
+        verdict = nativeProbe.peak > SILENT_PEAK
+          ? "\n        native AudioRecord DID get signal: the WebView capture path is at fault"
+          : "\n        native AudioRecord is silent too: mic muted, held by another app, or no input route";
+      }
+      lines.push((res.ok ? "PASS  " : "FAIL  ") + "audio capture\n        " + res.detail + verdict);
+      if (!res.ok) passed = false;
+      console.log("[selftest] " + (passed ? "PASS" : "FAIL") + " | " + lines.join(" | "));
+      renderSelfTest(lines, passed);
+      if (!passed) notifyAndroid("Arrow self-test failed", lines.join(" "));
+    });
+  }
+
   // ── WebSocket ──
 
   function connectWS() {
@@ -934,6 +1211,8 @@
       sendWS({type: "list_coworkers"});
       sendWS({type: "list_chains"});
       sendWS({type: "list_schedules"});
+      // First link-up: prove notifications and audio actually work.
+      runSelfTest();
     };
     ws.onmessage = function (evt) {
       if (evt.data === "__PONG__") return;

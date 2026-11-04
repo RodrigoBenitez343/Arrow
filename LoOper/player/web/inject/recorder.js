@@ -325,6 +325,37 @@
     emit(evt);
   }, true);
 
+  // ------------------------------------------------------ label forwarding
+  //
+  // A click on a <label> makes the browser activate the control it labels, so
+  // it dispatches a SECOND click - plus a focusin - on that control.  They are
+  // one physical press.  Without collapsing them the label click AND the
+  // forwarded control click/focus are all saved, and replay toggles a
+  // checkbox/radio twice (FocusHandler replays a focus by clicking) - a net
+  // no-op.  Arm a short guard when a label press is emitted; drop the control's
+  // forwarded click/focus while it holds so one press records one action.
+  var labelForwardGuard = null; // {control, ts}
+  var LABEL_FORWARD_WINDOW_MS = 350;
+
+  function labelForwardedControl(el) {
+    // el is a click's composed target; return the control a label press on it
+    // (or on an ancestor <label>) will forward to, or null when no label is
+    // involved.  A press that already landed on the control itself is handled
+    // by the caller (fwd !== t), so it is never mistaken for a forward.
+    var n = el;
+    while (n && n.nodeType === 1) {
+      if ((n.tagName || '').toLowerCase() === 'label') {
+        var forId = n.getAttribute && n.getAttribute('for');
+        var ctl = null;
+        if (forId) { try { ctl = document.getElementById(forId); } catch (e) {} }
+        if (!ctl) { try { ctl = n.querySelector('input,select,textarea'); } catch (e) {} }
+        return ctl;
+      }
+      n = n.parentElement;
+    }
+    return null;
+  }
+
   ['click', 'dblclick', 'contextmenu'].forEach(function (type) {
     window.addEventListener(type, function (e) {
       // A real click supersedes any pending pointerdown fallback press.
@@ -335,6 +366,14 @@
       flushKeyBuffer();
       var t = composedTarget(e);
       if (!t) return;
+      // Drop the click a just-clicked label forwards to its control: that
+      // physical press is already recorded as the label click.
+      if (type === 'click' && labelForwardGuard &&
+          (nowTs() - labelForwardGuard.ts) <= LABEL_FORWARD_WINDOW_MS &&
+          t === labelForwardGuard.control) {
+        labelForwardGuard = null;
+        return;
+      }
       if (type === 'click' && armedMatches(t)) {
         // This press was already emitted from pointerdown (the page may have
         // swallowed the click and navigated).  Mirror the buffer so a
@@ -352,6 +391,14 @@
       // locator is replaced with a selector that matches the whole set.
       markEntityIfHeld(evt, t);
       emit(evt);
+      // If this press landed on a <label>, remember the control it will
+      // activate so the forwarded click/focus are dropped.  A direct press on
+      // the control itself (t === the control) must NOT arm: that is the real,
+      // single action.
+      if (type === 'click') {
+        var fwd = labelForwardedControl(t);
+        if (fwd && fwd !== t) labelForwardGuard = { control: fwd, ts: nowTs() };
+      }
     }, true);
   });
 
@@ -537,6 +584,13 @@
   window.addEventListener('focusin', function (e) {
     var t = e.target;
     if (!t || t.nodeType !== 1) return;
+    // The forwarded focus of a just-clicked label is part of that one press, not
+    // a separate action (and replay would click the control to focus it).
+    if (labelForwardGuard &&
+        (nowTs() - labelForwardGuard.ts) <= LABEL_FORWARD_WINDOW_MS &&
+        t === labelForwardGuard.control) {
+      return;
+    }
     if (!isEditable(t)) return;
     var evt = baseFields('focus', nowTs(), t);
     emit(evt);

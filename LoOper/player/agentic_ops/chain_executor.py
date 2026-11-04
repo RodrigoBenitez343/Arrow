@@ -30,7 +30,8 @@ class ChainExecutor:
                    ask_user_v2_callback=None,
                    on_output_ready=None,
                    stop_flag=None,
-                   bound_inputs=None) -> str:
+                   bound_inputs=None,
+                   keep_web_browser: bool = True) -> str:
         """Execute a chain file and return a human-readable result.
 
         Args:
@@ -53,6 +54,12 @@ class ChainExecutor:
                          advertised agent_modifiable Input slots (the chat-mode
                          bind_input channel) — priority 0 in input resolution,
                          ahead of LLM reasoning.
+            keep_web_browser: Leave the chain's web browser OPEN when the chain
+                         ends (default).  An agent run is a sequence of chains
+                         on one session: quitting the browser after step 1
+                         loses the page and login step 2 must continue on
+                         (observed in the log as "Closed shared web browser
+                         for chain" between agent steps).
 
         Returns:
             A human-readable string (e.g."Executed 'extract_products': found
@@ -112,6 +119,7 @@ class ChainExecutor:
                     stop_flag=_combined_stop,
                     variables=_run_vars,
                     run_source="agent",
+                    keep_web_browser=bool(keep_web_browser),
                 )
                 if chain_ok is False:
                     logger.error("ChainExecutor: chain FAILED (node returned error): %s", chain_path)

@@ -59,6 +59,9 @@ class ContextNode(BaseNode):
 
         # Properties — minimal config
         self.create_property('label', '')         # Human-readable description
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
         # 0 = UNLIMITED: the pool serves its WHOLE history (no entry cap).
         self.create_property('max_history', 0)    # Recent entries to keep/serve (0=all)
         self.create_property('persistent', True)  # Keep context across runs

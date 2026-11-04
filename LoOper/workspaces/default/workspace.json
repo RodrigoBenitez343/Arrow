@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "slug": "default",
+ "name": "Default",
+ "agent": {
+  "name": "Default",
+  "avatar": 0,
+  "model": "",
+  "legacy_brain": "",
+  "policy": {
+   "max_steps": 6
+  }
+ },
+ "updated": "2026-10-30T14:03:33",
+ "created": "2026-10-30T14:03:33"
+}

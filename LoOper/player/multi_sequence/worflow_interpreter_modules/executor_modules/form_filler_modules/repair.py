@@ -8,7 +8,9 @@ from .common import (
     _as_int,
     _ff_na_value,
     _ff_placeholder_value,
+    _ff_plain_text,
     _ff_split_pool,
+    _ff_states_verbatim,
     _ff_ungrounded_identifier,
     log_block,
     log_table,
@@ -98,7 +100,7 @@ class FormFillerRepairMixin:
             # reject: 'field not found' says nothing about the VALUE.  Read as a
             # rejection it made the pass re-probe and re-answer fields the form
             # had already accepted (live: "Form Repair: First name* field not
-            # found (attempt 1/4)" - a full ComoRAG sweep plus an engine
+            # found (attempt 1/4)" - a full CRAG pass plus an engine
             # restart per attempt, on a good field).
             return ""
         if state is not None and not state.get("valid", True):
@@ -201,9 +203,13 @@ class FormFillerRepairMixin:
         )
         raw = self._ff_llm_call(prompt, "", cfg, stop_flag)
         verdicts = {}
+        # PRUNE MARKUP first: a small model answers '**1: NO**' / '- 1: NO',
+        # and the bolded form used to slip past the line pattern, so a flagged
+        # field was silently treated as OK.  Only the emphasis ticks are
+        # removed here - the list NUMBER is the verdict's key and must survive.
         for m in re.finditer(
             r"(?im)^\s*[-*.]?\s*(\d+)\s*[:.)]?\s*(ok|no)\b[:\-]?\s*(.*)$",
-            raw or "",
+            re.sub(r"[*_`#]", "", raw or ""),
         ):
             idx = int(m.group(1))
             if not 1 <= idx <= len(pairs):
@@ -238,13 +244,48 @@ class FormFillerRepairMixin:
                             % _clean_reason(reason))
         return out
 
+    def _ff_repair_markup(self, field, res, state, stop_flag, driver=None):
+        """Write the PLAIN form of a value the page holds with markdown in it.
+
+        A learned answer stored as '**1**' is written verbatim, reads back
+        verbatim (a text input accepts the markers), and is then kept forever:
+        the next pass asks Laya whether the page's value answers the field - it
+        does, semantically - so the field is skipped while the SITE'S OWN
+        validation (a numeric-only question) rejects it.  The correction is
+        deterministic - the value minus its markup - so it must never cost a
+        probe and a model call: the repair pass used to spend both and change
+        nothing, which is the delay the log shows.  True when the page now
+        holds the plain value.
+        """
+        cur = str((state or {}).get("value") or "").strip()
+        plain = _ff_plain_text(cur)
+        if not cur or plain == cur:
+            return False
+        if not plain:
+            return False        # nothing left to write: the field is re-asked
+        log_block(
+            logger, logging.WARNING,
+            "Form Repair: %s" % (res.get("label") or field.get("label") or ""),
+            "the page holds %r - writing its plain form %r"
+            % (cur[:60], plain[:60]),
+        )
+        if not self._ff_write(field, plain, stop_flag, driver):
+            return False
+        after = str((self._ff_state(field, stop_flag, driver)
+                     or {}).get("value") or "").strip()
+        if _ff_plain_text(after) != after:
+            return False        # the page re-marked it up: not repaired
+        res["value"] = plain
+        res["status"] = "repaired"
+        return True
+
     def _ff_repair_fields(self, field_map, results, cfg, source_text,
                           documents, stop_flag, driver=None):
         """Post-pass: re-check every written field and CORRECT the rejects.
 
         After the first pass the page knows what the model could not: a native
         constraint can REJECT the value we wrote, or the widget reformats it.
-        Every offending field is re-probed through the SAME ComoRAG probe and
+        Every offending field is re-retrieved through the SAME CRAG pass and
         re-answered WITH the browser's rejection message as feedback, then
         re-checked - so a date answered '2017' is corrected instead of silently
         left wrong.  Returns the number of fields repaired.
@@ -337,10 +378,29 @@ class FormFillerRepairMixin:
             # the page tree again (cheap when nothing moved) before reading the
             # field's state or writing to it.
             self._ff_resolve_target(field, cfg, stop_flag)
-            state = self._ff_field_state(field, stop_flag, driver)
-            reason = (self._ff_repair_reason(field, res.get("value"), state,
-                                            ground)
-                      or semantic.get(res.get("id"), ""))
+            state = self._ff_state(field, stop_flag, driver)
+            if self._ff_repair_markup(field, res, state, stop_flag, driver):
+                repaired += 1
+                continue
+            rule_reason = self._ff_repair_reason(field, res.get("value"),
+                                                state, ground)
+            _said = semantic.get(res.get("id"), "")
+            if _said and not rule_reason \
+                    and _ff_states_verbatim(res.get("value"), ground):
+                # A copy of the source is not a judgement call.  The judge
+                # answered NO ('city is too specific') for 'Buenos Aires' in a
+                # 'Location (city)' field, and this pass replaced a correct
+                # answer with 'N/A'.  The page's own rejection, the length cap
+                # and the identifier check are FACTS about the page and still
+                # apply - only the semantic opinion yields.
+                log_block(
+                    logger, logging.INFO, "Form Repair: %s" % label,
+                    "the value %r appears VERBATIM in the source - the semantic "
+                    "verdict (%r) is ignored"
+                    % (str(res.get("value"))[:60], _said[:80]),
+                )
+                _said = ""
+            reason = rule_reason or _said
             if not reason:
                 continue
             flagged += 1
@@ -365,7 +425,7 @@ class FormFillerRepairMixin:
                     % (reason, attempt + 1, attempts),
                 )
                 self._ff_learned_hint = _learned
-                evidence = self._ff_probe(
+                evidence = self._ff_retrieve(
                     label, cfg, source_text, documents, stop_flag,
                     repair_hint=spec,
                 )
@@ -387,7 +447,7 @@ class FormFillerRepairMixin:
                     # correct: re-writing it changes nothing, yet the pass went
                     # on to report 'repaired' (live: "attempt 1/4 corrected it
                     # -> '[No photo provided]'"), and the field was flagged
-                    # again on the next pass - a retry storm of full ComoRAG
+                    # again on the next pass - a retry storm of full CRAG
                     # sweeps over an answer that never moves.
                     log_block(
                         logger, logging.WARNING, "Form Repair: %s" % label,
@@ -395,7 +455,7 @@ class FormFillerRepairMixin:
                         "correct" % value,
                     )
                     break
-                if not self._ff_write_web(field, value, stop_flag, driver):
+                if not self._ff_write(field, value, stop_flag, driver):
                     # The page REFUSED this value (a typed input clears it) -
                     # keep the honest status and let the next attempt try again.
                     log_block(
@@ -406,7 +466,7 @@ class FormFillerRepairMixin:
                     res["status"] = "failed"
                     continue
                 res["value"] = value
-                state = self._ff_field_state(field, stop_flag, driver)
+                state = self._ff_state(field, stop_flag, driver)
                 still = self._ff_repair_reason(field, value, state, ground)
                 if still:
                     # Say WHAT was tried: without it a failed correction is

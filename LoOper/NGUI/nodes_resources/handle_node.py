@@ -78,6 +78,9 @@ class HandleNode(BaseNode):
         self.create_property('target_description', '')        # drag destination (drag only)
         self.create_property('agent_adaptive', False)        # Enable agent-driven grounding
         self.create_property('web_mode', False)              # Resolve against the browser DOM (click only)
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
     
     def get_handle_config(self):
         """Return the minimal configuration for this node."""

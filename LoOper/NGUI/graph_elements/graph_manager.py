@@ -3,6 +3,7 @@ from NodeGraphQt import NodeGraph
 from PyQt5.QtWidgets import QVBoxLayout, QSplitter, QGraphicsView
 from ..nodes import SequenceNode, WebSequenceNode, ActionNode, ConditionalNode, LLMNode, ChainImportNode, FormFillerNode, CodeNode, ContextNode, InputNode, HandleNode, MCPNode, OutputNode
 from ..constants import GRAPH_PLANE
+from .pipe_styling import restyle_pipes
 
 logger = logging.getLogger(__name__)
 
@@ -139,9 +140,11 @@ class GraphManager:
             logger.debug("Storing node_graph reference in parent widget")
             self.parent_widget.node_graph = self.node_graph
             
-            # Connect port connection signal for validation
+            # Connect port connection signal for validation + type coloring
             logger.debug("Connecting port_connected signal for validation")
             self.node_graph.port_connected.connect(self._on_port_connected)
+            self.node_graph.port_disconnected.connect(
+                lambda *_: restyle_pipes(self.node_graph))
             
             logger.info("Node graph setup completed successfully")
         except Exception as e:
@@ -606,6 +609,7 @@ class GraphManager:
         - output_port: The port that sends data (on the source node)
         """
         if not self._context_port_validation_enabled:
+            restyle_pipes(self.node_graph)
             return
             
         try:
@@ -649,6 +653,9 @@ class GraphManager:
                 logger.debug(f"Tools-port validation error: {e}")
         except Exception as e:
             logger.debug(f"Connection validation error: {e}")
+        else:
+            # Color the new pipe by connection type (exec/loopback/context/…)
+            restyle_pipes(self.node_graph)
 
     def _disconnect_ports(self, output_port, input_port):
         """Safely disconnect two ports."""

@@ -6,7 +6,7 @@ class.  App root = the LoOper/ directory (top-level packages NGUI/AI/player).
 """
 import logging
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QComboBox,
@@ -16,22 +16,16 @@ from PyQt5.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
-    QTextEdit,
     QTreeWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from NGUI.constants import (
-    ACCENT_COLOR,
-    BTN_PRIMARY_TEXT,
-    CONTROL_BG,
-    HAIRLINE,
-    RADIUS_SM,
-    TEXT_COLOR,
-)
+from NGUI.constants import DANGER_COLOR
 from NGUI.i18n import _
+from NGUI.icons import tabler_qicon
 from player.code_agent_ops.constants import (
     MAIN_FILE,
     STEER_PENALTY_BASE,
@@ -51,6 +45,10 @@ class UiMixin(object):
 
     def __init__(self, main_window=None):
         super().__init__()
+        # A plain QWidget subclass only paints its QSS background with this
+        # attribute set; without it #CodeStudioRoot stayed transparent and the
+        # lighter graph plane showed through empty areas (the chat column).
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._mw = main_window
         self._node = None
         self._config = {}
@@ -75,17 +73,20 @@ class UiMixin(object):
         self._chat_thread = None
         self._shell_thread = None
         self._stop_ref = None
+        self._chat_stop_ref = None  # Stop flag shared with stream workers
         self._last_run_record = None
         self._pending_run = False      # True while an agent auto-run is in flight
 
         # ---- agent loop state (flat, per-request) ----
         self._chat_history = []        # bounded ring of prior exchanges
         self._request_goal = None
+        self._request_is_question = False   # Laya's verdict for this request
+        self._intent_worker = None     # Laya intent classification thread
         self._rounds = 0               # applied main-code passes in this request
         self._tool_turns = 0           # investigation / corrective turns
         self._loop_aborted = False
         self._await_main = False       # next reply must edit the main script
-        self._last_sent = None         # (instruction, show_protocol) in flight
+        self._last_sent = None         # instruction of the turn in flight
         self._last_fail_kind = 'none'
         self._last_applied_main = None # dup detection across fix turns
         self._last_tool_results = None # last dev-tool output shown to the model
@@ -102,9 +103,15 @@ class UiMixin(object):
 
         # ---- live streaming ----
         self._stream_text = ''
-        self._stream_start_pos = None
         self._stream_started = False
         self._stream_timer = None
+        self._live_frame = None        # in-flight assistant bubble (rewritten
+        self._live_lbl = None          # in place as tokens arrive)
+        self._pipeline_thread = None   # modular project pipeline (build requests)
+        # Rendered chat log, replayed when the session is restored on a node
+        # switch: ('chat', role, text) | ('assistant', text) |
+        # ('run', title, ok, text)
+        self._chat_log = []
 
         self._build_ui()
 
@@ -112,22 +119,37 @@ class UiMixin(object):
     # UI construction
     # ------------------------------------------------------------------
 
+    def _icon_btn(self, icon, tooltip, obj=None, color=None, icon_px=18,
+                  btn_px=30):
+        """Icon-only vector button (Tabler glyph) with a hover tooltip, the
+        same compact idiom as the actions bar and chains-library tabs. No
+        button in the studio carries text now, so glyphs stay crisp."""
+        b = QPushButton()
+        ic = tabler_qicon(icon, icon_px, color=color)
+        if not ic.isNull():
+            b.setIcon(ic)
+            b.setIconSize(QSize(icon_px, icon_px))
+        b.setToolTip(tooltip)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setFixedSize(btn_px, btn_px)
+        if obj:
+            b.setObjectName(obj)
+        return b
+
     def _build_ui(self):
         mono = QFont('Consolas', 9)
         root = QVBoxLayout(self)
-        root.setContentsMargins(6, 6, 6, 6)
-        root.setSpacing(4)
+        root.setContentsMargins(10, 8, 10, 8)
+        root.setSpacing(6)
         self.setObjectName('CodeStudioRoot')
 
-        # ── Header: title, engine/model, run ──
-        head = QFrame()
-        head.setObjectName('StudioSection')
-        hv = QVBoxLayout(head)
-        hv.setContentsMargins(10, 6, 8, 4)
-        hv.setSpacing(4)
-
-        hl = QHBoxLayout()
-        hl.setSpacing(8)
+        # ── One compact top bar: identity · engine/model · actions ──
+        # The old two-row header (title card + a second engine/model/GGUF card)
+        # read as stacked panels; it is now a single flat row. Config labels are
+        # replaced by tooltips and the Ollama/llama.cpp model pickers swap in
+        # place (see _apply_engine_visibility), so only one selector shows.
+        bar = QHBoxLayout()
+        bar.setSpacing(6)
         title_col = QVBoxLayout()
         title_col.setSpacing(0)
         self._title_lbl = QLabel(_('No Code node selected'))
@@ -136,66 +158,72 @@ class UiMixin(object):
         self._sub_lbl.setObjectName('StudioSub')
         title_col.addWidget(self._title_lbl)
         title_col.addWidget(self._sub_lbl)
-        hl.addLayout(title_col, 1)
-        self._run_btn = QPushButton(_('Run'))
-        self._run_btn.setObjectName('primary')
-        self._run_btn.setToolTip(_('Run the node against the last real '
-                                   'upstream data'))
-        self._run_btn.clicked.connect(self._on_run)
-        hl.addWidget(self._run_btn)
-        self._stop_btn = QPushButton(_('Stop'))
-        self._stop_btn.setObjectName('danger')
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self._on_stop)
-        hl.addWidget(self._stop_btn)
-        back_btn = QPushButton('\u2190 ' + _('Graph'))
-        back_btn.setToolTip(_('Collapse the studio back to the graph'))
-        back_btn.clicked.connect(self._close_studio)
-        hl.addWidget(back_btn)
-        hv.addLayout(hl)
+        bar.addLayout(title_col, 1)
 
-        # Row 2: engine + model (Ollama / llama.cpp / BYOK providers) — the
-        # only config the chat needs; the selected model is stored on the
-        # node when code is applied.
-        sel = QHBoxLayout()
-        sel.setSpacing(6)
-        self._engine_lbl = QLabel(_('Engine:'))
-        sel.addWidget(self._engine_lbl)
         self._engine_combo = QComboBox()
         try:
             from NGUI.dialogs.engine_options import fill_engine_combo
             fill_engine_combo(self._engine_combo)
         except Exception:
             self._engine_combo.addItems(['Ollama', 'llama.cpp'])
-        self._engine_combo.setFixedHeight(24)
-        self._engine_combo.setFixedWidth(110)
+        self._engine_combo.setObjectName('StudioSelect')
+        self._engine_combo.setFixedHeight(26)
+        self._engine_combo.setFixedWidth(96)
+        self._engine_combo.setToolTip(_('Inference engine'))
         self._engine_combo.currentTextChanged.connect(self._on_engine_changed)
-        sel.addWidget(self._engine_combo)
-        self._model_lbl = QLabel(_('Model:'))
-        sel.addWidget(self._model_lbl)
+        bar.addWidget(self._engine_combo)
+
         self._model_combo = QComboBox()
+        self._model_combo.setObjectName('StudioSelect')
         self._model_combo.setEditable(True)
-        self._model_combo.setFixedHeight(24)
-        self._model_combo.setMinimumWidth(180)
-        sel.addWidget(self._model_combo)
-        self._refresh_btn = QPushButton('\u21bb')
-        self._refresh_btn.setToolTip(_('Refresh model list'))
-        self._refresh_btn.setFixedSize(24, 24)
-        self._refresh_btn.clicked.connect(self._refresh_models)
-        sel.addWidget(self._refresh_btn)
-        self._gguf_lbl = QLabel(_('GGUF:'))
-        sel.addWidget(self._gguf_lbl)
+        self._model_combo.setFixedHeight(26)
+        self._model_combo.setMinimumWidth(150)
+        self._model_combo.setMaximumWidth(260)
+        self._model_combo.setToolTip(_('Model'))
+        bar.addWidget(self._model_combo)
+
         self._gguf_combo = QComboBox()
+        self._gguf_combo.setObjectName('StudioSelect')
         self._gguf_combo.setEditable(True)
-        self._gguf_combo.setFixedHeight(24)
-        self._gguf_combo.setMinimumWidth(220)
-        sel.addWidget(self._gguf_combo)
-        sel.addStretch(1)
-        hv.addLayout(sel)
-        root.addWidget(head)
+        self._gguf_combo.setFixedHeight(26)
+        self._gguf_combo.setMinimumWidth(150)
+        self._gguf_combo.setMaximumWidth(300)
+        self._gguf_combo.setToolTip(_('GGUF model file'))
+        bar.addWidget(self._gguf_combo)
+
+        self._refresh_btn = self._icon_btn(
+            'REFRESH', _('Refresh model list'), btn_px=28)
+        self._refresh_btn.clicked.connect(self._refresh_models)
+        bar.addWidget(self._refresh_btn)
+
+        self._run_btn = self._icon_btn(
+            'PLAYER_PLAY', _('Run the node against the last real '
+                             'upstream data'), obj='primary', btn_px=32)
+        self._run_btn.clicked.connect(self._on_run)
+        bar.addWidget(self._run_btn)
+
+        self._stop_btn = self._icon_btn(
+            'PLAYER_STOP', _('Stop the agent / run'), obj='danger',
+            color=DANGER_COLOR, btn_px=32)
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.clicked.connect(self._on_stop)
+        bar.addWidget(self._stop_btn)
+
+        back_btn = self._icon_btn(
+            'ARROW_BACK', _('Collapse the studio back to the graph'),
+            btn_px=32)
+        back_btn.clicked.connect(self._close_studio)
+        bar.addWidget(back_btn)
+        root.addLayout(bar)
+
+        rule = QFrame()
+        rule.setObjectName('StudioRule')
+        rule.setFixedHeight(1)
+        root.addWidget(rule)
 
         # ── Page stack (one pane visible at a time) ──
         self._stack = QStackedWidget()
+        self._stack.setObjectName('StudioStack')
         root.addWidget(self._stack, 1)
         self._build_chat_page(mono)
         self._build_code_page(mono)
@@ -203,56 +231,73 @@ class UiMixin(object):
         self._build_files_page()
         self._build_io_page()
 
-        # ── Bottom pill tab strip ──
-        pills = QHBoxLayout()
-        pills.setContentsMargins(2, 2, 2, 2)
-        pills.setSpacing(4)
+        # ── Bottom tab strip (icon-only, like the chains library) ──
+        tabs = QHBoxLayout()
+        tabs.setContentsMargins(0, 0, 0, 0)
+        tabs.setSpacing(4)
         self._pill_btns = {}
+        tab_icons = {'chat': 'MESSAGE', 'code': 'CODE', 'terminal': 'TERMINAL',
+                     'files': 'FOLDER', 'io': 'TRANSFER'}
         for key, label in self.PAGES:
-            btn = QPushButton(_(label))
+            btn = self._icon_btn(tab_icons.get(key, 'CIRCLE'), _(label),
+                                 obj='StudioTab', icon_px=20, btn_px=34)
             btn.setCheckable(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setFixedHeight(24)
             btn.clicked.connect(lambda _c, k=key: self._switch_page(k))
             self._pill_btns[key] = btn
-            pills.addWidget(btn)
-        pills.addStretch(1)
+            tabs.addWidget(btn)
+        tabs.addStretch(1)
         self._tok_lbl = QLabel('')
         self._tok_lbl.setObjectName('StudioSub')
-        pills.addWidget(self._tok_lbl)
-        root.addLayout(pills)
+        tabs.addWidget(self._tok_lbl)
+        root.addLayout(tabs)
 
         self.setStyleSheet(_STUDIO_QSS)
         self._init_models()
         self._switch_page('chat')
 
     def _make_page(self):
-        frame = QFrame()
-        frame.setObjectName('StudioSection')
+        # A page is a plain container, not a bordered card: the studio root is
+        # already one surface, and nesting StudioSection cards inside it was
+        # the "too many panels" look.  The explicit object name keeps an ID
+        # rule on the page so the host window's inherited QWidget background
+        # (GRAPH_PLANE, lighter) can never bleed through.
+        frame = QWidget()
+        frame.setObjectName('StudioPage')
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(8, 6, 8, 6)
-        lay.setSpacing(4)
+        lay.setContentsMargins(0, 2, 0, 2)
+        lay.setSpacing(6)
         return frame, lay
 
     # ── Chat page ──
     def _build_chat_page(self, mono):
         page, lay = self._make_page()
-        self._chat_view = QTextEdit()
-        self._chat_view.setReadOnly(True)
-        try:
-            self._chat_view.document().setMaximumBlockCount(600)
-        except Exception:
-            pass
-        lay.addWidget(self._chat_view, 1)
+        # A scrollable column of real widget bubbles (the agent-overlay
+        # technique): QTextEdit's rich-text subset has no border-radius or
+        # max-width, so its CSS "bubbles" never actually rendered.
+        self._chat_scroll = QScrollArea()
+        self._chat_scroll.setObjectName('ChatScroll')
+        self._chat_scroll.setWidgetResizable(True)
+        self._chat_scroll.setFrameShape(QFrame.NoFrame)
+        self._chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName('ChatBody')
+        self._chat_lay = QVBoxLayout(body)
+        self._chat_lay.setContentsMargins(8, 8, 8, 8)
+        self._chat_lay.setSpacing(6)
+        self._chat_lay.setAlignment(Qt.AlignTop)
+        self._chat_lay.addStretch(1)   # rows insert before this anchor
+        self._chat_scroll.setWidget(body)
+        lay.addWidget(self._chat_scroll, 1)
 
         input_row = QHBoxLayout()
+        input_row.setSpacing(6)
         self._chat_input = QLineEdit()
         self._chat_input.setPlaceholderText(
             _('Tell the agent what to write or fix (Enter to send, /help)'))
         self._chat_input.returnPressed.connect(self._on_chat_send)
         input_row.addWidget(self._chat_input, 1)
-        self._send_btn = QPushButton(_('Send'))
-        self._send_btn.setObjectName('primary')
+        self._send_btn = self._icon_btn(
+            'SEND', _('Send'), obj='primary', btn_px=32)
         self._send_btn.clicked.connect(self._on_chat_send)
         input_row.addWidget(self._send_btn)
         lay.addLayout(input_row)
@@ -262,12 +307,13 @@ class UiMixin(object):
     def _build_code_page(self, mono):
         page, lay = self._make_page()
         bar = QHBoxLayout()
+        bar.setSpacing(6)
         self._file_lbl = QLabel('')
         self._file_lbl.setObjectName('FileLabel')
         bar.addWidget(self._file_lbl, 1)
-        save_btn = QPushButton(_('Save file'))
-        save_btn.setToolTip(_('Save this file: helpers to disk, main file to '
-                              'the node'))
+        save_btn = self._icon_btn(
+            'CHECK', _('Save this file: helpers to disk, main file to the '
+                       'node'), btn_px=30)
         save_btn.clicked.connect(self._save_open_file)
         bar.addWidget(save_btn)
         lay.addLayout(bar)
@@ -283,10 +329,9 @@ class UiMixin(object):
     def _build_terminal_page(self, mono):
         page, lay = self._make_page()
         bar = QHBoxLayout()
-        lbl = QLabel(_('Run console / shell'))
-        lbl.setObjectName('SectionLabel')
-        bar.addWidget(lbl, 1)
-        clear_btn = QPushButton(_('Clear'))
+        bar.setSpacing(6)
+        bar.addStretch(1)
+        clear_btn = self._icon_btn('ERASER', _('Clear console'), btn_px=28)
         clear_btn.clicked.connect(lambda: self._console.clear())
         bar.addWidget(clear_btn)
         lay.addLayout(bar)
@@ -298,13 +343,14 @@ class UiMixin(object):
         lay.addWidget(self._console, 1)
 
         cmd_row = QHBoxLayout()
+        cmd_row.setSpacing(6)
         self._term_input = QLineEdit()
         self._term_input.setPlaceholderText(
             _('$ command  (runs in the node folder; python/pip = node venv)'))
         self._term_input.returnPressed.connect(self._on_shell_send)
         cmd_row.addWidget(self._term_input, 1)
-        shell_btn = QPushButton(_('Run cmd'))
-        shell_btn.setObjectName('primary')
+        shell_btn = self._icon_btn(
+            'PLAYER_PLAY', _('Run command'), obj='primary', btn_px=32)
         shell_btn.clicked.connect(self._on_shell_send)
         cmd_row.addWidget(shell_btn)
         lay.addLayout(cmd_row)
@@ -314,20 +360,21 @@ class UiMixin(object):
     def _build_files_page(self):
         page, lay = self._make_page()
         bar = QHBoxLayout()
-        for text, slot in (
-            ('+ File', self._new_file),
-            ('+ Folder', self._new_folder),
-            ('Open', self._open_selected),
-            ('Rename', self._rename_selected),
-            ('Delete', self._delete_selected),
-            ('Refresh', self._refresh_files),
+        bar.setSpacing(4)
+        for icon, tip, slot in (
+            ('FILE_PLUS', _('New file'), self._new_file),
+            ('FOLDER_PLUS', _('New folder'), self._new_folder),
+            ('FOLDER_OPEN', _('Open'), self._open_selected),
+            ('PENCIL', _('Rename'), self._rename_selected),
+            ('TRASH', _('Delete'), self._delete_selected),
+            ('REFRESH', _('Refresh'), self._refresh_files),
         ):
-            b = QPushButton(_(text))
-            b.setFixedHeight(22)
+            b = self._icon_btn(icon, tip, btn_px=28)
             b.clicked.connect(slot)
             bar.addWidget(b)
         bar.addStretch(1)
-        hint = QLabel(_('script.py = executed main file'))
+        hint = QLabel(_('script.py = entry script (executed)  \u00b7  '
+                       'other files = project modules'))
         hint.setObjectName('StudioSub')
         bar.addWidget(hint)
         lay.addLayout(bar)
@@ -343,15 +390,15 @@ class UiMixin(object):
     # ── IO page ──
     def _build_io_page(self):
         page, lay = self._make_page()
-        conn_lbl = QLabel(_('Connected inputs (auto-injected as variables)'))
-        conn_lbl.setObjectName('SectionLabel')
-        lay.addWidget(conn_lbl)
         self._conn_view = QPlainTextEdit()
         self._conn_view.setReadOnly(True)
         self._conn_view.setMaximumHeight(64)
+        self._conn_view.setPlaceholderText(
+            _('Connected inputs (auto-injected as variables)'))
         lay.addWidget(self._conn_view)
 
         io_row = QHBoxLayout()
+        io_row.setSpacing(6)
         self._in_vars_box = self._make_var_box(True)
         self._out_vars_box = self._make_var_box(False)
         io_row.addWidget(self._in_vars_box['frame'])
@@ -362,20 +409,24 @@ class UiMixin(object):
     def _make_var_box(self, is_input):
         box = {}
         frame = QFrame()
-        frame.setObjectName('StudioSection')
+        frame.setObjectName('StudioWell')
         lay = QVBoxLayout(frame)
-        lay.setContentsMargins(6, 4, 6, 4)
+        lay.setContentsMargins(8, 6, 8, 6)
         lay.setSpacing(4)
+        head = QHBoxLayout()
         title = _('Input variables') if is_input else _('Output variables')
-        lay.addWidget(QLabel(title))
+        ttl = QLabel(title)
+        ttl.setObjectName('StudioSub')
+        head.addWidget(ttl, 1)
+        add_btn = self._icon_btn(
+            'PLUS', _('Add variable'), btn_px=24)
+        add_btn.clicked.connect(lambda: self._add_var_row(is_input))
+        head.addWidget(add_btn)
+        lay.addLayout(head)
         rows_host = QVBoxLayout()
         rows_host.setSpacing(2)
         rows_host.addStretch(1)
         lay.addLayout(rows_host)
-        add_btn = QPushButton(_('+ add'))
-        add_btn.setFixedHeight(22)
-        add_btn.clicked.connect(lambda: self._add_var_row(is_input))
-        lay.addWidget(add_btn)
         box['frame'] = frame
         box['rows_host'] = rows_host
         if is_input:
@@ -392,10 +443,11 @@ class UiMixin(object):
         name_field = QLineEdit(name)
         name_field.setPlaceholderText(_('variable name'))
         type_combo = QComboBox()
+        type_combo.setObjectName('StudioSelect')
         type_combo.addItems(VAR_TYPES)
         type_combo.setCurrentText(vtype)
-        remove_btn = QPushButton('\u00d7')
-        remove_btn.setFixedWidth(22)
+        remove_btn = self._icon_btn(
+            'CIRCLE_X', _('Remove'), color=DANGER_COLOR, icon_px=16, btn_px=24)
         remove_btn.clicked.connect(lambda: self._remove_var_row(row, is_input))
         rl.addWidget(name_field, 1)
         rl.addWidget(type_combo)
@@ -436,19 +488,10 @@ class UiMixin(object):
         names = [k for k, _l in self.PAGES]
         if key not in names:
             key = 'chat'
-        idx = names.index(key)
-        self._stack.setCurrentIndex(idx)
+        self._stack.setCurrentIndex(names.index(key))
+        # Checked look comes from the QSS (#StudioTab:checked), so no per-call
+        # inline stylesheet - the tab strip stays consistent with the library.
         for k, btn in self._pill_btns.items():
-            active = k == key
-            btn.setChecked(active)
-            btn.setProperty('checked', active)
-            btn.setStyleSheet(
-                f'QPushButton {{ background-color: '
-                f"{ACCENT_COLOR if active else CONTROL_BG}; "
-                f'color: {BTN_PRIMARY_TEXT if active else TEXT_COLOR}; '
-                f'border-radius: {RADIUS_SM}px; padding: 0px 14px; font-size: 11px; '
-                f"font-weight: 600; border: 1px solid "
-                f"{'transparent' if active else HAIRLINE}; }}"
-            )
+            btn.setChecked(k == key)
         if key == 'files':
             self._refresh_files()

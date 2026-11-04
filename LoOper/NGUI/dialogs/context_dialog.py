@@ -380,7 +380,8 @@ class ContextDialog(ModernDialog):
             return
 
         learned = [r for r in rows
-                   if str(r.get('key') or '').startswith('learned/')]
+                   if str(r.get('key') or '').startswith(
+                       ('learned/', 'verified/', 'alias/'))]
         turns = [r for r in rows
                  if str(r.get('source_type') or '').lower() == 'llm'
                  and not str(r.get('key') or '').startswith('learned/')]
@@ -461,9 +462,11 @@ class ContextDialog(ModernDialog):
         try:
             from LoOper.AI.context_database import ContextDatabase
             db = ContextDatabase()
+            # A key the USER typed is VERIFIED: it is parsed ahead of every
+            # auto-learned record and the pipeline never re-derives it.
             db.push(chain_id=self.chain_id or '', node_id=self.node_id,
-                    key="learned/%s" % label.strip(), value=value.strip(),
-                    source_type='learned')
+                    key="verified/%s" % label.strip(), value=value.strip(),
+                    source_type='verified')
             db.close()
         except Exception as e:
             QMessageBox.warning(self, _("Error"), str(e))
@@ -478,7 +481,19 @@ class ContextDialog(ModernDialog):
         try:
             from LoOper.AI.context_database import ContextDatabase
             db = ContextDatabase()
-            db.update_entry(row.get('id'), text)
+            _key = str(row.get('key') or '')
+            if _key.startswith('learned/'):
+                # Editing an AUTO answer is the user CORRECTING it: promote the
+                # correction to the verified tier and drop the auto row, so the
+                # engine can no longer override it (that is what made a
+                # hand-fixed field come back wrong on the next run).
+                _lab = _key[len('learned/'):]
+                db.push(chain_id=self.chain_id or '', node_id=self.node_id,
+                        key="verified/%s" % _lab, value=str(text or '').strip(),
+                        source_type='verified')
+                db.delete_entry(row.get('id'))
+            else:
+                db.update_entry(row.get('id'), text)
             db.close()
         except Exception as e:
             self._placeholder(self.all_layout, f"Error: {e}")

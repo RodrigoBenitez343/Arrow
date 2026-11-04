@@ -47,6 +47,219 @@ def test_the_source_is_pulled_from_a_passive_context_node():
     assert served == ["ctx1"]
 
 
+def test_a_user_verified_answer_is_authoritative(monkeypatch):
+    """A hand-corrected answer is never put to the engine that was wrong.
+
+    Live: the user fixed a learned answer, Laya's verdict called it a misfit,
+    the record was re-derived and the corrected field came back wrong on the
+    next run.  An AUTO record the source cannot show is dropped outright - the
+    engine cannot ground what is not there - while a SHORT record ('Yes'),
+    which the source can neither prove nor disprove, is still its call."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    calls = {"n": 0}
+
+    def _verdict(*a, **k):
+        calls["n"] += 1
+        return False
+
+    monkeypatch.setattr(laya_hooks, "value_accuracy_or", _verdict)
+
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("English level*", "Intermedio", cfg, "ctx",
+                                  manual=True) == 1.0
+    assert calls["n"] == 0            # no engine verdict on a verified answer
+
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("English level*", "Intermedio", cfg,
+                                  "ctx") == 0.0
+    assert calls["n"] == 0            # nowhere in the source: not even asked
+
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("Authorized to work?", "Yes", cfg,
+                                  "RESUME TEXT") == 0.0
+    assert calls["n"] == 1            # an AUTO short record is still revisable
+
+
+def test_a_record_the_source_holds_verbatim_skips_the_engine_verdict(monkeypatch):
+    """A stored answer the source contains LITERALLY is correct by definition.
+
+    Live: 'benitezrodrigo169@gmail.com' sat in the trusted document at char 228
+    while the calibrated statement scored p=0.416 - the markdown links around
+    the address alone moved the same judgement to 0.55 - so a CORRECT record was
+    declared a misfit, re-probed through a full ComoRAG sweep and lost.  A
+    verbatim copy is not a judgement call; a short word or an address the
+    source does NOT hold still goes to the engine."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    calls = {"n": 0}
+
+    def _verdict(*a, **k):
+        calls["n"] += 1
+        return False
+
+    monkeypatch.setattr(laya_hooks, "value_accuracy_or", _verdict)
+    source = ("# Rodrigo David Benitez\n"
+              "[benitezrodrigo169@gmail.com](mailto:benitezrodrigo169@gmail.com)\n"
+              "Buenos Aires, Argentina")
+
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("Email address*",
+                                  "benitezrodrigo169@gmail.com",
+                                  cfg, source) == 1.0
+    assert calls["n"] == 0        # the source already proves it
+
+    # A short word occurs everywhere in a big pool and proves nothing.
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("Authorized to work?", "Yes",
+                                  cfg, source) == 0.0
+    # An address the source does not hold is not a judgement call either: an
+    # AUTO record nobody can point at is dropped without the engine.
+    h._ff_last_match_conf = 0.9
+    assert h._ff_reuse_confidence("Email address*", "someoneelse@gmail.com",
+                                  cfg, source) == 0.0
+    assert calls["n"] == 1
+
+
+def test_a_record_is_the_answer_not_a_string_to_paste():
+    """A stored record answers the QUESTION; it does not certify a string for
+    every occurrence of that question.  The same ask is a textarea on one form
+    and a length-capped input on the next, and a record that THIS control
+    cannot hold is handed to the extractor as context (re-fitted), never typed
+    in raw - the wording belongs to the occurrence it was written for."""
+    h = _Harness()
+    long_record = (
+        "Forward-deployed AI/ML engineer who takes AI from prototype to "
+        "production in regulated, on-prem and air-gapped environments, and "
+        "owns the last mile across speech, translation and RAG tooling.")
+
+    # A plain single-line text input takes it as it stands.
+    assert h._ff_fit_record(
+        "Role", "DevOps engineer", {"tag": "input", "type": "text"},
+        "text") == "DevOps engineer"
+    # A textarea does not: the wording belongs to the other occurrence.
+    assert h._ff_fit_record(
+        "Role", long_record, {"tag": "textarea"}, "text") == ""
+    # Neither does a length-capped control.
+    assert h._ff_fit_record(
+        "Role", long_record,
+        {"tag": "input", "type": "text", "maxlength": 100}, "text") == ""
+    # A band learned on a choice question is scalarized for a number box.
+    assert h._ff_fit_record(
+        "Years of experience", "2-5 years",
+        {"tag": "input", "type": "number"}, "text") == "2"
+
+
+def test_a_verified_label_matches_a_reworded_question():
+    """The same question reworded or translated must hit the verified record -
+    a pure cosine gate missed it and the field was asked again."""
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    pool = {
+        "please provide your salary expectations in usd in a monthly basis":
+            "6000",
+    }
+    got, key = h._ff_learned_match(
+        "¿Cuál es tu remuneración bruta pretendida para el rol?*", pool, cfg,
+        manual_keys=set(pool))
+    assert got == ""                       # no word overlap with that label
+    got, key = h._ff_learned_match(
+        "Please provide your salary expectations (USD per month)*", pool, cfg,
+        manual_keys=set(pool))
+    assert got == "6000" and key in pool
+
+
+def test_one_question_is_one_record_however_it_is_worded(monkeypatch):
+    """The same question in two wordings must not become two records with two
+    answers (live: "how much experience you have with cloud providers like
+    aws?" and "how many years of experience do you have with aws?" each got
+    their own entry, and they disagreed).
+
+    Laya answers the same-question question; the node's LLM is only its
+    fallback, so the engine verdict is what decides here."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    h._ff_pass_cfg = cfg
+    h._ff_verified = []
+    h._ff_new_learned = []
+    h._ff_canon_cache = {}
+    canonical = "how many years of experience do you have with aws"
+    h._ff_known_answers = {canonical: "6"}
+
+    def _same(label, cands, fallback=None, agree=None):
+        return cands[0]
+
+    monkeypatch.setattr(laya_hooks, "same_question_or", _same)
+
+    reworded = "how much experience you have with cloud providers like aws?"
+    # An AUTO answer that disagrees is NOT learned: the pool keeps its answer.
+    h._ff_learn(reworded, "3", "pool")
+    assert h._ff_new_learned == []
+
+    # A USER answer replaces the SAME record instead of adding a second one.
+    h._ff_learn(reworded, "7", "pool", manual=True)
+    assert h._ff_verified == [(canonical, "7")]
+
+
+def test_a_question_asked_in_another_language_links_to_the_same_record(monkeypatch):
+    """Same question, ANOTHER LANGUAGE, same answer: the pool keeps ONE record.
+
+    The translated label shares no word with the stored one, so the lexical
+    prefilter never offered the record and the answer was stored twice, once
+    per language.  A record that already holds the SAME answer is a candidate.
+    """
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    h._ff_pass_cfg = cfg
+    h._ff_verified = []
+    h._ff_new_learned = []
+    h._ff_canon_cache = {}
+    canonical = "please provide your salary expectations in usd"
+    h._ff_known_answers = {canonical: "6000"}
+
+    def _same(label, cands, fallback=None, agree=None):
+        return cands[0]
+
+    monkeypatch.setattr(laya_hooks, "same_question_or", _same)
+
+    spanish = "cual es tu remuneracion bruta pretendida para el rol?"
+    h._ff_learn(spanish, "6000", "pool")
+    assert h._ff_new_learned == []      # already answered, in the other language
+
+    # A DIFFERENT answer is never silently folded into that record.
+    h._ff_learn(spanish, "9000", "pool")
+    assert h._ff_new_learned == []      # dropped: the pool keeps "6000"
+
+
+def test_unrelated_questions_never_pay_a_verdict(monkeypatch):
+    """The lexical prefilter keeps the same-question verdict off both the
+    engine and the model for every field that shares nothing with the store."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    calls = []
+
+    def _same(*a, **k):
+        calls.append(a)
+        return ""
+
+    monkeypatch.setattr(laya_hooks, "same_question_or", _same)
+    h._ff_llm_call = lambda *a, **k: calls.append(a) or "1"
+    known = {"please provide your salary expectations in usd": "6000"}
+
+    assert h._ff_canonical_label("LinkedIn Profile*", known, cfg) == ""
+    assert calls == []
+
+
 def test_learned_answers_are_pushed_into_the_wired_context_node():
     """The form filler PUSHES this pass's material into the Context pool it is
     wired to (ctx_out -> ctx_in), so the learned answers persist even though the
@@ -189,11 +402,32 @@ def test_a_learned_record_holding_its_own_question_is_not_reused():
     from .common import _ff_render_corrections
     h._ff_gather_source_text = lambda node: _ff_render_corrections(
         [(question + "*", question)])
-    h._ff_probe = lambda *a, **k: "7+ years of ML experience with AWS."
+    h._ff_retrieve = lambda *a, **k: "7+ years of ML experience with AWS."
     h._ff_extract = lambda *a, **k: "I use AWS services daily"
     h._execute_form_filling_node(_node(), None)
     assert h.writes == [("f0", "I use AWS services daily")]
     assert question not in [w[1] for w in h.writes]
+
+
+def test_a_page_value_holding_markdown_is_refilled_with_its_plain_form():
+    """Live: a learned '**1**' was written into a digits-only question, read
+    back verbatim, and then skipped on every later pass - the semantic rail
+    agrees the value answers the field while the site rejects it.  A page value
+    that still carries markup is not a fill, so the field is filled again."""
+    label = "¿Cuántos años de experiencia tienes con Modelo de datos?*"
+    h = _Harness()
+    _wire(h, fields=[{"id": "f0", "label": label, "kind": "text",
+                      "tag": "input"}],
+          current="**1**", llm_value="1", reads=["1"])
+    # The POOL carries the poisoned record: the answer learned with markers.
+    from .common import _ff_render_corrections
+    h._ff_gather_source_text = lambda node: _ff_render_corrections(
+        [(label, "**1**")])
+    h._execute_form_filling_node(_node(), None)
+    summary = json.loads(h.get_variable("node_ff1_output"))
+    assert h.writes == [("f0", "1")]      # NOT skipped as 'already filled'
+    assert summary["fields"][0]["status"] == "filled"
+    assert summary["fields"][0]["value"] == "1"
 
 
 def test_a_combo_holding_the_answer_is_committed_not_skipped():
@@ -430,13 +664,14 @@ def test_esc_stops_the_node_immediately_mid_field(caplog):
                      {"id": "c", "label": "Third"}],
           value="v", reads=["v", "v", "v"], llm_value="v")
 
-    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint=""):
+    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint="",
+               learned_hint="", field=None):
         # The user hits ESC while THIS field's probe is running.
         h.probes.append(label)
         state["stop"] = True
         return "evidence text"
 
-    h._ff_probe = _probe
+    h._ff_retrieve = _probe
     caplog.set_level("INFO")
     h._execute_form_filling_node(_node(), lambda: state["stop"])
 
@@ -457,19 +692,20 @@ def test_field_diagnostics_are_logged_as_a_table(caplog):
     _wire(h, fields=[{"id": "f0", "label": "Email"}], value="a@b.com",
           reads=["a@b.com"], llm_value="a@b.com")
 
-    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint=""):
-        h._ff_last_route = "comoRAG: 2 composed fact(s) + 1 verbatim excerpt(s)"
-        h._ff_last_facts = 2
-        h._ff_last_excerpts = 1
+    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint="",
+               learned_hint="", field=None):
+        h._ff_last_route = "CRAG: correct, 2 strip(s) kept of 2 scored"
+        h._ff_last_action = "correct"
+        h._ff_last_kept = 2
         return "evidence text"
-    h._ff_probe = _probe
+    h._ff_retrieve = _probe
 
     caplog.set_level("INFO")
     h._execute_form_filling_node(_node(), None)
     text = caplog.text
     # The node-parameter and source tables...
     assert "Form Filler Parameters" in text
-    assert "ComoRAG consolidation" in text
+    assert "Retrieval (CRAG)" in text
     assert "Form Filler Sources" in text
     # ...and the enumerated fields...
     assert "Form Fields to Fill (1)" in text
@@ -477,8 +713,8 @@ def test_field_diagnostics_are_logged_as_a_table(caplog):
     # ...the per-field diagnostic table, carrying the route/facts/excerpts...
     assert "Form Field: Email" in text
     assert "Retrieval route" in text
-    assert "comoRAG: 2 composed fact(s) + 1 verbatim excerpt(s)" in text
-    assert "Facts / excerpts" in text and "2 / 1" in text
+    assert "CRAG: correct, 2 strip(s) kept of 2 scored" in text
+    assert "CRAG verdict / strips" in text and "correct / 2 kept" in text
     # ...and the closing summary + output block.
     assert "Form Filler Summary" in text
     assert "Form Filler Output" in text
@@ -584,6 +820,48 @@ def test_a_pool_fact_fills_the_field_without_any_probe():
     assert h.probes == []                 # ComoRAG was bypassed
     assert h.writes == [("f0", "a@b.com")]
     assert json.loads(h.get_variable("node_ff1_output"))["filled"] == 1
+
+
+def test_a_combination_the_source_never_states_is_not_reused(caplog):
+    """The stored 'Buenos Aires, Saint Paul' was learned from a pack that held TWO
+    rows (the contact line and a 2018 employer).  Every fragment is real, so the
+    verbatim rail and the entailment verdict both pass it - and the field keeps a
+    value the document never states.  A compound record must appear AS WRITTEN."""
+    h = _Harness()
+    _wire(h, fields=[{"id": "f0", "label": "Location (city)"}],
+          evidence="Buenos Aires, Argentina",
+          llm_value="Buenos Aires, Argentina",
+          reads=["Buenos Aires, Argentina"])
+    pool = ("[[FORM_CORRECTIONS]]\n## Location (city)\nBuenos Aires, Saint Paul\n"
+            "[[/FORM_CORRECTIONS]]\n\nBuenos Aires, Argentina\n"
+            "Oxnard, California, USA")
+    caplog.set_level("INFO")
+    node = _node(ask_user=False)
+    node["inputs"] = [{"from_node": "ctx1", "input_port": "ctx_in"}]
+    h.set_variable("node_ctx1_output", pool)
+
+    h._execute_form_filling_node(node, None)
+    assert h.writes == [("f0", "Buenos Aires, Argentina")]
+    assert "combination the source never states" in caplog.text
+
+
+def test_a_record_the_source_does_not_hold_is_not_written():
+    """A stale AUTO record ('PDF resume_rodrigo_benitez.pdf' for a 'Photo' field)
+    rides in as context and the extractor echoes it back.  With nothing in the
+    source to point at, the field is LEFT ALONE - never filled from a record the
+    pool cannot ground."""
+    h = _Harness()
+    _wire(h, fields=[{"id": "f0", "label": "Photo"}], evidence="",
+          llm_value="", reads=[])
+    pool = ("[[FORM_CORRECTIONS]]\n## Photo\nPDF resume_rodrigo_benitez.pdf\n"
+            "[[/FORM_CORRECTIONS]]\n\nRodrigo David Benitez\nBuenos Aires")
+    node = _node(ask_user=False, answer_na=False)
+    node["inputs"] = [{"from_node": "ctx1", "input_port": "ctx_in"}]
+    h.set_variable("node_ctx1_output", pool)
+
+    h._execute_form_filling_node(node, None)
+    assert h.writes == []
+    assert json.loads(h.get_variable("node_ff1_output"))["skipped"] == 1
 
 
 def test_a_correct_fill_is_tagged_as_a_fact_for_the_pool():

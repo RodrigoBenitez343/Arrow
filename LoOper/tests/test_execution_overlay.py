@@ -235,6 +235,24 @@ def test_web_overlay_payload_is_idempotent_per_document():
     assert data["apiOk"] is True and data["onOk"] is True
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_web_overlay_walks_its_own_cursor_to_the_target():
+    """The page owns the pointer during a web replay: each mark WALKS the
+    in-page cursor onto the element's centre and reports the walk, so the action
+    can wait behind it.  Nothing here may reach an OS pointer - that is what
+    dragged the user's own mouse across the screen."""
+    harness = Path(__file__).parent / "js" / "exec_overlay_cursor_harness.js"
+    proc = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert 180 <= data["first_walk_ms"] <= 550
+    assert 180 <= data["second_walk_ms"] <= 550
+    assert data["parked"] == [500, 310]     # walked onto the second target
+    assert data["trail_strokes"] > 0        # and left a trail on the way
+
+
 def test_web_mark_script_reuses_the_deep_search():
     assert "__wvpDeepFindAny" in JS_EXEC_MARK       # shadow-piercing resolve
     assert "__wvpExecMark" in JS_EXEC_MARK          # hands the rect to the overlay

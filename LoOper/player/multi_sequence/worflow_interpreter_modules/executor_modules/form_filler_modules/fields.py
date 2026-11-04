@@ -276,6 +276,15 @@ class FormFillerFieldsMixin:
             if (f.get("kind") or "") != "choice":
                 out.append(f)
                 continue
+            # A control that ALREADY carries its own option list is ONE question
+            # with its options, not one control per option - a <select>, a combo,
+            # or an enumerated group.  Merging it made the QUESTION the only
+            # "option" (live: 'Choose one: ¿Ha trabajado en PedidosYa?' with
+            # options=[the question]) and the question then got written into the
+            # page as the answer.
+            if f.get("options"):
+                out.append(f)
+                continue
             gk = f.get("group") or ("solo:%s" % f.get("index"))
             g = groups.get(gk)
             if g is None:

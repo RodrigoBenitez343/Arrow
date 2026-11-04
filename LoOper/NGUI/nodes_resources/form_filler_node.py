@@ -1,7 +1,7 @@
 """Form Filling node — fills ONE PAGE of a form with a small language model.
 
 The node enumerates the form's fields deterministically (live DOM for web;
-vision + LayoutLMv3 for desktop) and fills them ONE FIELD AT A TIME.  Each
+Windows UI Automation for desktop) and fills them ONE FIELD AT A TIME.  Each
 field's value is grounded by probe-based retrieval over the connected source
 documents; the RUNTIME owns the field->value binding.  The model only ever
 returns a single value for a single field (or a ``SKIP`` sentinel).
@@ -80,15 +80,19 @@ class FormFillerNode(BaseNode):
         # Optional label allow/deny lists (comma-separated, case-insensitive).
         self.create_property('fields_include', '')
         self.create_property('fields_skip', '')
-        # Probe-based retrieval tuning (kept small for small-model windows).
-        self.create_property('probe_top_k', '3')
-        self.create_property('probe_char_budget', '1500')
-        self.create_property('probe_context_chars', '6000')
-        # Iterative ComoRAG retrieval cycles per field (1 = single-pass top-k;
-        # more cycles sweep the corpus further for better-grounded answers).
-        # ``consolidate`` gates whether the ComoRAG engine is used at all.
-        self.create_property('consolidate', 'true')
-        self.create_property('probe_cycles', '3')
+        # CRAG retrieval tuning (the port in AI/crag).
+        self.create_property('crag_enabled', 'true')
+        self.create_property('crag_evaluator', 'auto')
+        self.create_property('crag_upper_threshold', '0.60')
+        self.create_property('crag_lower_threshold', '0.40')
+        self.create_property('crag_decompose_mode', 'excerption')
+        self.create_property('crag_top_k', '6')
+        self.create_property('crag_max_strips', '12')
+        self.create_property('crag_top_n_internal', '6')
+        self.create_property('crag_top_n_external', '5')
+        self.create_property('crag_external', 'true')
+        self.create_property('crag_rewrite', 'true')
+        self.create_property('crag_char_budget', '4000')
         # Verify each field after writing (re-ask that field once on mismatch).
         self.create_property('verify', 'true')
         # Post-pass: re-check every written field's NATIVE validity and repair
@@ -131,6 +135,9 @@ class FormFillerNode(BaseNode):
         # element (a form / modal / iframe) so page chrome behind the current
         # frame is never read.  '' = whole document.
         self.create_property('web_scope', '')
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
 
     def get_form_filler_config(self):
         """Return the serialisable configuration for this node."""
@@ -141,11 +148,18 @@ class FormFillerNode(BaseNode):
             'instruction': self.get_property('instruction') or '',
             'fields_include': self.get_property('fields_include') or '',
             'fields_skip': self.get_property('fields_skip') or '',
-            'probe_top_k': int(self.get_property('probe_top_k') or 3),
-            'probe_char_budget': int(self.get_property('probe_char_budget') or 1500),
-            'probe_context_chars': int(self.get_property('probe_context_chars') or 6000),
-            'probe_cycles': int(self.get_property('probe_cycles') or 3),
-            'consolidate': _bool(self.get_property('consolidate') if self.get_property('consolidate') is not None else 'true'),
+            'crag_enabled': _bool(self.get_property('crag_enabled') if self.get_property('crag_enabled') is not None else 'true'),
+            'crag_evaluator': self.get_property('crag_evaluator') or 'auto',
+            'crag_upper_threshold': float(self.get_property('crag_upper_threshold') or 0.60),
+            'crag_lower_threshold': float(self.get_property('crag_lower_threshold') or 0.40),
+            'crag_decompose_mode': self.get_property('crag_decompose_mode') or 'excerption',
+            'crag_top_k': int(self.get_property('crag_top_k') or 6),
+            'crag_max_strips': int(self.get_property('crag_max_strips') or 12),
+            'crag_top_n_internal': int(self.get_property('crag_top_n_internal') or 6),
+            'crag_top_n_external': int(self.get_property('crag_top_n_external') or 5),
+            'crag_external': _bool(self.get_property('crag_external') if self.get_property('crag_external') is not None else 'true'),
+            'crag_rewrite': _bool(self.get_property('crag_rewrite') if self.get_property('crag_rewrite') is not None else 'true'),
+            'crag_char_budget': int(self.get_property('crag_char_budget') or 4000),
             'verify': _bool(self.get_property('verify') if self.get_property('verify') is not None else 'true'),
             'repair': _bool(self.get_property('repair') if self.get_property('repair') is not None else 'true'),
             'repair_attempts': int(self.get_property('repair_attempts') or 2),

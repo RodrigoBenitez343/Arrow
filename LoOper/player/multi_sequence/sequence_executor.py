@@ -15,6 +15,39 @@ from ..sequence_player import SequencePlayer
 from ..json_cache import get_sequence
 from ..base_bot import SeleniumBot
 from ..action_handlers import CLICK_JITTER_MIN, CLICK_JITTER_MAX
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import (
+        IS_WINDOWS,
+        activate_window,
+        active_window,
+        foreground_matches,
+        is_admin,
+        list_windows,
+        move_window,
+        sandbox_shared_dir,
+        screen_size,
+        start_sandbox_agent,
+        venv_python,
+    )
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import (
+        IS_WINDOWS,
+        activate_window,
+        active_window,
+        foreground_matches,
+        is_admin,
+        list_windows,
+        move_window,
+        sandbox_shared_dir,
+        screen_size,
+        start_sandbox_agent,
+        venv_python,
+    )
+
+
+def _is_admin() -> bool:
+    """True when this process holds an elevated/root token (platform gate)."""
+    return is_admin()
 
 
 def _is_sequence_shape(path: str) -> bool:
@@ -62,6 +95,15 @@ class SequenceExecutor:
         # gets a fresh disposable browser.
         self.web_chain_key = None
         self.web_profile_key = None
+        # True when this run was forced onto a disposable browser (playback
+        # while a web recording is capturing).  Imported chains inherit it so an
+        # isolated parent never silently puts its child back on the shared
+        # durable browser.
+        self.web_isolated = False
+        # Agent runs (a loop of chains over one browser session) set this: the
+        # next chain must continue on the SAME page and login, so the browser is
+        # left open at the end of the chain instead of being quit between steps.
+        self.keep_web_browser = False
         # True when the shared driver ATTACHED to a browser the user already
         # had open (or the GUI browser): close_web_session must then leave it
         # running instead of quitting it.
@@ -138,106 +180,22 @@ class SequenceExecutor:
 
     def _is_app_in_foreground(self, app_context):
         try:
-            import psutil
+            import psutil  # noqa: F401  (soft check: no psutil = no verdict)
         except Exception:
             return True
-
-        try:
-            import pygetwindow as gw
-        except Exception:
-            gw = None
-
-        try:
-            import win32gui
-            import win32process
-        except Exception:
-            win32gui = None
-            win32process = None
-
-        exe = str((app_context or {}).get("exe") or "")
-        proc_name = str((app_context or {}).get("process_name") or "")
-        title_hint = str((app_context or {}).get("title") or "")
-        pid_hint = (app_context or {}).get("pid")
-
-        exe_norm = os.path.normcase(exe) if exe else ""
-        proc_name_norm = proc_name.lower() if proc_name else ""
-
-        hwnd = None
-        title = ""
-        try:
-            if gw is not None:
-                w = gw.getActiveWindow()
-                if w is not None:
-                    title = str(getattr(w, "title", "") or "")
-                    hwnd = getattr(w, "_hWnd", None)
-        except Exception:
-            pass
-
-        try:
-            if hwnd is None and win32gui is not None:
-                hwnd = win32gui.GetForegroundWindow()
-                title = str(win32gui.GetWindowText(hwnd) or "")
-        except Exception:
-            pass
-
-        fg_pid = None
-        try:
-            if hwnd and win32process is not None:
-                _tid, fg_pid = win32process.GetWindowThreadProcessId(int(hwnd))
-        except Exception:
-            fg_pid = None
-
-        if not fg_pid:
-            return False
-
-        if pid_hint and int(pid_hint) == int(fg_pid):
-            return True
-
-        try:
-            p = psutil.Process(int(fg_pid))
-            if exe_norm:
-                try:
-                    if os.path.normcase(str(p.exe() or "")) == exe_norm:
-                        return True
-                except Exception:
-                    pass
-            if proc_name_norm:
-                try:
-                    if str(p.name() or "").lower() == proc_name_norm:
-                        return True
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
-        if title_hint:
-            try:
-                if title_hint.strip().lower() in str(title or "").lower():
-                    return True
-            except Exception:
-                pass
-
-        return False
+        ctx = app_context or {}
+        return foreground_matches(
+            pid=ctx.get("pid"),
+            exe=ctx.get("exe"),
+            process_name=ctx.get("process_name"),
+            title_hint=ctx.get("title"),
+        )
 
     def _ensure_app_open_and_focused(self, app_context, stop_flag, attempts=3):
         try:
             import psutil
         except Exception:
             return True
-
-        try:
-            import pygetwindow as gw
-        except Exception:
-            gw = None
-
-        try:
-            import win32gui
-            import win32process
-            import win32con
-        except Exception:
-            win32gui = None
-            win32process = None
-            win32con = None
 
         try:
             from pywinauto import Application
@@ -310,21 +268,8 @@ class SequenceExecutor:
                 pass
 
         def _foreground_hwnd():
-            try:
-                if gw is not None:
-                    w = gw.getActiveWindow()
-                    if w is not None:
-                        h = getattr(w, "_hWnd", None)
-                        if h:
-                            return int(h)
-            except Exception:
-                pass
-            try:
-                if win32gui is not None:
-                    return int(win32gui.GetForegroundWindow())
-            except Exception:
-                return None
-            return None
+            info = active_window()
+            return int(info["handle"]) if info and info.get("handle") else None
 
         def _matches_process(p):
             try:
@@ -368,54 +313,13 @@ class SequenceExecutor:
             return out
 
         def _window_candidates_for_pid(pid):
-            wins = []
+            """Visible titled windows of *pid* as (handle, title), top-most first."""
             try:
-                if gw is not None:
-                    for w in gw.getAllWindows():
-                        try:
-                            hwnd = getattr(w, "_hWnd", None)
-                            if not hwnd:
-                                continue
-                            hwnd = int(hwnd)
-                            if win32process is None:
-                                continue
-                            _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                            if int(wpid) != int(pid):
-                                continue
-                            if win32gui is not None and not win32gui.IsWindowVisible(hwnd):
-                                continue
-                            t = str(getattr(w, "title", "") or "")
-                            wins.append((hwnd, t))
-                        except Exception:
-                            continue
+                return [(w["handle"], w["title"])
+                        for w in list_windows()
+                        if w.get("pid") == int(pid)]
             except Exception:
-                wins = []
-
-            if wins:
-                return wins
-
-            try:
-                if win32gui is None or win32process is None:
-                    return wins
-
-                def cb(hwnd, _):
-                    try:
-                        if not win32gui.IsWindowVisible(hwnd):
-                            return
-                        _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                        if int(wpid) != int(pid):
-                            return
-                        t = str(win32gui.GetWindowText(hwnd) or "")
-                        if not t:
-                            return
-                        wins.append((int(hwnd), t))
-                    except Exception:
-                        return
-
-                win32gui.EnumWindows(cb, None)
-            except Exception:
-                pass
-            return wins
+                return []
 
         def _pick_window(wins):
             if not wins:
@@ -446,38 +350,22 @@ class SequenceExecutor:
             except Exception:
                 pass
 
-            try:
-                if win32gui is not None:
-                    try:
-                        if win32con is not None:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                            time.sleep(0.05)
-                    except Exception:
-                        pass
-                    
-                    # Restore window geometry if captured
-                    rect = (app_context or {}).get("rect")
-                    if rect:
-                        try:
-                            l = rect.get("left")
-                            t = rect.get("top")
-                            w_rect = rect.get("width")
-                            h_rect = rect.get("height")
-                            if all(v is not None for v in (l, t, w_rect, h_rect)):
-                                win32gui.MoveWindow(hwnd, int(l), int(t), int(w_rect), int(h_rect), True)
-                                time.sleep(0.05)
-                        except Exception:
-                            pass
-
-                    try:
-                        win32gui.SetForegroundWindow(hwnd)
+            rect = (app_context or {}).get("rect")
+            if rect:
+                try:
+                    l = rect.get("left")
+                    t = rect.get("top")
+                    w_rect = rect.get("width")
+                    h_rect = rect.get("height")
+                    if all(v is not None for v in (l, t, w_rect, h_rect)):
+                        move_window(hwnd, l, t, w_rect, h_rect)
                         time.sleep(0.05)
-                    except Exception:
-                        try:
-                            win32gui.BringWindowToTop(hwnd)
-                            time.sleep(0.05)
-                        except Exception:
-                            pass
+                except Exception:
+                    pass
+
+            try:
+                activate_window(hwnd)
+                time.sleep(0.05)
             except Exception:
                 pass
 
@@ -535,9 +423,20 @@ class SequenceExecutor:
                     if existing:
                         return True
 
+                    # The sandbox session needs an administrator token:
+                    # `schtasks /rl HIGHEST` for another user, `logoff`,
+                    # `icacls /grant`.  Say so instead of dying halfway.
+                    if IS_WINDOWS and not _is_admin():
+                        logger.error(
+                            "RDP sandbox requires administrator rights: start "
+                            "Arrow as administrator, or run this chain on the "
+                            "desktop (sandbox disabled)."
+                        )
+                        return False
+
                     logger.info("Initializing Concurrent RDP Agent Session...")
-                    
-                    temp_dir = "C:\\TempShared"
+
+                    temp_dir = sandbox_shared_dir()
                     os.makedirs(temp_dir, exist_ok=True)
                     
                     for name in ("agent_info.json", "agent_error.txt", "agent_log.txt", "agent_status.txt"):
@@ -633,8 +532,7 @@ class SequenceExecutor:
                     else:
                         _src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
                         _py_candidates.extend([
-                            os.path.join(_src_root, ".venv", "Scripts", "python.exe"),
-                            os.path.join(_src_root, ".venv", "scripts", "python.exe"),
+                            venv_python(os.path.join(_src_root, ".venv")),
                         ])
                         _py_candidates.append(sys.executable)
                     for c in _py_candidates:
@@ -658,6 +556,33 @@ class SequenceExecutor:
 
                     agent_username = str(ctx.get("rdp_username") or ctx.get("username") or "LoOperAgent")
                     agent_password = str(ctx.get("rdp_password") or ctx.get("password") or "LoOperPassword123!")
+
+                    # X11 twin of the RDP dance below: the desktop is already
+                    # interactive, so the agent is started in THIS session and
+                    # polled on its port - the same handshake `mstsc` ends with.
+                    if not IS_WINDOWS:
+                        _extra_env = {}
+                        if not getattr(sys, 'frozen', False):
+                            _extra_env["PYTHONPATH"] = _src_root
+                        agent_url = start_sandbox_agent(
+                            safe_python, agent_script, port,
+                            work_dir=temp_dir, extra_env=_extra_env)
+                        if not agent_url:
+                            return False
+                        for target in (ctx,
+                                       getattr(self, "global_app_context_override", None)):
+                            try:
+                                if isinstance(target, dict):
+                                    target["sandbox_agent_url"] = agent_url
+                                    target["rdp_agent_url"] = agent_url
+                            except Exception:
+                                pass
+                        try:
+                            from player.computer_vision import set_sandbox_agent_url
+                            set_sandbox_agent_url(agent_url)
+                        except Exception:
+                            pass
+                        return True
 
                     # --- Create .bat runner script for RDP alternate shell ---
                     runner_bat = os.path.join(temp_dir, f"agent_runner_{os.getpid()}.bat")
@@ -758,9 +683,7 @@ class SequenceExecutor:
                     host_w = 1920
                     host_h = 1080
                     try:
-                        import ctypes
-                        host_w = int(ctypes.windll.user32.GetSystemMetrics(0))
-                        host_h = int(ctypes.windll.user32.GetSystemMetrics(1))
+                        host_w, host_h = screen_size()
                     except Exception:
                         host_w = 1920
                         host_h = 1080
@@ -1392,10 +1315,10 @@ enablecredsspsupport:i:1
           browser stays open afterwards for inspection.
         - ``web_profile_key`` set (agent / scheduled / CLI runs): the same
           durable profile is used (attach to the still-open shared browser
-          when there is one, else launch/relaunch it).  Visible runs close
-          their self-launched browser at the end (profile kept); a still-open
-          shared browser is attached, not killed.  Headless runs open the
-          durable profile without a window.
+          when there is one, else launch/relaunch it).  Visible durable runs
+          leave their browser open for the next recorder/playback reattach;
+          a still-open shared browser is attached, not killed.  Headless runs
+          open the durable profile without a window.
         - neither (web_isolated run - playback while a web recording is
           capturing, or a chain config with no file identity): every chain
           run gets its own disposable browser, terminated by
@@ -1484,7 +1407,17 @@ enablecredsspsupport:i:1
                 self._web_session_driver = create_session(
                     headless=False, profile_dir=_chain_scope_dir(profile_key)
                 )
-                self._web_session_released = False
+                # The durable visible browser must SURVIVE the run - it IS the
+                # shared workbench browser: recording (and the next playback)
+                # reattaches to it instead of spawning a second instance on
+                # the same profile.  Quitting it here made every next caller
+                # relaunch its own Chrome (record/playback saw two instances).
+                try:
+                    from ..web.session import release_workbench
+                    release_workbench(self._web_session_driver)
+                except Exception:
+                    pass
+                self._web_session_released = True
                 return self._web_session_driver
             logger.info(
                 "Creating shared headless web browser on durable profile "
@@ -1542,7 +1475,8 @@ enablecredsspsupport:i:1
         if driver is None:
             return
         chain_key = getattr(self, "web_chain_key", None)
-        if chain_key or getattr(self, "_web_session_released", False):
+        if (chain_key or getattr(self, "_web_session_released", False)
+                or getattr(self, "keep_web_browser", False)):
             logger.info(
                 "Left chain-linked web browser open (scope=%s)",
                 chain_key or getattr(self, "web_profile_key", None) or "attached",

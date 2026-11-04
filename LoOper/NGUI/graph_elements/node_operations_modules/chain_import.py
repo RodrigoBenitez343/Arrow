@@ -103,7 +103,10 @@ class ChainImportOperationsMixin:
             )
             return False
 
-        # --- Ask the user for a name and description ---
+        # --- Ask the user for a name ---
+        # No description is asked for: the chain's own flow metadata is written
+        # by the describer right after the file exists (see below), so a typed
+        # sentence would only be a second, stale copy of it.
         chain_name, ok = QInputDialog.getText(
             self.parent_widget,
             "New Chain Name",
@@ -115,17 +118,6 @@ class ChainImportOperationsMixin:
             return False
         chain_name = chain_name.strip()
 
-        chain_desc, ok = QInputDialog.getText(
-            self.parent_widget,
-            "Chain Description",
-            "Enter a description for this chain:",
-            QLineEdit.Normal,
-            ""
-        )
-        if not ok:
-            return False
-        chain_desc = chain_desc.strip()
-
         # --- Build the chain configuration from the selected nodes ---
         config_manager = self.parent_widget.config_manager
         # Merge EVERY node-category list the config manager produced.  A
@@ -133,7 +125,7 @@ class ChainImportOperationsMixin:
         # (web sequences, input / orchestrator / handle / mcp / output nodes)
         # from the wrapped chain while their nodes were still deleted from
         # the graph - the nodes vanished without ever reaching the bundle.
-        merged_config = {"description": chain_desc}
+        merged_config = {}
         wrapped_nodes = []
         for node in nodes_to_wrap:
             single_cfg = config_manager.get_single_node_config(node)
@@ -193,6 +185,12 @@ class ChainImportOperationsMixin:
             )
             return False
 
+        # The chain exists and has a name: describe it NOW, so the next run
+        # already routes on its own lines (no model — the describer reads the
+        # file it just wrote).
+        from player import chain_refresh
+        described = chain_refresh.describe_file(chain_file_path) != chain_refresh.UPDATED
+
         # --- Remove the wrapped nodes from the graph ---
         for node in list(wrapped_nodes):
             try:
@@ -216,6 +214,13 @@ class ChainImportOperationsMixin:
             f"Successfully wrapped {len(wrapped_nodes)} node(s) into chain:\n"
             f"{safe_name}.json"
         )
+        if described:
+            message += "\n\nIt is described — the next run routes on it directly."
+        else:
+            message += (
+                "\n\nThe file was saved but could not be described back "
+                "(see the log); the chain still runs."
+            )
         if skipped:
             message += (
                 f"\n\n{skipped} node(s) had no exportable configuration and "
@@ -240,12 +245,14 @@ class ChainImportOperationsMixin:
             
             # Show dialog
             dialog = ChainImportDialog(current_config, self.parent_widget)
+            dialog.add_description(node.get_property('description') or '')
             
             if dialog.exec_() == dialog.Accepted:
                 config = dialog.get_config()
                 logger.debug(f"New Chain Import configuration: {config}")
                 
                 # Update the node with new configuration
+                node.set_property('description', dialog.description())
                 node.set_chain_import_data(
                     config['chain_file'],
                     config['import_mode'],

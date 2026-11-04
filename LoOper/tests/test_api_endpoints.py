@@ -88,6 +88,8 @@ def test_models_endpoint(client, monkeypatch):
     monkeypatch.setitem(sys.modules, "requests", mod)
     monkeypatch.setattr(api_mod, "requests", mod)
     monkeypatch.setattr(api_mod, "get_ollama_base_url", lambda: "http://127.0.0.1:11434")
+    # The GGUF listing is covered separately; this test is the Ollama leg.
+    monkeypatch.setattr(api_mod, "_gguf_model_files", lambda: [])
     resp = client.get("/models")
     assert resp.status_code == 200
     models = resp.json()

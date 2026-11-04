@@ -9,6 +9,11 @@ import base64
 import time
 import pyautogui
 
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import screenshot as capture_screen
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import screenshot as capture_screen
+
 # Disable PyAutoGUI failsafe to prevent interruption when mouse moves to corner
 pyautogui.FAILSAFE = False
 
@@ -110,7 +115,7 @@ class ScreenshotManager:
             region = click_crop_region(x, y, element_rect, region_size=region_size,
                                        screen_size=screen_size)
 
-            screenshot = pyautogui.screenshot(region=region)
+            screenshot = capture_screen(region)
 
             self.screenshot_count += 1
 

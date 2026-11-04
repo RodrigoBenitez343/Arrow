@@ -1,264 +1,511 @@
-"""assistant.py — the builder chat as a building ASSISTANT.
+"""assistant.py — the chain ANALYST, which may change what is selected.
 
-Aligned with the user's working method: the chain is built (and audited)
-MANUALLY in the canvas; the assistant helps where building is hard.  It
-answers questions grounded in the live chain and the user's SELECTION, and
-it acts on nodes only when asked — writing prompts, choosing models,
-filling settings, wiring, and building SKILL ladders.
+It reads (``read_graph``, ``read_node``) and answers questions about the chain
+from the evidence the panel hands it: the chain's own description when it has
+one, the deterministic topology digest otherwise.
 
-A skill ("thought ladder") is the decomposed working form of one process:
-``input -> llm/code/conditional steps -> output`` with a shared context
-pool that the llm steps write to and the last step reads back — the
-``basic skill example`` shape, generalized.  Skills run on LOCAL models by
-default; the orchestrator imports a saved skill as a tool.
+It may also CHANGE the canvas, but only what the user put in front of it:
+``edit_node`` writes settings on a SELECTED node and ``wire_nodes`` connects or
+disconnects the wire between the TWO selected nodes.  It cannot create or
+delete a node, record, or run anything; it does not write the chain's
+description and does not start the walkthrough — those are the panel's buttons.
 
-Actor split: the configured provider model (the builder settings engine)
-writes the reply and the action JSON; Python executes the actions through
-``execute_builder_call`` — the only canvas writer.  One bounded turn per
-user message: no composer loop, no per-step Laya/needle routing.
+The grounding is deterministic (``describe.py`` builds the digest from the
+resolved canvas); the model only writes prose over it.  Every failure raises
+(``errors.py``); a malformed envelope is a ``BuilderProtocolError``, not a
+silently-dropped action list.
 """
 
 import json
-import logging
+import re
 
-logger = logging.getLogger(__name__)
+from . import describe as _describe
+from . import flow as _flow
+from . import reasoning as _reasoning
+from . import tools as _tools
+from .errors import BuilderModelError, BuilderProtocolError
+from .trace import emit as _emit
 
-#: Hard caps — one turn is a handful of actions, never a marathon.
-MAX_ACTIONS = 8
+#: A reading turn needs a handful of drill-downs at most.
+MAX_ROUNDS = 3
+#: Chat tail carried between turns.
 MAX_HISTORY = 6
-PROMPT_CANVAS_CHARS = 3000
-PROMPT_SELECTION_CHARS = 2500
 
-#: The assistant ITERATES: edit -> test -> read -> edit again, until the
-#: chain passes its own test.  There is NO tight cap: the loop is bounded
-#: only by the model stopping, a stall (no change for MAX_IDLE_ROUNDS), or
-#: this very generous safety ceiling (a runaway model must still end).
-MAX_ROUNDS = 40
-#: Consecutive rounds that change NOTHING (only reads/tests) before the turn
-#: stops and asks the user — a model that only looks must not spin.
-MAX_IDLE_ROUNDS = 6
-#: Action results carried into the next round's prompt (bounded).
-MAX_RESULTS = 12
-
-
-#: Action names the assistant may execute (the whole surface).
-ACTION_NAMES = ('edit_node', 'configure_node', 'create_node', 'wire',
-                'set_description', 'save_chain', 'read_node', 'build_skill',
-                'test_chain')
-
-#: Actions that CHANGE the chain.  A round carrying one (and not testing
-#: itself) is auto-verified: the builder must always see whether the thing
-#: it just built runs, so the loop can iterate on the result.
-MUTATING_ACTIONS = ('create_node', 'edit_node', 'wire', 'delete_node',
-                    'build_skill', 'configure_node', 'set_description')
+#: Prompt budgets (characters).  Each part has a ceiling, and ``_format_turn``
+#: clips the SUM to ``PROMPT_TURN_CHARS``: per-part caps alone let the turn grow
+#: past any model's window, and an 8k model then answered a plain "show me the
+#: flow" with "please reduce the length of the messages".
+PROMPT_DIGEST_CHARS = 6000
+PROMPT_INDEX_CHARS = 2000
+PROMPT_SELECTION_CHARS = 1500
+PROMPT_HISTORY_CHARS = 1000
+RESULT_CLIP = 4000
+#: Everything the turn sends (every block, without the system prompt).
+PROMPT_TURN_CHARS = 10000
+#: Topology-only block for a chain that already describes itself.
+PROMPT_STRUCTURE_CHARS = 2500
 
 
-def _verdict(report):
-    """True / False / None for a ``test_chain`` report (None = no verdict)."""
-    text = str(report or '')
-    if 'test: completed' in text:
-        return False if 'NOT met' in text else True
-    if ('test: FAILED' in text or 'test: STALLED' in text
-            or 'test: STOPPED' in text):
-        return False
-    return None
+_ROLE_HEAD = (
+    "You are the LoOper/Arrow chain analyst, docked beside a chain canvas of a "
+    "deterministic computer-use runtime.\n"
+    "WHAT YOU DO\n"
+    "- Answer questions about this chain from the evidence below.\n"
+    "- Propose enhancements, and guide the user in building a chain — from "
+    "scratch or from another chain as a base — by naming the nodes to add, "
+    "their settings and the ports to wire. You cannot create or delete a node, "
+    "record or run anything, so those steps are the user's to do.\n"
+    "- CHANGE what the user has in front of it: the settings of the node(s) "
+    "they SELECTED, and — when exactly two nodes are selected — the wire "
+    "between those two (edit_node / wire_nodes). They refuse everything else, "
+    "and you report their result as it stands.\n"
+    "- Never write the chain's description and never start the walkthrough: "
+    "the panel's Describe button and its walk button own those. Do not emit a "
+    "'flow' object and do not ask for a walk.\n"
+    "For a change you cannot make, name the exact place it belongs (the dialog "
+    "field, the port pair to wire) and stop — never claim you changed it.\n"
+    "\n"
+    "THE GRAPH\n"
+    "- A chain is played by a deterministic player; the model that authored it "
+    "is not part of the run.\n"
+    "- EXECUTION edges decide WHEN: an `output` (exec out) into an `input` (exec "
+    "in). A conditional routes on `true` / `false`; a FILE-LOOP conditional "
+    "exposes a single `output`.\n"
+    "- DATA edges decide WHAT, and the destination port defines the meaning:\n"
+    "  * input.data -> llm.prompt REPLACES the prompt template (the instruction "
+    "belongs in system_message);\n"
+    "  * llm.context -> context.ctx_in STORES that turn; context.ctx_out -> "
+    "llm.context SERVES the whole pool (documents, skills, stored rows);\n"
+    "  * code uses NAMED IO ports for its declared variables; its base `output` "
+    "carries only execution and `error` is the failure branch;\n"
+    "  * an orchestrator LLM takes chains on `tools`, sub-brains on `brains`, "
+    "and exposes `trace` / `route`;\n"
+    "  * a context pool is PASSIVE: never run, only consulted and written "
+    "through its data ports.\n"
+    "- An `input` carries its value on `data`; its `output` (and `true`/`false` "
+    "when decision routing is on) only moves execution.\n"
+    "\n"
+    "ANSWERING \"WHAT DOES THIS CHAIN DO\"\n"
+    "1. The goal, from the chain's own words and the first act.\n"
+    "2. The start node, and why it starts.\n"
+    "3. The phases in order (a CHECK or LOOP closes one): what each does, and "
+    "what it leaves for the next.\n"
+    "4. Each CHECK: its criterion, and where true and false go.\n"
+    "5. Each LOOP: what repeats, what ends it, its cap.\n"
+    "6. Data per step: which value reaches which port, and what the port does "
+    "with it (replace / append / store / serve / bind).\n"
+    "7. Each REPORT: the value the chain actually produces.\n"
+    "8. The defects the topology contains: illegal wires, unwired branches, "
+    "dead ends, unreachable steps, missing recordings, typing on the real "
+    "desktop, more than one start.\n"
+    "Every node's DOES line under NODE CONTENT is built from its OWN settings — "
+    "the value it supplies, the criterion it decides, the instruction it writes "
+    "from, the recording it replays, plus its wiring. Answer about a node from "
+    "that line, never from its type or the type's purpose: the type is shared by "
+    "every node of that kind. Cite ports by ROLE, e.g. \"llm.prompt (prompt "
+    "in)\".\n"
+    "\n"
+    "A CHAIN CAN BE ONE NODE with no wires: then its DOES line IS the "
+    "description. Never call such a chain a stub or a placeholder while its node "
+    "points at a recording or carries settings that name real work; if the line "
+    "says the artifact is missing or holds no actions, say exactly that."
+)
 
+#: The facts an answer must not contradict.  (Writing the description is the
+#: Describe button's job, so the old "how to write flow metadata" block is gone.)
+_GROUND = (
+    "\n"
+    "GROUND YOUR ANSWER (a wrong statement is worse than a vague one)\n"
+    "- Only claim a value reaches a node when DATA FLOWS lists an edge into it. "
+    "A REPORT (output) with no data port receives nothing — it prints the text "
+    "it was configured with. Where a value lands is the port named on the edge, "
+    "not the node that looks closest.\n"
+    "- A node whose DOES line names a recording HAS its actions attached: never "
+    "call it unattached or empty; if the line reports a missing file, quote "
+    "that fact.\n"
+    "- An unwired branch is a dead end: say so. Never invent an edge the walk "
+    "does not show.\n"
+    "THE CHAIN'S OWN WORDS come first: when its stored description is in "
+    "front of you (summary and box notes), answer from it and from the "
+    "topology — do not restate the wiring and do not write it again."
+)
 
-def _clip(text, limit):
-    """A length-capped rendering (never raises)."""
-    text = str(text or '')
-    return text if len(text) <= limit else text[:limit] + '…'
+#: The mechanics of changing the canvas.  The tools enforce all of it, so a
+#: refusal is a fact the model reports — never something it works around.
+_CHANGES = (
+    "\n"
+    "CHANGING THE CANVAS (the tools enforce this; a refusal is a fact)\n"
+    "- edit_node works on ONE node the user selected, and only on the fields "
+    "its type declares — read_node lists them, so ask rather than guess.\n"
+    "- wire_nodes works only when EXACTLY TWO nodes are selected, and only "
+    "between those two. Give from_port/to_port when the source has several "
+    "execution outputs (a check) or the wire carries DATA; otherwise the only "
+    "execution pair is picked for you.\n"
+    "- Say what you changed in one line. If a tool raised, report its message "
+    "and ask for what it needs (usually a selection) — do not retry blindly."
+)
 
-_ROLE = (
-    "You are the LoOper/Arrow building assistant, docked beside the chain "
-    "canvas of a general computer-use automation app. The user builds the "
-    "chain manually; you help when asked. You can:\n"
-    "- answer questions about the chain, the SELECTED nodes, and how each "
-    "node works in a workflow — the canvas and the node runbook are below; "
-    "use read_node for any node's full details;\n"
-    "- write or improve prompts, choose models/engines and fill node "
-    "settings (edit_node accepts only the properties listed as editable);\n"
-    "- build SKILL ladders (build_skill): a described process decomposed "
-    "into input -> llm/code/conditional steps -> output with a shared "
-    "context pool (llm steps write their turns, the last llm step reads "
-    "them back). The orchestrator imports a saved skill as a tool; skills "
-    "run on LOCAL models by default.\n"
-    "Rules: act ONLY on what the user asks — never restructure the chain "
-    "on your own. Prefer small, precise edits. Keep replies short and "
-    "concrete; when the request is ambiguous, ask ONE question in your "
-    "reply and emit no actions."
+_ROLE_TAIL = (
+    "\n"
+    "STYLE\n"
+    "Answer the question that was asked. Be concrete and short: phases and "
+    "wiring, not a paraphrase of node names. Use read_node for a node you were "
+    "not shown. If the request is ambiguous, ask ONE question and stop."
 )
 
 _PROTOCOL = (
-    "Reply with ONE JSON object and nothing else:\n"
-    '{"reply": "<text shown to the user>", "actions": [{"name": "...", '
+    'Reply with ONE JSON object and nothing else:\n'
+    '{"reply": "<the answer, shown to the user>", "actions": [{"name": "...", '
     '"arguments": {...}}]}\n'
-    '"actions" may be omitted or empty when you are only answering.\n'
-    "You work in ROUNDS: the results of your actions are executed and shown "
-    "back to you before your next reply, so you can edit, TEST, read what "
-    "the test produced, and keep fixing until the request is satisfied — "
-    "then reply with NO actions to stop.\n"
-    "Available actions:\n"
-    '- edit_node {"node": "<label or id>", "property": "<name>", "value": '
-    "<value>}\n"
-    '- configure_node {"node": "<label or id>", "ask": "<what this node "'
-    'must do, e.g. read the page text / run on the local model>"} — let '
-    'Laya map plain words onto the node\'s exact field (and, for a fixed '
-    'set, its exact option). Prefer it over guessing a property/value; when '
-    'it returns a field to set yourself, follow up with edit_node.\n'
-    '- create_node {"node_type": "<type>", "label": "<name>"} — a code '
-    'node starts with NAMED IO ports input_vars=[data] / output_vars=[result]; '
-    'its data ALWAYS travels on those named ports (rename/extend them with '
-    'edit_node), never on the base input/output exec edges.\n'
-    '- wire {"from_node": "<label or id>", "to_node": "<label or id>", '
-    '"input_port": "<optional>", "output_port": "<optional>"} — an '
-    'Input -> LLM wire ALSO carries the value on the input\'s `data` port '
-    'into the LLM\'s `prompt` port (a wired prompt REPLACES the template, '
-    'so a step\'s instruction belongs in system_message).\n'
-    '- set_description {"text": "<what this chain does, 1-2 sentences>"}\n'
-    '- save_chain {"name": "<file name>"} — saves the WHOLE canvas as a '
-    "System chain; only when the user asks to save.\n"
-    '- read_node {"node": "<label or id>"}\n'
-    '- test_chain {"input": "<optional value, or a {label: value} '
-    'object for several Input nodes>"} — RUN the chain being edited '
-    '(unsaved edits included) and get back a report: a STATUS line '
-    '(completed / FAILED / STALLED), a "reason:" line naming the failing '
-    'node and WHY, each Output node\'s text, and a "goal (…): MET / NOT '
-    'met/not verified" verdict against the chain\'s goal. When exactly ONE '
-    'node is selected it runs THAT NODE ALONE instead of the whole chain; '
-    'pass {"scope": "chain"} to force the whole chain (a skill IS a whole '
-    'chain). A test ALSO '
-    'runs AUTOMATICALLY right after you wire or build the chain (find it '
-    'in RESULTS) — always read it. Use test_chain yourself after EVERY '
-    'edit. If the status is FAILED or STALLED, read the "reason:" '
-    'line, fix THAT node, and test again; never stop while the test FAILS '
-    'or the goal is NOT met / not verified — keep fixing and re-testing, or '
-    'ask the user ONE question. Only report success when the status is '
-    '"completed" (and the goal is MET).\n'
-    '- build_skill {"name": "<short name>", "description": "<what it '
-    'does>", "input_label": "<optional>", "output_label": "<optional>", '
-    '"steps": [{"kind": "llm", "label": "<step name>", "prompt": "<full '
-    'instruction>"} | {"kind": "code", "label": "...", "inputs": '
-    '["data"], "outputs": ["result"], "code": "<python: reads the named '
-    'input var, sets the named output var>"} | {"kind": "conditional", '
-    '"label": "...", "criterion": "<what it validates — an LLM decides>"} '
-    '(or "code": "<python: result = True/False>")}], "vision": true on an '
-    "llm step that must read the screen}\n"
-    "build_skill code steps use NAMED IO ports (the code node's IO "
-    "editor): name each input/output variable; the previous step wires "
-    "into the first named input and the first named output feeds the next "
-    "step (defaults: data in, result out).\n"
-    "build_skill rules: every llm step MUST carry a full prompt; code "
-    "steps use stdlib-only Python; conditional steps validate by default "
-    "with an llm criterion. One skill = one decomposed process."
+    '"actions" may be omitted or empty when the digest already answers.\n'
+    "Writing a chain's description is NOT yours: the panel's Describe button "
+    "does that, node by node and wire by wire. Answer questions; never emit a "
+    "'flow' object.\n"
+    "Tools:\n"
+    + '\n'.join('- %s %s — %s' % (spec['name'], spec['arguments'],
+                                  spec['description'])
+                for spec in _tools.TOOL_SPECS)
+    + "\n"
+    "Rules: at most three rounds per user message; call a tool when the digest "
+    "plus the canvas index do not carry what you need, or when the user asked "
+    "for a change to what they selected; never invent a tool name (the only "
+    "names are %s); the tool result comes back before your next reply. Do NOT "
+    "emit tool-call markup (DSML / XML invoke blocks) — a call is an entry in "
+    "the JSON 'actions' array and nothing else." % ', '.join(_tools.TOOL_NAMES)
 )
 
 
-def _system_prompt():
-    """Role + action protocol + the node runbook cheat sheet (fail-open)."""
+def _system_prompt(registry=True):
+    """Role + grounding + change rules + protocol + the node registry.
+
+    ``registry`` is the node-type reference; the last-resort prompt drops it.
+    There is no authoring variant: the chat does not write chain descriptions
+    (the Describe button does), so the prompt that taught HOW to write them,
+    and the ``flow`` object in the protocol, is gone.
+    """
+    from .runbook import capability_registry
+    parts = [_ROLE_HEAD, _GROUND, _CHANGES, _ROLE_TAIL, _PROTOCOL]
+    if registry:
+        parts.append(capability_registry())
+    return '\n\n'.join(part for part in parts if part)
+
+
+def _self_answer(stored, snapshot, described):
+    """The chain answering about itself, with NO model in the path.
+
+    Deterministic-first: a described chain has words of its own (summary + box
+    notes), an undescribed one has its topology.  Either is a better answer
+    than an error, and neither costs a model call at all.
+    """
+    if described:
+        lines = []
+        if stored.get('summary'):
+            lines.append(str(stored['summary']).strip())
+        for section in stored.get('sections') or ():
+            note = ' '.join(str(section.get('note') or '').split())
+            lines.append('- %s%s' % (section.get('title'),
+                                     (': ' + note) if note else ''))
+        if lines:
+            return '\n'.join(lines)
+    return ('This chain has no stored description yet, so here is its shape.\n'
+            + _describe.structure(snapshot, PROMPT_STRUCTURE_CHARS))
+
+
+def _window_too_small(exc):
+    """The provider rejected the prompt for SIZE (not for a bad key, a quota…).
+
+    Two spellings reach here: the gateway's own ``context_length_exceeded`` and
+    this module's rewording ("the prompt is bigger than this model's context
+    window"), so both must be recognised or the retry never runs.
+    """
+    text = str(exc).lower()
+    return 'context window' in text and ('bigger than' in text
+                                         or 'too small' in text
+                                         or 'context_length' in text)
+
+
+# ------------------------------------------------------------- envelope
+
+#: The chat-template tool-call markup some local models answer with instead of
+#: the JSON envelope (DeepSeek's DSML: ``<｜｜DSML｜｜ invoke name="read_node">``).
+#: The calls are unambiguous, so they are parsed — refusing them kills a turn
+#: the user asked for over a formatting difference.
+_DSML_INVOKE = re.compile(
+    r'<[^<>]*invoke\s+name\s*=\s*"([^"]+)"[^<>]*>(.*?)</[^<>]*invoke\s*>',
+    re.DOTALL)
+_DSML_PARAM = re.compile(
+    r'<[^<>]*parameter\s+name\s*=\s*"([^"]+)"([^<>]*)>(.*?)'
+    r'</[^<>]*parameter\s*>', re.DOTALL)
+_DSML_TAG = re.compile(r'</?[^<>]*DSML[^<>]*>', re.DOTALL)
+
+
+def _dsml_turn(text):
+    """``(reply, actions)`` from native tool-call markup; ('', []) when none.
+
+    Parameter values stay strings unless the markup says otherwise
+    (``string="false"``) or the value is itself a JSON object/array — the
+    tools take plain string arguments.
+    """
+    invokes = _DSML_INVOKE.findall(str(text or ''))
+    if not invokes:
+        return '', []
+    actions = []
+    for name, body in invokes:
+        arguments = {}
+        for arg_name, attributes, raw_value in _DSML_PARAM.findall(body):
+            value = raw_value.strip()
+            flags = attributes.replace(' ', '')
+            if 'string="false"' in flags:
+                try:
+                    arguments[arg_name] = json.loads(value)
+                    continue
+                except ValueError:
+                    pass
+            else:
+                try:
+                    parsed = json.loads(value)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, (dict, list)):
+                    arguments[arg_name] = parsed
+                    continue
+            arguments[arg_name] = value
+        actions.append({'name': name.strip(), 'arguments': arguments})
+    # Drop whole invoke blocks FIRST (they contain the parameter tags), then the
+    # leftover wrapper tags; the other order strips the delimiters and leaves
+    # the raw values behind as if the model had written them as prose.
+    prose = _DSML_TAG.sub(' ', _DSML_INVOKE.sub(' ', str(text)))
+    return ' '.join(prose.split()), actions
+
+
+def _balanced_end(text, start):
+    """The index of the '{' at *start*'s matching '}' (string aware)."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _plain_text(text):
+    """A model's prose as shown to the user (fences and stray braces gone)."""
+    out = []
+    for line in str(text or '').splitlines():
+        stripped = line.strip()
+        if stripped.startswith('```') or stripped in ('{', '}'):
+            continue
+        out.append(line.rstrip())
+    return '\n'.join(out).strip()
+
+
+def envelope(raw):
+    """``{'reply', 'actions', 'flow', 'walk'}`` from a model reply.
+
+    Raises when there is no envelope: a model that answers with prose has not
+    followed the protocol, and silently inventing an envelope would hide it.
+    """
+    text = str(raw or '').strip()
+    if not text:
+        raise BuilderProtocolError('the model returned an empty reply')
+    candidate = None
     try:
-        from player.builder.runbook import cheat_sheet
-        sheet = cheat_sheet()
-    except Exception:
-        sheet = ''
-    return '\n\n'.join(part for part in (_ROLE, _PROTOCOL, sheet) if part)
+        loaded = json.loads(text, strict=False)
+        if isinstance(loaded, dict):
+            candidate = loaded
+    except ValueError:
+        candidate = None
+    if candidate is None:
+        start = text.find('{')
+        while start >= 0:
+            end = _balanced_end(text, start)
+            if end > start:
+                try:
+                    loaded = json.loads(text[start:end + 1], strict=False)
+                except ValueError:
+                    loaded = None
+                if isinstance(loaded, dict) and (
+                        'reply' in loaded or 'actions' in loaded):
+                    candidate = loaded
+                    break
+            start = text.find('{', start + 1)
+    if not isinstance(candidate, dict) or not (
+            'reply' in candidate or 'actions' in candidate):
+        # Not our envelope — but a native tool-call block is still a readable
+        # turn, so parse it instead of failing the message.
+        prose, dsml_actions = _dsml_turn(text)
+        if dsml_actions:
+            return {'reply': prose, 'actions': dsml_actions, 'flow': {},
+                    'walk': False}
+        # A small model answers in PROSE.  That is still an answer: the panel
+        # shows it, and nothing is annotated.  Failing the turn because the
+        # JSON wrapper is missing punished the user for the model's shape —
+        # a chain description never depends on the wrapper anyway.
+        return {'reply': _plain_text(text), 'actions': [], 'flow': {},
+                'walk': False}
+    reply = str(candidate.get('reply') or '').strip()
+    raw_actions = candidate.get('actions') or []
+    if not isinstance(raw_actions, list):
+        raise BuilderProtocolError('"actions" must be a list, got %r'
+                                   % type(raw_actions).__name__)
+    actions = []
+    for item in raw_actions:
+        if not isinstance(item, dict) or not str(item.get('name') or '').strip():
+            raise BuilderProtocolError(
+                'every action needs a name and an arguments object; got %r'
+                % (item,))
+        arguments = item.get('arguments') or {}
+        if not isinstance(arguments, dict):
+            raise BuilderProtocolError(
+                'action %r arguments must be an object' % item.get('name'))
+        actions.append({'name': str(item['name']).strip(),
+                        'arguments': arguments})
+    # A turn answers questions.  ``flow`` (the chain's description) and ``walk``
+    # (the per-node highlight) are the panel's buttons now — deterministic, one
+    # click — so a model that still emits them changes nothing here.
+    return {'reply': reply, 'actions': actions, 'flow': {}, 'walk': False}
 
 
-def _format_turn(query, canvas, selection, history, results=None):
-    """The per-turn user prompt: chat tail, canvas, selection, results."""
-    parts = []
-    hist = []
+def extract_reply(raw):
+    """``(reply, actions)`` from a model reply.  Raises when there is none."""
+    env = envelope(raw)
+    return env['reply'], env['actions']
+
+def extract_turn(raw):
+    """``(reply, actions, flow, walk)`` — one round's whole envelope."""
+    env = envelope(raw)
+    return env['reply'], env['actions'], env['flow'], env['walk']
+
+
+def partial_reply(raw):
+    """The user-facing reply-so-far of a still-streaming envelope.
+
+    Only the ``reply`` string value is pulled out (with the escapes seen so
+    far), so the panel never flashes braces and keys at the user.  A stream
+    that has not reached the reply yet yields ''.
+    """
+    text = str(raw or '')
+    key = text.find('"reply"')
+    if key < 0:
+        return ''
+    colon = text.find(':', key + len('"reply"'))
+    if colon < 0:
+        return ''
+    quote = text.find('"', colon + 1)
+    if quote < 0:
+        return ''
+    escapes = {'n': '\n', 't': '\t', 'r': '', '"': '"', '\\': '\\',
+               '/': '/', 'b': '', 'f': ''}
+    out = []
+    index = quote + 1
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            break
+        if char == '\\':
+            nxt = text[index + 1] if index + 1 < len(text) else ''
+            if not nxt:
+                break
+            out.append(escapes.get(nxt, nxt))
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    return ''.join(out)
+
+
+# ---------------------------------------------------------------- turn
+
+def _clip_part(text, limit):
+    """*text* clipped to *limit* chars, saying so (never a silent cut)."""
+    text = str(text or '')
+    if len(text) <= limit:
+        return text
+    return (text[:max(0, limit - 60)].rstrip()
+            + '\n… [cut to fit the model — ask for a narrower scope]')
+
+
+def _fit_parts(pieces, budget):
+    """``{key: text}`` clipped so the parts together fit *budget*.
+
+    *pieces* is ``[(key, priority, text)]``; the LOWEST priority number is the
+    evidence that answers the question and is served first.  Per-part ceilings
+    alone let a turn grow past any model's window — the digest, the canvas
+    index, the selection and the chat tail each stayed under their own cap and
+    their SUM was still 34k characters, which an 8k model refuses outright.
+    """
+    left = budget
+    kept = {}
+    for key, _priority, text in sorted(pieces, key=lambda item: item[1]):
+        if not text:
+            kept[key] = ''
+            continue
+        if left <= 120:
+            kept[key] = ''
+            continue
+        kept[key] = _clip_part(text, left)
+        left -= len(kept[key]) + 2
+    return kept
+
+
+def _format_turn(query, digest, index, selection, history, results,
+                 flow_text=''):
+    """The whole turn, fitted to ``PROMPT_TURN_CHARS``.
+
+    Order on the page: chat tail, stored flow, digest, index, selection, tool
+    results, the question.  Order of IMPORTANCE (who gets the budget first) is
+    different: the digest answers "what does this chain do", the index answers
+    "which node", and the chat tail is a courtesy.  So the parts are clipped by
+    importance and printed in reading order.
+    """
+    lines = []
     for item in (history or [])[-MAX_HISTORY:]:
         if not isinstance(item, dict):
             continue
         text = ' '.join(str(item.get('text') or '').split())[:400]
         if text:
-            hist.append('%s: %s' % (str(item.get('role') or 'user'), text))
-    if hist:
-        parts.append('RECENT CHAT:\n' + '\n'.join(hist))
-    parts.append('CANVAS:\n' + str(canvas or '')[:PROMPT_CANVAS_CHARS])
-    selection = str(selection or '').strip()
-    parts.append('SELECTED NODES (the user\'s focus):\n'
-                 + (selection[:PROMPT_SELECTION_CHARS] if selection
-                    else '(none selected)'))
+            lines.append('%s: %s' % (item.get('role') or 'user', text))
+    tail = ['USER: ' + str(query or '').strip()]
     if results:
-        parts.append('RESULTS OF YOUR ACTIONS SO FAR:\n'
-                     + '\n'.join(str(r) for r in results[-MAX_RESULTS:]))
-    parts.append('USER: ' + str(query or ''))
-    return '\n\n'.join(parts)
+        tail.insert(0, 'Now reply with the JSON object ("reply" holds the '
+                       'answer; no tool-markup syntax). Call another tool only '
+                       'if a value you need is still missing.')
+    reserve = sum(len(part) + 2 for part in tail)
 
+    kept = _fit_parts([
+        ('digest', 0, 'CHAIN TOPOLOGY (deterministic digest):\n' + digest),
+        ('index', 1, 'CANVAS INDEX (ports with their roles):\n' + index),
+        ('selection', 2, "SELECTED NODES (the user's focus):\n"
+                         + (selection if selection else '(none selected)')),
+        ('flow', 3, flow_text),
+        ('results', 4, 'TOOL RESULTS:\n' + '\n\n'.join(str(r) for r in results)
+                       if results else ''),
+        ('history', 5, 'RECENT CHAT:\n' + '\n'.join(lines) if lines else ''),
+    ], PROMPT_TURN_CHARS - reserve)
 
-def _balanced_end(text, start):
-    """The index of the '{' at ``start``'s matching '}' (strings aware)."""
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(text)):
-        ch = text[i]
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == '\\':
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                return i
-    return -1
-
-
-def _extract_reply(text):
-    """(reply, actions, parsed) from a model reply; fail-open to prose.
-
-    The model may wrap the JSON in fences or prose — every '{' is tried
-    with a balanced-brace scan until one parses into a dict carrying
-    "reply"/"actions".  ``parsed`` is False when no such envelope was
-    found (the reply is plain prose).  Parsing is lenient (``strict=False``)
-    so raw control characters a model leaves inside a string — e.g. real
-    newlines in an action's embedded Python ``code`` — do NOT discard an
-    otherwise-valid action set (default strict JSON rejects them and the
-    builder would run zero actions, silently).
-    """
-    raw = str(text or '').strip()
-    if not raw:
-        return '', [], False
-    obj = None
-    try:
-        candidate = json.loads(raw, strict=False)
-        if isinstance(candidate, dict):
-            obj = candidate
-    except Exception:
-        obj = None
-    if obj is None:
-        start = raw.find('{')
-        while start >= 0:
-            end = _balanced_end(raw, start)
-            if end > start:
-                try:
-                    candidate = json.loads(raw[start:end + 1], strict=False)
-                except Exception:
-                    candidate = None
-                if isinstance(candidate, dict) and (
-                        'reply' in candidate or 'actions' in candidate):
-                    obj = candidate
-                    break
-            start = raw.find('{', start + 1)
-    if not isinstance(obj, dict) or not ('reply' in obj or 'actions' in obj):
-        return raw, [], False
-    reply = str(obj.get('reply') or '').strip()
-    actions = [a for a in (obj.get('actions') or []) if isinstance(a, dict)]
-    return reply, actions, True
+    parts = [kept['history'], kept['flow'], kept['digest'], kept['index'],
+             kept['selection'], kept['results']] + tail
+    return '\n\n'.join(part for part in parts if part)
 
 
 class BuilderAssistant:
-    """The panel's brain: one grounded, bounded assistant turn."""
+    """One analyst turn: read the canvas, answer, drill down at most 3 times."""
 
     def __init__(self, ctx, settings=None):
         self._ctx = ctx
@@ -267,189 +514,167 @@ class BuilderAssistant:
     def _load_settings(self):
         if isinstance(self._settings, dict):
             return self._settings
-        try:
-            from player.builder import settings as _bs
-            loaded = _bs.load()
-            return loaded if isinstance(loaded, dict) else {}
-        except Exception:
-            return {}
+        from . import settings as _settings
+        return _settings.load()
 
-    def route(self, query, progress_cb=None, trace=None):
-        """One assistant turn -> {'ok', 'text', 'steps', 'error'}.
+    def _stopped(self):
+        stop = self._ctx.get('stop')
+        return bool(callable(stop) and stop())
 
-        A turn runs ROUNDS: the model acts, the results (including
-        ``test_chain`` output) are fed back, and it keeps going until it
-        replies with no actions (satisfied) or MAX_ROUNDS.
+    def route(self, query, progress_cb=None, trace=None, on_reply_delta=None):
+        """Answer one user message -> ``{'reply', 'text', 'steps', 'stopped'}``.
+
+        Raises every failure (configuration, model, protocol, canvas, tool).
         """
-        from player.builder import reasoning
-        from player.builder.devtools import execute_builder_call
-        from player.builder.trace import emit as _emit
+        query = str(query or '').strip()
+        if not query:
+            raise BuilderProtocolError('the message is empty')
 
         def _note(event):
             if callable(progress_cb):
-                try:
-                    progress_cb(event)
-                except Exception:
-                    pass
+                progress_cb(event)
 
         def _step(message):
             _emit(trace, message)
 
-        query = str(query or '').strip()
-        _step('you: %s' % (query[:200] or '(empty)'))
-        if not reasoning.gateway_url():
-            return {'ok': False, 'steps': 0, 'error': 'no gateway',
-                    'text': ('(the local AI gateway is not reachable — '
-                             'check the AI settings)')}
         settings = self._load_settings()
-        if not settings.get('reasoning', True):
-            return {'ok': False, 'steps': 0, 'error': 'reasoning disabled',
-                    'text': ('(the builder model is switched off — enable '
-                             '"Reasoning LLM" in the builder settings gear '
-                             'to chat)')}
+        snapshot = _tools.read_snapshot(self._ctx)
+        stored = _tools.stored_flow(self._ctx)
+        # A DESCRIBED chain already carries its own words.  A question about it
+        # is answered from that metadata plus the order/branches — not from the
+        # whole canvas, and not by writing the description again (the panel's
+        # Describe button does that).  An undescribed chain has nothing to
+        # answer from, so the canvas itself is the evidence.
+        described = not _flow.is_empty(stored)
+        if described:
+            digest = '\n\n'.join(part for part in (
+                # Summary + box notes answer "how does it flow"; one line per
+                # node is the bulk of the metadata and read_node's job.
+                _flow.digest(stored, include_nodes=False),
+                _describe.structure(snapshot, PROMPT_STRUCTURE_CHARS)) if part)
+            # The sections and node lines already name every node: a second,
+            # id-only index would spend the budget saying it twice.
+            index = ''
+            flow_text = ''
+        else:
+            digest = _describe.overview(snapshot, PROMPT_DIGEST_CHARS)
+            index = _tools.read_graph(self._ctx, limit=PROMPT_INDEX_CHARS)
+            flow_text = ''
+        selection = _tools.selection_text(self._ctx, snapshot,
+                                          limit=PROMPT_SELECTION_CHARS)
+        history = self._ctx.get('history') or []
+        _step('chain: %s' % ('described — answering from its metadata'
+                             if described else 'undescribed — reading the canvas'))
 
-        selection = ''
-        sel_fn = self._ctx.get('selection_text')
-        if callable(sel_fn):
-            try:
-                selection = str(sel_fn() or '')
-            except Exception:
-                selection = ''
+        _step('you: %s' % (' '.join(query.split())[:200]))
         if selection:
-            first = next((ln.strip() for ln in selection.splitlines()
-                          if ln.strip()), '')
+            first = selection.splitlines()[0]
             _step('selection: %s' % first[:180])
 
-        history = self._ctx.get('history')
-        lines = []
-        results = []          # action outcomes carried into the next round
-        steps = 0
-        last_sig = None
-        mutated = False       # the chain changed this turn
-        built_skill = False   # a build_skill happened this turn
-        tested = False        # a test_chain run happened this turn
-        last_ok = None        # verdict of the last test (None = no verdict)
-        idle = 0              # consecutive rounds that changed nothing
+        settled = []
+        buffer = {'text': ''}
 
-        def _run_test(force_chain=False):
-            """Run test_chain, record its report, return its verdict.
+        def _delta(increment):
+            buffer['text'] += increment
+            prefix = partial_reply(buffer['text'])
+            shown = '\n\n'.join([part for part in settled if part]
+                                + ([prefix] if prefix else []))
+            if shown and callable(on_reply_delta):
+                on_reply_delta(shown)
 
-            ``force_chain`` runs the WHOLE chain even when one node is
-            selected — used while a skill is built (a skill IS a whole
-            chain); otherwise the test follows the user's selection.
+        def _generate(prompt, system, settings, on_delta=None, cancel=None):
+            """The model call, with one smaller retry and a deterministic floor.
+
+            A chain that describes itself can be answered from its goal and its
+            boxes, without the topology block or the node registry.  So a model
+            that cannot hold the full turn is asked something smaller; if even
+            that is too big, ``None`` says "answer from the chain itself" — the
+            Builder never needs a bigger model to answer a question.
             """
-            args = {'scope': 'chain'} if force_chain else {}
             try:
-                report = execute_builder_call('test_chain', args, self._ctx)
-            except Exception as e:
-                report = '(test_chain failed: %s)' % e
-            _step('test: %s' % _clip(' '.join(str(report).split()), 180))
-            lines.extend(str(report).splitlines())
-            results.append('test_chain -> %s' % _clip(str(report), 500))
-            return _verdict(report)
-
-        for rnd in range(MAX_ROUNDS):
-            # Re-read the canvas every round so edits are visible.
-            canvas = execute_builder_call('read_graph', {}, self._ctx)
-            _note('thinking')
-            _step('round %d' % (rnd + 1))
-            reply = reasoning._generate(
-                _format_turn(query, canvas, selection, history, results),
-                settings, _system_prompt())
-            if not reply:
-                if rnd == 0:
-                    return {'ok': False, 'steps': 0, 'error': 'no reply',
-                            'text': ('(no answer from the builder model — '
-                                     'check the engine and model in the '
-                                     'builder settings)')}
-                lines.append('(builder model stopped answering — stopping)')
-                break
-            text, actions, parsed = _extract_reply(reply)
-            # Always trace the round's outcome: a reply that runs no action
-            # must never be a silent dead stop in the log again.
-            _step('model: %d chars, %d actions%s'
-                  % (len(reply), len(actions),
-                     '' if parsed else ' (not JSON)'))
-            if parsed:
-                if text:
-                    lines.extend(text.splitlines())
-            else:
-                # No JSON envelope: keep a bounded head (the trace holds the
-                # whole reply) and flag an action JSON that failed to parse.
-                lines.append(_clip(reply, 600))
-                if '"actions"' in reply or '"reply"' in reply:
-                    lines.append("(the builder model's action JSON did not "
-                                 "parse — no actions were run; see the log)")
-            if not actions:
-                # Never conclude an EDITED chain without testing it: run the
-                # test now and hand the report back so the model fixes what
-                # fails — the loop iterates until the chain passes.
-                if mutated and (not tested or last_ok is False):
-                    last_ok = _run_test(force_chain=built_skill)
-                    tested = True
-                    if last_ok is False and rnd < MAX_ROUNDS - 1:
-                        results.append('(the test above FAILED — fix the '
-                                       'reason it names, then reply with '
-                                       'actions; do not stop)')
-                        continue
-                break
-            # No-progress guard: a model repeating the exact same calls must
-            # not loop (nor re-run a chain test forever).
-            sig = json.dumps([[a.get('name'), a.get('arguments')]
-                              for a in actions], sort_keys=True, default=str)
-            if sig == last_sig:
-                lines.append('(no new actions — stopping)')
-                break
-            last_sig = sig
-            names = []
-            for action in actions[:MAX_ACTIONS]:
-                name = str(action.get('name') or '').strip()
-                arguments = action.get('arguments')
-                if not isinstance(arguments, dict):
-                    arguments = {}
-                steps += 1
-                if name not in ACTION_NAMES:
-                    lines.append('(unknown action %r — skipped)' % name)
-                    continue
-                names.append(name)
-                _note('tool:' + name)
-                _step('tool: %s %s' % (
-                    name, json.dumps(arguments, ensure_ascii=False)[:160]))
+                return _reasoning.generate(prompt, system, settings,
+                                           on_delta=on_delta, cancel=cancel)
+            except BuilderModelError as exc:
+                if not _window_too_small(exc):
+                    raise
+                _step('the prompt is bigger than this model — retrying with '
+                      'the chain\'s own words only')
+                lean = _format_turn(
+                    query,
+                    _flow.headline(stored) if described
+                    else _describe.structure(snapshot, 1500),
+                    '', '', history, [])
                 try:
-                    result = execute_builder_call(name, arguments, self._ctx)
-                except Exception as e:  # execute never raises; belt + braces
-                    result = '(%s failed: %s)' % (name, e)
-                lines.extend(str(result).splitlines())
-                results.append('%s %s -> %s' % (
-                    name, json.dumps(arguments, ensure_ascii=False)[:120],
-                    _clip(str(result), 400)))
-                if name == 'test_chain':
-                    tested = True
-                    last_ok = _verdict(result)
-            if 'build_skill' in names:
-                built_skill = True
-            if any(name in MUTATING_ACTIONS for name in names):
-                mutated = True
-                idle = 0
-            else:
-                idle += 1
-            # Auto-verify a chain that was just (re)wired: the builder must
-            # see whether its own build runs.  An explicit test is respected.
-            if ('test_chain' not in names
-                    and any(name in ('wire', 'build_skill')
-                            for name in names)):
-                last_ok = _run_test(force_chain=built_skill)
-                tested = True
-            # A model that only reads (no change for MAX_IDLE_ROUNDS) will
-            # never fix anything: stop and hand back to the user.
-            if idle >= MAX_IDLE_ROUNDS:
-                lines.append('(the builder made no change for %d rounds — '
-                             'stopping; it is not converging on its own, ask '
-                             'it directly or edit the node yourself)' % idle)
+                    return _reasoning.generate(
+                        lean, _system_prompt(registry=False),
+                        settings, on_delta=on_delta, cancel=cancel)
+                except BuilderModelError as again:
+                    if not _window_too_small(again):
+                        raise
+                    return None
+
+        results = []
+        steps = 0
+        changed = False
+        for round_index in range(MAX_ROUNDS):
+            if self._stopped():
+                return {'reply': '\n\n'.join(settled), 'text': '(stopped)',
+                        'steps': steps, 'stopped': True,
+                        'flow': {}, 'walk': False, 'changed': changed}
+            if round_index == 0:
+                _note('reading')
+            _step('round %d' % (round_index + 1))
+            buffer['text'] = ''
+            reply_raw = _generate(
+                _format_turn(query, digest, index, selection, history, results,
+                             flow_text),
+                _system_prompt(), settings,
+                on_delta=_delta, cancel=self._stopped)
+            if reply_raw is None:
+                # Deterministic-first: no model can hold this prompt, and the
+                # chain already says what it does.  Answer from it.
+                _step('no model answer fits — answering from the chain itself')
+                settled.append(_self_answer(stored, snapshot, described))
                 break
-        if mutated and (not tested or last_ok is False):
-            lines.append('(the chain has not passed a test yet — reply '
-                         '"keep going" to let the builder keep fixing it)')
-        final = '\n'.join(ln for ln in lines if str(ln).strip())
-        return {'ok': True, 'text': final or '(done)', 'steps': steps,
-                'error': None}
+            if self._stopped():
+                return {'reply': '\n\n'.join(settled), 'text': '(stopped)',
+                        'steps': steps, 'stopped': True,
+                        'flow': {}, 'walk': False, 'changed': changed}
+            reply, actions, _flow_out, _walk = extract_turn(reply_raw)
+            _step('model: %d chars, %d action(s)'
+                  % (len(reply_raw), len(actions)))
+            if reply:
+                settled.append(reply)
+                if callable(on_reply_delta):
+                    on_reply_delta('\n\n'.join(settled))
+            if not actions:
+                break
+            for action in actions:
+                if self._stopped():
+                    return {'reply': '\n\n'.join(settled), 'text': '(stopped)',
+                            'steps': steps, 'stopped': True,
+                            'flow': {}, 'walk': False, 'changed': changed}
+                steps += 1
+                _note('tool:' + action['name'])
+                _step('tool: %s %s' % (action['name'],
+                                       json.dumps(action['arguments'])[:160]))
+                output = _tools.execute(action['name'], action['arguments'],
+                                        self._ctx)
+                if action['name'] in _tools.WRITE_TOOLS:
+                    changed = True
+                text = str(output)
+                if len(text) > RESULT_CLIP:
+                    text = (text[:RESULT_CLIP]
+                            + '\n[result clipped at %d chars]' % RESULT_CLIP)
+                results.append('%s %s ->\n%s'
+                               % (action['name'],
+                                  json.dumps(action['arguments'])[:120], text))
+
+        reply = '\n\n'.join(part for part in settled if part).strip()
+        if not reply:
+            raise BuilderProtocolError(
+                'the model called tools for all %d rounds but never wrote an '
+                'answer — it keeps emitting tool-call markup instead of the '
+                'reply/actions envelope' % MAX_ROUNDS)
+        return {'reply': reply, 'text': reply, 'steps': steps, 'stopped': False,
+                'flow': {}, 'walk': False, 'changed': changed}

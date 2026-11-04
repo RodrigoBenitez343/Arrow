@@ -526,9 +526,31 @@ async def handle_tts(request: web.Request) -> web.Response:
 # Application factory
 # ---------------------------------------------------------------------------
 
+@web.middleware
+async def _cors_middleware(request: web.Request, handler):
+    """Allow the bundled phone UI (an https asset origin) to call this API.
+
+    The APK serves its page from ``https://appassets.androidplatform.net``, so
+    ``/stt`` and ``/tts`` are cross-origin requests.  Without these headers the
+    browser drops the response and ``fetch()`` rejects with "Failed to fetch",
+    which looks like a network outage but is only CORS.
+    """
+    if request.method == "OPTIONS":
+        resp = web.Response(status=204)
+    else:
+        resp = await handler(request)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    # Chromium Private Network Access: a public https origin reaching a loopback
+    # address needs this on the preflight.
+    resp.headers["Access-Control-Allow-Private-Network"] = "true"
+    return resp
+
+
 def create_app(state: ServerState) -> web.Application:
     hs, hw = _make_handlers(state)
-    app = web.Application()
+    app = web.Application(middlewares=[_cors_middleware])
     app.router.add_get("/status", hs)
     app.router.add_get("/ws", hw)
     app.router.add_post("/stt", handle_stt)

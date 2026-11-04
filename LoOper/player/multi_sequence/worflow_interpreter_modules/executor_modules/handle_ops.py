@@ -64,11 +64,14 @@ class HandleMixin:
 
     def _call_llamacpp_api(self, api_url, model, prompt, system="",
                            images=None, temperature=0.2, max_tokens=256,
-                           context_size=0, log_calls=True, max_rounds=None):
+                           context_size=0, log_calls=True, max_rounds=None,
+                           timeout=None):
         """Call llama.cpp via the API gateway, matching the LLM node's format exactly.
 
         Uses ``/llamacpp/generate`` with ``prompt`` + ``system`` format (not ``messages``),
         plus standard params (gpu_layers, threads, context_size) that the LLM nodes use.
+        ``timeout=None`` keeps the Handle node's unlimited wait; the agentic
+        loop's grounding passes its per-step budget.
 
         Args:
             api_url: Base URL of the app's API (e.g., http://127.0.0.1:8000)
@@ -116,7 +119,7 @@ class HandleMixin:
                 url, model, bool(images), max_tokens, context_size or "auto",
             )
         try:
-            resp = requests.post(url, json=payload, timeout=None)
+            resp = requests.post(url, json=payload, timeout=timeout)
             if resp.status_code == 200:
                 data = resp.json()
                 text = data.get("response", "") or ""
@@ -591,17 +594,16 @@ class HandleMixin:
         )
         try:
             # Box the element about to be hit (the same execution overlay a
-            # web node shows) and walk the real pointer onto it, so a web
-            # Handle click reads like a desktop one.  Purely cosmetic - never
-            # fail the click on it.
+            # web node shows) and let the PAGE's own cursor walk onto it, so a
+            # web Handle click reads like a desktop one without steering the
+            # user's real pointer.  Purely cosmetic - never fail the click on it.
             geometry = web_actions.target_geometry(driver, event)
             exec_overlay.enable(driver)
-            exec_overlay.mark(
+            walk = exec_overlay.mark(
                 driver, event, "handle: %s" % picked['label'], geometry
             )
-            point = (geometry or {}).get("point")
-            if point:
-                glide_os_cursor(point[0], point[1])
+            if walk:
+                time.sleep(walk)
         except Exception:
             pass
         try:
@@ -713,136 +715,17 @@ class HandleMixin:
 
 
     def _find_mtmd_cli(self):
-        """Find the llama-mtmd-cli executable (used by the API for grounding models)."""
-        candidates = []
-
-        # Check from AI/models dir up to utils/llama.cpp/build/...
-        try:
-            from AI.config_loader import get_models_dir
-            md = get_models_dir()
-            candidates.append(
-                os.path.normpath(
-                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build-vulkan", "bin", "Release", "llama-mtmd-cli.exe")
-                )
-            )
-            candidates.append(
-                os.path.normpath(
-                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build-vulkan", "bin", "llama-mtmd-cli.exe")
-                )
-            )
-            candidates.append(
-                os.path.normpath(
-                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "Release", "llama-mtmd-cli.exe")
-                )
-            )
-            candidates.append(
-                os.path.normpath(
-                    os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "llama-mtmd-cli.exe")
-                )
-            )
-            # Setup stages the engine binaries into LoOper\AI\bin (models_dir/../bin)
-            candidates.append(
-                os.path.normpath(os.path.join(md, "..", "bin", "llama-mtmd-cli.exe"))
-            )
-        except Exception:
-            pass
-
-        # PyInstaller frozen: prefer _MEIPASS (the _internal/ dir) where the
-        # engine's own DLLs (llama-common/llama/ggml*/mtmd) sit beside the EXE.
-        # The MSI ALSO stages a bare stub at INSTALLFOLDER/bin WITHOUT those
-        # DLLs; spawning it fails to resolve its imports, so grounding silently
-        # returns "".  The stub must therefore be tried LAST.
-        import sys as _sys
-        if getattr(_sys, 'frozen', False):
-            _meipass = getattr(_sys, '_MEIPASS', None)
-            if _meipass:
-                candidates.insert(0, os.path.join(_meipass, "LoOper", "AI", "bin", "llama-mtmd-cli.exe"))
-                candidates.insert(0, os.path.join(_meipass, "bin", "llama-mtmd-cli.exe"))
-            _exe_dir = os.path.dirname(_sys.executable)
-            candidates.append(os.path.join(_exe_dir, "bin", "llama-mtmd-cli.exe"))
-            candidates.append(os.path.join(_exe_dir, "llama-mtmd-cli.exe"))
-
-        for c in candidates:
-            if os.path.exists(c):
-                return c
-        return None
+        """Find the llama-mtmd-cli executable (module-level, shared with
+        the agentic loop's grounding)."""
+        return _mtmd_cli_path()
 
     def _run_llama_cli(self, model_relative_path, prompt, image_b64, max_tokens=128, temperature=0.1):
         """Run llama-mtmd-cli locally as subprocess (fallback when server API fails).
 
         mtmd-cli already emits special/control tokens by default — no ``--special`` flag needed.
         """
-        try:
-            from AI.config_loader import get_models_dir
-            models_dir = get_models_dir()
-            model_path = os.path.normpath(os.path.join(models_dir, model_relative_path))
-            if not os.path.exists(model_path):
-                logger.warning("[HANDLE] Model not found: %s", model_path)
-                return ""
-
-            # Auto-discover mmproj in same directory
-            mmproj_path = ""
-            model_dir = os.path.dirname(model_path)
-            if os.path.isdir(model_dir):
-                for fname in os.listdir(model_dir):
-                    if fname.lower().startswith("mmproj-") and fname.lower().endswith(".gguf"):
-                        mmproj_path = os.path.join(model_dir, fname)
-                        break
-
-            # Locate llama-mtmd-cli.exe (multimodal CLI for grounding models)
-            cli_path = self._find_mtmd_cli()
-            if not cli_path:
-                logger.warning("[HANDLE] llama-mtmd-cli.exe not found")
-                return ""
-
-            # Save image to temp file
-            fd, img_path = tempfile.mkstemp(suffix=".png", prefix="locate_")
-            os.close(fd)
-            with open(img_path, "wb") as f:
-                f.write(base64.b64decode(image_b64))
-
-            cmd = [
-                cli_path,
-                "--model", model_path,
-                "--image", img_path,
-                "-p", prompt,
-                "--temp", str(temperature),
-                "-n", str(max_tokens),
-            ]
-            # NOTE: --no-display-prompt is NOT passed — llama-mtmd-cli
-            # (unlike llama-cli) does not support that flag.
-            if mmproj_path:
-                cmd.extend(["--mmproj", mmproj_path])
-            logger.info("[HANDLE] Running mtmd-cli: %s --model %s --image <temp> %s",
-                         os.path.basename(cli_path), os.path.basename(model_path),
-                         f"--mmproj {os.path.basename(mmproj_path)}" if mmproj_path else "(no mmproj)")
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=600,
-            )
-
-            # Clean up temp image
-            try:
-                os.remove(img_path)
-            except Exception:
-                pass
-
-            output = result.stdout.strip()
-            if output:
-                logger.info("[HANDLE] mtmd-cli output: %.200s", output)
-                return output
-            if result.stderr:
-                logger.warning("[HANDLE] mtmd-cli stderr: %.200s", result.stderr)
-            return ""
-
-        except Exception as e:
-            logger.error("[HANDLE] mtmd-cli subprocess failed: %s", e)
-            return ""
+        return _mtmd_infer(model_relative_path, prompt, image_b64,
+                           max_tokens=max_tokens, temperature=temperature)
 
     def _get_sandbox_url(self):
         """Return the sandbox agent URL when the Handle node runs sandboxed."""
@@ -901,123 +784,9 @@ class HandleMixin:
 
 
     def _parse_locate_anything_output(self, text, img_w, img_h):
-        """Parse LocateAnything-3B special-token output into pixel coordinates.
-
-        The model outputs normalized coordinates (tokens 0-999) relative to
-        the input image dimensions.  The conversion uses pyautogui.size()
-        (logical screen resolution) because pyautogui.click() operates in
-        logical coordinates — this handles HiDPI where the screenshot
-        physical pixels may differ from logical screen pixels.
-
-        Output format: <ref>label</ref><box><X1><Y1><X2><Y2></box>
-        where <0>..<999> are normalized coordinate tokens (0-999)
-        Returns (pixel_x, pixel_y) or None.
-        """
-        import pyautogui as _pg
-        import re
-        text = text.strip()
-
-        # The model normalises its output to the image it sees; convert using
-        # the image dimensions the screenshot helper returned (already DPI-
-        # normalized to the click coordinate space, including in sandbox mode).
-        # Fall back to pyautogui.size() only if the dims are unknown.
-        sw, sh = int(img_w or 0), int(img_h or 0)
-        if sw <= 0 or sh <= 0:
-            sw, sh = _pg.size()
-
-        # Sanitise for logging: replace non-ASCII chars to avoid
-        # UnicodeEncodeError when writing to cp1252 console.
-        log_safe = text.encode('ascii', errors='replace').decode('ascii')
-        logger.info(
-            "[HANDLE] Parse: screenshot=(%d,%d) pyautogui.size()=(%d,%d) "
-            "model_text=[%.120s]",
-            img_w, img_h, sw, sh, log_safe,
-        )
-
-        # Detect explicit failure: model returned <box>None</box>
-        if re.search(r'<box>\s*None\s*</box>', text, re.IGNORECASE):
-            logger.warning(
-                "[HANDLE] Parse FAILED: model returned <box>None</box> — "
-                "could not find element matching prompt"
-            )
-            return None
-
-        # Try <box><X1><Y1><X2><Y2></box> format
-        # Allow for optional whitespace between tokens since model output
-        # formatting can vary between server and local CLI.
-        box_match = re.search(
-            r'<box>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*</box>',
-            text, re.IGNORECASE,
-        )
-        if box_match:
-            try:
-                x1 = int(box_match.group(1))
-                y1 = int(box_match.group(2))
-                x2 = int(box_match.group(3))
-                y2 = int(box_match.group(4))
-                # Use center of bounding box
-                cx_norm = (x1 + x2) / 2
-                cy_norm = (y1 + y2) / 2
-                # Convert from normalized 0-999 to screen pixels
-                px = int(cx_norm / 999 * sw)
-                py = int(cy_norm / 999 * sh)
-                logger.info(
-                    "[HANDLE] Parse OK (box): norm=(%.1f,%.1f) -> pixel=(%d,%d)",
-                    cx_norm, cy_norm, px, py,
-                )
-                # ponytail: full-screen box = mmproj likely missing
-                if x1 <= 1 and y1 <= 1 and x2 >= 998 and y2 >= 998:
-                    logger.warning(
-                        "[HANDLE] Model returned full-screen bounding box — "
-                        "mmproj projector file is likely missing. "
-                        "Ensure mmproj-LocateAnything-3B-BF16.gguf is in the models directory."
-                    )
-                return (px, py)
-            except (ValueError, IndexError):
-                pass
-
-        # Try <point><X><Y></point> format (if model outputs point directly)
-        point_match = re.search(
-            r'<point>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*</point>',
-            text, re.IGNORECASE,
-        )
-        if point_match:
-            try:
-                nx = int(point_match.group(1))
-                ny = int(point_match.group(2))
-                px = int(nx / 999 * sw)
-                py = int(ny / 999 * sh)
-                logger.info(
-                    "[HANDLE] Parse OK (point): norm=(%d,%d) -> pixel=(%d,%d)",
-                    nx, ny, px, py,
-                )
-                return (px, py)
-            except (ValueError, IndexError):
-                pass
-
-        # Fallback: extract plain numbers from text — only use if they look
-        # like valid normalized coordinates (0-999) so we don't accidentally
-        # pick up metadata or error text as click coordinates.
-        nums = re.findall(r'\b(\d{1,5})\b', text)
-        if len(nums) >= 2:
-            px = int(nums[0])
-            py = int(nums[1])
-            sw_int, sh_int = int(sw), int(sh)
-            # Discard if numbers are way out of screen range (likely garbage)
-            if (px > sw_int * 2 or py > sh_int * 2):
-                logger.warning(
-                    "[HANDLE] Parse FALLBACK rejected (%s,%s) — out of plausible range",
-                    nums[0], nums[1],
-                )
-            else:
-                logger.warning(
-                    "[HANDLE] Parse FALLBACK (plain numbers): (%s,%s) -> pixel=(%d,%d)",
-                    nums[0], nums[1], px, py,
-                )
-                return (px, py)
-
-        logger.warning("[HANDLE] Parse FAILED: %.150s", text)
-        return None
+        """Parse LocateAnything-3B special-token output into pixel coordinates
+        (module-level, shared with the agentic loop's grounding)."""
+        return parse_locate_anything_output(text, img_w, img_h)
 
 
     def _vlm_get_coordinates(
@@ -1173,6 +942,15 @@ class HandleMixin:
     # Screenshot helper
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _gate_screenshot(region):
+        """Platform gate capture: mss on X11, pyautogui/ImageGrab on Windows."""
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import screenshot
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import screenshot
+        return screenshot(region)
+
     def _take_screenshot_b64(self):
         """Take a screenshot of the PRIMARY monitor and return
         (base64, width_px, height_px, pil_image).
@@ -1230,7 +1008,7 @@ class HandleMixin:
             import pyautogui
             sw, sh = pyautogui.size()
             # Capture ONLY the primary monitor so screenshot dims == pyautogui.size()
-            screenshot = pyautogui.screenshot(region=(0, 0, sw, sh))
+            screenshot = self._gate_screenshot((0, 0, sw, sh))
             width, height = screenshot.size
             logger.debug(
                 "[DPI] screenshot=%dx%d  pyautogui.size()=%dx%d",
@@ -1255,4 +1033,312 @@ class HandleMixin:
             return connections[port][0].get('node_id')
         if port == 'output':
             return "__done__"
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Module-level grounding — the Handle node's own LocateAnything pipeline,
+# factored out so the builder's agentic loop REUSES it (spec: "grounding
+# extracted/reused from the Handle node runtime") instead of keeping a copy.
+# The mixin methods above delegate here; behavior is unchanged for the node.
+# ---------------------------------------------------------------------------
+
+
+def _mtmd_cli_path():
+    """Find the llama-mtmd-cli executable (used by the API for grounding models)."""
+    candidates = []
+
+    # Check from AI/models dir up to utils/llama.cpp/build/...
+    try:
+        from AI.config_loader import get_models_dir
+        md = get_models_dir()
+        candidates.append(
+            os.path.normpath(
+                os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build-vulkan", "bin", "Release", "llama-mtmd-cli.exe")
+            )
+        )
+        candidates.append(
+            os.path.normpath(
+                os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build-vulkan", "bin", "llama-mtmd-cli.exe")
+            )
+        )
+        candidates.append(
+            os.path.normpath(
+                os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "Release", "llama-mtmd-cli.exe")
+            )
+        )
+        candidates.append(
+            os.path.normpath(
+                os.path.join(md, "..", "..", "..", "utils", "llama.cpp", "build", "bin", "llama-mtmd-cli.exe")
+            )
+        )
+        # Setup stages the engine binaries into LoOper\AI\bin (models_dir/../bin)
+        candidates.append(
+            os.path.normpath(os.path.join(md, "..", "bin", "llama-mtmd-cli.exe"))
+        )
+    except Exception:
+        pass
+
+    # PyInstaller frozen: prefer _MEIPASS (the _internal/ dir) where the
+    # engine's own DLLs (llama-common/llama/ggml*/mtmd) sit beside the EXE.
+    # The MSI ALSO stages a bare stub at INSTALLFOLDER/bin WITHOUT those
+    # DLLs; spawning it fails to resolve its imports, so grounding silently
+    # returns "".  The stub must therefore be tried LAST.
+    import sys as _sys
+    if getattr(_sys, 'frozen', False):
+        _meipass = getattr(_sys, '_MEIPASS', None)
+        if _meipass:
+            candidates.insert(0, os.path.join(_meipass, "LoOper", "AI", "bin", "llama-mtmd-cli.exe"))
+            candidates.insert(0, os.path.join(_meipass, "bin", "llama-mtmd-cli.exe"))
+        _exe_dir = os.path.dirname(_sys.executable)
+        candidates.append(os.path.join(_exe_dir, "bin", "llama-mtmd-cli.exe"))
+        candidates.append(os.path.join(_exe_dir, "llama-mtmd-cli.exe"))
+
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+def _mtmd_infer(model_relative_path, prompt, image_b64, max_tokens=128,
+                temperature=0.1, timeout=600):
+    """Run llama-mtmd-cli locally as subprocess (fallback when server API fails).
+
+    mtmd-cli already emits special/control tokens by default — no ``--special``
+    flag needed.  ``timeout`` bounds the subprocess (the Handle node keeps 600;
+    the act loop passes its per-step budget).
+    """
+    try:
+        from AI.config_loader import get_models_dir
+        models_dir = get_models_dir()
+        model_path = os.path.normpath(os.path.join(models_dir, model_relative_path))
+        if not os.path.exists(model_path):
+            logger.warning("[HANDLE] Model not found: %s", model_path)
+            return ""
+
+        # Auto-discover mmproj in same directory
+        mmproj_path = ""
+        model_dir = os.path.dirname(model_path)
+        if os.path.isdir(model_dir):
+            for fname in os.listdir(model_dir):
+                if fname.lower().startswith("mmproj-") and fname.lower().endswith(".gguf"):
+                    mmproj_path = os.path.join(model_dir, fname)
+                    break
+
+        # Locate llama-mtmd-cli.exe (multimodal CLI for grounding models)
+        cli_path = _mtmd_cli_path()
+        if not cli_path:
+            logger.warning("[HANDLE] llama-mtmd-cli.exe not found")
+            return ""
+
+        # Save image to temp file
+        fd, img_path = tempfile.mkstemp(suffix=".png", prefix="locate_")
+        os.close(fd)
+        with open(img_path, "wb") as f:
+            f.write(base64.b64decode(image_b64))
+
+        cmd = [
+            cli_path,
+            "--model", model_path,
+            "--image", img_path,
+            "-p", prompt,
+            "--temp", str(temperature),
+            "-n", str(max_tokens),
+        ]
+        # NOTE: --no-display-prompt is NOT passed — llama-mtmd-cli
+        # (unlike llama-cli) does not support that flag.
+        if mmproj_path:
+            cmd.extend(["--mmproj", mmproj_path])
+        logger.info("[HANDLE] Running mtmd-cli: %s --model %s --image <temp> %s",
+                     os.path.basename(cli_path), os.path.basename(model_path),
+                     f"--mmproj {os.path.basename(mmproj_path)}" if mmproj_path else "(no mmproj)")
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+
+        # Clean up temp image
+        try:
+            os.remove(img_path)
+        except Exception:
+            pass
+
+        output = result.stdout.strip()
+        if output:
+            logger.info("[HANDLE] mtmd-cli output: %.200s", output)
+            return output
+        if result.stderr:
+            logger.warning("[HANDLE] mtmd-cli stderr: %.200s", result.stderr)
+        return ""
+
+    except Exception as e:
+        logger.error("[HANDLE] mtmd-cli subprocess failed: %s", e)
+        return ""
+
+
+def parse_locate_anything_output(text, img_w, img_h):
+    """Parse LocateAnything-3B special-token output into pixel coordinates.
+
+    The model outputs normalized coordinates (tokens 0-999) relative to
+    the input image dimensions.  The conversion uses pyautogui.size()
+    (logical screen resolution) because pyautogui.click() operates in
+    logical coordinates — this handles HiDPI where the screenshot
+    physical pixels may differ from logical screen pixels.
+
+    Output format: <ref>label</ref><box><X1><Y1><X2><Y2></box>
+    where <0>..<999> are normalized coordinate tokens (0-999)
+    Returns (pixel_x, pixel_y) or None.
+    """
+    import pyautogui as _pg
+    import re
+    text = text.strip()
+
+    # The model normalises its output to the image it sees; convert using
+    # the image dimensions the screenshot helper returned (already DPI-
+    # normalized to the click coordinate space, including in sandbox mode).
+    # Fall back to pyautogui.size() only if the dims are unknown.
+    sw, sh = int(img_w or 0), int(img_h or 0)
+    if sw <= 0 or sh <= 0:
+        sw, sh = _pg.size()
+
+    # Sanitise for logging: replace non-ASCII chars to avoid
+    # UnicodeEncodeError when writing to cp1252 console.
+    log_safe = text.encode('ascii', errors='replace').decode('ascii')
+    logger.info(
+        "[HANDLE] Parse: screenshot=(%d,%d) pyautogui.size()=(%d,%d) "
+        "model_text=[%.120s]",
+        img_w, img_h, sw, sh, log_safe,
+    )
+
+    # Detect explicit failure: model returned <box>None</box>
+    if re.search(r'<box>\s*None\s*</box>', text, re.IGNORECASE):
+        logger.warning(
+            "[HANDLE] Parse FAILED: model returned <box>None</box> — "
+            "could not find element matching prompt"
+        )
+        return None
+
+    # Try <box><X1><Y1><X2><Y2></box> format
+    # Allow for optional whitespace between tokens since model output
+    # formatting can vary between server and local CLI.
+    box_match = re.search(
+        r'<box>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*</box>',
+        text, re.IGNORECASE,
+    )
+    if box_match:
+        try:
+            x1 = int(box_match.group(1))
+            y1 = int(box_match.group(2))
+            x2 = int(box_match.group(3))
+            y2 = int(box_match.group(4))
+            # Use center of bounding box
+            cx_norm = (x1 + x2) / 2
+            cy_norm = (y1 + y2) / 2
+            # Convert from normalized 0-999 to screen pixels
+            px = int(cx_norm / 999 * sw)
+            py = int(cy_norm / 999 * sh)
+            logger.info(
+                "[HANDLE] Parse OK (box): norm=(%.1f,%.1f) -> pixel=(%d,%d)",
+                cx_norm, cy_norm, px, py,
+            )
+            # ponytail: full-screen box = mmproj likely missing
+            if x1 <= 1 and y1 <= 1 and x2 >= 998 and y2 >= 998:
+                logger.warning(
+                    "[HANDLE] Model returned full-screen bounding box — "
+                    "mmproj projector file is likely missing. "
+                    "Ensure mmproj-LocateAnything-3B-BF16.gguf is in the models directory."
+                )
+            return (px, py)
+        except (ValueError, IndexError):
+            pass
+
+    # Try <point><X><Y></point> format (if model outputs point directly)
+    point_match = re.search(
+        r'<point>\s*<\s*(\d+)\s*>\s*<\s*(\d+)\s*>\s*</point>',
+        text, re.IGNORECASE,
+    )
+    if point_match:
+        try:
+            nx = int(point_match.group(1))
+            ny = int(point_match.group(2))
+            px = int(nx / 999 * sw)
+            py = int(ny / 999 * sh)
+            logger.info(
+                "[HANDLE] Parse OK (point): norm=(%d,%d) -> pixel=(%d,%d)",
+                nx, ny, px, py,
+            )
+            return (px, py)
+        except (ValueError, IndexError):
+            pass
+
+    # Fallback: extract plain numbers from text — only use if they look
+    # like valid normalized coordinates (0-999) so we don't accidentally
+    # pick up metadata or error text as click coordinates.
+    nums = re.findall(r'\b(\d{1,5})\b', text)
+    if len(nums) >= 2:
+        px = int(nums[0])
+        py = int(nums[1])
+        sw_int, sh_int = int(sw), int(sh)
+        # Discard if numbers are way out of screen range (likely garbage)
+        if (px > sw_int * 2 or py > sh_int * 2):
+            logger.warning(
+                "[HANDLE] Parse FALLBACK rejected (%s,%s) — out of plausible range",
+                nums[0], nums[1],
+            )
+        else:
+            logger.warning(
+                "[HANDLE] Parse FALLBACK (plain numbers): (%s,%s) -> pixel=(%d,%d)",
+                nums[0], nums[1], px, py,
+            )
+            return (px, py)
+
+    logger.warning("[HANDLE] Parse FAILED: %.150s", text)
+    return None
+
+
+def ground_by_vision(goal, screenshot_b64='', img_w=0, img_h=0, timeout=120):
+    """Fuzzy-target grounding: LocateAnything-3B -> pixel (x, y), or None.
+
+    The Handle node's own pipeline, module-level: screenshot (taken here
+    when none is given) -> the gateway's ``/llamacpp/generate`` with the
+    LocateAnything prompt template -> mtmd-cli subprocess fallback -> the
+    shared parser.  ``timeout`` bounds BOTH calls (the Handle node itself
+    stays unbounded; the act loop passes its per-step budget).  Never
+    raises.
+    """
+    try:
+        if not screenshot_b64:
+            screenshot_b64, w, h, _pil = HandleMixin()._take_screenshot_b64()
+            img_w, img_h = (img_w or w), (img_h or h)
+        if not screenshot_b64:
+            return None
+        prompt = (
+            "Locate the region that matches the following"
+            " description: %s." % str(goal or '')[:300]
+        )
+        text = HandleMixin()._call_llamacpp_api(
+            api_url=HandleMixin._API_URL,
+            model=HandleMixin._LOCATE_MODEL,
+            prompt=prompt,
+            images=[screenshot_b64],
+            temperature=0.1,
+            max_tokens=64,
+            log_calls=False,
+            timeout=timeout,
+        )
+        if not text:
+            logger.info("[HANDLE] API returned empty, trying local llama-cli...")
+            text = _mtmd_infer(HandleMixin._LOCATE_MODEL, prompt,
+                               screenshot_b64, max_tokens=64, temperature=0.1,
+                               timeout=max(timeout, 30))
+        if not text:
+            return None
+        return parse_locate_anything_output(text, img_w, img_h)
+    except Exception as exc:
+        logger.warning("[HANDLE] ground_by_vision failed: %s", exc)
         return None

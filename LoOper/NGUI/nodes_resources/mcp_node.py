@@ -59,6 +59,9 @@ class MCPNode(BaseNode):
         self.create_property('tool_args', '{}')       # JSON string of tool arguments
         self.create_property('mcp_tools', '')         # Cached JSON of discovered tool schemas
         self.create_property('keep_alive', False)     # Keep server alive across chain iterations
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
 
     def get_mcp_config(self):
         """Return configuration dict for save/restore."""

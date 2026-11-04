@@ -145,6 +145,7 @@ class HandleOperationsMixin:
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             dialog.content_layout.addWidget(buttons)
+            dialog.add_description(node.get_property('description') or '')
 
             if dialog.exec_() != QDialog.Accepted:
                 logger.debug("Dialog cancelled")
@@ -159,6 +160,7 @@ class HandleOperationsMixin:
             web_mode = bool(web_check.isChecked()) and action_type == 'click'
 
             node.set_property('action_type', action_type)
+            node.set_property('description', dialog.description())
             node.set_property('goal_description', goal_description)
             node.set_property('target_description', target_description)
             node.set_property('agent_adaptive', agent_adaptive)

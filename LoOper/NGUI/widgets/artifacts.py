@@ -12,9 +12,9 @@ import re
 import sys
 import time
 
-# ```html ... ``` fence an LLM often wraps the document in.
-_FENCE = re.compile(r"^\s*```[A-Za-z0-9_-]*\s*\n(.*?)\n?```\s*$", re.S)
-_HTML_TAG = re.compile(r"<html[\s>]", re.I)
+# ```html ... ``` fence an LLM often wraps the document in, usually after
+# a line of chatty prose ("Here's your page:").
+_FENCE = re.compile(r"```[A-Za-z0-9_-]*\s*\r?\n(.*?)\r?\n?```", re.S)
 
 
 def artifacts_dir() -> str:
@@ -39,13 +39,26 @@ def artifacts_dir() -> str:
 
 
 def _normalize(content: str) -> str:
-    """Strip a code fence and wrap a bare fragment into a full document."""
+    """Keep the artifact only: drop the prose an LLM wraps it in, then wrap
+    a bare fragment into a full document."""
     text = (content or "").strip()
-    fence = _FENCE.match(text)
+    fence = _FENCE.search(text)
     if fence:
         text = fence.group(1).strip()
-    if _HTML_TAG.search(text):
+    low = text.lower()
+    # A full document: keep it from its first doctype/root tag to its last
+    # </html>, so "Sure! Here you go:" and "Enjoy." never reach the view.
+    starts = [i for i in (low.find("<!doctype"), low.find("<html")) if i >= 0]
+    if starts:
+        text = text[min(starts):]
+        end = text.lower().rfind("</html>")
+        if end >= 0:
+            text = text[:end + 7]
         return text
+    # A bare fragment: strip anything outside its outermost tags.
+    first, last = text.find("<"), text.rfind(">")
+    if 0 <= first < last:
+        text = text[first:last + 1]
     return (
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"

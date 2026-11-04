@@ -123,7 +123,12 @@ class ConditionalLoop:
                             from player.multi_sequence_player import MultiSequencePlayer
                         temp_chain_player = MultiSequencePlayer(
                             chain_config,
-                            chain_file_path=resolved_file
+                            chain_file_path=resolved_file,
+                            # Loop children run on the same shared browser as
+                            # their caller: never quit it when one iteration's
+                            # chain ends, or the next node/recording must spawn
+                            # a second instance.
+                            keep_web_browser=True,
                         )
                         temp_chain_player.selection_memory = {}
                         if getattr(self, '_loop_sandbox_url', None):

@@ -465,3 +465,27 @@ def test_stop_flag_ends_the_sweep_before_the_first_cycle(caplog):
     )
     assert probes["n"] == 0, "a stop must end the sweep BEFORE probing"
     assert "stopped by user" in caplog.text
+
+
+def test_every_absence_phrasing_counts_as_an_absence():
+    """A finding that only reports the value is NOT in the material carries no
+    knowledge and must never pass as a composed fact.  The list has to spell
+    out every form the composer uses: "do not contain" slipped through a rule
+    that held only does not / did not / is not, so an absence finding entered
+    the pool, passed the judge's grounding check and cut a sweep at cycle 1
+    (live: "The answers written by ... do not contain any information about
+    the source of the photo")."""
+    absence = [
+        "The answers do not contain any information about the photo.",
+        "The answers don't include the photo source.",
+        "The context does not mention where the photo came from.",
+        "The source is not explicitly stated in the provided context.",
+        "There is no mention of a specific website.",
+    ]
+    for line in absence:
+        assert comorag._NEGATIVE_FINDING_RE.search(line), line
+    # A REAL answer still passes: the rule is about negated presence, not
+    # about the words a value happens to use.
+    for line in ("The photo was taken at the Buenos Aires office.",
+                 "The source of the photo is https://example.com/p.jpg"):
+        assert not comorag._NEGATIVE_FINDING_RE.search(line), line

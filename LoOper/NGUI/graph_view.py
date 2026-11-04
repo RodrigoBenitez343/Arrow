@@ -4,7 +4,7 @@ import os
 import sys
 import logging
 from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import pyqtSignal, QTimer
+from PyQt5.QtCore import QRectF, pyqtSignal, QTimer
 from PyQt5.QtGui import QCursor
 from .constants import *
 from .node_context_menu import NodeContextMenuManager
@@ -20,27 +20,43 @@ from .graph_elements import (
 from .graph_elements.dnd_manager import DragDropManager
 from .graph_elements.clipboard_manager import ClipboardManager
 from .i18n import _
+from player import workspace
 # Branching is handled automatically during workflow execution
 
 # Set up logger for this module
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+# Where the canvas puts a just-built chain: a margin around its bounding box (a
+# fraction of its size), the smallest viewport worth fitting into, and how long
+# to wait for a canvas that has not been laid out yet.
+_FOCUS_PADDING = 0.08
+_FOCUS_MIN_VIEWPORT = 80
+_FOCUS_RETRIES = 20
+_FOCUS_RETRY_MS = 60
+
 class GraphViewWidget(QWidget):
     """Widget for visualizing and managing sequence chains using NodeGraphQt"""
     
+    # Emitted with the slug whenever the canvas switches workspace, so the
+    # library and agent mode rescan instead of showing the old one's chains.
+    workspace_changed = pyqtSignal(str)
     node_selected = pyqtSignal(int, int)
     sequence_selected = pyqtSignal(int)
     # Emitted with the selected Code node graph object when exactly one code
     # node is selected (Code Node Studio dock).
     code_node_selected = pyqtSignal(object)
     
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, project_root=None):
         logger.info("Initializing GraphViewWidget")
         try:
             super().__init__(parent)
             # Initialize clipboard for copied nodes
             self.copied_nodes = []
+            # Bumped whenever the canvas becomes a DIFFERENT chain (opened, or
+            # cleared).  The Builder keys its chat session to this, so a new
+            # chain never inherits the previous one's conversation.
+            self._chain_epoch = 0
             # Last code-node id shown in the Code Node Studio (dedupe guard)
             self._last_code_selected_id = None
             # Initialize paste counter for positioning
@@ -68,8 +84,12 @@ class GraphViewWidget(QWidget):
             # Initialize ready flag
             self._initialization_complete = False
             
-            # Set up folder paths
-            if getattr(sys, 'frozen', False):
+            # Set up folder paths.  ``project_root`` is injectable so a test
+            # (or a caller opening another tree) never migrates the real
+            # chains folder of the running app.
+            if project_root:
+                project_root = os.path.abspath(project_root)
+            elif getattr(sys, 'frozen', False):
                 # In frozen builds, we want paths relative to the executable, 
                 # not the temporary _MEIPASS directory.
                 project_root = os.path.dirname(sys.executable)
@@ -85,6 +105,37 @@ class GraphViewWidget(QWidget):
             os.makedirs(self.sequences_folder, exist_ok=True)
             os.makedirs(self.chains_folder, exist_ok=True)
             os.makedirs(self.web_sequences_folder, exist_ok=True)
+
+            # Workspaces (player/workspace.py): one agent + its own chains
+            # folder per workspace.  The legacy flat chains/ folder is migrated
+            # into them once; from then on ``chains_folder`` is the ACTIVE
+            # workspace's folder, which is what gates what the library lists
+            # and what the agent may route to.
+            self._legacy_chains_folder = self.chains_folder
+            self.workspaces_root = workspace.root_for_chains(
+                self._legacy_chains_folder)
+            self._workspace_slug = ''
+            try:
+                report = workspace.migrate(self.workspaces_root,
+                                           self._legacy_chains_folder)
+                if report.get('moves'):
+                    logger.info(
+                        "Chains migrated into %d workspace(s): %d file(s), "
+                        "%d import path(s) rewritten",
+                        len(report.get('workspaces') or {}), report['moves'],
+                        report.get('imports', 0))
+            except Exception:
+                # Never stop the editor from opening: an unmigrated tree keeps
+                # the legacy folder and the user can move chains by hand.
+                logger.exception('workspace migration failed; the legacy '
+                                 'chains folder stays in use')
+            try:
+                self.set_workspace(
+                    workspace.default_workspace(self.workspaces_root)['slug'],
+                    remember=False)
+            except Exception:
+                logger.exception('no workspace could be opened; the library '
+                                 'lists the legacy chains folder')
             
             logger.debug(f"Set sequences_folder to: {self.sequences_folder}")
             logger.debug(f"Set chains_folder to: {self.chains_folder}")
@@ -912,10 +963,29 @@ class GraphViewWidget(QWidget):
         """Clear all nodes and connections from the graph"""
         logger.debug("Clearing graph")
         try:
+            # Builder annotations reference node ids that are about to die.
+            self.flow_overlay().clear()
+            # A new chain carries no description of its own.
+            self.set_flow({})
+            self._chain_epoch += 1
             self.graph_manager.clear_graph()
             logger.info("Graph cleared successfully")
         except Exception as e:
             logger.error(f"Error clearing graph: {str(e)}", exc_info=True)
+
+    def flow_overlay(self):
+        """The Builder's canvas annotations (section boxes + walk ring).
+
+        Lazily created and owned by this widget: the panel asks for it on
+        every turn, and a chain load / clear drops what it drew.
+        """
+        overlay = getattr(self, '_flow_overlay', None)
+        if overlay is None:
+            from .graph_elements.flow_overlay import FlowOverlay
+            overlay = FlowOverlay(lambda: getattr(self, 'node_graph', None),
+                                  parent=self)
+            self._flow_overlay = overlay
+        return overlay
 
     def _validate_conditional_nodes(self):
         """Validate conditional nodes in the graph"""
@@ -953,6 +1023,131 @@ class GraphViewWidget(QWidget):
                 hasattr(self, 'node_graph') and self.node_graph is not None and
                 hasattr(self, 'view') and self.view is not None)
 
+    # -- workspaces (player/workspace.py) --------------------------------
+
+    def workspaces(self):
+        """Every workspace manifest on disk (sorted by name)."""
+        return workspace.list_workspaces(self.workspaces_root)
+
+    def workspace_slug(self):
+        """The workspace the canvas is scoped to ('' before one is opened)."""
+        return self._workspace_slug
+
+    def active_workspace(self):
+        """The active workspace manifest, or None when there is none."""
+        slug = self._workspace_slug
+        if not slug:
+            return None
+        return workspace.load(self.workspaces_root, slug)
+
+    def set_workspace(self, slug, remember=True):
+        """Scope the library and the agent to one workspace.
+
+        The open chain is NOT closed: it is a canvas, not a workspace member,
+        and closing it would throw away edits made after the last save.  What
+        changes here is what the library lists and which chains the agent may
+        route to — the workspace's own folder.
+        """
+        manifest = workspace.load(self.workspaces_root, slug)
+        folder = workspace.chains_dir(self.workspaces_root, slug)
+        os.makedirs(folder, exist_ok=True)
+        self.chains_folder = folder
+        self._workspace_slug = slug
+        if remember:
+            workspace.set_active_slug(self.workspaces_root, slug)
+        logger.info("Workspace '%s' active: %s", manifest.get('name'), folder)
+        try:
+            self.workspace_changed.emit(slug)
+        except Exception:
+            logger.debug('workspace_changed had no listener', exc_info=True)
+        return manifest
+
+    # -- keeping the chain on screen ------------------------------------
+
+    def focus_chain(self):
+        """Frame the whole open chain in the canvas.
+
+        Node positions come from the chain itself, so a chain recorded on
+        another screen (or after a pan) can open entirely outside the visible
+        area and the canvas looks empty.  Fitting the view to the chain's own
+        bounding box is what "the chain is on screen" means here; a canvas that
+        has not been laid out yet retries, because fitting a 0-size viewport
+        computes a meaningless zoom.
+        """
+        self._focus_attempts = 0
+        self._fit_chain_now()
+
+    def _fit_chain_now(self):
+        try:
+            graph = getattr(self, 'node_graph', None)
+            if graph is None:
+                return
+            viewer = graph.viewer()
+            viewport = viewer.viewport()
+            if (viewport.width() < _FOCUS_MIN_VIEWPORT or
+                    viewport.height() < _FOCUS_MIN_VIEWPORT):
+                attempts = getattr(self, '_focus_attempts', 0)
+                if attempts < _FOCUS_RETRIES:
+                    self._focus_attempts = attempts + 1
+                    QTimer.singleShot(_FOCUS_RETRY_MS, self._fit_chain_now)
+                else:
+                    logger.debug(
+                        "Chain focus skipped: the canvas never got a size")
+                return
+            views = [node.view for node in (graph.all_nodes() or [])
+                     if getattr(node, 'view', None) is not None]
+            if not views:
+                self._focus_attempts = 0
+                return
+            bounds = QRectF()
+            for view in views:
+                bounds = bounds.united(view.sceneBoundingRect())
+            if bounds.isNull() or bounds.isEmpty():
+                return
+            pad = max(bounds.width(), bounds.height()) * _FOCUS_PADDING
+            bounds = bounds.adjusted(-pad, -pad, pad, pad)
+            graph.clear_selection()
+            viewer.set_scene_rect([bounds.x(), bounds.y(),
+                                   bounds.width(), bounds.height()])
+            # Never magnify past 100%: a two-node chain would otherwise be
+            # drawn as two boxes filling the screen.
+            if viewer.transform().m11() > 1.0:
+                viewer.reset_zoom(bounds.center())
+            self._focus_attempts = 0
+            logger.info("Canvas focused on the chain: %d node(s), %.0fx%.0f",
+                        len(views), bounds.width(), bounds.height())
+        except Exception:
+            logger.warning("The canvas could not be focused on the chain",
+                           exc_info=True)
+
+    def ensure_chain_visible(self):
+        """Focus the chain only when the current view shows none of it.
+
+        Used after a restored zoom/pan: the saved view is what the user left,
+        so it is kept — unless it points at empty canvas, in which case the
+        chain is brought back in front of them.
+        """
+        try:
+            graph = getattr(self, 'node_graph', None)
+            if graph is None:
+                return
+            viewer = graph.viewer()
+            viewport = viewer.viewport()
+            if (viewport.width() < _FOCUS_MIN_VIEWPORT or
+                    viewport.height() < _FOCUS_MIN_VIEWPORT):
+                return
+            visible = viewer.mapToScene(viewport.rect()).boundingRect()
+            nodes = [node for node in (graph.all_nodes() or [])
+                     if getattr(node, 'view', None) is not None]
+            if any(visible.intersects(node.view.sceneBoundingRect())
+                   for node in nodes):
+                return
+            logger.info("No node of the chain is in view: focusing the chain")
+            self.focus_chain()
+        except Exception:
+            logger.warning("Could not check that the chain is on screen",
+                           exc_info=True)
+
     def load_chain(self, file_path):
         """Load a chain configuration from a file"""
         logger.debug(f"Loading chain from file: {file_path}")
@@ -972,10 +1167,73 @@ class GraphViewWidget(QWidget):
                 raise RuntimeError("Graph view not initialized")
                 
             self.config_manager.load_chain(file_path)
+            # The loaded chain has its own nodes: previous annotations are stale.
+            self.flow_overlay().clear()
+            # A different chain is a different conversation for the Builder.
+            self._chain_epoch += 1
+            # A chain that describes itself shows that description unasked.
+            self._show_stored_flow()
+            # Its nodes sit where the file says; put them in front of the user.
+            self.focus_chain()
             logger.info("Chain loaded successfully")
         except Exception as e:
             logger.error(f"Error loading chain: {str(e)}", exc_info=True)
             raise
+
+    def _show_stored_flow(self):
+        """Draw the chain's own section boxes as soon as the canvas holds it.
+
+        The metadata lives in the chain file, so the boxes are why it exists —
+        requiring the user to ask the builder before seeing them is a bug.  A
+        description that cannot be drawn (it names nodes an older build wrote)
+        must not stop the chain from opening: it is logged, and the builder can
+        re-describe the chain.
+        """
+        flow = self.get_flow()
+        if not flow:
+            return
+        from player.builder import flow as bflow
+        from player.builder import snapshot as bsnapshot
+        try:
+            snap = bsnapshot.build(self.graph_manager)
+            # A ref this canvas does not have used to hide EVERY box: one stale
+            # id raised and nothing was drawn.  The rest is still true, so it
+            # is drawn and the stale refs are reported (the next save prunes
+            # them out of the file for good).
+            had_sections = bool(flow.get('sections'))
+            flow, dropped = bflow.prune(snap, flow)
+            if dropped:
+                logger.warning(
+                    'the chain\'s flow description names %d node(s) this '
+                    'canvas does not have — drew the rest; save or re-describe '
+                    'the chain to rewrite it', dropped)
+            # A box frames its members: when the stored sections name no node
+            # of this canvas, inventing phases instead drew frames around
+            # whatever happened to sit in between.  Draw nothing and say so.
+            boxes = ([] if had_sections and not flow.get('sections')
+                     else bflow.sections(snap, flow))
+            self.flow_overlay().show_sections(boxes)
+            logger.info("Stored flow metadata drawn: %d section(s)", len(boxes))
+        except Exception:
+            logger.warning(
+                'the chain carries a flow description that cannot be drawn on '
+                'this canvas (stale node references) - ask the Builder to '
+                'describe the chain again', exc_info=True)
+
+    # -- the chain's own flow metadata (player/builder/flow.py) ---------
+
+    def get_flow(self):
+        """The chain's permanent description ({} when it has none)."""
+        getter = getattr(self.config_manager, 'get_flow', None)
+        return dict(getter() or {}) if callable(getter) else {}
+
+    def set_flow(self, metadata):
+        """Hold the description with the open chain; it is saved with it."""
+        setter = getattr(self.config_manager, 'set_flow', None)
+        if not callable(setter):
+            raise RuntimeError(
+                'this chain cannot carry flow metadata (no set_flow)')
+        setter(dict(metadata or {}))
 
     def save_chain(self, file_path):
         """Save the current chain configuration to a file"""
@@ -991,8 +1249,14 @@ class GraphViewWidget(QWidget):
         """Build the graph from a chain configuration"""
         logger.debug("Building graph from config")
         try:
+            # The boxes describe the chain that is about to be replaced.
+            self.flow_overlay().clear()
             self.config_manager.build_graph_from_config(config)
             logger.info("Graph built successfully")
+            # Programmatic builds (chain expansion, paste) show the boxes too.
+            self._show_stored_flow()
+            # ...and land on screen: a built chain is never left off-canvas.
+            self.focus_chain()
             try:
                 if hasattr(self, 'node_button_manager'):
                     self.node_button_manager.install()

@@ -27,6 +27,7 @@ from ..constants import ACCENT_COLOR, DANGER_COLOR, TEXT_COLOR, TEXT_MUTED
 from ..i18n import _
 from ..icons import tabler_qicon
 from . import ui_motion
+from .chain_avatar import chain_avatar_qicon
 from .hover_button import HoverGlowButton
 
 logger = logging.getLogger(__name__)
@@ -116,9 +117,9 @@ class AgentNotch(QWidget):
         # glyph is drawn.
         self._avatar.setStyleSheet("background: transparent;")
         row.addWidget(self._avatar)
-        # Left slot: the SELECTED system chain's vector avatar, so it is clear
+        # Left slot: the SELECTED system chain's procedural avatar, so it is clear
         # who the user is talking to (it replaced the plain status dot).
-        self._chain_icon = "ROBOT"     # until a system chain is selected
+        self._chain_seed = ""        # until a system chain is selected
 
         self._input = QLineEdit(self._bar)
         self._input.setPlaceholderText(_(_PLACEHOLDER_TEXT))
@@ -167,20 +168,22 @@ class AgentNotch(QWidget):
 
     def _render_avatar(self, color):
         """Paint the chain avatar in *color*, so the run state stays readable."""
-        icon = tabler_qicon(self._chain_icon, AVATAR_PX, color)
+        icon = chain_avatar_qicon(self._chain_seed or "agent", AVATAR_PX, color)
         if icon.isNull():
             self._avatar.clear()
         else:
             self._avatar.setPixmap(icon.pixmap(AVATAR_PX, AVATAR_PX))
 
-    def set_chain_avatar(self, icon_name):
-        """Show the selected system chain's vector avatar in the left slot.
+    def set_chain_avatar(self, chain_seed):
+        """Show the selected system chain's procedural avatar in the left slot.
 
-        Takes a Tabler icon name; an empty/unknown name falls back to the
-        generic agent glyph.  The icon is tinted by the current state colour,
-        so the avatar also carries the idle/executing signal.
+        Takes the chain id; the avatar pattern and hue are derived from it, so
+        every chain is unique and distinguishable at this small size.  Empty
+        falls back to a generic agent seed.  The pattern is tinted by the
+        current state colour, so the avatar also carries the idle/executing
+        signal while the disc keeps the chain's own hue.
         """
-        self._chain_icon = icon_name or "ROBOT"
+        self._chain_seed = chain_seed or ""
         self._render_avatar(self._accent().name())
 
     def set_execute(self, executing: bool):

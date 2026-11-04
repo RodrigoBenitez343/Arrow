@@ -76,7 +76,7 @@ def exe(tmp_path):
     executor._chain_runtime_dir = str(tmp_path / 'runtime')
     executor._venv_python = sys.executable
     executor._ensure_chain_venv = lambda: None
-    executor._install_code_dependencies = lambda code_str: {
+    executor._install_code_dependencies = lambda code_str, local_dirs=None: {
         'installed': [], 'failed': [], 'skipped': [],
         'pip_stdout': '', 'pip_stderr': '',
     }

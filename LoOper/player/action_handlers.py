@@ -21,6 +21,10 @@ from .computer_vision import TemplateMatching
 from .key_defs import MODIFIER_NAMES, key_to_name, pynput_key_for
 from .screenshot_cleanup import register_temporal_screenshot
 from .uia_locator import element_tiers, resolve_element, resolve_repeat
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import screenshot as capture_screen
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import screenshot as capture_screen
 
 if CV2_AVAILABLE:
     import cv2
@@ -264,7 +268,7 @@ class ActionHandlers:
             _exec_bus.hide_overlay_for_capture()
         except Exception:
             pass
-        return pyautogui.screenshot()
+        return capture_screen()
 
     def _get_agent_position(self):
         """Return the RDP agent's current cursor position, or None on failure."""

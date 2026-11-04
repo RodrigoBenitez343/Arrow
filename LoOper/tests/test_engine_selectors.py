@@ -69,16 +69,24 @@ def test_store_and_resolve_engine_from_model_prefix():
 
 def test_models_for_engine_filters_the_merged_list():
     """Refresh must bring the SELECTED engine's models only — never Ollama
-    tags mixed with every provider's entries."""
+    tags, GGUFs and every provider's entries in one list."""
     from NGUI.dialogs.engine_options import models_for_engine
 
     merged = ["llama3.2:1b", "nomic-embed-text:latest", "ollama:llama3.2:1b",
-              "openai:gpt-4o-mini", "groq:llama-3.3"]
+              "openai:gpt-4o-mini", "groq:llama-3.3",
+              "needle2/needle2.gguf", "D:/models/Qwen.Q4_K_M.gguf"]
     assert models_for_engine(merged, "ollama") == \
         ["llama3.2:1b", "nomic-embed-text:latest"]
     assert models_for_engine(merged, "openai") == ["openai:gpt-4o-mini"]
-    # Unknown/legacy engines pass the list through untouched.
-    assert models_for_engine(merged, "llamacpp") == merged
+    # llama.cpp serves the GGUF files on disk and NOTHING else: the merged
+    # list used to pass through whole, which is how an Ollama tag showed up
+    # under the local engine (and its own models showed up nowhere).
+    assert models_for_engine(merged, "llamacpp") == \
+        ["needle2/needle2.gguf", "D:/models/Qwen.Q4_K_M.gguf"]
+    assert models_for_engine(merged, "llama.cpp") == \
+        ["needle2/needle2.gguf", "D:/models/Qwen.Q4_K_M.gguf"]
+    # No engine named: no filtering (the caller asked for everything).
+    assert models_for_engine(merged, "") == merged
 
 
 # --------------------------------------------------------------------------- #
@@ -110,6 +118,99 @@ def test_llm_dialog_provider_engine_round_trip(qapp):
         None, {"use_llamacpp": True, "llamacpp_model_path": "m.gguf"})
     cfg2 = dlg2.get_config()
     assert cfg2["use_llamacpp"] is True and cfg2["model"] == "llamacpp"
+
+
+def test_store_model_drops_a_foreign_prefix_when_switching_back():
+    """Picking Ollama/llama.cpp again must stop routing to the old provider.
+
+    A leftover "groq:" prefix kept dispatching to groq while the dialog said
+    Ollama, so the node never actually changed engine.
+    """
+    from NGUI.dialogs.engine_options import store_model
+
+    assert store_model("ollama", "groq:qwen/qwen3.8-27b") == "qwen/qwen3.8-27b"
+    assert store_model("llamacpp", "deepseek:deepseek-flash") == "deepseek-flash"
+    # Ollama's own prefix is just noise; an Ollama TAG keeps its tag.
+    assert store_model("ollama", "ollama:llama3.2") == "llama3.2"
+    assert store_model("ollama", "llama3.2:1b") == "llama3.2:1b"
+
+
+def test_reopening_a_provider_node_shows_its_engine(qapp):
+    """edit_llm() restores the engine from the stored config, then the model."""
+    import NGUI.graph_elements  # noqa: F401
+    from NGUI.dialogs.engine_options import (
+        engine_from_config, engine_id, select_engine)
+    from NGUI.dialogs.llm_dialogs import LLMPropertiesDialog
+
+    stored = "groq:qwen/qwen3.8-27b"
+    dlg = LLMPropertiesDialog(None)  # what edit_llm() builds: no config
+    select_engine(dlg.engine_combo, engine_from_config("", False, stored))
+    dlg.on_engine_changed(dlg.engine_combo.currentText())
+    dlg.model_combo.setCurrentText(stored)
+
+    assert engine_id(dlg.engine_combo) == "groq"
+    assert dlg.model_combo.currentText() == stored
+    # ...and saving keeps the routing prefix (store_model is idempotent here).
+    assert dlg.get_config()["model"] == stored
+
+
+# --------------------------------------------------------------------------- #
+#  Gateway client: a provider failure must not be flattened to "Bad Gateway"
+# --------------------------------------------------------------------------- #
+
+class _Resp:
+    def __init__(self, code, reason, body):
+        self.status_code = code
+        self.reason = reason
+        self.text = ""
+        self._body = body
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        raise AssertionError("raise_for_status() drops the gateway detail")
+
+
+def test_gateway_502_surfaces_the_provider_detail():
+    import AI.consult as consult
+
+    client = consult.OllamaClient(base_url="http://gw.test")
+    sent = []
+
+    class _Session:
+        def post(self, url, json=None, **kw):
+            sent.append(url)
+            return _Resp(502, "Bad Gateway",
+                         {"detail": "DeepSeek rejected the API key."})
+
+    client.session = _Session()
+    out = client._post_json("/generate", {"model": "deepseek:deepseek-flash"})
+
+    assert "DeepSeek rejected the API key." in out["error"]
+    assert "502" in out["error"]
+    # Permanent failures are not retried four times.
+    assert len(sent) == 1
+
+
+def test_provider_model_is_never_replayed_against_local_ollama():
+    """A provider-routed model can only run on its provider: the old
+    direct-Ollama fallback 404'd and hid the real error."""
+    import AI.consult as consult
+
+    client = consult.OllamaClient(base_url="http://gw.test")
+    sent = []
+
+    class _Session:
+        def post(self, url, json=None, **kw):
+            sent.append(url)
+            return _Resp(502, "Bad Gateway", {"detail": "bad key"})
+
+    client.session = _Session()
+    out = client.chat("groq:llama-3.3", "hi")
+
+    assert "bad key" in out["error"]
+    assert all("11434" not in url for url in sent)
 
 
 # --------------------------------------------------------------------------- #

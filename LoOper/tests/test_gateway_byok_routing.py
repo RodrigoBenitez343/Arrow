@@ -225,8 +225,14 @@ def test_embeddings_route_legacy_untouched(monkeypatch):
 # --------------------------------------------------------------------------- /models
 
 
+def _no_ggufs(monkeypatch):
+    """No models directory: these tests are about the SERVER-backed lists."""
+    monkeypatch.setattr(api, "_gguf_model_files", lambda: [])
+
+
 def test_models_endpoint_merges_byok_entries(monkeypatch):
     """GUI pickers read /models: cloud models arrive as provider:model."""
+    _no_ggufs(monkeypatch)
     class _Resp:
         status_code = 200
 
@@ -246,6 +252,7 @@ def test_models_endpoint_merges_byok_entries(monkeypatch):
 def test_models_endpoint_survives_ollama_down_with_byok(monkeypatch):
     import requests as rq
 
+    _no_ggufs(monkeypatch)
     def _boom(*a, **k):
         raise rq.exceptions.ConnectionError("refused")
 
@@ -259,6 +266,7 @@ def test_models_endpoint_survives_ollama_down_with_byok(monkeypatch):
 def test_models_endpoint_503_when_nothing_available(monkeypatch):
     import requests as rq
 
+    _no_ggufs(monkeypatch)
     def _boom(*a, **k):
         raise rq.exceptions.ConnectionError("refused")
 
@@ -268,6 +276,25 @@ def test_models_endpoint_503_when_nothing_available(monkeypatch):
     with pytest.raises(api.HTTPException) as err:
         _run(api.list_models())
     assert err.value.status_code == 503
+
+
+def test_models_endpoint_serves_the_local_ggufs(monkeypatch):
+    """The local engine's models are FILES: without them in /models every
+    picker that reads the gateway reports llama.cpp as empty."""
+    import requests as rq
+
+    def _boom(*a, **k):
+        raise rq.exceptions.ConnectionError("refused")
+
+    monkeypatch.setattr(api.requests, "get", _boom)
+    monkeypatch.setattr(byok, "prefixed_model_names",
+                        lambda settings=None: [])
+    monkeypatch.setattr(api, "_gguf_model_files", lambda: [
+        {"name": "Qwen3.8-2B-Q8_0.gguf", "path": "x", "size": 7}])
+
+    out = _run(api.list_models())
+    assert [m.name for m in out] == ["Qwen3.8-2B-Q8_0.gguf"]
+    assert out[0].size == 7
 
 
 # --------------------------------------------------------------------------- /stop
@@ -302,3 +329,29 @@ def test_stop_endpoint_is_provider_agnostic(monkeypatch):
     assert http_stopped == ["llama3"]
     assert cli_stopped == ["gemma"]
     assert released == ["embed", "laya"]
+
+
+def test_a_rejected_provider_request_is_an_http_error_not_an_empty_stream(
+        monkeypatch):
+    """Groq answers 400 "reduce the length of the messages" for a model whose
+    window is too small.  That used to reach the caller as an empty 200 stream
+    ("the model returned no text"); it must be a real error with the provider's
+    own words."""
+    from AI import byok
+
+    class _Boom:
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            raise byok.ByokProviderError(
+                'Groq request failed: HTTP 400: {"error": {"message": '
+                '"Please reduce the length of the messages"}}')
+
+    monkeypatch.setattr(byok, 'generate_stream', lambda *a, **k: _Boom())
+    request = api.ChatRequest(model='groq:allam-2-7b', prompt='hi')
+    with pytest.raises(api.HTTPException) as err:
+        api._byok_stream_response(request, 'groq', 'allam-2-7b')
+
+    assert err.value.status_code == 502
+    assert 'reduce the length' in str(err.value.detail)

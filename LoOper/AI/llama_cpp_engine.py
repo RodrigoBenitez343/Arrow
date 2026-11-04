@@ -37,6 +37,54 @@ LLAMA_BIN_NAMES = {
     "llama-bench.exe", "llama-bench",
 }
 
+# (binary, flag) -> supported?  Probed once from --help.
+_FLAG_SUPPORT: Dict[tuple, bool] = {}
+
+
+def _dump_reasoning(reasoning: str) -> str:
+    """Write a reasoning harvest to a temp .md file and return its path.
+
+    The stream is also left on disk so a stuck run can be inspected after the
+    fact instead of being lost with the request.  '' on failure - never raises.
+    """
+    try:
+        import tempfile as _tf
+        d = os.path.join(_tf.gettempdir(), 'looper_reasoning')
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, 'reasoning_%s.md' %
+                            time.strftime('%Y%m%d-%H%M%S'))
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('# Reasoning harvest (%s)\n\n' %
+                    time.strftime('%Y-%m-%d %H:%M:%S'))
+            f.write(reasoning)
+        return path
+    except Exception:
+        return ''
+
+
+def _flag_supported(exe: str, flag: str) -> bool:
+    """True when *exe* lists *flag* in --help (cached per binary).
+
+    The bundled fork knows ``--device none``; an older WinGet build may not,
+    and passing an unknown argument would make it exit at startup.
+    """
+    key = (exe, flag)
+    cached = _FLAG_SUPPORT.get(key)
+    if cached is not None:
+        return cached
+    ok = False
+    try:
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        out = subprocess.run([exe, "--help"], capture_output=True, text=True,
+                             timeout=20, **kwargs)
+        ok = flag in ((out.stdout or "") + (out.stderr or ""))
+    except Exception:
+        ok = False
+    _FLAG_SUPPORT[key] = ok
+    return ok
+
 
 def _is_kv_cache_oom(stderr_text: str) -> bool:
     """True when the llama-server crash is a KV-cache/context-init allocation
@@ -383,6 +431,24 @@ class LlamaCppEngine:
                 ]
             )
 
+        # Bundled layouts apply to both platforms; only the filename differs
+        # by the .exe suffix.  (No PATH scan: a host install must never shadow
+        # the layout the engine was configured with.)
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import exe_name
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import exe_name
+        _srv_name = exe_name("llama-server")
+        _roots = [getattr(sys, "_MEIPASS", None)]
+        if getattr(sys, "frozen", False):
+            _roots.append(os.path.dirname(sys.executable))
+        for _root in _roots:
+            if not _root:
+                continue
+            for _sub in ("bin", os.path.join("LoOper", "AI", "bin"), ""):
+                candidates.append(os.path.join(_root, _sub, _srv_name)
+                                  if _sub else os.path.join(_root, _srv_name))
+
         for candidate in candidates:
             if os.path.exists(candidate):
                 _eng_logger.info("Found llama-server.exe at: %s", candidate)
@@ -445,6 +511,14 @@ class LlamaCppEngine:
                                     break
             except Exception:
                 pass
+        else:  # Linux/Mac
+            candidates.extend(
+                [
+                    os.path.join(self.llama_cpp_path, "build", "bin",
+                                 "llama-mtmd-cli"),
+                    os.path.join(self.llama_cpp_path, "llama-mtmd-cli"),
+                ]
+            )
         for candidate in candidates:
             if os.path.exists(candidate):
                 return candidate
@@ -797,6 +871,107 @@ class LlamaCppEngine:
             env["PATH"] = rt_dir + os.pathsep + env.get("PATH", "")
         return env
 
+    def _server_cmd(self, server_exe):
+        """The llama-server command line for the CURRENT config.
+
+        llama.cpp defaults ``--gpu-layers`` to 1024 (fit everything onto the
+        GPU), so a CPU-only request that omitted the flag silently dumped the
+        whole model on Vulkan and died at load with
+        ``vk::Device::allocateMemory: ErrorOutOfDeviceMemory`` (measured on a
+        35B MoE / 8 GB iGPU).  Every flag that decides placement is therefore
+        explicit here, and the crash-retry path rebuilds through this same
+        builder so a fix can never be lost on a retry.
+        """
+        threads = int(self.threads or -1)
+        if threads <= 0:
+            # CPU-first: physical cores beat SMT for llama.cpp decoding
+            # (a 6c/12t part reports 12 otherwise).
+            try:
+                import psutil
+                threads = int(psutil.cpu_count(logical=False) or 0) or -1
+            except Exception:
+                threads = -1
+
+        cmd = [server_exe,
+               "--model", self.model_path,
+               "--port", str(self.server_port),
+               "--threads", str(threads),
+               "--ctx-size", str(self.context_size),
+               "--batch-size", str(self.batch_size),
+               "--host", "127.0.0.1"]
+        if self.ubatch_size > 0:
+            cmd.extend(["--ubatch-size", str(self.ubatch_size)])
+
+        cap = getattr(self, 'capability', None)
+        is_moe = bool(getattr(cap, 'is_moe', False))
+        if cap is None:
+            # No capability object: probe the GGUF.  Imported HERE - the
+            # module-level name does not exist, and a missing import must
+            # never cost the whole server command (it surfaced as
+            # "llama.cpp error: name 'is_moe_model' is not defined" -> 500
+            # on every chat call).
+            try:
+                from AI.gguf_model_info import is_moe_model
+                is_moe = bool(is_moe_model(self.model_path))
+            except Exception:
+                is_moe = False
+        gpu = int(self.gpu_layers or 0)
+
+        cmd.extend(["--gpu-layers", str(max(gpu, 0))])
+        if gpu <= 0:
+            # No GPU at all: never even initialise Vulkan/CUDA.  -fit off alone
+            # already prevents placement; --device none also skips device init
+            # (startup is seconds faster and no VRAM is reserved).
+            if _flag_supported(server_exe, "--device"):
+                cmd.extend(["--device", "none"])
+        elif is_moe:
+            # Experts dominate an MoE model (~85% of the file): keep them in
+            # CPU RAM so the device heap only holds attention + KV cache.
+            cmd.append("--cpu-moe")
+            _eng_logger.info(
+                "MoE on %d GPU layers - experts stay in CPU RAM (--cpu-moe)",
+                gpu)
+        if gpu <= 0 or is_moe:
+            # Never let the loader move tensors we did not ask for.
+            cmd.extend(["-fit", "off"])
+
+        # The projector loads into the server ONLY for a multimodal model that
+        # actually runs through the server.  Grounding models (LocateAnything)
+        # go through llama-mtmd-cli with their own --mmproj; attaching it here
+        # doubled the memory footprint on every turn.
+        if (self.mmproj_path and os.path.exists(self.mmproj_path)
+                and cap is not None and cap.model_type == "multimodal"):
+            cmd.extend(["--mmproj", self.mmproj_path])
+            _eng_logger.info("Using mmproj: %s", self.mmproj_path)
+
+        # --special: emit special/control tokens in responses (needed for
+        # grounding/LocateAnything models that output <ref>, <box>, <0>..<999> tokens).
+        if cap is not None and cap.needs_special_tokens:
+            cmd.append("--special")
+            _eng_logger.info("Enabled --special (grounding model)")
+
+        # Embedding server mode: expose POST /embedding for vector retrieval.
+        if self._embedding_mode:
+            cmd.append("--embeddings")
+            _eng_logger.info(
+                "Enabled --embeddings (embedding server mode, port %d)",
+                self.server_port,
+            )
+        if getattr(self, '_no_mmap', False):
+            cmd.append("--no-mmap")
+
+        # Cap the chain of thought.  A thinking model left unbounded burns the
+        # ENTIRE output budget on reasoning and returns 0 chars of answer
+        # (measured: 5.6k/11k/22k/45k reasoning chars, finish_reason=length,
+        # four rounds, ~25 minutes, no output).  2048 tokens still allows deep
+        # thinking, then forces the answer.  -1 disables the cap.
+        _rb = os.getenv('LOOPER_LLAMACPP_REASONING_BUDGET', '2048').strip()
+        if _rb and _rb != '-1' and _flag_supported(server_exe,
+                                                   '--reasoning-budget'):
+            cmd.extend(['--reasoning-budget', _rb])
+        _eng_logger.info("llama-server cmd: %s", " ".join(cmd[1:]))
+        return cmd
+
     def start_server(self, blocking: bool = False) -> bool:
         """
         Start llama.cpp server
@@ -961,83 +1136,9 @@ class LlamaCppEngine:
             )
             return False
 
-        # Build command
-        cmd = [
-            server_exe,
-            "--model",
-            self.model_path,
-            "--port",
-            str(self.server_port),
-            "--threads",
-            str(self.threads),
-            "--ctx-size",
-            str(self.context_size),
-            "--batch-size",
-            str(self.batch_size),
-            "--host",
-            "127.0.0.1",
-        ]
-        # Embedding inputs must fit in a single physical batch (the server
-        # refuses to split them); raise --ubatch-size so long inputs work.
-        if self.ubatch_size > 0:
-            cmd.extend(["--ubatch-size", str(self.ubatch_size)])
-
-        # MoE models (qwen3moe, deepseek2, ...): when offloading to the GPU,
-        # keep the expert weights in CPU RAM (--cpu-moe).  Experts dominate
-        # an MoE model (~85% of the file), so without this the device-memory
-        # budget must hold nearly the whole model — on iGPUs with a small
-        # dedicated VRAM (shared system RAM) that OOMs the server at load
-        # time (ErrorOutOfDeviceMemory).  With --cpu-moe the device heap
-        # only holds attention layers + KV cache.
-        _cap = getattr(self, 'capability', None)
-        _moe_on_cpu = bool(
-            getattr(_cap, 'is_moe', False)
-            if _cap is not None
-            else is_moe_model(self.model_path)
-        )
-        if _moe_on_cpu:
-            _eng_logger.info(
-                "MoE model detected — keeping expert weights on CPU (--cpu-moe)"
-            )
-
-        # GPU offload if specified
-        if self.gpu_layers > 0:
-            cmd.extend(["--gpu-layers", str(self.gpu_layers)])
-        if _moe_on_cpu and self.gpu_layers > 0:
-            cmd.append("--cpu-moe")
-
-        # Multimodal projector for vision-language models.
-        # Only attach mmproj if the model is actually multimodal/grounding —
-        # a text-only model with an incompatible mmproj from a sibling model
-        # will crash the server with an n_embd mismatch.
-        _needs_mmproj = (
-            self.mmproj_path
-            and os.path.exists(self.mmproj_path)
-            and _cap is not None
-            and _cap.model_type in ("multimodal", "grounding")
-        )
-        if _needs_mmproj:
-            cmd.extend(["--mmproj", self.mmproj_path])
-            _eng_logger.info(f"Using mmproj: {self.mmproj_path}")
-
-        # --special: emit special/control tokens in responses (needed for
-        # grounding/LocateAnything models that output <ref>, <box>, <0>..<999> tokens).
-        # Only enable for grounding models — unconditionally forcing it on the new
-        # mtmd-grounders fork causes text-only + VLM /chat/completions to hang.
-        _needs_special = getattr(self, 'capability', None) is not None and self.capability.needs_special_tokens
-        if _needs_special:
-            cmd.append("--special")
-            _eng_logger.info("Enabled --special (grounding model)")
-
-        # Embedding server mode: expose POST /embedding for vector retrieval.
-        # Used by a SEPARATE engine instance running an embedding GGUF so the
-        # generation server keeps serving completions with its own model.
-        if self._embedding_mode:
-            cmd.append("--embeddings")
-            _eng_logger.info(
-                "Enabled --embeddings (embedding server mode, port %d)",
-                self.server_port,
-            )
+        # Build command (ONE builder: the crash-retry path rebuilds with the
+        # exact same flags, so a fix here can never be lost on a retry).
+        cmd = self._server_cmd(server_exe)
 
         # Subprocess kwargs for Windows (hidden console window)
         subprocess_kwargs = {}
@@ -1294,35 +1395,12 @@ class LlamaCppEngine:
                                     flush=True,
                                 )
         
-                            # Rebuild command based on current config
-                            cmd = [server_exe, "--model", self.model_path,
-                                   "--port", str(self.server_port),
-                                   "--threads", str(self.threads),
-                                   "--ctx-size", str(self.context_size),
-                                   "--batch-size", str(self.batch_size),
-                                   "--host", "127.0.0.1"]
-                            if self.ubatch_size > 0:
-                                cmd.extend(["--ubatch-size", str(self.ubatch_size)])
-                            if self._embedding_mode:
-                                cmd.append("--embeddings")
-                            if self.gpu_layers > 0:
-                                cmd.extend(["--gpu-layers", str(self.gpu_layers)])
-                            if _moe_on_cpu and self.gpu_layers > 0:
-                                cmd.append("--cpu-moe")
-                            _cap = getattr(self, 'capability', None)
-                            _needs_mmproj = (
-                                self.mmproj_path
-                                and os.path.exists(self.mmproj_path)
-                                and _cap is not None
-                                and _cap.model_type in ("multimodal", "grounding")
-                            )
-                            if _needs_mmproj:
-                                cmd.extend(["--mmproj", self.mmproj_path])
-                            if _cap is not None and _cap.needs_special_tokens:
-                                cmd.append("--special")
+                            # Rebuild through the ONE builder, so the flags
+                            # fixed above (explicit --gpu-layers, --device none,
+                            # --cpu-moe, mmproj gating) survive a retry.
                             if _crash_retry_count >= 3:
-                                cmd.append("--no-mmap")
-        
+                                self._no_mmap = True
+                            cmd = self._server_cmd(server_exe)        
                             _eng_logger.info(
                                 f"Restarting server (attempt {_crash_retry_count + 1})..."
                             )
@@ -1491,12 +1569,12 @@ class LlamaCppEngine:
                     pass
         
                 if not _server_verified:
+                    _elapsed = int(time.time() - start_time)
                     _eng_logger.error(
-                        f"Server failed to start within {max_wait} seconds. "
-                        f"Final stderr:\n{_final_stderr}"
-                    )
+                        f"Server failed to start after {_elapsed}s. "
+                        f"Final stderr:\n{_final_stderr}")
                     print(
-                        f"[LLAMA.CPP] Server FAILED after {max_wait}s. "
+                        f"[LLAMA.CPP] Server FAILED after {_elapsed}s. "
                         f"Stderr:\n{_final_stderr[-1000:]}",
                         flush=True,
                     )
@@ -2076,6 +2154,30 @@ class LlamaCppEngine:
                 _truncated = False
                 break
             _truncated = True
+            if not _content and _reasoning:
+                # A thinking model that spent the WHOLE budget reasoning and
+                # produced no answer.  Continuing doubles the wait every round
+                # (measured: 3.5 -> 4 -> 6 -> 11 minutes for one reply), so the
+                # harvest is written out and ONE answer-only call finishes the
+                # job instead.
+                _eng_logger.warning(
+                    "/chat/completions round %d hit the budget while still "
+                    "REASONING (0 chars answer) - harvesting %d chars of "
+                    "thoughts and finalising without thinking.",
+                    _round, len(_acc_reasoning),
+                )
+                _path = _dump_reasoning(_acc_reasoning)
+                if _path:
+                    _eng_logger.info("Reasoning harvest written to %s", _path)
+                _final = self._finalize_from_reasoning(
+                    messages, _acc_reasoning, max_tokens, temperature, top_p,
+                    repeat_penalty=repeat_penalty,
+                    chat_template_kwargs=chat_template_kwargs,
+                )
+                if _final:
+                    _acc_content += _final
+                    _truncated = False
+                break
             if not _content and not _reasoning:
                 _eng_logger.warning(
                     "/chat/completions truncated with no new text — "
@@ -2093,6 +2195,57 @@ class LlamaCppEngine:
             _cont_messages = list(messages) + [_partial]
 
         return _ok, _acc_content, _acc_reasoning, _usage, _truncated
+
+    def _finalize_from_reasoning(self, messages, reasoning, max_tokens,
+                                 temperature, top_p, repeat_penalty=1.1,
+                                 chat_template_kwargs=None):
+        """One answer-only call seeded with the harvested chain of thought.
+
+        Measured on Qwen3.6-35B (CPU): thinking on = 0 chars of answer after
+        39 s (budget exhausted mid-thought); the same request with the
+        template's thinking switched off answers in 2-4 s.  Feeding the
+        harvest back as an assistant turn is what makes the analysis usable
+        without making the model think it all over again.
+
+        Returns the final answer, or '' when even this call produced nothing.
+        """
+        notes = str(reasoning or "").strip()
+        if not notes:
+            return ""
+        seed = list(messages or [])
+        seed.append({
+            "role": "assistant",
+            "content": ("Working notes (already finished - do not repeat or "
+                        "extend them):\n" + notes[-8000:]),
+        })
+        seed.append({
+            "role": "user",
+            "content": ("Use the notes above. Reply with the FINAL answer "
+                        "only - the code or text requested, no reasoning."),
+        })
+        kwargs = dict(chat_template_kwargs or {})
+        # Template-level switch: Qwen-style templates honour it; models
+        # without it simply ignore the key.
+        kwargs.setdefault("enable_thinking", False)
+        try:
+            ok, _result, content, _reasoning, finish = (
+                self._post_chat_completion(
+                    seed, max_tokens, temperature, top_p,
+                    repeat_penalty=repeat_penalty, continue_final=False,
+                    chat_template_kwargs=kwargs,
+                )
+            )
+        except Exception as exc:  # never break the caller on a rescue path
+            _eng_logger.warning("reasoning finalisation failed: %s", exc)
+            return ""
+        if not ok:
+            _eng_logger.warning("reasoning finalisation call was rejected")
+            return ""
+        _eng_logger.info(
+            "reasoning finalisation: %d chars answer (finish=%s)",
+            len(content or ""), finish,
+        )
+        return content or ""
 
     def probe(self) -> bool:
         """Perform a real 1-token generation to verify the server can infer.
@@ -2201,6 +2354,8 @@ class LlamaCppEngine:
             "stream": True,
         }
         try:
+            _streamed = False
+            _streamed_reasoning = ""
             response = requests.post(
                 f"{self.server_url}/chat/completions",
                 json=_payload,
@@ -2227,21 +2382,65 @@ class LlamaCppEngine:
                 # real failure instead of a silently truncated reply.
                 if isinstance(_data, dict) and _data.get("error"):
                     raise RuntimeError(str(_data.get("error")))
-                try:
-                    _choices = _data.get("choices") or []
-                    if _choices:
-                        _delta = (_choices[0].get("delta") or {}).get("content", "")
-                        if _delta:
-                            yield _delta
-                        # finish_reason="length" means the model hit the token
-                        # budget mid-reply — the caller must know it is truncated.
-                        if (_choices[0].get("finish_reason") == "length"
-                                and not _delta):
-                            raise RuntimeError(
-                                "max_tokens reached - response truncated"
-                            )
-                except Exception:
-                    raise
+                _choices = _data.get("choices") or []
+                if not _choices:
+                    continue
+                _delta = (_choices[0].get("delta") or {}).get("content", "")
+                if _delta:
+                    _streamed = True
+                    yield _delta
+                else:
+                    # A thinking model streams its chain of thought first.
+                    # Keep it so an answer can be forced afterwards instead
+                    # of streaming nothing at all.
+                    _streamed_reasoning += (
+                        (_choices[0].get("delta") or {})
+                        .get("reasoning_content") or "")
+                # finish_reason="length" means the model hit the token
+                # budget mid-reply — the caller must know it is truncated.
+                if (_choices[0].get("finish_reason") == "length"
+                        and not _delta):
+                    raise RuntimeError(
+                        "max_tokens reached - response truncated"
+                    )
+
+            if not _streamed and _streamed_reasoning:
+                # Only thoughts arrived: write the harvest out and force one
+                # answer-only completion so the caller gets text, not silence.
+                _path = _dump_reasoning(_streamed_reasoning)
+                if _path:
+                    _eng_logger.info("Reasoning harvest written to %s", _path)
+                _final = self._finalize_from_reasoning(
+                    messages, _streamed_reasoning, kwargs.get("max_tokens", -1),
+                    kwargs.get("temperature", 0.7),
+                    kwargs.get("top_p", 0.9),
+                    repeat_penalty=kwargs.get("repeat_penalty") or 1.1,
+                )
+                if _final:
+                    yield _final
+                    _streamed = True
+
+            if not _streamed:
+                # Some forks answer /chat/completions with a plain JSON body
+                # even for stream=true (no SSE frames).  Falling back to one
+                # blocking call yields the text instead of an EMPTY reply the
+                # UI shows as "the model returned nothing".
+                _payload["stream"] = False
+                _resp = requests.post(
+                    f"{self.server_url}/chat/completions",
+                    json=_payload, timeout=None,
+                )
+                _resp.raise_for_status()
+                _body = _resp.json() or {}
+                if isinstance(_body, dict) and _body.get("error"):
+                    raise RuntimeError(str(_body.get("error")))
+                _choices = _body.get("choices") or []
+                _text = ""
+                if _choices:
+                    _text = ((_choices[0].get("message") or {})
+                             .get("content") or "")
+                if _text:
+                    yield _text
         except Exception as e:
             yield f"[Error: {str(e)}]"
 

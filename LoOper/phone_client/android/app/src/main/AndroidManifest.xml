@@ -4,6 +4,10 @@
   <uses-permission android:name="android.permission.INTERNET" />
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- Lets WebView acquire the audio subsystem/audio focus. Without it the mic
+       is refused after the permission grant: NotReadableError, "Could not start
+       audio source". -->
+  <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
   <!-- Per-message notifications (runtime-requested on API 33+). -->
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <!-- Foreground service keeps the P2P pipe alive while backgrounded. -->
@@ -13,12 +17,15 @@
   <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
   <application
-      android:label="LoOper Agent"
+      android:label="Arrow"
+      android:icon="@mipmap/ic_launcher"
+      android:roundIcon="@mipmap/ic_launcher"
       android:usesCleartextTraffic="true"
       android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
     <activity
         android:name=".MainActivity"
+        android:label="Arrow"
         android:exported="true"
         android:configChanges="orientation|screenSize|keyboardHidden|screenLayout">
       <intent-filter>

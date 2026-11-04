@@ -5,17 +5,133 @@ import re
 
 from .common import (
     _FF_NA_VALUE,
+    _FF_PLAIN_RULE,
     _as_int,
+    _ff_dense,
     _ff_fit_length,
     _ff_na_value,
     _ff_norm,
     _ff_option_exact,
     _ff_option_match,
+    _ff_plain_text,
     _ff_value_rejection,
     _strip_think,
     log_block,
     logger,
 )
+
+
+# An identifier a document can only hold VERBATIM: an address, a URL, a phone,
+# a year.  Copying one out of the material is a copy, not a judgement.
+_LITERAL_VALUE_RE = re.compile(r"@|https?://|www\.|\d{4}", re.IGNORECASE)
+
+
+def _ff_literal_copy(value, evidence):
+    """True when *value* is an exact identifier copied out of the material."""
+    v = str(value or "").strip()
+    if len(v) < 8 or not _LITERAL_VALUE_RE.search(v):
+        return False
+    try:
+        return _ff_dense(v) in _ff_dense(evidence)
+    except Exception:  # noqa: BLE001 - a gate must not break the pass
+        return False
+
+
+# An option that is a VALUE (not a bare yes/no word) and appears character-
+# for-character in the material.  Four characters keeps 'Yes', 'No', 'Sí' and
+# 'N/A' out of it: those are decided by meaning further down the rails.
+_LITERAL_OPTION_MIN = 4
+
+
+def _ff_option_literal(evidence, options):
+    """The page option the material holds VERBATIM ('' when none/ambiguous).
+
+    A select whose options are literal values - LinkedIn's email picker lists
+    the address itself, a country-code picker lists 'Argentina (+54)' - needs
+    no semantics: the option IS the answer when it appears character-for-
+    character in the material.  The semantic rails cannot see that: asked to
+    score a bare address against 'Email address*' the encoder answered below
+    its threshold and the field was handed to the user, every run.
+    """
+    body = _ff_norm(str(evidence or ""))
+    if not body:
+        return ""
+    hits = []
+    for option in options or []:
+        text = str(option or "").strip()
+        dense = _ff_norm(text)
+        if len(dense) < _LITERAL_OPTION_MIN:
+            continue
+        if dense in body:
+            hits.append((len(dense), text))
+    if not hits:
+        return ""
+    hits.sort(reverse=True)
+    # Two options of the SAME length both present ('Spain'/'Italy' in one
+    # sentence) is not a decision: fall through to the semantic rails.
+    if len(hits) > 1 and hits[0][0] == hits[1][0]:
+        return ""
+    return hits[0][1]
+
+
+_OPTION_CODE_RE = re.compile(r"\(\s*(\+\d{1,4})\s*\)")
+
+
+def _ff_option_code(evidence, options):
+    """The option whose DIAL CODE the material holds ('' when none).
+
+    A phone-country select lists 'Argentina (+54)' while the material holds
+    '+54 11 5498 0148': the option's own text is not present, but its code is
+    the number's prefix.  Same idea as the literal rail - the page's option is
+    corroborated by a value in the source - and it is what makes a 250-entry
+    country list decidable instead of 'ask the user'.
+    """
+    body = str(evidence or "")
+    if not body:
+        return ""
+    hits = []
+    for option in options or []:
+        text = str(option or "").strip()
+        m = _OPTION_CODE_RE.search(text)
+        if not m:
+            continue
+        code = m.group(1)
+        if code in body:
+            hits.append((len(code), text))
+    if not hits:
+        return ""
+    hits.sort(reverse=True)
+    if len(hits) > 1 and hits[0][0] == hits[1][0]:
+        return ""
+    return hits[0][1]
+
+
+def _ff_entity_missing(label, evidence):
+    """True when the question NAMES something the material never mentions.
+
+    The one mechanical fact an affirmative answer cannot survive: "¿Ha
+    trabajado anteriormente en PedidosYa (Delivery Hero Group)?" cannot be
+    answered YES by a pack that never says PedidosYa - and the encoder alone
+    does not catch that (on the live 3110-char pack it scored "Sí" as
+    supported, because a long resume reads as on-topic for anything).  A
+    NAME is a capitalised word that is not the sentence-initial one, matched
+    whole against the material: no synonym list, no language assumption.
+    """
+    names = []
+    for word in re.findall(r"[^\W\d_][\w.+-]{2,}", str(label or ""))[1:]:
+        if word[:1].isupper() and len(word) > 2:
+            names.append(word)
+    if not names:
+        return False
+    try:
+        body = _ff_dense(evidence)
+    except Exception:  # noqa: BLE001 - a gate must not break the pass
+        return False
+    # The LONGEST name is the distinctive one: in "¿Ha trabajado en PedidosYa
+    # (Delivery Hero Group)?" the pack does say "delivery" (a plain English
+    # word) but never "PedidosYa", and "any name present" called that a match.
+    rarest = max(names, key=len)
+    return _ff_dense(rarest) not in body
 
 
 class FormFillerExtractMixin:
@@ -46,7 +162,11 @@ class FormFillerExtractMixin:
         opts = [str(o).strip() for o in (options or []) if str(o).strip()]
         if self._ff_halt(stop_flag):
             return ""
+        # The plain-text contract is stated FIRST: a small model follows the
+        # format rule it reads at the top of the system prompt, and the reply
+        # is pruned afterwards anyway (see _ff_plain_text).
         system = (
+            _FF_PLAIN_RULE + " "
             "You fill ONE form field at a time from the user's source "
             "documents. Return ONLY the value to enter in the field - no "
             "explanation, no quotes, no field name. Derive the value from the "
@@ -181,7 +301,18 @@ class FormFillerExtractMixin:
             raw = self._ff_llm_call(_build(ev), system, bigger, stop_flag)
         # Diagnostics for the per-field table (see _ff_log_field).
         self._ff_last_raw = str(raw) if raw is not None else ""
-        value = _strip_think(raw)
+        # PRUNE MARKUP: a small model wraps the value in markdown (**2**,
+        # `2`, - 2) no matter what the prompt forbids, and the page stores the
+        # markers as part of the answer.  The raw reply stays in the log above;
+        # only the value is pruned.
+        raw_value = _strip_think(raw)
+        value = _ff_plain_text(raw_value)
+        if value != raw_value.strip():
+            log_block(
+                logger, logging.INFO, "Form Extract: %s" % label,
+                "pruned markdown from the reply: %r -> %r"
+                % (raw_value.strip()[:80], value[:80]),
+            )
         lines = [ln.strip() for ln in value.splitlines() if ln.strip()]
         # A single-line field takes the first line (a small model appends a
         # trailing note); a textarea keeps every line.  A CHOICE keeps every
@@ -268,7 +399,7 @@ class FormFillerExtractMixin:
         # is dropped here so the harness SKIPs the field instead of writing it
         # (observed: an invented LinkedIn URL, and a phone number written into
         # 'Postal' - both accepted by the page, so the repair pass is too late).
-        reject = _ff_value_rejection(label, value, evidence)
+        reject = _ff_value_rejection(label, value, evidence, multiline)
         if reject:
             log_block(
                 logger, logging.WARNING, "Form Extract: %s" % label,
@@ -306,6 +437,12 @@ class FormFillerExtractMixin:
                 options=options, multiline=multiline,
                 format_hint=format_hint, max_chars=max_chars, kind=kind,
             )
+        # CRAG's verdict is the licence to write, not a composed finding: the
+        # retrieval stages hand over material they SCORED against this field
+        # (correct / ambiguous / externally corrected), and a rejected pack
+        # ships no material at all, so it never reaches this method.  The old
+        # gate demanded a "Key Finding:" line from the composer, which threw
+        # away a verbatim email or URL that already WAS the answer.
         return value
 
     @staticmethod
@@ -333,22 +470,76 @@ class FormFillerExtractMixin:
         experience with Python (including Django, FastAPI...)") that names no
         option literally.  The rails, in order:
 
-        1. the answer IS an option VERBATIM - used as-is;
-        2. LAYA picks the option the answer MEANS (``laya_hooks.choose_option``,
-           the same semantic picker the Handle node uses).  When the engine
-           ANSWERS but no option wins clearly, the field is left to the
-           harness, which ASKS - a blind second guess is what pinned a keyword
-           soup to whichever option shared a word (observed: a cloud-experience
-           question the evidence answered "no" was filled with the MOST SENIOR
-           option, "implementé y desplegué soluciones completas");
-        3. the engine-OFF/DOWN fallback: the string rail, then ONE bounded
-           re-ask pinned to the option list - a loop here would BE the infinite
-           retry this rail exists to remove.
+        1. the DECISION: which option does this field's own material support
+           (``laya_hooks.decide_choice``)?  When the material states nothing,
+           the negative option is the answer ("no evidence -> no"); when not
+           even that holds, the field is left to the USER - an unsure answer is
+           asked, never guessed;
+        2. the answer IS an option VERBATIM - only reachable when no sweep
+           produced material, or the option list is too large to score;
+        3. LAYA picks the option the answer MEANS
+           (``laya_hooks.choose_option``), then the source-scored pick;
+        4. the engine-OFF/DOWN fallback: the string rail, then ONE bounded
+           re-ask pinned to the option list.
 
-        An answer no rail can place is dropped (the harness skips the field)
+        An answer no rail can place is dropped (the harness ASKS the user)
         rather than written as a selection the page does not offer.
         """
-        # 1. Verbatim echo: the model already answered with an option.
+        # 0. THE PAGE'S OWN VALUE, FOUND VERBATIM.  A select whose options are
+        # literal values (LinkedIn's email picker lists the address itself, a
+        # country-code picker lists 'Argentina (+54)') needs no semantics: the
+        # option that appears character-for-character in the material IS the
+        # answer.  The rails below cannot see that - the encoder scored a bare
+        # address below its threshold against 'Email address*' and the field
+        # went to the user on every run.
+        _literal = _ff_option_literal(evidence, opts)
+        if not _literal:
+            _literal = _ff_option_code(evidence, opts)
+        if _literal:
+            log_block(
+                logger, logging.INFO, "Form Extract: %s" % label,
+                "the material holds the option %r verbatim" % _literal,
+            )
+            return _literal
+        # 1. THE DECISION.  A choice is decided by THIS field's own material,
+        # never by the extractor's sentence: with twelve unrelated resume
+        # chunks it answered "Sí" to "¿Ha trabajado anteriormente en
+        # PedidosYa?", the answer happened to BE one of the options, and the
+        # verbatim rail below took it as if it were evidence.  Laya scores
+        # every option against the pack (measured: nothing 0.13, fact present
+        # 0.83), and when the pack says nothing the NEGATIVE option is the
+        # answer - "no evidence -> no".
+        # The rail runs on EVALUATED material: a CRAG pack carries the verdict
+        # that produced it (an incorrect one ships no material at all, so the
+        # field is asked upstream and never arrives here).
+        _verdict = getattr(self, "_ff_last_action", "")
+        if _verdict and str(evidence or "").strip():
+            from AI.laya_hooks import decide_choice
+            # The mechanical half of the decision: can this material support
+            # an AFFIRMATIVE at all?  It needs BOTH the question's own entity in
+            # the material AND a verdict that did not reject it.  Measured live:
+            # a long resume reads as on-topic for anything, so the encoder alone
+            # scored "Sí" 0.71 for a question nothing in it answers.
+            _states = (not _ff_entity_missing(label, evidence)
+                       and _verdict in ("correct", "ambiguous", "incorrect"))
+            _didx, _dwhy = decide_choice(label, evidence, opts,
+                                         material_states=_states)
+            if _didx is not None and 0 <= _didx < len(opts):
+                log_block(
+                    logger, logging.INFO, "Form Extract: %s" % label,
+                    "the field's own material decides %r (%s)"
+                    % (opts[_didx], _dwhy),
+                )
+                return opts[_didx]
+            if _dwhy == "nothing":
+                log_block(
+                    logger, logging.INFO, "Form Extract: %s" % label,
+                    "the material supports no option and none of them asserts "
+                    "the negative - leaving the field to the user",
+                )
+                return ""
+        # 1b. Verbatim echo - reachable when no sweep produced material, or the
+        # option list was too large for one scoring pass.
         if _ff_option_exact(value, opts):
             return _ff_option_match(value, opts)
         if self._ff_halt(stop_flag):
@@ -400,7 +591,8 @@ class FormFillerExtractMixin:
             % (value, "\n".join("- " + o for o in opts))
         )
         raw = self._ff_llm_call(build(evidence, note), system, cfg, stop_flag)
-        lines = [ln.strip() for ln in _strip_think(raw).splitlines() if ln.strip()]
+        lines = [ln.strip() for ln in _ff_plain_text(raw).splitlines()
+                 if ln.strip()]
         w2 = lines[0] if lines else ""
         hit = _ff_option_match(w2, opts)
         if not hit:

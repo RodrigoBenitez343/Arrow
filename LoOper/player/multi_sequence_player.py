@@ -76,7 +76,8 @@ class MultiSequencePlayer(SeleniumBot):
     def __init__(self, chain_config, chain_file_path=None, variables=None,
                  agent_query="", llamacpp_server_url="",
                  ask_user_callback=None, ask_user_v2_callback=None, on_output_ready=None,
-                 web_chain_key=None, chain_identity=None, web_isolated=False):
+                 web_chain_key=None, chain_identity=None, web_isolated=False,
+                 keep_web_browser=False):
         """
         Initializes the multi-sequence player.
 
@@ -115,6 +116,8 @@ class MultiSequencePlayer(SeleniumBot):
             self.chain_file_dir = os.path.dirname(os.path.abspath(chain_file_path))
         # Per-chain web browser scope (see SequenceExecutor web driver).
         self.web_chain_key = web_chain_key
+        # Kept so imported chains can inherit the isolation choice.
+        self.web_isolated = bool(web_isolated)
         # Original chain identity for PERSISTENCE: when set, context rows are
         # stored under this name even if chain_file_path is a deterministic
         # temp copy (GUI playback) — the persisted context follows the
@@ -209,6 +212,19 @@ class MultiSequencePlayer(SeleniumBot):
                 )
             except Exception:
                 pass
+        else:
+            # Isolated run: flag the executor so imported chains inherit it.
+            try:
+                self.sequence_executor.web_isolated = True
+            except Exception:
+                pass
+        # An agent run is a SEQUENCE of chains on one browser session: closing
+        # the browser when the first chain ends loses the page/login the next
+        # chain is supposed to continue on.
+        try:
+            self.sequence_executor.keep_web_browser = bool(keep_web_browser)
+        except Exception:
+            pass
         
         # Initialize workflow executor for new format
         if self.workflow_graph:
@@ -604,13 +620,17 @@ class MultiSequencePlayer(SeleniumBot):
                     except Exception as e:
                         logger.error(f"Fallback sequence failed: {e}")
                 
-                # Play the sequence with fallback support
+                # Play the sequence with fallback support.  A legacy chain is
+                # always desktop work: the app leaves the screen for it instead
+                # of for the whole run (see bus.screen_access).
                 try:
-                    player = SequencePlayer(seq_file)
-                    # Share selection memory with the sequence player
-                    player.selection_memory = self.selection_memory
-                    player.sequence_data = sequence_data  # Use the modified sequence data with fallback
-                    player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
+                    from .execution_overlay_bus import screen_access
+                    with screen_access():
+                        player = SequencePlayer(seq_file)
+                        # Share selection memory with the sequence player
+                        player.selection_memory = self.selection_memory
+                        player.sequence_data = sequence_data  # Use the modified sequence data with fallback
+                        player.play_sequence(fallback_callback=fallback_callback, stop_flag=stop_flag)
                 except Exception as e:
                     logger.error(f"Error playing sequence {seq_file}: {e}")
                     break
@@ -679,7 +699,8 @@ def play_chain_with_tailcalls(chain_path, agent_query="", llamacpp_server_url=""
                               variables=None, stop_flag=None,
                               player_setup_callback=None,
                               web_chain_key=None, chain_identity=None,
-                              web_isolated=False, run_source="play"):
+                              web_isolated=False, run_source="play",
+                              keep_web_browser=False):
     """Run *chain_path*, following self-callback (tail-call) handoffs in a flat loop.
 
     A chain that imports itself is a *callback*: the currently executing
@@ -702,7 +723,10 @@ def play_chain_with_tailcalls(chain_path, agent_query="", llamacpp_server_url=""
     Returns (result, last_player).
     """
     current_path = chain_path
-    inherited = dict(variables) if variables else None
+    # Tag the run so node executors can tell an interactive playback ("play")
+    # from an agent/scheduled run — Output nodes gate their blocking popup on it.
+    inherited = dict(variables) if variables else {}
+    inherited['_run_source'] = run_source
     result = None
     last_player = None
     while True:
@@ -739,6 +763,7 @@ def play_chain_with_tailcalls(chain_path, agent_query="", llamacpp_server_url=""
             ask_user_v2_callback=ask_user_v2_callback,
             web_chain_key=web_chain_key, chain_identity=chain_identity,
             web_isolated=web_isolated,
+            keep_web_browser=keep_web_browser,
         )
         if pre_collected_inputs:
             try:
@@ -771,6 +796,7 @@ def play_chain_with_tailcalls(chain_path, agent_query="", llamacpp_server_url=""
             _we = getattr(last_player, "workflow_executor", None)
             _le = getattr(_we, "llm_executor", None) if _we is not None else None
             inherited = {
+                "_run_source": run_source,
                 "_chain_input_context": (
                     (_le.get_variable("_chain_input_context") if _le is not None else None)
                     or agent_query or ""

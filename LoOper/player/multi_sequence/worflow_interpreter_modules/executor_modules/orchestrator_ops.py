@@ -595,39 +595,19 @@ def _orchestrator_cursor_monitor_rect():
     """(left, top, right, bottom) of the monitor under the cursor, or None.
 
     Multi-monitor: a run is started from the screen the user is looking at,
-    so the desktop digest reads THAT screen rather than whatever monitor
-    Windows put the global foreground window on.
+    so the desktop digest reads THAT screen.  X11 reports one screen.
     """
-    if os.name != 'nt':
-        return None
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import cursor_work_area
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import cursor_work_area
+
     try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-
-        class _MONITORINFO(ctypes.Structure):
-            _fields_ = [
-                ('cbSize', wintypes.DWORD),
-                ('rcMonitor', wintypes.RECT),
-                ('rcWork', wintypes.RECT),
-                ('dwFlags', wintypes.DWORD),
-            ]
-
-        point = wintypes.POINT()
-        if not user32.GetCursorPos(ctypes.byref(point)):
+        work = cursor_work_area()
+        if not work:
             return None
-        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-        user32.MonitorFromPoint.restype = ctypes.c_void_p
-        monitor = user32.MonitorFromPoint(point, 2)  # MONITOR_DEFAULTTONEAREST
-        if not monitor:
-            return None
-        info = _MONITORINFO()
-        info.cbSize = ctypes.sizeof(_MONITORINFO)
-        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return None
-        rect = info.rcMonitor
-        return (int(rect.left), int(rect.top),
-                int(rect.right), int(rect.bottom))
+        left, top, width, height = work
+        return (int(left), int(top), int(left + width), int(top + height))
     except Exception:
         return None
 
@@ -3465,73 +3445,54 @@ class OrchestratorMixin:
         return line
 
     def _orchestrator_desktop_state(self):
-        """Focused window on the monitor the CURSOR is on (win32/psutil only).
+        """Focused window on the monitor the CURSOR is on (platform gate).
 
         Multi-monitor: the run is started from the screen the user is looking
         at, so the digest reports THAT screen's focused window - or its topmost
-        window when the focus sits elsewhere - instead of the global foreground
-        window, which may be on another monitor.  Read-only and win32/psutil
-        only: walking the UIA tree on a short-lived thread tore comtypes'
-        cached object down inside a dying apartment (2026-09-23), so no COM/UIA
-        here.
+        window when the focus sits elsewhere.  Read-only: walking the a11y tree
+        here tore comtypes' cached object down inside a dying apartment
+        (2026-09-23), so no COM/UIA here.
         """
-        try:
-            import win32gui
-        except Exception:
-            return ''
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import active_window, list_windows, window_rect
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import (active_window, list_windows,
+                                             window_rect)
+
         monitor = _orchestrator_cursor_monitor_rect()
 
-        def _title(h):
-            try:
-                return str(win32gui.GetWindowText(h) or '')
-            except Exception:
-                return ''
-
-        def _process(h):
-            try:
-                import psutil
-                import win32process
-                _tid, pid = win32process.GetWindowThreadProcessId(h)
-                return str(psutil.Process(int(pid)).name() or '') if pid else ''
-            except Exception:
-                return ''
-
-        def _on_cursor_monitor(h):
+        def _on_cursor_monitor(handle):
             if not monitor:
                 return True
             try:
                 return _orchestrator_rect_overlaps(
-                    win32gui.GetWindowRect(h), monitor)
+                    window_rect(handle), monitor)
             except Exception:
                 return False
 
         try:
-            target = int(win32gui.GetForegroundWindow() or 0)
+            target = active_window() or {}
         except Exception:
-            target = 0
-        if not target or (monitor and not _on_cursor_monitor(target)):
+            target = {}
+        handle = target.get("handle") or 0
+        if not handle or (monitor and not _on_cursor_monitor(handle)):
             # Focus is elsewhere (or unknown): the topmost visible window on
-            # the cursor's monitor - EnumWindows enumerates front-to-back.
-            found = []
-            try:
-                def _collect(hwnd, _):
-                    try:
-                        if (win32gui.IsWindowVisible(hwnd)
-                                and _title(hwnd).strip()
-                                and _on_cursor_monitor(hwnd)):
-                            found.append(int(hwnd))
-                    except Exception:
-                        pass
-                    return True
-                win32gui.EnumWindows(_collect, None)
-            except Exception:
-                pass
-            target = found[0] if found else 0
-        title = _title(target) if target else ''
+            # the cursor's monitor - the gate lists front-to-back.
+            found = [w for w in list_windows() if _on_cursor_monitor(w["handle"])]
+            target = found[0] if found else {}
+        title = str(target.get("title") or "")
         if not title:
             return ''
+        process = ''
+        try:
+            import psutil
+            pid = target.get("pid")
+            if pid:
+                process = str(psutil.Process(int(pid)).name() or '')
+        except Exception:
+            process = ''
         return (f"Desktop now: '{title[:80]}' "
-                f"(process: {_process(target) or 'unknown'})")
+                f"(process: {process or 'unknown'})")
 
     def _orchestrator_verify_step(self, goal, step_text, result, allow_start=False,
                                   state=None):

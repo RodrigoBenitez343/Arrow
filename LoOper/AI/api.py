@@ -927,13 +927,26 @@ def _byok_stream_response(request, provider: str, model: str):
     try:
         deltas = byok.generate_stream(provider, model, prompt,
                                       instructions=instructions)
+        # The provider answers (or rejects the model) on its FIRST chunk, and
+        # by then a streaming response is already committed — which is how a
+        # "model decommissioned" 400 reached the caller as "no text".  Pull it
+        # here so a rejected request is still a real HTTP error with the
+        # provider's own words.
+        first = next(deltas)
+    except StopIteration:
+        first = ""
     except byok.ByokProviderError as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+    def _chunks():
+        if first:
+            yield first
+        yield from deltas
 
     def _iter():
         accumulated = ""
         try:
-            for chunk in deltas:
+            for chunk in _chunks():
                 accumulated += chunk
                 yield json.dumps({"text": accumulated}) + "\n"
         except byok.ByokProviderError as e:
@@ -1109,15 +1122,51 @@ async def health_check():
         )
 
 
+def _gguf_model_files():
+    """Every ``.gguf`` under the models dir: ``[{'name', 'path', 'size'}]``.
+
+    The local engine's models live on DISK, not in a server, so a model list
+    that only asks Ollama and the BYOK providers reports llama.cpp as empty
+    while the files sit right there.
+    """
+    from AI.config_loader import get_models_dir
+
+    models_dir = get_models_dir()
+    found = []
+    if not os.path.exists(models_dir):
+        return found
+    for root, _dirs, files in os.walk(models_dir):
+        for name in files:
+            if not name.endswith(".gguf"):
+                continue
+            if "mmproj" in name.lower():
+                # A vision PROJECTOR, not a model: loading it as one fails.
+                continue
+            path = os.path.join(root, name)
+            found.append({
+                # Relative and forward-slashed: that is what a chain stores.
+                "name": os.path.relpath(path, models_dir).replace("\\", "/"),
+                "path": path,
+                "size": os.path.getsize(path),
+            })
+    return sorted(found, key=lambda entry: entry["name"])
+
+
 @app.get("/models", response_model=List[ModelInfo])
 async def list_models():
     """List locally available models plus configured BYOK provider models.
 
     BYOK entries carry the ``provider:model`` form the gateway dispatches
     on, so listing them here turns every GUI model dropdown into a
-    provider+model selector (the choice routes through the prefix).
+    provider+model selector (the choice routes through the prefix).  The
+    llama.cpp GGUFs are listed as their bare file names for the same
+    reason: every engine's models come from this one list, and the dialog's
+    ``models_for_engine`` keeps each picker to its own provider.
     """
     models: List[ModelInfo] = []
+    for entry in _gguf_model_files():
+        models.append(ModelInfo(name=entry["name"], size=int(entry["size"]),
+                                digest="", modified_at=""))
     ollama_error: Optional[Exception] = None
     try:
         response = requests.get(f"{get_ollama_base_url()}/api/tags", timeout=8)
@@ -2069,12 +2118,16 @@ def _ensure_llamacpp_engine(
         if model_capability is not None:
             LLAMACPP_ENGINE.capability = model_capability
 
-            # Safety: clear mmproj for text-only models.  An incompatible
-            # mmproj from a sibling model in the same directory will crash
-            # the server with an n_embd mismatch.
-            if model_capability.model_type == "text" and LLAMACPP_ENGINE.mmproj_path:
-                _api_logger.warning(
-                    "Model is text-only — clearing incompatible mmproj: %s",
+            # Safety: the projector belongs to a multimodal model that runs
+            # THROUGH the server.  Text models would crash on an n_embd
+            # mismatch, and grounding models (LocateAnything) run via
+            # llama-mtmd-cli with their own --mmproj - attaching it to the
+            # server doubled the memory footprint on every turn.
+            if (model_capability.model_type != "multimodal"
+                    and LLAMACPP_ENGINE.mmproj_path):
+                _api_logger.info(
+                    "Model type '%s' - not loading mmproj into the server: %s",
+                    model_capability.model_type,
                     LLAMACPP_ENGINE.mmproj_path,
                 )
                 LLAMACPP_ENGINE.mmproj_path = ""
@@ -2291,6 +2344,10 @@ async def _llamacpp_generate_impl(request: ChatRequest,
     except HTTPException as e:
         raise e
     except Exception as e:
+        # Log the traceback: the caller only sees a one-line detail, and a
+        # NameError in the engine command builder surfaced as a bare 500 with
+        # nothing in the log to find it by.
+        _api_logger.exception("llamacpp_chat failed: %s", e)
         raise HTTPException(status_code=500, detail=f"llama.cpp error: {str(e)}")
 
 
@@ -2411,27 +2468,8 @@ async def llamacpp_generate_stream(request: ChatRequest):
 async def llamacpp_list_models():
     """List available GGUF models"""
     try:
-        from AI.config_loader import get_models_dir
-        models_dir = get_models_dir()
-        gguf_models = []
-
-        if os.path.exists(models_dir):
-            for root, dirs, files in os.walk(models_dir):
-                for file in files:
-                    if file.endswith(".gguf"):
-                        model_path = os.path.join(root, file)
-                        rel_path = os.path.relpath(model_path, models_dir)
-                        file_size = os.path.getsize(model_path)
-                        gguf_models.append(
-                            {
-                                "name": rel_path,
-                                "path": model_path,
-                                "size": file_size,
-                                "type": "gguf",
-                            }
-                        )
-
-        return {"models": gguf_models}
+        return {"models": [dict(entry, type="gguf")
+                           for entry in _gguf_model_files()]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

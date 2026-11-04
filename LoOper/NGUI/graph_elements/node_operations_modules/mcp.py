@@ -581,12 +581,14 @@ class MCPOperationsMixin:
                     folder, tool_combo, node, discover_btn, tools_ref, rebuild_form))
 
             discover_btn.clicked.connect(do_discover)
+            dialog.add_description(node.get_property('description') or '')
 
             if dialog.exec_() != QDialog.Accepted:
                 logger.debug("Dialog cancelled")
                 return
 
             folder = folder_input.text().strip()
+            node.set_property('description', dialog.description())
             node.set_property('mcp_folder', folder)
             node.set_property('keep_alive', keep_alive_cb.isChecked())
 

@@ -9,7 +9,20 @@ drive execution only — they carry no data.
 
 from player.multi_sequence.llm_executor_resources import executor as ex
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
-    context_ops import ContextMixin
+    context_ops import ContextMixin, _ctx_row_key
+
+
+def test_a_pool_row_is_keyed_by_identity_never_by_a_description():
+    """A node's pool row is keyed by its type + id.  The DESCRIPTION is
+    workspace-agent text about the node, not source material: keying rows by
+    it put it in the pool every consumer reads, and the form filler's intent
+    planner then wrote probes about "the answers written by Qwen3.8-2B-Q8_0.gguf"
+    instead of about the field it was filling."""
+    assert _ctx_row_key("form_filler", "n7") == "form_filler/n7"
+    assert _ctx_row_key("llm", "0x1abb69fffd0") == "llm/0x1abb69fffd0"
+    # Nothing to name -> the type alone, still no free text.
+    assert _ctx_row_key("", "") == "unknown"
+    assert _ctx_row_key("context", None) == "context"
 
 
 def test_context_port_payload_ignores_base_output():
@@ -83,3 +96,72 @@ def test_turn_text_reads_as_the_agents_own_action():
     assert "User query: open gmail" in text
     assert "Tool I ran: gmail" in text
     assert "What it did: ran successfully (sequence)" in text
+
+
+# ---------------------------------------------------------------------------
+# ONE QUESTION = ONE ANSWER: the context node LINKS a reworded question
+# ---------------------------------------------------------------------------
+
+
+def test_a_reworded_question_is_linked_not_written_again(monkeypatch):
+    """The store keys answers by the field label, so the same question in two
+    wordings became two records with two answers.  A reworded question is now
+    resolved to the record it duplicates (an ``alias/`` link) instead of being
+    written again - and the verdict is Laya's, not a lexical score's."""
+    from AI import laya_hooks
+
+    class _Ctx(ContextMixin):
+        pass
+
+    ctx = _Ctx()
+    stored = "learned/how many years of experience do you have with aws"
+    existing = {stored: "6"}
+    reworded = "how much experience you have with cloud providers like aws?"
+
+    monkeypatch.setattr(laya_hooks, "same_question_or",
+                        lambda label, cands, fallback=None, agree=None: cands[0])
+    assert ctx._ff_dupe_canonical(reworded, existing) == stored
+
+    # The engine answering NONE keeps them apart (two real questions).
+    monkeypatch.setattr(laya_hooks, "same_question_or",
+                        lambda label, cands, fallback=None, agree=None: "")
+    assert ctx._ff_dupe_canonical(reworded, existing) == ""
+
+    # A verified record outranks the auto one for the same question.
+    existing["verified/%s" % "how many years of experience do you have with aws"] = "7"
+    monkeypatch.setattr(laya_hooks, "same_question_or",
+                        lambda label, cands, fallback=None, agree=None: cands[0])
+    assert ctx._ff_dupe_canonical(reworded, existing).startswith("verified/")
+
+
+def test_a_question_asked_in_another_language_is_linked(monkeypatch):
+    """Same question, other language, same answer: ONE record.
+
+    A translation shares no word with the stored label, so the lexical prefilter
+    never offered the record and the answer was stored twice, once per
+    language.  A record that already holds the SAME answer is a candidate, and
+    the engine's undecided band (where a translation scores) is lifted for it.
+    """
+    from AI import laya_hooks
+
+    class _Ctx(ContextMixin):
+        pass
+
+    ctx = _Ctx()
+    stored = "learned/please provide your salary expectations in usd in a monthly basis"
+    existing = {stored: "6000"}
+    spanish = "cual es tu remuneracion bruta pretendida para el rol?"
+
+    # Measured shape of a translated match: undecided band (0.62-0.73).
+    monkeypatch.setattr(laya_hooks, "same_question_scores",
+                        lambda label, cands: [(c, 0.68) for c in cands])
+    assert ctx._ff_dupe_canonical(spanish, existing, "6000") == stored
+
+    # A DIFFERENT answer in the same band is not merged (that would fill one
+    # field with the other's value) - both records are kept.
+    assert ctx._ff_dupe_canonical(spanish, existing, "5000") == ""
+
+    # Engine unavailable -> no dedupe at all, never a guess.
+    monkeypatch.setattr(laya_hooks, "same_question_scores",
+                        lambda label, cands: None)
+    assert ctx._ff_dupe_canonical(spanish, existing, "6000") == ""

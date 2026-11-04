@@ -4,6 +4,7 @@ import sys
 import json
 import os
 import time
+import base64
 import threading
 import logging
 import traceback
@@ -51,9 +52,9 @@ if os.name == 'nt' and hasattr(os, 'add_dll_directory'):
         pass
 
 from datetime import datetime
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QFileDialog, QInputDialog, QMessageBox, QLineEdit
-from PyQt5.QtCore import QObject, pyqtSignal, QTimer, Qt, QEvent
-from PyQt5.QtGui import QIcon, QKeySequence, QCursor
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QMenuBar, QAction, QInputDialog, QMessageBox, QLineEdit, QLabel
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer, QThread, QSize, Qt, QEvent
+from PyQt5.QtGui import QIcon, QKeySequence, QCursor, QPixmap
 from .constants import DARK_GREY, MEDIUM_GREY, TEXT_COLOR, GRAPH_PLANE
 from .i18n import _
 from pynput import mouse, keyboard
@@ -87,12 +88,15 @@ from .icons import tabler_qicon as _tabler_qicon
 class _BgInputDialogHelper(QObject):
     _sig = pyqtSignal(str)
     _sig_rich = pyqtSignal(str)
+    _sig_output = pyqtSignal(str)
 
-    def __init__(self):
+    def __init__(self, owner=None):
         super().__init__()
+        self._owner = owner
         self._result_container = []
         self._sig.connect(self._show, Qt.BlockingQueuedConnection)
         self._sig_rich.connect(self._show_rich, Qt.BlockingQueuedConnection)
+        self._sig_output.connect(self._show_output, Qt.BlockingQueuedConnection)
         self.moveToThread(QApplication.instance().thread())
 
     def ask(self, question):
@@ -126,9 +130,58 @@ class _BgInputDialogHelper(QObject):
             request = {'question': str(payload)}
         self._result_container.append(ask_question(request))
 
+    def show_output(self, label, content, mode='text', asset=None):
+        """Show an Output node's result popup and block until it is closed.
+
+        Manual playback pauses here — same contract as ``ask`` — so the user
+        reads the result before the chain moves on.
+        """
+        if self._owner is None:
+            return
+        payload = json.dumps({
+            'label': label or '', 'content': content or '',
+            'mode': mode or 'text', 'asset': asset,
+        }, ensure_ascii=False)
+        app = QApplication.instance()
+        if app is not None and QThread.currentThread() is app.thread():
+            self._show_output(payload)
+            return
+        self._sig_output.emit(payload)
+
+    def _show_output(self, payload):
+        try:
+            data = json.loads(payload)
+        except Exception:
+            data = {'content': str(payload)}
+        self._owner._show_chain_output_popup(
+            data.get('label') or '', data.get('content') or '',
+            mode=data.get('mode') or 'text', asset=data.get('asset'),
+        )
+
+
+class _ScaledImageLabel(QLabel):
+    """Pixmap label that rescales to the room it is given (no fixed 720px cap)."""
+
+    def __init__(self, pixmap, parent=None):
+        super().__init__(parent)
+        self._source = pixmap
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(1, 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not self._source.isNull():
+            self.setPixmap(self._source.scaled(
+                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
 
 class MainWindow(QMainWindow):
     """Main application window"""
+
+    # Screen access happens on the runtime's worker thread; these marshal the
+    # hide/restore onto the GUI thread (see _screen_access_begin).
+    _screenHideRequested = pyqtSignal()
+    _screenShowRequested = pyqtSignal()
     
     def __init__(self):
         logger.info("Initializing MainWindow")
@@ -183,6 +236,16 @@ class MainWindow(QMainWindow):
             # Snapshot of the most recent chain run — Code Node Studio replays
             # a selected code node against its real runtime data.
             self._last_player = None
+            # Resume where the last session stopped (chain, Builder panel,
+            # canvas view) once the window is actually on screen.
+            try:
+                from . import app_state
+                # The frame is restored BEFORE the first show, so the window
+                # never appears at the default size and then jumps.
+                app_state.apply_geometry(self)
+                QTimer.singleShot(400, lambda: self._resume_app_state(app_state))
+            except Exception:
+                logger.exception('could not schedule the app-state restore')
             logger.info("MainWindow initialization completed successfully")
         except Exception as e:
             logger.error(f"Error initializing MainWindow: {str(e)}")
@@ -227,10 +290,6 @@ class MainWindow(QMainWindow):
             self._agent_overlay.embed(self.central_widget)
             self._agent_overlay.closed.connect(self._on_overlay_closed)
             self._agent_overlay.collapsed.connect(self._on_overlay_collapsed)
-            self._agent_overlay.set_window_manager(
-                minimize_cb=self.showMinimized,
-                restore_cb=self.showNormal,
-            )
             self.layout.addWidget(self._agent_overlay, 1)
             self._agent_overlay.hide()
             self._agent_inwindow = True
@@ -267,6 +326,32 @@ class MainWindow(QMainWindow):
                 logger.exception("Could not register the agent capture hooks")
             logger.debug("AgentNotch created")
 
+            # ── Screen-access guard ──
+            # The runtime takes this window off screen ONLY while a node needs
+            # the real desktop (desktop sequence, handle, desktop form fill,
+            # visual conditional).  LLM / orchestrator / code / web nodes run
+            # with the window - and the agent chat - up, so progress stays
+            # visible instead of the app vanishing for the whole run.
+            self._screen_hidden = False
+            self._screen_was_shown = False
+            self._screen_was_max = False
+            self._screen_restore_timer = QTimer(self)
+            self._screen_restore_timer.setSingleShot(True)
+            # Linger: back-to-back reads/actions stay one hidden block, and the
+            # window cannot pop up between two steps of one sequence.
+            self._screen_restore_timer.setInterval(700)
+            self._screen_restore_timer.timeout.connect(self._screen_restore_now)
+            self._screenHideRequested.connect(
+                self._screen_hide_now, Qt.BlockingQueuedConnection)
+            self._screenShowRequested.connect(
+                lambda: self._screen_restore_timer.start(), Qt.QueuedConnection)
+            try:
+                from player.execution_overlay_bus import bus as _exec_bus
+                _exec_bus.set_screen_hooks(
+                    self._screen_access_begin, self._screen_access_end)
+            except Exception:
+                logger.exception("Could not register the screen-access guard")
+
             # One poll owns the cursor arrow's visibility: shown while the app is
             # recording, replaying, or showing an agent surface (overlay/notch).
             # Polling is deliberate - the run-end hooks fire on worker threads
@@ -279,6 +364,7 @@ class MainWindow(QMainWindow):
             self._agent_mode_active = False
             self._notch_active = False   # the compact notch is the active agent UI
             self._agent_executing = False  # a chain run started from the agent
+            self._manual_run_live = False  # a chain run started from the player
             self._overlay_was_visible = False
             self._dot_was_visible = False
             self._notch_was_visible = False
@@ -588,6 +674,12 @@ class MainWindow(QMainWindow):
         ex = getattr(self, '_execution_overlay', None)
         playing = ex is not None and not ex._stop.is_set()
         dot.set_execute_mode(bool(getattr(self, '_agent_executing', False) or playing))
+        # Manual run: the cursor itself says what the runtime is doing.
+        thinking = bool(playing and getattr(self, '_manual_run_live', False))
+        if thinking:
+            from player.execution_overlay_bus import bus as _bus
+            thinking = not _bus.screen_busy
+        dot.set_thinking(thinking)
         if not dot.isVisible():
             dot.show()
 
@@ -912,7 +1004,6 @@ class MainWindow(QMainWindow):
         """Hide the agent overlay/notch and show the builder again."""
         overlay = getattr(self, '_agent_overlay', None)
         if overlay is not None:
-            overlay._was_visible_for_automation = False
             overlay._keep_web_server = False
             overlay.hide()
         # The graph UI and the agent UI are never shown at the same time.
@@ -1018,15 +1109,18 @@ class MainWindow(QMainWindow):
 
         QAction shortcuts only fire when the Qt app has focus.
         pynput hooks into the OS input stack and works globally.
-        Uses GetAsyncKeyState (not modifier tracking) so key-repeat races
-        can't desync the modifier state from the physical keyboard.
+        Uses the gate's live key state (not modifier tracking) so key-repeat
+        races can't desync the modifier state from the physical keyboard.
         """
         if getattr(self, '_hotkey_listener', None) is not None:
             return
 
         _vk_ctrl = 0x11
         _vk_shift = 0x10
-        _get_key = ctypes.windll.user32.GetAsyncKeyState
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import async_key_state
+        except ImportError:  # imported as LoOper.*
+            from ..platform_gate import async_key_state
 
         def on_press(key):
             # Match 'A' via char or virtual-key code (0x41)
@@ -1035,7 +1129,7 @@ class MainWindow(QMainWindow):
             if not ((ch and (ch.lower() == 'a' or ch == '\x01')) or vk == 0x41):
                 return
             try:
-                if _get_key(_vk_ctrl) & 0x8000 and _get_key(_vk_shift) & 0x8000:
+                if async_key_state(_vk_ctrl) and async_key_state(_vk_shift):
                     logger.info("Global hotkey Ctrl+Shift+A detected via pynput")
                     from PyQt5.QtCore import QTimer
                     QTimer.singleShot(0, self.toggle_agent_mode)
@@ -1068,19 +1162,21 @@ class MainWindow(QMainWindow):
                 )
                 chains_dir = os.path.join(project_root, "chains")
 
+            from player import workspace as wsmod
             from player.agentic_ops import SimpleChainRouter
-            controller = SimpleChainRouter(chains_dir=chains_dir)
-
-            # Auto-detect system chain: first chain with collection="system"
-            # becomes the agent's cognitive architecture.
-            for c in controller._chains:
-                coll = c.get("collection", "") or ""
-                if coll.lower() == "system":
-                    controller.set_system_chain(c["path"])
-                    logger.info(
-                        "MainWindow: auto-selected system chain '%s'", c["id"]
-                    )
-                    break
+            # Agent mode is scoped by WORKSPACE now: one agent per workspace,
+            # and its chains are that workspace's folder.
+            workspaces_root = wsmod.root_for_chains(chains_dir)
+            active_slug = ''
+            try:
+                active_slug = str(self.graph_view.workspace_slug() or '')
+            except Exception:
+                logger.debug('no workspace on the canvas yet', exc_info=True)
+            controller = SimpleChainRouter(
+                chains_dir=chains_dir,
+                workspaces_root=workspaces_root,
+                workspace_slug=active_slug,
+            )
 
             overlay.set_chat_controller(controller)
             logger.debug("Overlay chat controller initialized")
@@ -1162,11 +1258,11 @@ class MainWindow(QMainWindow):
             self.showMinimized()
         except Exception:
             pass
-        # Left slot of the notch: the selected system chain's vector avatar, so
-        # the user can see who they are talking to.
+        # Left slot of the notch: the selected system chain's procedural avatar,
+        # so the user can see who they are talking to.
         try:
-            name = overlay.current_chain_avatar() if overlay is not None else ""
-            notch.set_chain_avatar(name)
+            seed = overlay.current_chain_seed() if overlay is not None else ""
+            notch.set_chain_avatar(seed)
         except Exception:
             pass
         notch.summon()   # repositions and drops in from the screen edge
@@ -1185,7 +1281,6 @@ class MainWindow(QMainWindow):
         """
         overlay = getattr(self, '_agent_overlay', None)
         if overlay is not None:
-            overlay._was_visible_for_automation = False
             overlay._keep_web_server = True
         # Notch up first: the panel leaves with the window minimize, so hiding
         # it before the notch was ready is what showed a blank frame.
@@ -1279,6 +1374,71 @@ class MainWindow(QMainWindow):
         if overlay and overlay.isVisible():
             self._overlay_was_visible = True
             overlay.hide()
+
+    # ── Screen-access guard ───────────────────────────────────────────
+
+    def _screen_access_begin(self):
+        """Take the app off screen for a screen read/action (any thread).
+
+        Blocks until the window is really hidden, so the capture can never
+        contain it and a click can never land on it.
+        """
+        if QThread.currentThread() == self.thread():
+            self._screen_hide_now()
+        else:
+            self._screenHideRequested.emit()
+
+    def _screen_access_end(self):
+        """Let the app come back once no screen access is left (any thread)."""
+        if QThread.currentThread() == self.thread():
+            self._screen_restore_timer.start()
+        else:
+            self._screenShowRequested.emit()
+
+    def _screen_hide_now(self):
+        """GUI thread: hide the window for a screen read/action."""
+        self._screen_restore_timer.stop()
+        # Acting: the cursor goes back to a plain arrow while the runtime
+        # drives the desktop (thinking shows the node animation instead).
+        dot = getattr(self, '_agent_dot', None)
+        if dot is not None:
+            dot.set_thinking(False)
+        # Re-check visibility instead of trusting the flag: another path may
+        # have re-shown the window mid-run, and a capture must never see it.
+        if not self.isVisible() or self.isMinimized():
+            return
+        if not self._screen_hidden:
+            self._screen_was_max = self.isMaximized()
+        self._screen_hidden = True
+        self._screen_was_shown = True
+        self.hide()
+
+    def _screen_restore_now(self):
+        """GUI thread: bring the window back after the linger, focus untouched.
+
+        Restoring WITHOUT activation keeps the keyboard focus on the app the
+        automation is driving, so a sequence that resumes right after still
+        types into the right window.
+        """
+        if not self._screen_hidden:
+            return
+        self._screen_hidden = False
+        # Back to thinking: the manual run keeps the node animation on the cursor.
+        dot = getattr(self, '_agent_dot', None)
+        if dot is not None and getattr(self, '_manual_run_live', False):
+            dot.set_thinking(True)
+        was_shown, was_max = self._screen_was_shown, self._screen_was_max
+        self._screen_was_shown = False
+        if not was_shown:
+            return
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        try:
+            if was_max:
+                self.showMaximized()
+            else:
+                self.showNormal()
+        finally:
+            self.setAttribute(Qt.WA_ShowWithoutActivating, False)
     
     def new_chain(self):
         """Clears the graph to start a new chain."""
@@ -1289,11 +1449,12 @@ class MainWindow(QMainWindow):
             cfg_mgr = getattr(self.graph_view, 'config_manager', None)
             if cfg_mgr is not None and hasattr(cfg_mgr, 'reset_chain_scope'):
                 cfg_mgr.reset_chain_scope()
-            # Workspace organization: a chain created while a collection
-            # filter is active belongs to that collection (ChainsLibrary).
-            lib = getattr(self, 'chains_library', None)
-            if cfg_mgr is not None and lib is not None and hasattr(lib, 'active_collection'):
-                cfg_mgr._current_chain_collection = lib.active_collection()
+            # Workspaces: a chain created on this canvas belongs to the
+            # workspace the canvas is scoped to (the workspace bar).
+            if cfg_mgr is not None:
+                cfg_mgr._current_chain_workspace = str(
+                    getattr(self.graph_view, 'workspace_slug', lambda: '')()
+                    or '')
         except Exception:
             pass
 
@@ -1383,12 +1544,16 @@ class MainWindow(QMainWindow):
             # Hide the floating agent overlay so it doesn't block automation
             self._hide_agent_overlay()
 
-            # Minimize window BEFORE starting playback (similar to recording)
-            logger.debug("Minimizing main window for playback")
-            self.showMinimized()
-            
+            # Minimizing is NOT needed: the runtime hides the window itself, per
+            # node, while a node actually reads or drives the screen (see the
+            # screen-access guard in setup_ui), so thinking nodes keep it up
+            # with their progress visible.
+            logger.debug("Starting playback (screen-access guard manages the window)")
+
             # Use QTimer to delay chain execution start, allowing window to minimize properly
             def start_playback_delayed():
+                # From here on the cursor reports thinking vs acting.
+                self._manual_run_live = True
                 # Execute the chain directly using MultiSequencePlayer
                 logger.info(f"Starting direct chain execution with config: {temp_filename}")
 
@@ -1487,7 +1652,7 @@ class MainWindow(QMainWindow):
                     # Uses _BgInputDialogHelper with BlockingQueuedConnection to route
                     # the dialog to the main thread (QTimer.singleShot won't work from
                     # a bg thread because there's no Qt event loop on that thread).
-                    _bg_dialog_helper = _BgInputDialogHelper()
+                    _bg_dialog_helper = _BgInputDialogHelper(self)
                     def _ask_user_from_bg_thread(question):
                         return _bg_dialog_helper.ask(question)
                     def _ask_user_v2_from_bg_thread(request):
@@ -1521,17 +1686,21 @@ class MainWindow(QMainWindow):
                                 """Called from background thread when a node fails"""
                                 QTimer.singleShot(0, lambda: self._highlight_failed_node(node_id, node_type))
 
-                            # Create callback for mid-execution output node popups (e.g. calculator loop)
+                            # Output nodes with 'show popup on finish' block here:
+                            # the chain thread waits on the main thread until the user
+                            # closes the dialog (QTimer.singleShot cannot be used from
+                            # this event-loop-less worker thread).
                             def _on_output_ready(label, content, **kwargs):
                                 """Called from background thread when an output node fires with popup_on_finish.
-                                New render_mode/asset kwargs are tolerated; the manual-mode popup
-                                shows text mode only."""
-                                logger.info('[OUTPUT] on_output_ready scheduled from bg thread (label="%s", %d chars)', label, len(content))
-                                def _show():
-                                    logger.info('[OUTPUT] _show executing on main thread')
-                                    self._restore_window()
-                                    self._show_chain_output_popup(label, content)
-                                QTimer.singleShot(0, _show)
+                                Renders the node's render_mode (text/audio/markdown/html/image) and
+                                pauses execution until the popup is closed."""
+                                logger.info('[OUTPUT] on_output_ready from bg thread (label="%s", %d chars, mode=%s)',
+                                            label, len(content or ''), kwargs.get('mode'))
+                                _bg_dialog_helper.show_output(
+                                    label, content,
+                                    mode=str(kwargs.get('mode') or 'text'),
+                                    asset=kwargs.get('asset'),
+                                )
                             
                             try:
                                 # Execute the chain with stop flag for ESC key abort.
@@ -1560,20 +1729,15 @@ class MainWindow(QMainWindow):
                                 except Exception:
                                     pass
                                 
-                                # After chain execution, check for output nodes with popup_on_finish
+                                # Output-node popups fire mid-execution (the callback
+                                # above blocks until closed), so there is nothing left to
+                                # show once the chain finishes.
                                 thread_output_nodes = thread_chain_config.get("output_nodes", [])
-                                if thread_output_nodes and hasattr(player, 'llm_executor'):
-                                    for _onode in thread_output_nodes:
-                                        if _onode.get("popup_on_finish", True):
-                                            _nid = _onode.get("node_id", "")
-                                            if _nid:
-                                                try:
-                                                    _oval = player.llm_executor.get_variable(f"node_{_nid}_output")
-                                                    if _oval and isinstance(_oval, str) and _oval.strip():
-                                                        _label = _onode.get("label", "") or "Chain Output"
-                                                        QTimer.singleShot(0, lambda v=_oval, l=_label: self._show_chain_output_popup(l, v))
-                                                except Exception:
-                                                    pass
+                                if thread_output_nodes:
+                                    logger.debug(
+                                        '[OUTPUT] %d output node(s) handled by the mid-execution popup',
+                                        len(thread_output_nodes),
+                                    )
                             finally:
                                 # Always stop monitoring when done
                                 logger.info("Stopping keyboard monitoring...")
@@ -1706,39 +1870,46 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, _("Chain Error"), f"Failed to run chain: {str(e)}")
 
     def open_chain(self):
-        """Open a chain configuration file."""
-        fileName, selected_filter = QFileDialog.getOpenFileName(
-            self, _("Open Chain"), "", "JSON Files (*.json);;All Files (*)"
-        )
-        if fileName:
-            try:
-                # Check if graph view is ready
-                if not self.graph_view.is_ready():
-                    QMessageBox.warning(
-                        self,
-                        _("Graph Not Ready"),
-                        _("The graph view is not fully initialized yet. Please wait a moment and try again.")
-                    )
-                    return
-                
-                self.graph_view.load_chain(fileName)
-            except RuntimeError as e:
-                QMessageBox.critical(self, _("Error"), f"Graph not ready: {str(e)}")
-            except Exception as e:
-                QMessageBox.critical(self, _("Error"), f"Failed to load chain: {str(e)}")
+        """Open a chain: the app's own picker, not the OS file dialog."""
+        # Asked BEFORE the picker: offering a list and then refusing the pick
+        # because the graph is still coming up is the worst of both.
+        if not self.graph_view.is_ready():
+            QMessageBox.warning(
+                self,
+                _("Graph Not Ready"),
+                _("The graph view is not fully initialized yet. Please wait a moment and try again.")
+            )
+            return
+        from .dialogs.chain_files_dialog import ask_open_chain
+
+        fileName = ask_open_chain(self, self.graph_view)
+        if not fileName:
+            return
+        try:
+            self.graph_view.load_chain(fileName)
+        except RuntimeError as e:
+            QMessageBox.critical(self, _("Error"), f"Graph not ready: {str(e)}")
+        except Exception as e:
+            QMessageBox.critical(self, _("Error"), f"Failed to load chain: {str(e)}")
 
     def save_chain(self):
-        """Saves the current chain to a file"""
-        options = QFileDialog.Options()
-        fileName, selected_filter = QFileDialog.getSaveFileName(self, _("Save Chain File"), "", "JSON Files (*.json)", options=options)
-        if fileName:
-            try:
-                self.graph_view.save_chain(fileName)
-                QMessageBox.information(self, _("Success"), _("Chain saved successfully!"))
-            except Exception as e:
-                QMessageBox.critical(self, _("Save Error"), f"Failed to save chain: {str(e)}")
+        """Save the current chain: the app's own picker, not the OS dialog."""
+        from .dialogs.chain_files_dialog import ask_save_chain
+
+        current = str(getattr(
+            getattr(self.graph_view, 'config_manager', None),
+            '_current_chain_file', '') or '')
+        fileName = ask_save_chain(self, self.graph_view,
+                                  current=os.path.basename(current)[:-5])
+        if not fileName:
+            return
+        try:
+            self.graph_view.save_chain(fileName)
+            QMessageBox.information(self, _("Success"), _("Chain saved successfully!"))
+        except Exception as e:
+            QMessageBox.critical(self, _("Save Error"), f"Failed to save chain: {str(e)}")
     
-    def start_recording(self, sequence_name):
+    def start_recording(self, sequence_name, title=''):
         """Start recording a sequence using ElementRecorder with full capabilities"""
         logger.info(f"Starting recording process for sequence: {sequence_name}")
         
@@ -1771,7 +1942,8 @@ class MainWindow(QMainWindow):
             overlay = None
             try:
                 from .widgets.recording_overlay import RecordingOverlay
-                overlay = RecordingOverlay(rec_stop, rec_mouse_down)
+                overlay = RecordingOverlay(rec_stop, rec_mouse_down,
+                                           title=title)
                 overlay.start()
                 # Hit-test at the exact click/drag point (not the last hovered
                 # element) so a drag's FROM row is captured correctly.  It MUST
@@ -2049,6 +2221,8 @@ class MainWindow(QMainWindow):
         Respects one-UI-at-a-time: restores overlay, dot, or main window
         depending on what was visible before the chain ran.
         """
+        # The run is over: the cursor goes back to its arrow (hidden if idle).
+        self._manual_run_live = False
         # Tear down the recording overlay first (created in start_recording).
         ov = getattr(self, '_recording_overlay', None)
         if ov is not None:
@@ -2108,19 +2282,22 @@ class MainWindow(QMainWindow):
             self._poll_agent_dot()
             return
 
-        # Main graph mode — restore main window
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
+        # Main graph mode — restore the main window, but only if something
+        # actually took it down (recording, notch mode).  A playback that only
+        # used the screen-access guard must not make the window jump in front.
+        if not self.isVisible() or self.isMinimized():
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
 
-        # Force re-application of stylesheet to fix a known Qt-on-Windows bug
-        # where minimized windows restored via showNormal() lose their
-        # QApplication-level dark theme and render in the default boxy style.
-        app = QApplication.instance()
-        if app:
-            ss = app.styleSheet()
-            app.setStyleSheet("")
-            app.setStyleSheet(ss)
+            # Force re-application of stylesheet to fix a known Qt-on-Windows bug
+            # where minimized windows restored via showNormal() lose their
+            # QApplication-level dark theme and render in the default boxy style.
+            app = QApplication.instance()
+            if app:
+                ss = app.styleSheet()
+                app.setStyleSheet("")
+                app.setStyleSheet(ss)
         self._poll_agent_dot()
         self.update()
     
@@ -2129,34 +2306,145 @@ class MainWindow(QMainWindow):
         self._restore_window()
         QMessageBox.critical(self, _("Recording Error"), _("Recording failed: {error}").format(error=error_msg))
 
-    def _show_chain_output_popup(self, label, content):
-        """Show a popup with the collected chain output.
+    def _show_chain_output_popup(self, label, content, mode='text', asset=None):
+        """Show an Output node's result and wait for the user to close it.
 
-        Called via QTimer.singleShot from the background thread after
-        manual chain execution completes.
+        Manual playback pauses here (the chain thread blocks on this modal),
+        matching the Input-node prompt.  The body follows the node's
+        render_mode: text/audio as plain text, markdown rendered, html in a live
+        web view, image as a pixmap.
         """
-        if not content or not isinstance(content, str) or not content.strip():
+        body = str(content or '')
+        if not body.strip() and not asset:
             return
         from .dialogs.base_dialog import ModernDialog
-        from PyQt5.QtWidgets import QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QGroupBox
-        dlg = ModernDialog(self, title=label or "Chain Output", show_help_button=False)
-        dlg.resize(640, 440)
-        card = QGroupBox(_("Chain Output"))
+        from PyQt5.QtWidgets import (
+            QGroupBox, QHBoxLayout, QLabel, QPushButton, QSizeGrip, QTextEdit,
+            QVBoxLayout,
+        )
+        # No Qt parent: playback minimizes the main window and the chain's
+        # browser sits in front, so the popup must be top-most and modal.
+        dlg = ModernDialog(None, title=label or _("Chain Output"),
+                           show_help_button=False)
+        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowStaysOnTopHint)
+        dlg.setModal(True)
+        # A result is a reader: open large, and let the user fill the screen.
+        # Keep that size — the default fit-to-content would shrink it back to
+        # the text's sizeHint before the first paint.
+        dlg._auto_fit = False
+        screen = QApplication.primaryScreen()
+        avail = screen.availableGeometry() if screen is not None else None
+        if avail is not None:
+            dlg.resize(min(avail.width(), max(900, int(avail.width() * 0.85))),
+                       min(avail.height(), max(640, int(avail.height() * 0.85))))
+        else:
+            dlg.resize(1100, 760)
+        dlg.setMinimumSize(480, 360)
+        saved_geo = {'geo': None}
+        max_btn = QPushButton()
+        max_btn.setIcon(_tabler_qicon("MAXIMIZE", 16))
+        max_btn.setIconSize(QSize(16, 16))
+        max_btn.setFixedSize(30, 30)
+        max_btn.setCursor(Qt.PointingHandCursor)
+        max_btn.setAutoDefault(False)
+        max_btn.setFocusPolicy(Qt.NoFocus)
+        max_btn.setToolTip(_("Maximize"))
+        max_btn.setStyleSheet(dlg.close_btn.styleSheet())
+
+        def _toggle_max():
+            if saved_geo['geo'] is None:
+                saved_geo['geo'] = dlg.geometry()
+                target = QApplication.screenAt(dlg.geometry().center()) or screen
+                dlg.setGeometry(target.availableGeometry() if target else dlg.geometry())
+                max_btn.setIcon(_tabler_qicon("MINIMIZE", 16))
+                max_btn.setToolTip(_("Restore"))
+            else:
+                dlg.setGeometry(saved_geo['geo'])
+                saved_geo['geo'] = None
+                max_btn.setIcon(_tabler_qicon("MAXIMIZE", 16))
+                max_btn.setToolTip(_("Maximize"))
+
+        max_btn.clicked.connect(_toggle_max)
+        title_layout = dlg.title_bar.layout()
+        if title_layout is not None:
+            title_layout.insertWidget(title_layout.count() - 1, max_btn, 0, Qt.AlignVCenter)
+        card = QGroupBox(label or _("Chain Output"))
         layout = QVBoxLayout(card)
         layout.setContentsMargins(0, 0, 0, 0)
-        text_edit = QTextEdit()
-        text_edit.setReadOnly(True)
-        text_edit.setPlainText(content)
-        layout.addWidget(text_edit)
-        dlg.content_layout.addWidget(card)
+
+        if mode == 'html':
+            layout.addWidget(self._output_html_view(body, card))
+        elif mode == 'markdown':
+            from .widgets.rich_render import md_to_html
+            browser = self._output_text_view(card)
+            browser.setHtml(md_to_html(body))
+            layout.addWidget(browser)
+        elif mode == 'image':
+            pix = self._output_pixmap(asset)
+            if not pix.isNull():
+                layout.addWidget(_ScaledImageLabel(pix, card))
+            else:
+                browser = self._output_text_view(card)
+                browser.setPlainText(body or _("(image unavailable)"))
+                layout.addWidget(browser)
+        else:
+            # text and audio: the speech already played via tts_service.
+            editor = QTextEdit(card)
+            editor.setReadOnly(True)
+            editor.setPlainText(body)
+            layout.addWidget(editor)
+
+        # Stretch 1: the body owns every spare pixel, so a maximized popup
+        # shows the result instead of a strip of text with dead space below.
+        dlg.content_layout.addWidget(card, 1)
         btn_layout = QHBoxLayout()
         close_btn = QPushButton(_("Close"))
         close_btn.setProperty("class", "primary")
         close_btn.clicked.connect(dlg.accept)
         btn_layout.addStretch()
         btn_layout.addWidget(close_btn)
+        btn_layout.addWidget(QSizeGrip(dlg.container), 0, Qt.AlignBottom | Qt.AlignRight)
         dlg.content_layout.addLayout(btn_layout)
+        dlg.raise_()
+        dlg.activateWindow()
         dlg.exec_()
+
+    def _output_text_view(self, parent):
+        """Read-only rich-text view used for markdown / static HTML."""
+        from PyQt5.QtWidgets import QTextBrowser
+        browser = QTextBrowser(parent)
+        browser.setOpenExternalLinks(True)
+        return browser
+
+    def _output_html_view(self, html_text, parent):
+        """Live web view for an HTML artifact; rich text when QtWebEngine fails."""
+        try:
+            from PyQt5.QtCore import QUrl
+            from PyQt5.QtWebEngineWidgets import QWebEngineView
+            from .widgets.artifacts import save_artifact
+            view = QWebEngineView(parent)
+            view.load(QUrl.fromLocalFile(save_artifact(html_text)))
+            return view
+        except Exception:
+            logger.warning('[OUTPUT] HTML popup: static render', exc_info=True)
+            from .widgets.rich_render import sanitize_html
+            browser = self._output_text_view(parent)
+            browser.setHtml(sanitize_html(html_text))
+            return browser
+
+    def _output_pixmap(self, asset):
+        """QPixmap from an image data URI or a file path (null when unusable)."""
+        try:
+            if isinstance(asset, str) and asset.startswith('data:image/'):
+                _, _, b64 = asset.partition(',')
+                pix = QPixmap()
+                pix.loadFromData(base64.b64decode(b64))
+                return pix
+            if isinstance(asset, str) and os.path.isfile(asset):
+                return QPixmap(asset)
+        except Exception:
+            logger.warning('[OUTPUT] popup image load failed', exc_info=True)
+        return QPixmap()
     
     def _highlight_failed_node(self, node_id, node_type):
         """
@@ -2218,8 +2506,25 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to open UserGuideDialog: {e}")
             QMessageBox.critical(self, _("Documentation Error"), _("Failed to open user guide: {error}").format(error=e))
 
+    def _resume_app_state(self, app_state):
+        """Put back the chain / panel / canvas view the last session ended on."""
+        try:
+            restored = app_state.restore(self)
+        except Exception:
+            logger.warning(
+                'the previous session could not be resumed - starting with an '
+                'empty canvas', exc_info=True)
+            return
+        if restored:
+            logger.info('Resumed the previous session: %s', restored)
+
     def closeEvent(self, event):
         """Ensure background services stop on app close"""
+        try:
+            from . import app_state
+            app_state.save(self)
+        except Exception:
+            logger.error('could not save the app state', exc_info=True)
         try:
             if hasattr(self, 'scheduler_service') and self.scheduler_service:
                 self.scheduler_service.stop()

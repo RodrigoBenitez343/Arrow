@@ -6,11 +6,13 @@ The suite moved next to the code it covers and got split by concern:
         _test_support.py    shared _Harness / _node / _wire
         suite_ask_user.py   the opt-in ask-user fallback + knowledge file
         suite_common.py     config, helpers, field identity, filters
+        suite_desktop.py    which window is the form, how a field is written
         suite_extract.py    extraction prompt, sentinels, yes/no
         suite_fill_flow.py  the node loop (fill / verify / skip / abort)
         suite_scope.py      picked-scope resolution
         suite_tree.py       Laya-first element resolution (the tree + its fallbacks)
-        suite_probe.py      retrieval, ComoRAG hooks, facts vs verbatim
+        suite_probe.py      (retired: the ComoRAG probe stack, replaced by CRAG)
+        suite_crag.py       CRAG retrieval: verdict, strips, correction
         suite_repair.py     the post-pass
         suite_web.py        JS contracts, writes, the overlay
         suite_dialog.py     dialog + chain save/load
@@ -25,13 +27,15 @@ from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_common import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
+    form_filler_modules.suite_crag import *  # noqa: F401,F403
+from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
+    form_filler_modules.suite_desktop import *  # noqa: F401,F403
+from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_dialog import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_extract import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_fill_flow import *  # noqa: F401,F403
-from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
-    form_filler_modules.suite_probe import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\
     form_filler_modules.suite_repair import *  # noqa: F401,F403
 from player.multi_sequence.worflow_interpreter_modules.executor_modules.\

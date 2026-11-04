@@ -240,3 +240,32 @@ def test_cleanup_runners_empty_models(monkeypatch):
     monkeypatch.setattr(api, "requests", session)
     monkeypatch.setattr(api, "get_ollama_base_url", lambda: "http://127.0.0.1:11434")
     api._cleanup_ollama_runners(None)  # no crash
+
+
+# ---------------------------------------------------------------------------
+# The gateway model list is the ONE list every picker reads: it has to carry
+# the llama.cpp GGUFs too, or those pickers report the local engine as empty.
+# ---------------------------------------------------------------------------
+
+def test_gguf_models_are_listed_from_disk(monkeypatch, tmp_path):
+    from AI import config_loader
+
+    (tmp_path / "needle2").mkdir()
+    (tmp_path / "needle2" / "needle2.gguf").write_bytes(b"x" * 16)
+    (tmp_path / "notes.txt").write_text("not a model")
+    monkeypatch.setattr(config_loader, "get_models_dir",
+                        lambda: str(tmp_path))
+
+    files = api._gguf_model_files()
+    # Relative, forward-slashed: that is the name a chain stores and the
+    # dialog's per-engine filter matches on.
+    assert [f["name"] for f in files] == ["needle2/needle2.gguf"]
+    assert files[0]["size"] == 16
+
+
+def test_gguf_scan_of_a_missing_dir_is_empty(monkeypatch, tmp_path):
+    from AI import config_loader
+
+    monkeypatch.setattr(config_loader, "get_models_dir",
+                        lambda: str(tmp_path / "nope"))
+    assert api._gguf_model_files() == []

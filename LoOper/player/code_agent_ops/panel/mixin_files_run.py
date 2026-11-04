@@ -2,6 +2,7 @@
 
 App root = the LoOper/ directory (top-level packages NGUI/AI/player).
 """
+import json
 import logging
 import os
 
@@ -12,8 +13,9 @@ from PyQt5.QtWidgets import (
     QTreeWidgetItem,
 )
 
-from NGUI.constants import TEXT_SECONDARY, WELL_BG
+from NGUI.constants import ACCENT_COLOR, DANGER_COLOR, TEXT_MUTED, TEXT_SECONDARY
 from NGUI.i18n import _
+from NGUI.icons import tabler_qicon
 from player.code_agent_ops.constants import (
     MAIN_FILE,
     _MAX_RUN_RESULT,
@@ -22,10 +24,13 @@ from player.code_agent_ops.constants import (
 )
 from player.code_agent_ops.execution import (
     _CodeRunWorker,
+    _GuiCheckWorker,
     _ShellWorker,
 )
+from player.code_agent_ops.gui_check import venv_python
 from player.code_agent_ops.parsing import (
     _clip,
+    _collect_project_files,
     _looks_like_shell_command,
     _resolve_venv_site_packages,
     _resolve_workspace,
@@ -33,6 +38,34 @@ from player.code_agent_ops.parsing import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Per-extension Tabler glyphs: the tree should read at a glance (a .py module,
+# a .json data file, an image) instead of showing one generic file icon.
+_FILE_ICONS = {
+    '.py': 'BRAND_PYTHON', '.pyw': 'BRAND_PYTHON',
+    '.json': 'JSON', '.jsonc': 'JSON',
+    '.md': 'MARKDOWN', '.markdown': 'MARKDOWN',
+    '.html': 'FILE_TYPE_HTML', '.htm': 'FILE_TYPE_HTML',
+    '.css': 'FILE_TYPE_CSS',
+    '.js': 'FILE_TYPE_JS', '.mjs': 'FILE_TYPE_JS', '.cjs': 'FILE_TYPE_JS',
+    '.jsx': 'FILE_CODE', '.tsx': 'FILE_CODE',
+    '.ts': 'FILE_TYPE_TS',
+    '.csv': 'FILE_TYPE_CSV',
+    '.xml': 'FILE_TYPE_XML',
+    '.sql': 'FILE_TYPE_SQL',
+    '.svg': 'FILE_TYPE_SVG',
+    '.vue': 'FILE_TYPE_VUE',
+    '.rs': 'FILE_TYPE_RS',
+    '.pdf': 'FILE_TYPE_PDF',
+    '.zip': 'FILE_TYPE_ZIP', '.7z': 'FILE_TYPE_ZIP', '.gz': 'FILE_TYPE_ZIP',
+    '.png': 'PHOTO', '.jpg': 'PHOTO', '.jpeg': 'PHOTO', '.gif': 'PHOTO',
+    '.webp': 'PHOTO', '.bmp': 'PHOTO', '.ico': 'PHOTO',
+    '.sh': 'TERMINAL', '.bat': 'TERMINAL', '.ps1': 'TERMINAL',
+    '.cmd': 'TERMINAL',
+    '.txt': 'FILE_TYPE_TXT', '.log': 'FILE_TYPE_TXT',
+    '.yml': 'FILE_TEXT', '.yaml': 'FILE_TEXT', '.toml': 'FILE_TEXT',
+    '.ini': 'FILE_TEXT', '.cfg': 'FILE_TEXT', '.env': 'FILE_TEXT',
+}
 
 
 class FilesRunMixin(object):
@@ -63,6 +96,14 @@ class FilesRunMixin(object):
         node_id = str(getattr(self._node, 'id', '') or 'code')
         return _resolve_workspace(self._last_player(), node_id)
 
+    def _file_icon(self, name, is_dir=False):
+        """Vector icon for a tree entry: folder, or a per-extension file glyph."""
+        if is_dir:
+            return tabler_qicon('FOLDER', 16, color=TEXT_MUTED)
+        ext = os.path.splitext(str(name))[1].lower()
+        color = ACCENT_COLOR if ext in ('.py', '.pyw') else TEXT_SECONDARY
+        return tabler_qicon(_FILE_ICONS.get(ext, 'FILE'), 16, color=color)
+
     def _refresh_files(self):
         self._files_tree.clear()
         root = self._workspace_root()
@@ -70,6 +111,7 @@ class FilesRunMixin(object):
             [os.path.basename(root.rstrip(os.sep)) or root])
         root_item.setData(0, Qt.UserRole, '')
         root_item.setToolTip(0, root)
+        root_item.setIcon(0, self._file_icon('', True))
         self._files_tree.addTopLevelItem(root_item)
         root_item.setExpanded(True)
 
@@ -91,12 +133,7 @@ class FilesRunMixin(object):
                 item.setData(0, Qt.UserRole, rel)
                 item.setToolTip(0, rel if not os.path.isdir(full)
                                 else _('folder'))
-                if os.path.isdir(full):
-                    item.setIcon(0, self.style().standardIcon(
-                        self.style().SP_DirIcon))
-                else:
-                    item.setIcon(0, self.style().standardIcon(
-                        self.style().SP_FileIcon))
+                item.setIcon(0, self._file_icon(entry, os.path.isdir(full)))
                 parent_item.addChild(item)
                 if os.path.isdir(full):
                     walk(item, full)
@@ -240,6 +277,18 @@ class FilesRunMixin(object):
                     f.write(self._code_edit.toPlainText())
             except Exception:
                 pass
+            self._persist_project_files()
+
+    def _persist_project_files(self):
+        """Store the node's whole workspace (minus script.py) on the node, so
+        the chain carries the project to any machine that opens it."""
+        if self._node is None:
+            return
+        try:
+            files = _collect_project_files(self._workspace_root())
+            self._node.set_property('project_files', json.dumps(files))
+        except Exception:
+            pass
 
     def _save_open_file(self):
         """Save the open file: helpers to the workspace disk, main to node."""
@@ -250,6 +299,7 @@ class FilesRunMixin(object):
             path = self._workspace_path(self._active_file)
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(self._code_edit.toPlainText())
+            self._persist_project_files()
             self._append_console(_('Saved {}').format(self._active_file))
         except Exception as e:
             QMessageBox.warning(self, _('Save file'), str(e))
@@ -281,6 +331,13 @@ class FilesRunMixin(object):
         cfg['code'] = code if code is not None else self._main_code
         cfg['input_vars'] = self._collect_rows(self._in_rows)
         cfg['output_vars'] = self._collect_rows(self._out_rows)
+        # Fresh project snapshot: the workspace is the live truth while the
+        # studio is open (node config may lag a just-typed helper).
+        try:
+            cfg['project_files'] = _collect_project_files(
+                self._workspace_root())
+        except Exception:
+            pass
         node_id = str(getattr(self._node, 'id', '') or 'studio_code')
         return {
             'type': 'code',
@@ -305,6 +362,10 @@ class FilesRunMixin(object):
         self._run_btn.setEnabled(False)
         mode_hint = 'replay' if self._last_player() is not None else 'solo'
         self._append_console(_('Running (mode: {})...').format(mode_hint))
+        try:
+            self._task_update('run', 'running', mode_hint)
+        except Exception:
+            pass
         worker = _CodeRunWorker(
             self._current_node_dict(),
             player_provider=self._last_player,
@@ -330,15 +391,60 @@ class FilesRunMixin(object):
         self._pending_run = True
         self._on_run()
 
+    def _start_gui_check(self):
+        """Windowed code: launch it, screenshot the window, let the vision
+        model report - so the agent debugs a GUI instead of the user."""
+        if self._node is None:
+            return
+        if self._run_thread is not None and self._run_thread.isRunning():
+            self._append_chat('execution', _('A run is already in progress - '
+                'press Run after it finishes to test this change.'))
+            return
+        api_url = ''
+        try:
+            from NGUI.nodes_resources.base_node import get_default_api_url
+            api_url = get_default_api_url()
+        except Exception:
+            pass
+        python_exe = venv_python(_resolve_venv_site_packages(self._last_player()))
+        self._append_chat('execution', _(
+            'The code opens a window - launching it, screenshotting it and '
+            'asking the vision model what is on screen (it closes after the '
+            'check).'))
+        self._append_console(_('GUI check: launching {}').format(python_exe))
+        try:
+            self._task_update('run', 'running', 'gui check')
+        except Exception:
+            pass
+        self._stop_ref = {'flag': False}
+        worker = _GuiCheckWorker(
+            self._workspace_path(MAIN_FILE), self._main_code, python_exe,
+            api_url)
+        worker.token = self._node_token
+        worker.owner_id = self._loaded_node_id
+        worker.finished_run.connect(self._on_run_finished)
+        self._run_thread = worker
+        self._pending_run = True
+        self._run_btn.setEnabled(False)
+        worker.start()
+
     def _on_stop(self):
+        # Stop every live worker of the current request: the node run AND the
+        # streaming agent reply, so an infinite-hallucination loop is cut off
+        # without the mid-stream result being parsed or retried.
         if self._stop_ref is not None:
             self._stop_ref['flag'] = True
             self._append_console(_('Stop requested (in-process exec finishes '
                                    'the current statement).'))
+        if self._chat_stop_ref is not None:
+            self._chat_stop_ref['flag'] = True
         self._loop_aborted = True
         self._request_goal = None
-        self._append_console(_('Iteration loop stopped.'))
+        self._pending_run = False
+        self._finish_live()
+        self._append_console(_('Agent request stopped.'))
         self._stop_btn.setEnabled(False)
+        self._run_btn.setEnabled(True)
 
     def _run_block_text(self, record):
         """The raw terminal-style lines the run block renders - mirrors what
@@ -370,26 +476,15 @@ class FilesRunMixin(object):
         """Append an execution as an inline tool-style terminal block (like a
         terminal-tool call): monospace, dark, labelled, right in the chat."""
         ok = bool(record.get('ok'))
-        accent = '#7AE0A0' if ok else '#FF8A8A'
-        title_safe = str(title).replace('&', '&amp;').replace('<', '&lt;') \
-            .replace('>', '&gt;')
-        safe = self._run_block_text(record)
-        safe = safe.replace('&', '&amp;').replace('<', '&lt;') \
-            .replace('>', '&gt;').replace('\n', '<br>')
-        body = (
-            '<div style="background:' + WELL_BG + '; border-left:3px solid '
-            + accent
-            + '; border-radius:6px; padding:6px 8px; margin:6px 2px;">'
-            '<span style="color:' + accent
-            + '; font-size:10px; font-weight:700;">' + title_safe
-            + '</span><br>'
-            '<span style="color:' + TEXT_SECONDARY + '; font-family:Consolas; '
-            'font-size:11px;">' + safe + '</span></div>'
-        )
-        self._chat_view.append(body)
-        sb = self._chat_view.verticalScrollBar()
-        if sb is not None:
-            sb.setValue(sb.maximum())
+        # Follow the app's single-accent palette (cyan = good, danger red =
+        # failed) rather than an ad-hoc mint/salmon that reads off-theme.
+        accent = ACCENT_COLOR if ok else DANGER_COLOR
+        text = self._run_block_text(record)
+        self._chat_add_bubble('execution', text, mono=True, caption=title,
+                              label_color=accent)
+        self._chat_log.append(('run', text, str(title), ok))
+        self._chat_log = self._chat_log[-600:]
+        self._chat_scroll_bottom()
 
     def _is_stale_worker(self, sender):
         """True when a worker belongs to a node we switched away from AND
@@ -413,6 +508,13 @@ class FilesRunMixin(object):
         self._run_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
         self._last_run_record = record
+        # Close the task card's run row (task list lives in the chat).
+        try:
+            ok_run = bool(record.get('ok'))
+            self._task_update('run', 'ok' if ok_run else 'failed',
+                              str(record.get('mode') or ''))
+        except Exception:
+            pass
         self._append_console('\n'.join(self._run_console_lines(record)))
         self._refresh_files()
 

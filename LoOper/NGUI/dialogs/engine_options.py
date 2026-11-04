@@ -117,6 +117,8 @@ def select_engine(combo, engine_id_value):
         combo.blockSignals(False)
 
 
+# ponytail: one resolution order for the dialog AND the executor, so a
+# reopened node can never disagree with what the run actually does.
 def engine_from_config(engine_hint="", use_llamacpp=False, model=""):
     """The engine a stored config means (never raises).
 
@@ -145,21 +147,34 @@ def engine_from_config(engine_hint="", use_llamacpp=False, model=""):
     return "ollama"
 
 
+def _is_gguf(text):
+    """A local engine model: the gateway lists GGUFs as bare file names."""
+    return str(text or "").strip().lower().endswith(".gguf")
+
+
 def models_for_engine(models, engine_id_value):
     """Filter a merged model list to the models the selected engine serves.
 
-    The gateway's ``/models`` merges Ollama tags with every configured
-    provider's ``provider:model`` entries; a picker must not mix them.  A
-    provider engine keeps only its own entries; Ollama keeps the bare tags
-    (an ``ollama:`` prefix is shown without it); anything else passes
-    through unchanged.  Used by every model Refresh and engine switch.
+    The gateway's ``/models`` merges the llama.cpp GGUFs on disk, the Ollama
+    tags and every configured provider's ``provider:model`` entries; a picker
+    must not mix them.  So:
+
+    * ``llamacpp`` keeps the ``.gguf`` file names and nothing else;
+    * Ollama keeps the bare tags (never a GGUF, never a provider entry) and
+      shows an ``ollama:`` prefix without it;
+    * a provider keeps only its own ``provider:model`` entries.
+
+    Anything else passes through unchanged.  Used by every model Refresh and
+    engine switch in the app.
     """
     engine = str(engine_id_value or "").strip().lower()
-    if engine in ("", "llamacpp"):
+    if engine in ("llama.cpp", "llama_cpp"):
+        engine = "llamacpp"
+    if not engine:
         return [str(m) for m in (models or [])]
     b = _byok()
     out = []
-    for m in models or []:
+    for m in models or ():
         text = str(m)
         prefix, bare = "", text
         if b is not None:
@@ -167,8 +182,11 @@ def models_for_engine(models, engine_id_value):
                 prefix, bare = b.split_model_ref(text)
             except Exception:
                 prefix, bare = "", text
-        if engine == "ollama":
-            if not prefix:
+        if engine == "llamacpp":
+            if not prefix and _is_gguf(text) and text not in out:
+                out.append(text)
+        elif engine == "ollama":
+            if not prefix and not _is_gguf(text):
                 if text not in out:
                     out.append(text)
             elif prefix == "ollama" and bare and bare not in out:
@@ -182,13 +200,22 @@ def store_model(engine_id_value, model):
     """The model string to persist for an engine choice (never raises).
 
     A provider engine prefixes the model (``openai:gpt-4o-mini``) so the
-    gateway routes it; the legacy engines (and a model that already names a
-    provider) pass through unchanged.
+    gateway routes it; a legacy engine DROPS a provider prefix (switching
+    back to Ollama must actually stop routing to groq), while a model that
+    already names the selected provider passes through unchanged.
     """
     engine = str(engine_id_value or "").strip().lower()
-    if engine in ("", "ollama", "llamacpp", "llama.cpp", "llama_cpp"):
-        return model
     b = _byok()
+    if engine in ("", "ollama", "llamacpp", "llama.cpp", "llama_cpp"):
+        if b is None:
+            return model
+        try:
+            prefix, bare = b.split_model_ref(model)
+        except Exception:
+            return model
+        if prefix and bare:
+            return bare
+        return model
     if b is None:
         return model
     try:

@@ -1,73 +1,36 @@
 # Arrow Node Runbook
 
-Complete reference for building Arrow chains: what every node does, how to
-connect them, and when the builder chat must ask the user instead of guessing.
+Reference for reading and authoring Arrow chains: what every node does, the
+role of every port it exposes, and how the wiring composes behaviour.
 
 > Generated from `LoOper/player/builder/runbook.py` — edit the source, then
 > run `python -m player.builder.runbook --write`.
 
-## The template pipeline — never emit node JSON
+## Ports carry roles, not just names
 
-Chains are strictly typed templates. The builder runs as a pipeline: the
-builder LLM reasons about WHAT node is needed, FOR WHAT, and WHICH arguments
-it carries (prose only); Laya selects the node type from this catalogue;
-needle2 fills the selected template's arguments field by field; Python
-creates the node, wires the ports and writes the chain file — the only
-writer. This runbook therefore documents each node as intent (purpose,
-ports, usage cases, when to ask), not as JSON anyone types.
+An Arrow chain has two kinds of edge, and they are never interchangeable:
 
-## How the builder composes a system chain
+- **Execution edges** decide *when* a node runs: `output` (exec out) into
+  `input` (exec in). A conditional routes on `true` / `false`; a FILE-LOOP
+  conditional (`loop_type` + `sequence_file`) exposes a single `output`.
+- **Data edges** decide *what* a node sees, and every destination port has
+  its own meaning: `input.data -> llm.prompt` REPLACES the prompt template;
+  `llm.context -> context.ctx_in` STORES that turn; `context.ctx_out ->
+  llm.context` SERVES the pool; code nodes use their declared NAMED IO
+  ports (their base `output` only carries execution, `error` is the failure
+  branch); an orchestrator LLM takes chains on `tools` and sub-brains on
+  `brains`. A context pool is PASSIVE: never executed, only written and
+  consulted through its data ports.
 
-Structure is never a model decision — the composer assembles the same shape
-the hand-built system chains use:
+## How chains are built
 
-1. Skeleton, always: `input -> orchestrator LLM -> output`, wired
-deterministically (`input.output -> input`, `input.data -> prompt`,
-`llm.output -> output`).
-2. The reasoning LLM decomposes the goal into 3-6 TOOL lines (prose —
-reusable capabilities the bot needs, not screen micro-steps).
-3. Each tool is matched against the existing chains in the library with the
-runtime direct-chain gate's measured rules: the chain's routing signal
-(description + served examples; learned artifacts by examples only), the
-goal-framed Laya read, and a floor + object-confirmation + margin gate.
-A match becomes a `chain_import` wired to `tools` (or `brains` when the
-chain file contains an orchestrator, via `classify_chain`).
-A plan line that NAMES its own node type ("input (ask): …",
-"llm (vanilla): …", "web_sequence (dom replay, repeating set): …") routes
-itself: input/output/orchestrator lines ARE the skeleton (skipped, never
-matched — matching them stole real tools' chains); llm lines are DESIGNED
-LLM steps (authored prompt, chain file, wired import); code lines are REAL
-code steps (the Python is authored ONCE, compile-validated, and the code
-node runs it deterministically — a broken script falls back to an LLM
-step); conditional lines become CHECK steps (input -> LLM conditional over
-the line's criterion -> true/false outputs); an llm line with an
-orchestrator modifier becomes a sub-brain. Designed steps never match the
-library (matching these picked stale artifacts at the margins), and every
-designed step runs on the LOCAL engine by default — the build-time
-provider never leaks into the artifact. Only the remaining lines are
-matched.
-4. A tool with no matching chain is TAUGHT, cheapest first (one teach
-round per unmatched tool — the plan is the budget):
-- a WEB routine is DEMONSTRATED first: the configured provider drives the
-shared browser itself (navigate / click / type / scroll / press) until the
-routine works; every executed action is recorded with the recorder's own
-event schema, frozen into `web_sequences/<tool>.json`, wrapped into its
-own sub-chain file and wired to `tools` — no user involvement. An attempt
-that gets stuck stops and reports what it tried.
-- the teach card is the fallback (its body carries the failed attempt):
-`web`/`desktop` = the user records it on a fresh node and it is WRAPPED
-into its own sub-chain file (the recording file itself is never touched);
-`llm` = the builder AUTHORS the instruction prompt and Python writes an
-`input -> LLM step -> output` chain file (local engine + app GGUF by
-default; the prompt is never empty — the tool line is the fallback);
-`brain` = a nested system chain is written with the subtask as its
-`orch_goal` and imported wired to `brains`.
-Only when teaching is declined or unavailable is the tool reported
-instead; it is never faked with an empty node.
-5. Description + save close the pass; the result is a real
-`collection="System"` chain, ready for agent mode. The user audits and
-edits the topology in the graph; on-the-fly chain learning stays a
-runtime agent-mode feature, not a build-time one.
+The builder chat is read-only: it explains a chain from its topology and
+never creates, edits, wires or records anything. Chains are authored on the
+canvas (nodes + their dialogs) and recorded with the recorders; the panel
+can load documents into a selected node's own field — a context node's
+Documents / Skills streams, an LLM's system message, a sequence's recording
+path.
+
 
 ## Node reference
 
@@ -253,6 +216,10 @@ Branching: routes its true/false output ports on a criterion (one small LLM turn
 - `llm_timeout` — evaluator timeout in seconds
 - `code` — python for condition_type code: set result True/False
 - `description` — what this check decides (orchestrator routing context)
+- `loop_type` — file-loop kind (while/until/...); with sequence_file the node loops the file and exposes a single output
+- `loop_position` — where the loop sits relative to the file (pre/post)
+- `sequence_file` — the recording a FILE-LOOP conditional replays
+- `max_loops` — cap on loop passes for a file loop
 
 **Modes:**
 - `desktop visual` — web_mode OFF: routes on the screen — presence/absence triggers, OCR, layout match, and while/until loops
@@ -398,8 +365,9 @@ Vision-grounded screen action: locates the goal object on a screenshot (LocateAn
 - **Outputs:** `output`, `data`
 
 **Fields:**
-- `prompt` — the on-screen goal (e.g. 'open the messages menu')
-- `description` — what this handle is for (agent routing)
+- `action_type` — click or drag (which grounded action the node performs)
+- `goal_description` — the on-screen goal to locate (click target, or drag source)
+- `target_description` — where a drag ends (drag only)
 
 **Modes:**
 - `click / drag` — action_type: one grounded action per activation (drag grounds the source, then the target)
@@ -428,6 +396,8 @@ Persistent memory across turns: stores turn records (SQLite) so the next turn ca
 - `clear_on_finish` — wipe the store when the chain completes
 - `max_history` — how many turn records to keep
 - `scope` — local (this chain only) or global (shared store)
+- `documents` — JSON list of file paths (or literal notes) the pool reads and serves as its Documents stream
+- `skills` — JSON list of skill files / free-text notes served as its Skills stream
 
 **Modes:**
 - `persistent` — keep turn records across runs (off = per-run)
@@ -442,6 +412,29 @@ Persistent memory across turns: stores turn records (SQLite) so the next turn ca
 - Whether memory should persist between runs.
 
 **Example:** Context -> ctx_in; LLM context port <- ctx_out.
+
+### Action (`action`)
+
+Legacy single-action node: one simple action with an execution output. Recordings belong to Sequence / Web Sequence and vision-grounded actions to Handle.
+
+- **Inputs:** `input`
+- **Outputs:** `output`
+
+**Fields:**
+- `label` — what the action does
+- `action_type` — the action kind the node performs
+- `description` — what this action does (agent routing context)
+
+**Modes:**
+- `single action` — performs its one action when execution reaches it, then continues on output
+
+**Use it when:**
+- A chain needs one simple action that has no recording.
+
+**Ask the user when:**
+- Whether the step should be recorded instead (a Sequence replays exactly what the user showed).
+
+**Example:** (legacy) Action 'press Enter'.
 
 ### MCP (`mcp`)
 

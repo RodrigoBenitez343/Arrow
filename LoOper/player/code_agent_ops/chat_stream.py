@@ -43,14 +43,25 @@ class _SteerError(Exception):
     pass
 
 
+class _Aborted(RuntimeError):
+    """Stop was pressed mid-stream - end the request, never retry it.
+    (Subclasses RuntimeError so a missed catch can never be salvaged as a
+    dead stream.)"""
+    pass
+
+
 def _failure_kind(msg):
     """Classify a failed stream for the retry policy: 'steer' = degenerate
     repetition (escalate the anti-repeat penalty), 'trunc' = the reply was cut
-    by the token budget (grow the budget), 'none' = anything else (temperature
-    wobble so the model is pushed off its rut)."""
+    by the token budget (grow the budget), 'empty' = the provider sent no text
+    at all (a retry rarely helps - a wrong model/key does not fix itself),
+    'none' = anything else (temperature wobble so the model is pushed off its
+    rut)."""
     m = str(msg or '').lower()
     if 'steer:' in m:
         return 'steer'
+    if 'empty reply' in m:
+        return 'empty'
     if 'max_tokens' in m or 'truncat' in m:
         return 'trunc'
     return 'none'
@@ -102,7 +113,7 @@ class _ChatStreamWorker(QThread):
 
     def __init__(self, prompt, model, use_llamacpp, system, max_tokens=4096,
                  temperature=STEER_TEMP_BASE,
-                 repeat_penalty=STEER_PENALTY_BASE):
+                 repeat_penalty=STEER_PENALTY_BASE, stop_ref=None):
         super().__init__()
         self._prompt = prompt
         self._model = model
@@ -111,6 +122,15 @@ class _ChatStreamWorker(QThread):
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._repeat_penalty = repeat_penalty
+        # Shared with the panel's Stop button: once 'flag' is set the stream
+        # dies on the next chunk instead of running to completion.
+        self._stop_ref = stop_ref
+
+    def _stopped(self):
+        try:
+            return bool(self._stop_ref and self._stop_ref.get('flag'))
+        except Exception:
+            return False
 
     def run(self):
         acc = ''
@@ -123,6 +143,8 @@ class _ChatStreamWorker(QThread):
 
         def push(chunk):
             nonlocal acc
+            if self._stopped():
+                raise _Aborted(_('Stopped by user.'))
             if not chunk:
                 return
             # Full-text servers echo the running text; emit only the tail.
@@ -181,6 +203,10 @@ class _ChatStreamWorker(QThread):
                                timeout=None) as resp:
                     resp.raise_for_status()
                     for line in resp.iter_lines(decode_unicode=True):
+                        if self._stopped():
+                            # Breaking here closes the streamed connection on
+                            # context exit, so the server slot is released too.
+                            break
                         if not line or not line.strip():
                             continue
                         try:
@@ -188,8 +214,23 @@ class _ChatStreamWorker(QThread):
                         except Exception:
                             continue
                         push(obj.get('text') or '')
+            if self._stopped():
+                self.error_stream.emit(_('Stopped by user.'))
+                return
+            if not acc.strip():
+                # Zero text is not a normal finish: the panel would retry the
+                # same call six times and end with "the agent did not produce
+                # anything".  Name the cause instead of the symptom.
+                self.error_stream.emit(
+                    _('The model returned an empty reply ({}). Check the '
+                      'model/provider in the Terminal page.').format(
+                          self._model))
+                return
         except _SteerError as e:
             self.error_stream.emit(str(e))
+            return
+        except _Aborted:
+            self.error_stream.emit(_('Stopped by user.'))
             return
         except RuntimeError as e:
             # The stream died (truncation / context overflow / server abort).

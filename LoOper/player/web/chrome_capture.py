@@ -8,8 +8,9 @@ document.  To record the full set of user actions the recorder installs two
 OS-level hooks during a session:
 
 - ``ChromeKeyHook``: captures page-INVISIBLE keyboard chords (Ctrl+T/W/L/N/H,
-  Ctrl+Tab, Ctrl+1-9) via the ``keyboard`` package (the same one already used
-  for the global ESC stop hook), plus BARE special keys (Enter, Tab,
+  Ctrl+Tab, Ctrl+1-9) via the platform gate's global key hook (pynput on both
+  Windows and X11 - the ``keyboard`` package needs root on Linux), plus BARE
+  special keys (Enter, Tab,
   Backspace, arrows, F-keys, ...) typed while the browser chrome has focus
   (the omnibox) - those never reach a page document either.  They become
   ordinary ``key`` events tagged ``context={"chrome": True}`` and replay
@@ -161,28 +162,22 @@ def classify_chrome_region(x: float, y: float, scale: float = 1.0) -> Optional[s
 
 
 def _foreground_pid() -> Optional[int]:
-    """PID of the OS foreground window (Win32 only; None when unavailable)."""
-    if os.name != "nt":
-        return None
-    try:
-        import ctypes
-        from ctypes import wintypes
+    """PID of the OS foreground window (platform gate)."""
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import active_window
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import active_window
 
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        if not hwnd:
-            return None
-        pid = wintypes.DWORD()
-        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        return pid.value
-    except Exception:
-        return None
+    info = active_window() or {}
+    pid = info.get("pid")
+    return int(pid) if pid else None
 
 
 class ChromeKeyHook:
     """OS-level capture of page-invisible browser-chrome keyboard chords.
 
-    Registers a global callback via the ``keyboard`` package (cleaned up by
-    the recorder's existing ``unhook_all()`` - no separate handle).  Emits
+    Registers a global callback through the platform gate's key hook (cleaned
+    up by ``stop()``, which the recorder calls at session end).  Emits
     ``key`` events tagged ``context={"chrome": True}`` that replay through the
     trusted native path, since untrusted JS events can never drive chrome.
     """
@@ -194,11 +189,10 @@ class ChromeKeyHook:
         *,
         foreground_pid: Optional[int] = None,
     ) -> None:
-        try:
-            import keyboard
-        except Exception as exc:
-            raise RuntimeError(f"keyboard hook unavailable: {exc}") from exc
-        self._keyboard = keyboard
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import key_hook
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import key_hook
         self._foreground_pid = foreground_pid
         self._held: set[str] = set()
         # Bare special keys currently HELD: the `keyboard` hook fires a 'down'
@@ -211,7 +205,14 @@ class ChromeKeyHook:
         # system-wide even when the browser page does not receive it, so the
         # recording loop bridges this into the page (recorder.record_web_session).
         self.marker_held = False
-        keyboard.hook(self._on_event, suppress=False)
+        self._hook = key_hook(self._on_event)
+
+    def stop(self) -> None:
+        """Detach the global key hook."""
+        try:
+            self._hook.stop()
+        except Exception:
+            pass
 
     def drain(self) -> list[Event]:
         """Return and clear the captured chrome-key events."""

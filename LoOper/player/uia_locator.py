@@ -138,31 +138,26 @@ def element_tiers(desc):
 # --------------------------------------------------------------------- UIA
 
 # COM objects are apartment-bound, so the IUIAutomation instance is per-thread.
-# The recorder overlay keeps the same per-thread singleton; duplicated here on
-# purpose so the player never has to import the GUI layer.
-_uia_local = threading.local()
+# The platform gate owns that singleton; the player never imports the GUI layer.
+_uia_warned = False
 
 
 def _get_uia():
-    """Per-thread ``IUIAutomation`` instance, or None when unavailable."""
-    if getattr(_uia_local, "tried", False):
-        return getattr(_uia_local, "uia", None)
-    _uia_local.tried = True
-    _uia_local.uia = None
-    try:
-        import comtypes
-        import comtypes.client
+    """Per-thread ``IUIAutomation`` instance from the gate, or None."""
+    global _uia_warned
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import uia, uia_available
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import uia, uia_available
 
-        comtypes.CoInitialize()
-        comtypes.client.GetModule("UIAutomationCore.dll")
-        from comtypes.gen import UIAutomationClient
-
-        _uia_local.uia = comtypes.client.CreateObject(
-            UIAutomationClient.CUIAutomation
-        )
-    except Exception as exc:
-        logger.debug("UIA unavailable for replay locator: %s", exc)
-    return _uia_local.uia
+    if not uia_available():
+        if not _uia_warned:
+            _uia_warned = True
+            logger.info(
+                "UI Automation is Windows-only: element-first replay is OFF "
+                "on this platform, the image locator decides every click.")
+        return None
+    return uia()
 
 
 def _and_condition(uia, pairs):
@@ -233,7 +228,7 @@ def _find_window_root(uia, root, desc):
     return same_pid or by_name or root
 
 
-def _visible_at(uia, point, element_rect):
+def _visible_at(uia, click_point, element_rect):
     """True when the element (or a child of it) is the topmost thing at ``point``.
 
     UIA can resolve an element that the user CANNOT see - covered by another
@@ -244,9 +239,13 @@ def _visible_at(uia, point, element_rect):
     falling back to the image locator, never a wrong click.
     """
     try:
-        from ctypes import wintypes
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import point
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import point
 
-        hit = uia.ElementFromPoint(wintypes.POINT(int(point[0]), int(point[1])))
+        hit = uia.ElementFromPoint(
+            point(int(click_point[0]), int(click_point[1])))
         r = hit.CurrentBoundingRectangle
         hit_rect = (int(r.left), int(r.top), int(r.right), int(r.bottom))
     except Exception:
@@ -349,6 +348,112 @@ def resolve_element(desc, timeout=_RESOLVE_TIMEOUT_S):
         logger.warning("UIA element resolve timed out (%.1fs); using image fallback", timeout)
         return None
     return result.get("point")
+
+
+def find_element_by_name(text, timeout=_RESOLVE_TIMEOUT_S):
+    """The first visible UIA element whose Name matches *text*, as a recorded
+    descriptor (or None).
+
+    The agentic desktop act loop's target resolution: the provider names the
+    element it wants from the screen digest, and this turns the name into the
+    SAME descriptor shape the recorder stores — so the click it records
+    replays element-first (``resolve_element``) instead of as raw pixels.
+    Runs on a short-lived daemon thread like ``resolve_element``; a hung UIA
+    provider or a timeout behaves exactly like "not found".  Never raises.
+    """
+    want = ' '.join(str(text or '').split())
+    if not want:
+        return None
+    result = {}
+
+    def _work():
+        try:
+            uia = _get_uia()
+            if uia is None:
+                return
+            condition = _and_condition(uia, [(_NAME, want)])
+            found = uia.GetRootElement().FindAll(_SCOPE_DESCENDANTS, condition)
+            if found is None or found.Length == 0:
+                return
+            for index in range(min(found.Length, 50)):
+                element = found.GetElement(index)
+                try:
+                    rect = element.CurrentBoundingRectangle
+                except Exception:
+                    continue
+                if rect is None:
+                    continue
+                left, top, right, bottom = rect
+                if right - left < 2 or bottom - top < 2:
+                    continue
+                result['desc'] = {
+                    'name': want,
+                    'control_type': int(element.CurrentControlType),
+                    'automation_id': str(element.CurrentAutomationId or ''),
+                    'class_name': str(element.CurrentClassName or ''),
+                    'process_id': int(element.CurrentProcessId),
+                    'rect': [float(left), float(top),
+                             float(right), float(bottom)],
+                }
+                return
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("UIA find-by-name failed: %s", exc)
+
+    worker = threading.Thread(target=_work, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        logger.warning("UIA find-by-name timed out (%.1fs)", timeout)
+        return None
+    return result.get('desc')
+
+
+def list_visible_elements(limit=30, timeout=_RESOLVE_TIMEOUT_S):
+    """Visible UIA elements as ``{name, x, y}`` centers (or []).
+
+    The agentic desktop act loop's digest: the provider reads these lines
+    to pick a target by name OR a raw point (``click x/y``, ``move x/y``) —
+    the centers are real coordinates, never guessed.  Runs on a short-lived
+    daemon thread like ``find_element_by_name``; a hung UIA provider or a
+    timeout behaves exactly like an empty screen.  Never raises.
+    """
+    result = {}
+
+    def _work():
+        try:
+            uia = _get_uia()
+            if uia is None:
+                return
+            found = uia.GetRootElement().FindAll(
+                _SCOPE_DESCENDANTS, _and_condition(uia, []))
+            if found is None or found.Length == 0:
+                return
+            out = []
+            for index in range(min(found.Length, 800)):
+                element = found.GetElement(index)
+                try:
+                    name = str(element.CurrentName or '').strip()
+                    rect = element.CurrentBoundingRectangle
+                except Exception:
+                    continue
+                if not name or rect is None:
+                    continue
+                left, top, right, bottom = rect
+                if right - left < 2 or bottom - top < 2:
+                    continue
+                out.append({'name': name[:60],
+                            'x': int((left + right) / 2),
+                            'y': int((top + bottom) / 2)})
+                if len(out) >= limit:
+                    break
+            result['elements'] = out
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("UIA list-visible failed: %s", exc)
+
+    worker = threading.Thread(target=_work, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    return result.get('elements') or []
 
 
 # ------------------------------------------------- repeating sibling set
@@ -668,7 +773,19 @@ _SHELL_LIST_CLASSES = frozenset(("syslistview32",))
 
 def _desktop_dirs():
     """The Desktop folders the shell shows (per-user + shared), or []."""
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import IS_WINDOWS
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import IS_WINDOWS
+
     dirs = []
+    if not IS_WINDOWS:
+        # XDG: the user's Desktop plus the freedesktop app entries.
+        for candidate in (os.path.join(os.path.expanduser("~"), "Desktop"),
+                          "/usr/share/applications"):
+            if os.path.isdir(candidate) and candidate not in dirs:
+                dirs.append(candidate)
+        return dirs
     try:
         import ctypes
 

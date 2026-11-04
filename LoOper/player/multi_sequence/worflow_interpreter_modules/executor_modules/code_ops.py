@@ -19,6 +19,49 @@ except Exception:
         text = content if isinstance(content, str) else repr(content)
         logger.log(level, "=== %s ===\n%s", title, text)
 
+
+def _workspace_module_names(local_dirs):
+    """Top-level import names that live in the node's own workspace folder."""
+    names = set()
+    if local_dirs and os.path.isdir(local_dirs):
+        try:
+            for fn in os.listdir(local_dirs):
+                fp = os.path.join(local_dirs, fn)
+                if fn.endswith('.py'):
+                    names.add(fn[:-3])
+                elif os.path.isdir(fp) and os.path.isfile(os.path.join(fp, '__init__.py')):
+                    names.add(fn)
+        except Exception:
+            pass
+    return names
+
+
+def _is_first_party_import(name, local_names=frozenset()):
+    """True when *name* is first-party source, not a pip-installable package.
+
+    A code node is a small project: a little coder model splits script.py into
+    siblings (main_window.py, styles.py, ...) that import fine at runtime (the
+    workspace is on sys.path) but are NOT on PyPI.  Those, the LoOper app tree,
+    the stdlib and builtins all count as first-party and must never be pip-
+    installed.  A name that resolves under a site-packages/dist-packages dir is
+    treated as third-party, so a real package the *chain venv* lacks (e.g.
+    pygame the host has) still gets installed.
+    """
+    if name in local_names or name in sys.builtin_module_names:
+        return True
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec(name)
+    except Exception:
+        return False
+    if spec is None or not spec.origin:
+        return False                     # unknown / namespace pkg: leave it to pip
+    if spec.origin in ('built-in', 'frozen'):
+        return True
+    ncase = os.path.normcase(spec.origin)
+    return 'site-packages' not in ncase and 'dist-packages' not in ncase
+
+
 class CodeMixin:
     def _resolve_code_input_value(self, from_node_id, output_type, input_port=''):
         """Resolve the raw value an upstream node published for a port.
@@ -267,10 +310,21 @@ class CodeMixin:
 
         if not node_id:
             node_id = node.get('id') or node.get('node_id') or code_data.get('node_id') or code_data.get('id')
+        tmp_dir = None
         try:
             base_dir = self._chain_runtime_dir or os.path.join(os.getcwd(), 'runtime')
             tmp_dir = os.path.join(base_dir, 'code_nodes', str(node_id))
             os.makedirs(tmp_dir, exist_ok=True)
+            # Project files carried by the node (helper modules, data): write
+            # the missing ones so a chain opened on a fresh machine runs with
+            # its whole project beside script.py.  Existing files win - the
+            # studio workspace may hold newer unsaved edits.
+            try:
+                from player.code_agent_ops.parsing import _materialize_project_files
+                _materialize_project_files(
+                    tmp_dir, code_data.get('project_files') or {})
+            except Exception:
+                pass
             # Workspace siblings (agent/user-created helpers in the node folder)
             # must be importable by the main script, in-process exec included.
             if tmp_dir not in sys.path:
@@ -289,7 +343,7 @@ class CodeMixin:
             if self._venv_site_packages and os.path.isdir(self._venv_site_packages):
                 if self._venv_site_packages not in sys.path:
                     sys.path.insert(0, self._venv_site_packages)
-            dep_report = self._install_code_dependencies(code_to_run)
+            dep_report = self._install_code_dependencies(code_to_run, local_dirs=tmp_dir)
             dep_error_msg = ""
             try:
                 if node_id and dep_report:
@@ -1023,9 +1077,12 @@ class CodeMixin:
         except Exception:
             return False
 
-    def _install_code_dependencies(self, code_str):
+    def _install_code_dependencies(self, code_str, local_dirs=None):
         """
         Analyzes the code for imports and installs missing packages in the chain's venv.
+
+        *local_dirs* is the node's own workspace folder: modules that live there
+        (or anywhere first-party) are imported at runtime, never pip-installed.
         """
         try:
             self._ensure_chain_venv()
@@ -1042,7 +1099,9 @@ class CodeMixin:
                         for alias in node.names:
                             pkgs.add(alias.name.split('.')[0])
                     elif isinstance(node, ast.ImportFrom):
-                        if node.module:
+                        # A relative import (from .x import y) is by definition a
+                        # project file, never a pip package - skip it.
+                        if node.module and not getattr(node, 'level', 0):
                             pkgs.add(node.module.split('.')[0])
             except Exception as e:
                 logger.warning(f"Failed to parse code imports with AST: {e}")
@@ -1095,10 +1154,14 @@ class CodeMixin:
                 'errno',
             }
 
-            # ponytail: removed find_spec check against main process — it incorrectly
-            # skips project-installed packages like pygame that the chain venv lacks.
-            # The static stdlib set is sufficient; everything else gets pip-installed.
-            wanted = [p for p in pkgs if p and p not in stdlib]
+            # First-party source - the node's own project files (a small model
+            # routinely splits script.py into siblings like main_window.py /
+            # styles.py) and the LoOper app tree - imports fine at runtime (the
+            # workspace is on sys.path) but is NOT a pip package.  pip-installing
+            # them wastes ~20s and logs a scary "No matching distribution" error.
+            local_names = _workspace_module_names(local_dirs)
+            wanted = [p for p in pkgs
+                      if p and p not in stdlib and not _is_first_party_import(p, local_names)]
             
             if not wanted:
                 return {"installed": [], "failed": [], "skipped": [], "pip_stdout": "", "pip_stderr": ""}
@@ -1300,9 +1363,23 @@ class CodeMixin:
             if process.returncode == 0:
                 installed = to_install
             else:
-                logger.warning(f"Bulk pip install failed, retrying individually. Error: {stderr}")
+                # A name pip reports as "no matching distribution" does not
+                # exist on PyPI at all - usually a module the model invented.
+                # Retrying it individually only costs another ~5 s each.
+                import re as _re
+                absent = set(_re.findall(
+                    r"No matching distribution found for ([A-Za-z0-9_.\-]+)",
+                    (stderr or '') + (stdout or '')))
+                failed = [p for p in to_install if p in absent]
+                retry = [p for p in to_install if p not in absent]
+                if failed:
+                    logger.error(
+                        "Not real packages (import one of your own files or "
+                        "the stdlib instead): %s", failed)
+                if retry:
+                    logger.warning(f"Bulk pip install failed, retrying individually. Error: {stderr}")
                 # Retry individually to isolate failures
-                for pkg in to_install:
+                for pkg in retry:
                     try:
                         cmd_single = [self._venv_python, "-m", "pip", "install", pkg]
                         if os.name == 'nt':

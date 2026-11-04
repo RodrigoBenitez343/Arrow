@@ -155,6 +155,12 @@ class ChainExpansionDialog(ModernDialog):
             self.config_manager.chain_config = self.chain_config
             print("DEBUG: Calling build_graph_from_config")
             self.config_manager.build_graph_from_config()
+            # This manager is its own instance, so the canvas was not focused by
+            # GraphViewWidget.build_graph_from_config: do it here, or the
+            # expanded chain lands wherever its saved positions point.
+            focus = getattr(self.graph_view, 'focus_chain', None)
+            if callable(focus):
+                focus()
             
             # Note: Not calling auto_layout_nodes() to preserve saved positions from configuration
             

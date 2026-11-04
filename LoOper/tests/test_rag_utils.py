@@ -1520,6 +1520,41 @@ def test_coerce_probes_splits_multi_line_and_dedupes():
     assert comorag._coerce_probes("   ") == []
 
 
+def test_intent_plan_is_cut_at_the_first_code_line():
+    """A plan that drifts into python must reach the probes as prose only.
+
+    Observed on a resume run: EXPECTED ANSWER SHAPE was followed by
+    "def pipeline_plan():" and the probe generator then answered every call
+    by continuing that function.
+    """
+    plan = (
+        "Pipeline Plan\n\nINTENT SUMMARY:\nfind the email.\n"
+        "SEARCH PLAN:\n- search 'email' in the header\n"
+        "EXPECTED ANSWER SHAPE:\ndef pipeline_plan():\n"
+        "    GOAL = \"x\"\n    return {}\n"
+    )
+    clean = comorag._sanitize_intent_plan(plan)
+    assert "INTENT SUMMARY" in clean and "SEARCH PLAN" in clean
+    assert "def pipeline_plan" not in clean
+    assert "GOAL =" not in clean
+    # Prose that merely STARTS like a keyword survives.
+    assert comorag._sanitize_intent_plan(
+        "SEARCH PLAN:\nFrom the header: find the date\n") == \
+        "SEARCH PLAN:\nFrom the header: find the date"
+    assert comorag._sanitize_intent_plan(None) == ""
+
+
+def test_coerce_probes_refuses_code_as_a_probe():
+    # No question line -> no probe (the old fallback handed the cycle
+    # "def pipeline_plan():", which cost a model call to reject).
+    assert comorag._coerce_probes("def pipeline_plan():\n    return {}") == []
+    assert comorag._coerce_probes("Search for 'email' in the header") == []
+    # A question hidden among code lines still wins.
+    assert comorag._coerce_probes(
+        "def f():\nWhere is the email address?\n") == [
+        "Where is the email address?"]
+
+
 def test_probe_similar_collapses_paraphrases():
     # The observed cycle-1 trio: probes 1 and 3 ask the same thing in other
     # words (two retrievals + two composer calls for one answer), while the

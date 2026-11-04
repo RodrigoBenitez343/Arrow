@@ -15,10 +15,34 @@ from ..constants import (
     BLOCK_COLOR, BLOCK_HOVER, CHAIN_IMPORT_COLOR, CONTEXT_NODE_COLOR,
     CODE_NODE_COLOR, LLM_COLOR, WEB_SEQUENCE_COLOR, SIDE_PANEL_BG, GRAPH_PLANE
 )
-from .collapsible_toolbar import get_node_icon, load_tabler_icon, make_toggle_triangle_icon, _painter_icon_folder
+from .collapsible_toolbar import (
+    get_node_icon, load_tabler_icon, make_toggle_triangle_icon, _painter_icon_folder,
+    CARD_HEIGHT, CARD_ICON, CARD_RADIUS, CARD_FONT_PX,
+)
 from ..i18n import _
+from player import workspace
 
 logger = logging.getLogger(__name__)
+
+
+def _card_glyph_label(icon, parent=None):
+    """QLabel holding *icon* at CARD_ICON logical px.
+
+    The box is sized from the pixmap's own device-independent size, so a DPI
+    change can neither shrink the glyph nor push it off-centre.
+    """
+    label = QLabel(parent)
+    try:
+        pm = icon.pixmap(QSize(CARD_ICON, CARD_ICON))
+        dpr = pm.devicePixelRatio() or 1.0
+        label.setPixmap(pm)
+        label.setFixedSize(int(round(pm.width() / dpr)),
+                           int(round(pm.height() / dpr)))
+    except Exception:
+        label.setFixedSize(CARD_ICON, CARD_ICON)
+    label.setAlignment(Qt.AlignCenter)
+    label.setStyleSheet("background: transparent; border: none;")
+    return label
 
 class DraggableChainButton(QFrame):
     """Green card-style widget representing a chain, supporting drag-to-add and load-to-graph."""
@@ -32,44 +56,42 @@ class DraggableChainButton(QFrame):
         self._drag_start_pos = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(48)
+        self.setFixedHeight(CARD_HEIGHT)
 
-        # Load description for tooltip
+        # The tooltip is the chain's DERIVED routing line (player/chain_brief):
+        # derived at display time, so a file saved by an older build still
+        # shows what it does instead of stale hand-written prose.
         self._description = ""
         try:
             if os.path.exists(self.file_path):
+                from player import chain_brief
                 with open(self.file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self._description = data.get('description', '')
+                    self._description = chain_brief.brief(json.load(f))
         except Exception:
             pass
 
         # Chain icon
-        chain_icon = get_node_icon('chain_import', 20)
+        chain_icon = get_node_icon('chain_import', CARD_ICON)
 
         # Layout: [chain_icon] [label_text] [folder_btn] [load_button]
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 6, 6, 6)
+        layout.setContentsMargins(10, 2, 4, 2)
         layout.setSpacing(6)
 
         # Left icon
         if chain_icon and not chain_icon.isNull():
-            icon_label = QLabel(self)
-            icon_label.setPixmap(chain_icon.pixmap(QSize(20, 20)))
-            icon_label.setFixedSize(20, 20)
-            icon_label.setStyleSheet("background: transparent; border: none;")
-            layout.addWidget(icon_label)
+            layout.addWidget(_card_glyph_label(chain_icon, self))
 
         # Text label (takes remaining space)
         self._label = QLabel(self._full_text, self)
         self._label.setStyleSheet(
-            f"color: {TEXT_COLOR}; font-weight: 600; background: transparent; border: none;"
+            f"color: {TEXT_COLOR}; font-size: {CARD_FONT_PX}px; font-weight: 600; background: transparent; border: none;"
         )
         layout.addWidget(self._label, 1)
 
         # Folder button to move chain between collections
         self._folder_btn = QToolButton(self)
-        self._folder_btn.setFixedSize(22, 22)
+        self._folder_btn.setFixedSize(20, 20)
         fld_icon = _painter_icon_folder(14)
         if fld_icon and not fld_icon.isNull():
             self._folder_btn.setIcon(fld_icon)
@@ -81,7 +103,7 @@ class DraggableChainButton(QFrame):
             QToolButton {{
                 background-color: transparent;
                 border: none;
-                border-radius: 11px;
+                border-radius: 10px;
                 padding: 2px;
             }}
             QToolButton:hover {{
@@ -94,11 +116,11 @@ class DraggableChainButton(QFrame):
 
         # Load-to-graph button
         self._load_btn = QToolButton(self)
-        self._load_btn.setFixedSize(28, 28)
-        btn_icon = load_tabler_icon('ARROW_RIGHT', 16)
+        self._load_btn.setFixedSize(24, 24)
+        btn_icon = load_tabler_icon('ARROW_RIGHT', 14)
         if btn_icon and not btn_icon.isNull():
             self._load_btn.setIcon(btn_icon)
-            self._load_btn.setIconSize(QSize(16, 16))
+            self._load_btn.setIconSize(QSize(14, 14))
         self._load_btn.setToolTip(_("Load chain into graph"))
         self._load_btn.setCursor(Qt.PointingHandCursor)
         self._load_btn.setStyleSheet(
@@ -106,7 +128,7 @@ class DraggableChainButton(QFrame):
             QToolButton {{
                 background-color: #0FFFFFFF;
                 border: none;
-                border-radius: 14px;
+                border-radius: 12px;
                 padding: 2px;
             }}
             QToolButton:hover {{
@@ -133,7 +155,7 @@ class DraggableChainButton(QFrame):
                 background-color: {CHAIN_IMPORT_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                border-radius: 10px;
+                border-radius: {CARD_RADIUS}px;
                 font-weight: 600;
             }}
             DraggableChainButton:hover {{ 
@@ -157,117 +179,85 @@ class DraggableChainButton(QFrame):
 
     def update_display_text(self):
         """Elide label text to fit available width."""
-        available_width = self.width() - 110  # margins + icon + folder btn + load button + spacing
+        available_width = self.width() - 90  # margins + icon + folder btn + load button + spacing
         fm = self.fontMetrics()
         elided = fm.elidedText(self._full_text, Qt.ElideRight, max(0, available_width))
         self._label.setText(elided)
 
     def contextMenuEvent(self, event):
-        menu = QMenu(self)
+        """Right-click: load the chain, or move it to another workspace.
 
-        # Add Description action
-        edit_desc_action = QAction(_("Edit Description"), self)
-        edit_desc_action.triggered.connect(self._edit_description)
-        menu.addAction(edit_desc_action)
+        There is no "Edit Description" any more: a chain's routing line is
+        derived from its own flow metadata (``player/chain_brief.py``), so
+        typing prose here was the drift this feature exists to remove.
+        """
+        menu = QMenu(self)
+        load_action = QAction(_("Load in canvas"), self)
+        load_action.triggered.connect(self._load_chain_to_graph)
+        menu.addAction(load_action)
 
         menu.addSeparator()
-        coll_menu = menu.addMenu(_painter_icon_folder(14), _("Move to Collection"))
-        # Get collections from parent ChainsLibrary
+        coll_menu = menu.addMenu(_painter_icon_folder(14),
+                                 _("Move to workspace"))
         parent_lib = self.parent()
         while parent_lib and not isinstance(parent_lib, ChainsLibrary):
             parent_lib = parent_lib.parent()
-        collections = parent_lib._get_collection_names() if parent_lib else []
-        for coll in [''] + collections:
-            label = _("(None)") if coll == '' else coll
-            act = QAction(label, self)
-            if coll == '':
-                act.setIcon(_painter_icon_folder(14))
-            act.triggered.connect(lambda checked, c=coll: self._set_collection(c))
-            coll_menu.addAction(act)
+        if parent_lib:
+            current = parent_lib.graph_view.workspace_slug()
+            for manifest in parent_lib.graph_view.workspaces():
+                if manifest.get('slug') == current:
+                    continue
+                act = QAction(manifest.get('name') or manifest.get('slug'),
+                              self)
+                act.triggered.connect(
+                    lambda checked, c=manifest.get('slug'):
+                    self._set_workspace(c))
+                coll_menu.addAction(act)
 
         menu.exec_(event.globalPos())
 
-    def _edit_description(self):
-        # Load current description
-        current_desc = ""
-        try:
-            with open(self.file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                current_desc = data.get('description', '')
-        except Exception as e:
-            logger.error(f"Failed to load chain for description: {e}")
-
-        text, ok = QInputDialog.getText(
-            self, 
-            _("Chain Description"), 
-            _("Enter description for this chain:"),
-            QLineEdit.Normal, 
-            current_desc
-        )
-
-        if ok:
-            try:
-                if os.path.exists(self.file_path):
-                     with open(self.file_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                else:
-                    data = {}
-
-                data['description'] = text
-                self._description = text
-
-                with open(self.file_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2)
-
-                # Update tooltip
-                if text:
-                    self.setToolTip(f"{self._full_text}\n{text}")
-                else:
-                    self.setToolTip(self._full_text)
-
-            except Exception as e:
-                logger.error(f"Failed to save chain description: {e}")
-
     def _show_collection_menu(self):
+        """Move this chain into another WORKSPACE (collections are gone)."""
         menu = QMenu(self)
         parent_lib = self.parent()
         while parent_lib and not isinstance(parent_lib, ChainsLibrary):
             parent_lib = parent_lib.parent()
-        collections = parent_lib._get_collection_names() if parent_lib else []
-        for coll in [''] + collections:
-            label = _("(None)") if coll == '' else coll
-            act = QAction(label, self)
-            if coll == '':
-                act.setIcon(_painter_icon_folder(14))
-            act.triggered.connect(lambda checked, c=coll: self._set_collection(c))
+        if not parent_lib:
+            return
+        current = parent_lib.graph_view.workspace_slug()
+        for manifest in parent_lib.graph_view.workspaces():
+            if manifest.get('slug') == current:
+                continue
+            act = QAction(manifest.get('name') or manifest.get('slug'), self)
+            act.triggered.connect(
+                lambda checked, c=manifest.get('slug'): self._set_workspace(c))
             menu.addAction(act)
+        if menu.isEmpty():
+            return
         btn = self._folder_btn
         menu.exec_(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _set_collection(self, collection_name):
+    def _set_workspace(self, slug):
+        """Move the chain file into workspace *slug* (fixes its imports)."""
         try:
-            if os.path.exists(self.file_path):
-                with open(self.file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-            else:
-                data = {}
-            data['collection'] = collection_name
-            with open(self.file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2)
             parent_lib = self.parent()
             while parent_lib and not isinstance(parent_lib, ChainsLibrary):
                 parent_lib = parent_lib.parent()
-            if parent_lib:
-                parent_lib.refresh_chains_list()
+            if not parent_lib:
+                return
+            root = parent_lib.graph_view.workspaces_root
+            workspace.move_chain(root, self.file_path, slug)
+            parent_lib.on_workspace_changed()
         except Exception as e:
-            logger.error(f"Failed to set chain collection: {e}")
+            logger.error(f"Failed to move chain to workspace {slug}: {e}")
 
     def _sync_folder_btn_visibility(self):
         try:
             parent_lib = self.parent()
             while parent_lib and not isinstance(parent_lib, ChainsLibrary):
                 parent_lib = parent_lib.parent()
-            has_colls = bool(parent_lib and parent_lib._get_collection_names())
+            has_colls = bool(parent_lib and
+                             len(parent_lib.graph_view.workspaces()) > 1)
             self._folder_btn.setVisible(has_colls)
         except Exception:
             pass
@@ -348,10 +338,11 @@ class DraggableContextNodeButton(QPushButton):
         self.setToolTip(tooltip)
         
         # Set icon (context node icon)
-        icon = get_node_icon('context', 24)
+        icon = get_node_icon('context', CARD_ICON)
         if icon:
             self.setIcon(icon)
-            self.setIconSize(QSize(24, 24))
+            self.setIconSize(QSize(CARD_ICON, CARD_ICON))
+        self.setFixedHeight(CARD_HEIGHT)
             
         self.setStyleSheet(
             f"""
@@ -359,9 +350,9 @@ class DraggableContextNodeButton(QPushButton):
                 background-color: {CONTEXT_NODE_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 8px 12px;
-                border-radius: 10px;
-                min-height: 44px;
+                padding: 2px 8px;
+                border-radius: {CARD_RADIUS}px;
+                font-size: {CARD_FONT_PX}px;
                 font-weight: 600;
                 text-align: left;
             }}
@@ -480,10 +471,11 @@ class DraggableCodeNodeButton(QPushButton):
         self.setToolTip(tooltip)
 
         # Set icon (code node icon)
-        icon = get_node_icon('code', 24)
+        icon = get_node_icon('code', CARD_ICON)
         if icon:
             self.setIcon(icon)
-            self.setIconSize(QSize(24, 24))
+            self.setIconSize(QSize(CARD_ICON, CARD_ICON))
+        self.setFixedHeight(CARD_HEIGHT)
 
         self.setStyleSheet(
             f"""
@@ -491,9 +483,9 @@ class DraggableCodeNodeButton(QPushButton):
                 background-color: {CODE_NODE_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 8px 12px;
-                border-radius: 10px;
-                min-height: 44px;
+                padding: 2px 8px;
+                border-radius: {CARD_RADIUS}px;
+                font-size: {CARD_FONT_PX}px;
                 font-weight: 600;
                 text-align: left;
             }}
@@ -665,10 +657,11 @@ class DraggableLLMNodeButton(QPushButton):
         self.setToolTip(tooltip)
 
         # Set icon (LLM node icon)
-        icon = get_node_icon('llm', 24)
+        icon = get_node_icon('llm', CARD_ICON)
         if icon:
             self.setIcon(icon)
-            self.setIconSize(QSize(24, 24))
+            self.setIconSize(QSize(CARD_ICON, CARD_ICON))
+        self.setFixedHeight(CARD_HEIGHT)
 
         self.setStyleSheet(
             f"""
@@ -676,9 +669,9 @@ class DraggableLLMNodeButton(QPushButton):
                 background-color: {LLM_COLOR};
                 color: {TEXT_COLOR};
                 border: 1px solid {LIGHT_GREY};
-                padding: 8px 12px;
-                border-radius: 10px;
-                min-height: 44px;
+                padding: 2px 8px;
+                border-radius: {CARD_RADIUS}px;
+                font-size: {CARD_FONT_PX}px;
                 font-weight: 600;
                 text-align: left;
             }}
@@ -832,7 +825,7 @@ class DraggableSequenceFileButton(QFrame):
         self._drag_start_pos = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(48)
+        self.setFixedHeight(CARD_HEIGHT)
 
         # Load description for tooltip
         self._description = ""
@@ -851,19 +844,19 @@ class DraggableSequenceFileButton(QFrame):
 
         # Layout: [label] [folder_btn]
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 6, 6, 6)
+        layout.setContentsMargins(10, 2, 4, 2)
         layout.setSpacing(6)
 
         # Text label (takes remaining space)
         self._label = QLabel(self._full_text, self)
         self._label.setStyleSheet(
-            f"color: {TEXT_COLOR}; font-weight: 600; background: transparent; border: none;"
+            f"color: {TEXT_COLOR}; font-size: {CARD_FONT_PX}px; font-weight: 600; background: transparent; border: none;"
         )
         layout.addWidget(self._label, 1)
 
         # Folder button to move sequence between collections
         self._folder_btn = QToolButton(self)
-        self._folder_btn.setFixedSize(22, 22)
+        self._folder_btn.setFixedSize(20, 20)
         fld_icon = _painter_icon_folder(14)
         if fld_icon and not fld_icon.isNull():
             self._folder_btn.setIcon(fld_icon)
@@ -875,7 +868,7 @@ class DraggableSequenceFileButton(QFrame):
             QToolButton {{
                 background-color: transparent;
                 border: none;
-                border-radius: 11px;
+                border-radius: 10px;
                 padding: 2px;
             }}
             QToolButton:hover {{
@@ -893,7 +886,7 @@ class DraggableSequenceFileButton(QFrame):
                 background-color: rgba(255, 255, 255, 0.04);
                 color: {TEXT_COLOR};
                 border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 12px;
+                border-radius: {CARD_RADIUS}px;
                 font-weight: 600;
             }}
             DraggableSequenceFileButton:hover {{ 
@@ -905,7 +898,7 @@ class DraggableSequenceFileButton(QFrame):
 
     def update_display_text(self):
         """Elide label text to fit available width."""
-        available_width = self.width() - 70  # margins + folder btn + spacing
+        available_width = self.width() - 44  # margins + folder btn + spacing
         fm = self.fontMetrics()
         elided = fm.elidedText(self._full_text, Qt.ElideRight, max(0, available_width))
         self._label.setText(elided)
@@ -1083,17 +1076,17 @@ class DraggableWebSequenceFileButton(QFrame):
         self._drag_start_pos = None
         self.setCursor(Qt.OpenHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.setFixedHeight(48)
+        self.setFixedHeight(CARD_HEIGHT)
         self.setToolTip(self._full_text)
 
         # Layout: [label]
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 6, 6, 6)
+        layout.setContentsMargins(10, 2, 4, 2)
         layout.setSpacing(6)
 
         self._label = QLabel(self._full_text, self)
         self._label.setStyleSheet(
-            f"color: {TEXT_COLOR}; font-weight: 600; background: transparent; border: none;"
+            f"color: {TEXT_COLOR}; font-size: {CARD_FONT_PX}px; font-weight: 600; background: transparent; border: none;"
         )
         layout.addWidget(self._label, 1)
 
@@ -1104,7 +1097,7 @@ class DraggableWebSequenceFileButton(QFrame):
                 background-color: rgba(255, 255, 255, 0.04);
                 color: {TEXT_COLOR};
                 border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 12px;
+                border-radius: {CARD_RADIUS}px;
                 font-weight: 600;
             }}
             DraggableWebSequenceFileButton:hover {{ 
@@ -1116,7 +1109,7 @@ class DraggableWebSequenceFileButton(QFrame):
 
     def update_display_text(self):
         """Elide label text to fit available width."""
-        available_width = self.width() - 30  # margins + spacing
+        available_width = self.width() - 20  # margins + spacing
         fm = self.fontMetrics()
         elided = fm.elidedText(self._full_text, Qt.ElideRight, max(0, available_width))
         self._label.setText(elided)
@@ -1238,16 +1231,16 @@ class ChainsLibrary(QWidget):
         # -- Helper for icon-only tab buttons --
         def _make_tab_btn(icon_node_type, icon_tabler_name, tooltip_text, checked_color, is_checked=False):
             btn = QPushButton()
-            btn.setFixedHeight(40)
+            btn.setFixedHeight(CARD_HEIGHT)
             btn.setCheckable(True)
             btn.setChecked(is_checked)
             # Try node icon first, then tabler icon
-            ico = get_node_icon(icon_node_type, 22) if icon_node_type else None
+            ico = get_node_icon(icon_node_type, CARD_ICON) if icon_node_type else None
             if ico is None or ico.isNull():
-                ico = load_tabler_icon(icon_tabler_name, 22)
+                ico = load_tabler_icon(icon_tabler_name, 18)
             if ico and not ico.isNull():
                 btn.setIcon(ico)
-                btn.setIconSize(QSize(22, 22))
+                btn.setIconSize(QSize(18, 18))
             btn.setToolTip(tooltip_text)
             btn.setStyleSheet(
                 f"""
@@ -1338,7 +1331,9 @@ class ChainsLibrary(QWidget):
         # be created/renamed/removed from any tab; it filters the chain and
         # sequence lists) ---
         self._collections_bar = QFrame(self._content_frame)
-        self._collections_bar.setVisible(True)
+        # Hidden while the Chains tab is active: chains are gated by the
+        # WORKSPACE selector on the canvas, not by a collection filter.
+        self._collections_bar.setVisible(False)
         coll_bar_layout = QHBoxLayout(self._collections_bar)
         coll_bar_layout.setContentsMargins(0, 0, 0, 0)
         coll_bar_layout.setSpacing(4)
@@ -1786,17 +1781,13 @@ class ChainsLibrary(QWidget):
         return sorted(names)
 
     def active_collection(self) -> str:
-        """The collection (workspace) the user is currently building in.
+        """The workspace the user is building in ('' when none is open).
 
-        Drives workspace organization: a chain created while a collection
-        filter is active is auto-annotated with it (ChainsLibrary combo:
-        index 0 = "All", index 1 = Default, then System + custom names).
+        Kept under the old name for its one caller (new-chain creation), which
+        now stamps the chain with a WORKSPACE instead of a collection.
         """
         try:
-            combo = self._collections_combo
-            if combo.currentIndex() <= 1:
-                return ""
-            return combo.currentText().strip()
+            return str(self.graph_view.workspace_slug() or '')
         except Exception:
             return ""
 
@@ -1831,6 +1822,12 @@ class ChainsLibrary(QWidget):
         if idx >= 0:
             combo.setCurrentIndex(idx)
         combo.blockSignals(False)
+        # Chains are gated by WORKSPACE (the canvas bar), not by a collection:
+        # the filter bar stays for node snippets only.
+        try:
+            self._collections_bar.setVisible(self._active_coll_type != 'chain')
+        except Exception:
+            pass
 
     def _on_collection_filter_changed(self):
         if self._active_coll_type == 'chain':
@@ -1936,10 +1933,12 @@ class ChainsLibrary(QWidget):
             self._refresh_sequences_list()
 
     def refresh_chains_list(self, path=None):
-        # Determine current collection filter (only when the Chains tab is active)
-        selected = self._collections_combo.currentText() if hasattr(self, '_collections_combo') else ''
-        filter_coll = '' if self._active_coll_type != 'chain' or selected == _("All chains") else selected
+        """List the ACTIVE workspace's chains.
 
+        Workspaces replaced collections: ``graph_view.chains_folder`` IS the
+        active workspace's folder, so the list is already gated — no per-file
+        filter, and nothing here reads a chain's metadata to decide.
+        """
         # Clear existing buttons (except stretch)
         while self._container_layout.count() > 1:
             item = self._container_layout.takeAt(0)
@@ -1953,36 +1952,36 @@ class ChainsLibrary(QWidget):
                 files = sorted([f for f in os.listdir(folder) if f.lower().endswith('.json')])
                 for name in files:
                     full_path = os.path.join(folder, name)
-                    # Skip if filtered and chain doesn't belong to this collection
-                    if filter_coll:
-                        try:
-                            with open(full_path, 'r', encoding='utf-8') as fh:
-                                data = json.load(fh)
-                            coll = data.get('collection', '') or ''
-                            # "Default" filter matches empty collection or "default"
-                            if filter_coll == "Default":
-                                if coll not in ("", "default", "Default"):
-                                    continue
-                            # "System" filter matches "system" or "System"
-                            elif filter_coll == "System":
-                                if coll.lower() != "system":
-                                    continue
-                            else:
-                                if coll != filter_coll:
-                                    continue
-                        except Exception:
-                            continue
                     btn = DraggableChainButton(name, full_path, self.graph_view, self)
                     self._container_layout.insertWidget(self._container_layout.count() - 1, btn)
             except Exception as e:
                 logger.error(f"Error listing chains: {e}")
         
         if self._container_layout.count() == 1: # Only stretch
-            placeholder = QLabel(_("No chains in this collection") if filter_coll else _("No chains"))
+            placeholder = QLabel(_("No chains in this workspace"))
             placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(f"color: {TEXT_COLOR}; opacity: 0.5; padding: 20px;")
             self._container_layout.insertWidget(0, placeholder)
         QTimer.singleShot(0, self._sync_chain_buttons)
+
+    def on_workspace_changed(self):
+        """Rescan after the canvas switched workspace.
+
+        The chains folder changed, so the watcher must follow it (otherwise
+        edits in the new workspace never refreshes the list) and every visible
+        list is rebuilt.
+        """
+        try:
+            folder = getattr(self.graph_view, 'chains_folder', None)
+            if self._watcher is not None and folder:
+                for watched in list(self._watcher.directories()):
+                    self._watcher.removePath(watched)
+                os.makedirs(folder, exist_ok=True)
+                self._watcher.addPath(folder)
+        except Exception:
+            logger.debug('library watcher could not follow the workspace',
+                         exc_info=True)
+        self.refresh_chains_list()
 
     def _sync_chain_buttons(self):
         for i in range(self._container_layout.count()):

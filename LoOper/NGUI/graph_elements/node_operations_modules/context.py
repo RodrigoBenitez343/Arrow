@@ -141,10 +141,12 @@ class ContextOperationsMixin:
             
             from ...dialogs import ContextDialog
             dialog = ContextDialog(self.parent_widget, current_config, node_id=context_node_id, chain_id=chain_id)
+            dialog.add_description(node.get_property('description') or '')
             
             if dialog.exec_() == dialog.Accepted:
                 config = dialog.get_config()
                 
+                node.set_property('description', dialog.description())
                 node.set_property('label', config['label'])
                 node.set_property('max_history', config['max_history'])
                 node.set_property('persistent', config['persistent'])

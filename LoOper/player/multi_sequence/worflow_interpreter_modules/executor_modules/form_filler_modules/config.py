@@ -19,9 +19,47 @@ class FormFillerConfigMixin:
             "instruction": str(data.get("instruction") or ""),
             "fields_include": _split_list(data.get("fields_include")),
             "fields_skip": _split_list(data.get("fields_skip")),
-            "probe_top_k": _as_int(data.get("probe_top_k"), 3),
-            "probe_char_budget": _as_int(data.get("probe_char_budget"), 1500),
-            "probe_context_chars": _as_int(data.get("probe_context_chars"), 6000),
+            # ── CRAG retrieval (the port in AI/crag) ──
+            # ``crag_enabled`` off = one plain embedding pass per field.
+            "crag_enabled": _as_bool(data.get("crag_enabled"), True),
+            # Backend for the relevance SCORE: 'auto' = Laya (calibrated
+            # probability), falling back to embeddings when the engine is
+            # unavailable; 'laya' / 'embed' / 'llm' force one of them.
+            "crag_evaluator": (
+                str(data.get("crag_evaluator") or "auto").strip().lower()
+                or "auto"),
+            # The two CRAG thresholds in the active backend's score space:
+            # >= upper = CORRECT, >= lower = AMBIGUOUS, below both = INCORRECT.
+            "crag_upper_threshold": _as_float(
+                data.get("crag_upper_threshold"), 0.60),
+            "crag_lower_threshold": _as_float(
+                data.get("crag_lower_threshold"), 0.40),
+            # Decompose-then-recompose mode: selection | excerption | fixed_num.
+            "crag_decompose_mode": (
+                str(data.get("crag_decompose_mode") or "excerption")
+                .strip().lower() or "excerption"),
+            # Passages retrieved + scored per field, and the strip scoring
+            # budget (one evaluator forward each).
+            "crag_top_k": _as_int(data.get("crag_top_k"), 6),
+            "crag_max_strips": _as_int(data.get("crag_max_strips"), 12),
+            # Strips kept from the internal knowledge / from the corrective
+            # store (upstream's two top-n values; selection mode keeps 3).
+            "crag_top_n_internal": _as_int(
+                data.get("crag_top_n_internal"), 6),
+            "crag_top_n_external": _as_int(
+                data.get("crag_top_n_external"), 5),
+            # The corrective stage, and the query rewrite it feeds on.
+            "crag_external": _as_bool(data.get("crag_external"), True),
+            "crag_rewrite": _as_bool(data.get("crag_rewrite"), True),
+            # CONSOLIDATION CYCLES per field.  A sweep that comes back
+            # incorrect/ambiguous has only shown where the answer is NOT: the
+            # next one is handed what the last already scored, so it searches
+            # what nothing has looked at yet.  A CEILING, not a quota - the
+            # loop stops as soon as a sweep is `correct` or runs out of fresh
+            # material, so the common field still costs ONE sweep.
+            "crag_cycles": _as_int(data.get("crag_cycles"), 2),
+            # Cap on the material handed to the extractor.
+            "crag_char_budget": _as_int(data.get("crag_char_budget"), 4000),
             "verify": _as_bool(data.get("verify"), True),
             "answer_no": _as_bool(data.get("answer_no"), True),
             # LAST-RESORT skip policy: a field that genuinely CANNOT be answered
@@ -31,11 +69,12 @@ class FormFillerConfigMixin:
             # wizard from re-entering the node forever.  Strictly a LAST RESORT:
             # it is only reached once ask_user and answer_no produced nothing.
             "answer_na": _as_bool(data.get("answer_na"), True),
-            # Ask the user directly (the same blocking callback Input nodes use)
-            # when nothing grounds a field, and learn the answer into the
-            # node-owned corrections file so a later run retrieves it instead
-            # of asking.
-            "ask_user": _as_bool(data.get("ask_user"), False),
+            # UNSURE -> ASK.  A field the pipeline cannot decide is the USER's to
+            # answer - never a guess and never a silent skip.  The answer is
+            # learned into the wired Context pool, so a later run retrieves it
+            # instead of asking again.  ON by default; the toggle exists to turn
+            # it OFF for unattended runs.
+            "ask_user": _as_bool(data.get("ask_user"), True),
             # Post-pass: re-check every written field's NATIVE validity and
             # correct the ones the page rejected (format / constraint).
             "repair": _as_bool(data.get("repair"), True),
@@ -48,11 +87,6 @@ class FormFillerConfigMixin:
             # times the node ends the chain instead of re-entering again.
             # 0 disables the cap.
             "max_stall_passes": _as_int(data.get("max_stall_passes"), 6),
-            # ComoRAG consolidation (iterative multi-cycle probing) is ON by
-            # default; turn it OFF to rely on one single-pass retrieval per
-            # field (lighter - for a bigger model that needs less scaffolding).
-            "consolidate": _as_bool(data.get("consolidate"), True),
-            "probe_cycles": _as_int(data.get("probe_cycles"), 3),
             # CONFIDENCE GATE for a mechanically-reused (learned/cached) answer.
             # A learned answer is written verbatim only when the match is at
             # least this confident AND the page did not reject it; otherwise the

@@ -58,6 +58,23 @@ class OutputMixin:
             node_id, label, agent_visible, overlay_visible, popup_on_finish, show_rating, render_mode,
         )
 
+        # The run tag tells a manual playback apart from an agent/scheduled run:
+        # "play" (manual GUI playback, builder tests) drives the blocking finish
+        # popup; "agent"/"schedule" post to the chat UI.  A manual run also has
+        # an ask_user callback, so the callback alone cannot decide this.
+        try:
+            _run_source = str(self.llm_executor.get_variable('_run_source') or '')
+        except Exception:
+            _run_source = ''
+        if _run_source:
+            _agent_active = _run_source != 'play'
+        else:
+            # Legacy caller without the tag: keep the old heuristic.
+            try:
+                _agent_active = self.llm_executor.get_variable("_ask_user_callback") is not None
+            except Exception:
+                _agent_active = False
+
         # ── Collect data from all upstream inputs ──
         inputs = node.get('inputs', [])
         collected_parts = []
@@ -132,9 +149,12 @@ class OutputMixin:
                 val_str = str(val)  # raw — asset transport handles the payload
             else:
                 val_str = str(val)
-                cap = 2000 if render_mode == 'text' else 20000
-                if len(val_str) > cap:
-                    val_str = val_str[:cap] + "..."
+                # Chat bubbles cap long content; the manual popup is the user's
+                # only reader, so it gets the whole value.
+                if _agent_active:
+                    cap = 2000 if render_mode == 'text' else 20000
+                    if len(val_str) > cap:
+                        val_str = val_str[:cap] + "..."
 
             collected_parts.append({
                 "source_node": from_node_id,
@@ -274,13 +294,6 @@ class OutputMixin:
         if not _display_text and render_mode == 'text':
             _display_text = str(tts_text or '').strip()
 
-        # Agent mode is active when _ask_user_callback is set (chat overlay).
-        _agent_active = False
-        try:
-            _agent_active = self.llm_executor.get_variable("_ask_user_callback") is not None
-        except Exception:
-            _agent_active = False
-
         # The agent-facing toggles (agent_visible + overlay_visible) govern
         # agent mode; the manual popup toggle governs manual mode.  Posting
         # used to be gated by popup_on_finish in BOTH modes, so a manual-only
@@ -295,7 +308,7 @@ class OutputMixin:
             node_id, _agent_active, agent_visible, overlay_visible,
             popup_on_finish, len(_display_text), _post_here,
         )
-        if _display_text and _post_here:
+        if (_display_text or asset) and _post_here:
             try:
                 cb = getattr(self, '_on_output_ready', None)
                 if cb:

@@ -161,6 +161,16 @@ class UIComponents:
             except Exception:
                 pass
 
+            # Workspace selector + creator: collections are gone, this scopes
+            # the library and agent mode to one workspace's own chains.
+            from ..widgets.workspace_bar import WorkspaceBar
+            workspace_bar = WorkspaceBar(self.parent_widget, self.parent_widget)
+            workspace_bar.workspace_selected.connect(self._switch_workspace)
+            workspace_bar.workspace_created.connect(self._switch_workspace)
+            self.parent_widget.workspace_changed.connect(
+                self._workspace_ui_refresh)
+            self.parent_widget._workspace_bar = workspace_bar
+
             from ..widgets.actions_toolbar import ActionsToolbar
             actions_toolbar = ActionsToolbar(self.parent_widget)
             self.parent_widget.actions_toolbar = actions_toolbar
@@ -206,6 +216,7 @@ class UIComponents:
             # panels open/close under the dock.
             self._floating_bars = [
                 (self.parent_widget._float_dock, "top"),
+                (self.parent_widget._workspace_bar, "top"),
                 (self.parent_widget._builder_toggle_btn, "right"),
             ]
             for w, _side in self._floating_bars:
@@ -253,6 +264,31 @@ class UIComponents:
             logger.error(f"Error setting up UI: {e}")
             raise
         
+    def _switch_workspace(self, slug):
+        """Make *slug* the workspace the library and the agent work in.
+
+        The UI refresh rides the canvas' own ``workspace_changed`` signal, so
+        a workspace set from anywhere (bar, restored session, code) updates
+        the library and the combo exactly once.
+        """
+        try:
+            self.parent_widget.set_workspace(slug)
+        except Exception:
+            logger.exception('switching to workspace %r failed', slug)
+
+    def _workspace_ui_refresh(self, slug):
+        """Rescan everything that is scoped by the active workspace."""
+        try:
+            logger.info('Workspace UI refresh: %s', slug)
+            library = getattr(self.parent_widget, 'chains_library', None)
+            if library is not None:
+                library.on_workspace_changed()
+            bar = getattr(self.parent_widget, '_workspace_bar', None)
+            if bar is not None:
+                bar.refresh()
+        except Exception:
+            logger.exception('the workspace switch could not repaint the UI')
+
     def create_control_panel(self):
         """Create the top collapsible toolbar for quick actions."""
         logger.debug("Creating collapsible toolbar control panel")
@@ -288,10 +324,20 @@ class UIComponents:
                 dock.raise_()
             # The collection sub-dock sits beside the base dock row, and only
             # exists while the Library panel is open.
+            bar = getattr(parent, '_workspace_bar', None)
+            if bar is not None and bar.isVisible():
+                bx = m
+                if dock is not None and dock.isVisible():
+                    bx = dock.x() + dock.width() + 8
+                bar.setGeometry(bx, m, bar.sizeHint().width(),
+                                bar.height() or 34)
+                bar.raise_()
             sub = getattr(parent, '_sub_dock', None)
             if sub is not None and sub.isVisible():
                 sx = m
-                if dock is not None and dock.isVisible():
+                if bar is not None and bar.isVisible():
+                    sx = bar.x() + bar.width() + 8
+                elif dock is not None and dock.isVisible():
                     sx = dock.x() + dock.width() + 8
                 sh = sub.sizeHint().height() or 38
                 sub.setGeometry(sx, m, sub.sizeHint().width(), sh)
@@ -347,7 +393,16 @@ class UIComponents:
             w = 56
         # Never cross into the builder chat's column.
         w = min(w, max(120, right_edge - m))
-        return (m, top, w, avail_h)
+        h = avail_h
+        if key == 'nodes' and pane is not None:
+            # The node cards are a fixed-height list, so the panel hugs its
+            # content instead of stretching a mostly-empty column to the
+            # bottom of the canvas.
+            try:
+                h = min(avail_h, max(120, pane.sizeHint().height()))
+            except Exception:
+                h = avail_h
+        return (m, top, w, h)
 
     def _builder_rect(self, W, H, width):
         """(x, y, w, h) for the Builder chat overlay: right side, below the

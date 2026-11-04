@@ -246,6 +246,37 @@ _JUDGE_LABEL_RE = re.compile(
 
 _INTENT_PLAN_SECTIONS = ("INTENT SUMMARY", "SEARCH PLAN", "EXPECTED ANSWER SHAPE")
 
+#: A line that is CODE, not plan prose.  Case-sensitive on purpose: prose
+#: legitimately starts with "From ..." / "For ...", python statements are
+#: lowercase and syntactically shaped.  A small model asked for a three-section
+#: plan often appends a sketch (a `def pipeline_plan():` block followed by
+#: GOAL = ... constants) which then steered every probe into continuing the
+#: function instead of writing a question.
+_CODE_LINE_RE = re.compile(
+    r"^\s*(?:def|class|import|from|return|async\s+def)\b"
+    r"|^\s*[A-Za-z_]\w*\s*=[^=]"
+    r"|^\s*[{}]"
+    r"|^\s*(?:\"\"\"|''')"
+    r"|^\s*@\w+"
+    r"|=>"
+)
+
+
+def _sanitize_intent_plan(plan: Any) -> str:
+    """Cut a plan at its first code line so only PROSE reaches the probes.
+
+    The plan is prepended verbatim to every probe prompt (as the INTENT PLAN
+    section) and supplies the relevance vocabulary, so a python sketch inside
+    it poisons both: the probe generator continues ``def pipeline_plan():``
+    instead of writing a question, and code identifiers enter the focus terms.
+    """
+    out: List[str] = []
+    for line in str(plan or "").splitlines():
+        if _CODE_LINE_RE.search(line):
+            break
+        out.append(line)
+    return "\n".join(out).strip()
+
 
 def _is_valid_intent_plan(plan: Any) -> bool:
     """True when *plan* has at least one section label the planner was asked for.
@@ -321,7 +352,11 @@ def _coerce_probes(raw: Any, limit: int = 3) -> List[str]:
             ln for ln in _lines
             if ln.endswith("?") or _starts_interrogative(ln)
         ]
-        for _c in (_qs or _lines):
+        # A non-question line is NEVER a probe.  The old `or _lines` fallback
+        # pushed a stray "def pipeline_plan():" into the cycle, which the
+        # validator then rejected — after paying a full model round trip and
+        # three critique retries for it.
+        for _c in _qs:
             _c = _c[:200].strip()
             if _c and _c not in out:
                 out.append(_c)
@@ -540,11 +575,17 @@ def _dedupe_fact_entries(entries, existing):
 # provided in the evidence"), telling the model to leave the field empty
 # (observed: the LinkedIn-URL field returned nothing on a resume that holds
 # the URL, while the pool carried "Key Finding: ... is not provided").
+# The negation list must spell out EVERY form the composer uses: "do not
+# contain" slipped through a list that had only does not / did not / is not,
+# so an absence finding entered the pool, passed the judge's grounding check
+# and cut the sweep at cycle 1 (observed: "The answers written by ... do not
+# contain any information about the source of the photo").
 _NEGATIVE_FINDING_RE = re.compile(
     r"\b(?:not|no|never|none|n/?a)\b[^.]{0,60}?"
     r"(?:provided|mentioned|stated|specified|listed|found|present|"
     r"available|contained|included|given|disclosed|known)\b"
-    r"|\b(?:does\s+not|doesn't|did\s+not|cannot|can't|is\s+not|are\s+not)\b"
+    r"|\b(?:do\s+not|does\s+not|did\s+not|don't|doesn't|didn't|cannot|can't|"
+    r"is\s+not|are\s+not|was\s+not|were\s+not)\b"
     r"[^.]{0,40}?(?:contain|include|mention|state|specify|list|provide|"
     r"hold|answer)\b"
     r"|\bno\s+(?:information|details?|mention|evidence|value)\b"
@@ -569,16 +610,36 @@ _FINDING_LABEL_RE = re.compile(
 )
 
 
-def _is_negative_finding(entry: Any) -> bool:
+def _absence(claim: Any, judge: Optional[Callable[[str], Optional[bool]]] = None
+             ) -> bool:
+    """Is *claim* an absence?  The caller's verdict, else the engine's rule.
+
+    The phrase rule is what runs when NO judge is wired (the engine used
+    standalone, and its tests).  A wired judge is REQUIRED to answer - the
+    form filler injects a Laya-backed verdict that retries and then raises -
+    so its failure PROPAGATES: swallowing it here would quietly restore the
+    word list, which is the graceful degradation this hook exists to remove.
+    """
+    text = str(claim or "")
+    if judge is not None:
+        return bool(judge(text))
+    return bool(_NEGATIVE_FINDING_RE.search(text))
+
+
+def _is_negative_finding(entry: Any, judge=None) -> bool:
     """True when a composed finding only reports the value is ABSENT.
 
     Only the FINDING lines are inspected: the verbatim ``Support:`` quote is
     source text and routinely contains "no"/"not" without meaning the field
-    is unanswerable.
+    is unanswerable.  ``judge`` is the caller's semantic verdict (see
+    :func:`_absence`).
     """
     for line in str(entry or "").splitlines():
         m = _FINDING_LABEL_RE.match(line)
-        if m and _NEGATIVE_FINDING_RE.search(line[m.end():]):
+        if not m:
+            continue
+        claim = line[m.end():].strip()
+        if claim and _absence(claim, judge):
             return True
     return False
 
@@ -1047,6 +1108,7 @@ class ProbeBasedConsolidator:
         response_generator: Optional[Callable[[str, str, str], Optional[str]]] = None,
         judge: Optional[Callable[[str, str, str], Optional[str]]] = None,
         relevance_judge: Optional[Callable[[str, List[str]], Optional[List[bool]]]] = None,
+        absence_judge: Optional[Callable[[str], Optional[bool]]] = None,
         stop_flag: Optional[Callable[[], bool]] = None,
     ) -> str:
         """ComoRAG-style iterative probing cycles with a memory pool.
@@ -1137,6 +1199,15 @@ class ProbeBasedConsolidator:
                 probing loop goes back and forth to the context following
                 the plan's search items.  ``None``/empty falls back to
                 probing from the raw enhanced intent.
+            absence_judge: Optional callable ``(claim) -> bool`` —
+                "does this finding only report the information is ABSENT?".
+                Decides what ENTERS the fact pool and whether a judge
+                ``ANSWER`` draft is itself an absence.  A WIRED judge must
+                answer: its failure propagates out of the sweep (the form
+                filler passes Laya's ``absence_required``, which retries and
+                then raises).  Only ``None`` - no judge at all - uses the
+                engine's own phrase rule, so the engine stays usable
+                standalone.
             stop_flag: Optional callable ``() -> bool`` — the caller's user
                 abort (ESC).  Checked at every cycle boundary and before the
                 final synthesis, so a stop ends the consolidation instead of
@@ -1225,6 +1296,7 @@ class ProbeBasedConsolidator:
                     _cand = intent_planner(intent_prompt)
                 except Exception:
                     _cand = None
+                _cand = _sanitize_intent_plan(_cand)
                 if _is_valid_intent_plan(_cand):
                     _plan = _cand
                     break
@@ -1684,7 +1756,7 @@ class ProbeBasedConsolidator:
                 _kind, _payload = _parse_judge_verdict(_verdict)
                 if _kind == "answer":
                     if (not _payload.strip()
-                            or _NEGATIVE_FINDING_RE.search(_payload)):
+                            or _absence(_payload, absence_judge)):
                         # An "answer" that carries no value — or is itself an
                         # absence ("not provided") — is not an answer.
                         log_block(
@@ -1766,7 +1838,7 @@ class ProbeBasedConsolidator:
                         # below), so the sweep accumulates freely and the
                         # curation verdict never steers the next probe.
                         for _finding in _split_findings(_answer):
-                            if _is_negative_finding(_finding):
+                            if _is_negative_finding(_finding, absence_judge):
                                 _absent += 1
                                 _dropped.append(_finding)
                             elif not _is_grounded_finding(

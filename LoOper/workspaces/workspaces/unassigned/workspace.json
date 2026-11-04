@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "slug": "unassigned",
+ "name": "Unassigned",
+ "agent": {
+  "name": "Unassigned",
+  "avatar": 0,
+  "model": "",
+  "legacy_brain": "",
+  "policy": {
+   "max_steps": 6
+  }
+ },
+ "updated": "2026-10-31T13:34:14",
+ "created": "2026-10-31T13:34:14"
+}

@@ -106,6 +106,23 @@ def _ff_drop_foreign_qa(text, label):
     return "\n".join(out)
 
 
+def _ff_pool_body(text):
+    """The pool text WITHOUT its learned-answer sentinel blocks.
+
+    Both the auto-learned and the human-verified blocks are a KEYED memory, not
+    source material: each answer belongs to ITS question.  Retrieving them as
+    evidence let one field be answered (or asked) from another field's answer -
+    observed, the JS/TS experience question pulled in the neighbouring "## have
+    you led engineering teams ... / No" block and returned No for a resume that
+    states the skill.  The current field's own record still rides via the
+    per-field learned hint.
+    """
+    s = str(text or "")
+    if _FF_CORR_START not in s and _FF_VERIFIED_START not in s:
+        return s.strip()
+    return _POOL_BLOCK_RE.sub("", s).strip()
+
+
 def _ff_parse_learned_answers(text):
     """The ``## <label>`` blocks of a learned-answers document, by label.
 
@@ -116,6 +133,12 @@ def _ff_parse_learned_answers(text):
     be asked again on a later pass (live: the stored 'Ezeiza, Buenos Aires
     Province, Argentina' came back from the model as a lossy 'Ezeiza', no
     option won the choice rail, and the field was re-asked).
+
+    A stored answer is PRUNED of markdown on the way out: an answer learned as
+    ``**1**`` was written into every later form verbatim, and a control that
+    only takes digits (the site's own validation, not the DOM's) rejected it
+    forever (live: '¿Cuántos años de experiencia tienes con Modelo de datos?'
+    holding '**1**' while the page refused to advance).
     """
     out, cur = {}, None
     for line in str(text or "").splitlines():
@@ -123,11 +146,16 @@ def _ff_parse_learned_answers(text):
         if m:
             cur = _ff_norm(m.group(1)).strip("*? .:")
             if cur:
-                out.setdefault(cur, [])
+                # A label can appear in SEVERAL accumulated blocks (the pool is
+                # append-only): the NEWEST block wins.  Appending to an existing
+                # list made the value BOTH answers at once ("Yes No", "6000
+                # 6000"), which matched no option, so the field was re-asked and
+                # re-learned on every pass.
+                out[cur] = []
             continue
         if cur is not None and line.strip():
             out[cur].append(line.strip())
-    return {k: " ".join(v).strip() for k, v in out.items()}
+    return {k: _ff_plain_text(" ".join(v)) for k, v in out.items()}
 
 
 # Sentinels wrapping the learned answers INSIDE the context pool text.
@@ -137,6 +165,20 @@ def _ff_parse_learned_answers(text):
 # as learned Q&A).
 _FF_CORR_START = "[[FORM_CORRECTIONS]]"
 _FF_CORR_END = "[[/FORM_CORRECTIONS]]"
+
+# A SECOND block carries the answers a HUMAN fixed (added or edited in the
+# Context node's dialog).  Same shape, different provenance: the pipeline treats
+# a verified entry as truth and never re-derives or overrides it, while an
+# auto-learned entry is still revisable.  Without the split the two were
+# indistinguishable, so an engine verdict could discard a hand-corrected answer
+# and the user had to correct the same field again on the next run.
+_FF_VERIFIED_START = "[[FORM_VERIFIED]]"
+_FF_VERIFIED_END = "[[/FORM_VERIFIED]]"
+_POOL_BLOCK_RE = re.compile(
+    re.escape(_FF_CORR_START) + r".*?" + re.escape(_FF_CORR_END)
+    + r"|" + re.escape(_FF_VERIFIED_START) + r".*?" + re.escape(_FF_VERIFIED_END),
+    re.DOTALL,
+)
 
 # Section headers the Context node puts on its served pool.  They are ONE pool
 # - documents, stored rows, skills, history turns and the learned block are all
@@ -177,8 +219,12 @@ def _ff_render_corrections(pairs):
     """Wrap this pass's NEW ``(label, answer)`` pairs in the pool sentinel block.
 
     '' when there is nothing to publish (so an unchanged pass adds no block).
+    The answer is PRUNED of markdown before it is published: the block is the
+    node's own memory, and a '**1**' stored there is replayed into every later
+    form (see ``_ff_plain_text``).
     """
-    body = "\n".join("## %s\n%s" % (lab, ans) for lab, ans in (pairs or [])
+    pairs = [(lab, _ff_plain_text(ans)) for lab, ans in (pairs or [])]
+    body = "\n".join("## %s\n%s" % (lab, ans) for lab, ans in pairs
                      if str(ans or "").strip())
     if not body.strip():
         return ""
@@ -191,7 +237,8 @@ def _ff_split_corrections(text):
     The CONTEXT node stores each learned answer as its OWN entry (so the audit
     dialog edits ONE answer at a time), so the block must be lifted OUT of the
     stored value; the parsed map comes back for that.  ``(<text>, {})`` when no
-    block is present.
+    block is present.  The VERIFIED block is left in place - see
+    :func:`_ff_split_verified`, which is applied to the same value right after.
     """
     s = str(text or "")
     if _FF_CORR_START not in s:
@@ -210,6 +257,83 @@ def _ff_split_corrections(text):
     return clean.strip(), pairs
 
 
+def _ff_question_words(label):
+    """Content words of a field label, crudely singularised (len >= 4)."""
+    words = []
+    for w in re.split(r"[^a-z0-9]+", _ff_norm(label or "")):
+        if len(w) < 4:
+            continue
+        if len(w) > 4 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        words.append(w)
+    return words
+
+
+def _ff_dupe_score(a, b):
+    """Cheap lexical similarity (0..1) used to PREFILTER duplicate questions.
+
+    "how much experience you have with cloud providers like aws?" vs "how many
+    years of experience do you have with aws?" share only a few words, so the
+    score is CONTAINMENT of the shorter label (every word of the shorter one
+    that the longer one carries) rather than a symmetric Jaccard - and it is
+    only a prefilter: the model decides, because "with aws" vs "with azure"
+    looks identical to any lexical or embedding score.
+    """
+    wa = set(_ff_question_words(a))
+    wb = set(_ff_question_words(b))
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / float(min(len(wa), len(wb)))
+
+
+def _ff_render_verified(pairs):
+    """The HUMAN-verified answers as their own sentinel block ('' when none)."""
+    pairs = [(lab, _ff_plain_text(ans)) for lab, ans in (pairs or [])]
+    body = "\n".join("## %s\n%s" % (lab, ans) for lab, ans in pairs
+                     if str(ans or "").strip())
+    if not body.strip():
+        return ""
+    return "%s\n%s\n%s" % (_FF_VERIFIED_START, body, _FF_VERIFIED_END)
+
+
+def _ff_pool_verified(text):
+    """The human-verified answer text carried inside the context pool."""
+    s = str(text or "")
+    if _FF_VERIFIED_START not in s:
+        return ""
+    parts, idx = [], 0
+    while True:
+        a = s.find(_FF_VERIFIED_START, idx)
+        if a < 0:
+            break
+        b = s.find(_FF_VERIFIED_END, a + len(_FF_VERIFIED_START))
+        if b < 0:
+            parts.append(s[a + len(_FF_VERIFIED_START):])
+            break
+        parts.append(s[a + len(_FF_VERIFIED_START):b])
+        idx = b + len(_FF_VERIFIED_END)
+    return "\n".join(p.strip() for p in parts if p.strip()).strip()
+
+
+def _ff_split_verified(text):
+    """Split a pool value into (text WITHOUT verified blocks, {label: answer})."""
+    s = str(text or "")
+    if _FF_VERIFIED_START not in s:
+        return s, {}
+    pairs, clean = {}, s
+    while _FF_VERIFIED_START in clean:
+        a = clean.find(_FF_VERIFIED_START)
+        b = clean.find(_FF_VERIFIED_END, a + len(_FF_VERIFIED_START))
+        if b < 0:
+            inner = clean[a + len(_FF_VERIFIED_START):]
+            clean = clean[:a]
+        else:
+            inner = clean[a + len(_FF_VERIFIED_START):b]
+            clean = clean[:a] + clean[b + len(_FF_VERIFIED_END):]
+        pairs.update(_ff_parse_learned_answers(inner))
+    return clean.strip(), pairs
+
+
 # THIS node's own per-field summary row: `[<key>] {'mode': ..., 'fields': [...]}`.
 # It rides the pool whenever the chain wires the node's output back through a
 # Context node, and it is NOT source material - retrieved as evidence it makes
@@ -218,8 +342,16 @@ def _ff_split_corrections(text):
 # its own answer once a bad value had been learned).  The rows stay IN the pool
 # (the prior-pass statuses are read from them, see `_ff_prior_from_pool`); they
 # are only kept OUT of the material a probe may retrieve.
+#
+# The bracket holds the node's DESCRIPTION, so its length is unbounded: a
+# 120-char cap let the live row through -
+#   [form_filler/fills a web form with the user's data — "Fill the form using
+#    the provided context." — answers written by "Qwen3.8-2B-Q8_0.gguf" —
+#    verifies what it typed] {'mode': 'web', ...}
+# - and the intent planner then wrote probes about "the answers written by
+# Qwen3.8-2B-Q8_0.gguf" instead of about the field.
 _FF_OWN_ROW_RE = re.compile(
-    r"^\s*\[[^\]\n]{1,120}\]\s*[\{\[].*['\"]fields['\"]", re.MULTILINE)
+    r"^\s*\[[^\]\n]+\]\s*[\{\[].*['\"]fields['\"]", re.MULTILINE)
 
 
 def _ff_strip_own_output(text):
@@ -244,10 +376,9 @@ def _ff_split_pool(text):
     s = str(text or "")
     learned_text = _ff_pool_corrections(s)
     learned = _ff_parse_learned_answers(learned_text)
-    body = re.sub(
-        re.escape(_FF_CORR_START) + r".*?" + re.escape(_FF_CORR_END),
-        "", s, flags=re.DOTALL,
-    ).strip()
+    verified_text = _ff_pool_verified(s)
+    verified = _ff_parse_learned_answers(verified_text)
+    body = _ff_pool_body(s)
     documents, context = "", body
     if _FF_DOCS_HEADER in body:
         before, after = body.split(_FF_DOCS_HEADER, 1)
@@ -261,6 +392,8 @@ def _ff_split_pool(text):
         "context": context,
         "learned": learned,
         "learned_text": learned_text,
+        "verified": verified,
+        "verified_text": verified_text,
     }
 
 
@@ -348,6 +481,48 @@ def _ff_ungrounded_identifier(value, ground):
     return None
 
 
+def _ff_states_verbatim(value, text):
+    """True when *text* holds *value* AS WRITTEN (punctuation/spacing blind).
+
+    A judgement call cannot override a copy: the semantic repair judge called
+    'Buenos Aires' too specific for a 'Location (city)' field and the repair
+    pass replaced a correct, verbatim-from-the-source answer with 'N/A'.  The
+    match is at a WORD boundary, so 'Air' is not found inside 'Buenos Aires'.
+    """
+    v = _ff_dense(value)
+    if len(v) < 4:
+        return False
+    body = _ff_dense(text)
+    if not body or v not in body:
+        return False
+    return re.search(r"(?<![a-z0-9])" + re.escape(v) + r"(?![a-z0-9])",
+                     body) is not None
+
+
+def _ff_compound_unstated(value, ground):
+    """True when *value* is a COMBINATION the source never states as one.
+
+    A stored answer learned from material that held TWO rows - 'Buenos Aires'
+    from the contact line and 'Saint Paul' from a 2018 employer - replays
+    forever: every fragment is real, so a substring grounding test and the
+    entailment verdict both pass, and the field keeps a value the document never
+    states (live: 'Location (city)*' answered 'Buenos Aires, Saint Paul').
+
+    The test is structural, not a word list: a value with two or more parts
+    separated by a comma / semicolon / pipe must appear AS WRITTEN.  A single
+    part is left to the callers' other rails - it may be a legitimate derived
+    answer (a counted number of years, a short summary).
+    """
+    text = str(value or "").strip()
+    if not text or not ground:
+        return False
+    parts = [p.strip() for p in re.split(r"[,;|]", text) if len(p.strip()) >= 3]
+    if len(parts) < 2:
+        return False
+    dense = _ff_dense(text)
+    return bool(dense) and dense not in _ff_dense(ground)
+
+
 def _ff_fragment_of_evidence(value, evidence):
     """True when *value* occurs in the evidence ONLY as part of a longer word.
 
@@ -371,7 +546,37 @@ def _ff_fragment_of_evidence(value, evidence):
     return re.search(r"(?<![a-z0-9])" + re.escape(v) + r"(?![a-z0-9])", ev) is None
 
 
-def _ff_value_rejection(label, value, evidence):
+def _ff_joined_strips(value, evidence, multiline=False):
+    """True when *value* is several WHOLE source lines glued into one answer.
+
+    A narrow field came back as the tagline line, the skills line and the NAME,
+    comma-joined ('Current job title' -> 'Forward Deployed AI Engineer,
+    Applied AI/ML (GenAI, RAG), Enterprise & Regulated Environments, Rodrigo
+    David Benitez').  Every part is real, the combination is not a job title -
+    that is the mixing this guard exists to stop.  Prose (a textarea) may
+    legitimately quote several lines, so the rule is off for a multiline
+    control.
+    """
+    if multiline:
+        return False
+    body = _ff_dense(value)
+    if not body or len(body) > 400:
+        return False
+    strips = set()
+    for line in str(evidence or "").splitlines():
+        line = line.strip()
+        if not line.startswith("-"):
+            continue
+        line = re.sub(r"^-\s*(\[[^\]]{0,60}\]\s*)?", "", line).strip()
+        dense = _ff_dense(line)
+        if len(dense) >= 8:
+            strips.add(dense)
+    if len(strips) < 2:
+        return False
+    return sum(1 for s in strips if s in body) >= 2
+
+
+def _ff_value_rejection(label, value, evidence, multiline=False):
     """Why a value must NOT be written into the field ('' when it is fine).
 
     Three guards, all independent of the model's cooperation: an identifier the
@@ -398,6 +603,9 @@ def _ff_value_rejection(label, value, evidence):
     if m:
         return ("the value is placeholder text (%r), not an answer"
                 % m.group(0))
+    if _ff_joined_strips(value, evidence, multiline):
+        return ("the value is several DIFFERENT source lines joined together "
+                "- a list, not an answer")
     return ""
 
 
@@ -565,6 +773,88 @@ def _strip_think(text):
         t = t[close.end():]
     t = re.sub(r"(?is)<\s*/?\s*think\s*>", "", t)
     return _strip_fences(t)
+
+
+# Every form-filler prompt asks for plain text, and a small model answers
+# ``**2**`` anyway - the markers then become part of the VALUE the page stores
+# (observed: a years-of-experience input holding '**2**').  This rule is the
+# prompt-side half, stated as a CONTRACT at the TOP of the system prompt (a
+# small model follows a format rule it reads first); ``_ff_plain_text`` is the
+# harness-side half, because a prompt is a suggestion, never a guarantee.
+_FF_PLAIN_RULE = (
+    "OUTPUT FORMAT - PLAIN TEXT ONLY, NEVER MARKDOWN. Your reply is typed "
+    "into the field EXACTLY as written, so every marker becomes part of the "
+    "answer: no **bold**, no *italics*, no `code`, no # headings, no - or 1. "
+    "list markers, no tables, no [links](url). Asked 'how many years of "
+    "experience do you have with X?', the whole reply is 2 - never **2**."
+)
+
+_MD_RULE_RE = re.compile(r"^\s{0,3}(?:[-*_])(?:\s*[-*_]){2,}\s*$")
+_MD_HEADING_RE = re.compile(r"^\s{0,3}#{1,6}\s+")
+_MD_QUOTE_RE = re.compile(r"^\s{0,3}>\s?")
+_MD_BULLET_RE = re.compile(r"^\s{0,3}(?:[-*+•])\s+")
+# A numbered list marker, but never a YEAR that starts a sentence.
+_MD_NUMBER_RE = re.compile(r"^\s{0,3}(\d{1,3})[.)]\s+")
+_MD_TABLE_EDGE_RE = re.compile(r"^\s{0,3}\|(.*)\|\s*$")
+_MD_LINK_RE = re.compile(r"!?\[([^\]\n]*)\]\(\s*<?([^)\s>]*)>?[^)\n]*\)")
+_MD_EMPHASIS_RES = (
+    re.compile(r"\*\*\*(.+?)\*\*\*"),
+    re.compile(r"\*\*(.+?)\*\*"),
+    re.compile(r"(?<!\w)__(.+?)__(?!\w)"),
+    re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])"),
+    re.compile(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)"),
+)
+
+
+def _ff_plain_text(text):
+    """Prune MARKDOWN out of a model reply, keeping only what it SAYS.
+
+    Fences, headings, quote markers, list bullets, emphasis pairs, inline-code
+    ticks, table edges and link markup are dropped; the CONTENT they wrapped
+    survives: ``**2**`` -> ``2``, ``- **Python**`` -> ``Python``,
+    ``[CV](https://x)`` -> ``CV``.  A form value is written to the page
+    VERBATIM, so markup left in it lands in the form (observed: a
+    years-of-experience input holding '**2**').  A reply that was nothing but
+    markup becomes '' - the caller then treats the field as unanswered instead
+    of typing punctuation into it.
+    """
+    t = str(text or "")
+    if not t.strip():
+        return ""
+    # A fenced block HOLDS the value; the fence itself is markup.
+    t = re.sub(
+        r"(?ms)^[ \t]*```[a-zA-Z0-9_+-]*[ \t]*\n?(.*?)\n?[ \t]*```[ \t]*$",
+        r"\1", t,
+    )
+    t = re.sub(r"```[a-zA-Z0-9_+-]*", "", t)
+    lines = []
+    for line in t.splitlines():
+        if _MD_RULE_RE.match(line):
+            continue                     # a horizontal rule is pure markup
+        line = _MD_HEADING_RE.sub("", line)
+        line = _MD_QUOTE_RE.sub("", line)
+        line = _MD_BULLET_RE.sub("", line)
+        m = _MD_NUMBER_RE.match(line)
+        if m and not re.fullmatch(r"(?:19|20)\d{2}", m.group(1)):
+            line = line[m.end():]
+        line = _MD_TABLE_EDGE_RE.sub(r"\1", line)
+        lines.append(line.strip())
+    t = "\n".join(lines)
+    if not t.strip():
+        return ""
+    t = _MD_LINK_RE.sub(
+        lambda m: m.group(1).strip() or m.group(2).strip(), t
+    )
+    t = t.replace("`", "")
+    for rx in _MD_EMPHASIS_RES:
+        t = rx.sub(r"\1", t)
+    # Emphasis that never paired up (a truncated reply) is dangling markup.
+    t = re.sub(r"\*{2,}", "", t)
+    t = re.sub(r"(?<!\w)_{2,}(?!\w)", "", t)
+    t = re.sub(r"(?m)^[ \t]*\*+[ \t]*", "", t)
+    t = re.sub(r"(?m)[ \t]*\*+[ \t]*$", "", t)
+    t = re.sub(r"[ \t]{2,}", " ", t)
+    return t.strip()
 
 
 def _ff_source_sig(documents, source_text):

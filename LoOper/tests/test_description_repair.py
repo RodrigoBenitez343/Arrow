@@ -140,3 +140,23 @@ def test_parse_reply_multiline_and_quotes():
     assert fb == "repairtest.json"
     assert desc.startswith("Opens LinkedIn...")
     assert '"' not in desc
+
+
+def test_a_described_chain_keeps_its_derived_brief(tmp_path, monkeypatch):
+    """Flow metadata owns the routing line: the rating is recorded, not
+    rewritten into prose (player/chain_brief.py derives it on every save)."""
+    d = _chains_dir(tmp_path)
+    path = d / "repairtest.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["flow"] = {"summary": "Searches job boards for matching postings."}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setenv("LOOPER_DESC_FEEDBACK_LOG", str(tmp_path / "fb.jsonl"))
+    monkeypatch.setattr(dr, "_call_local_model",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("no rewrite for a derived line")))
+
+    ev = dr.repair_description(str(path), "repairtest", 2)
+
+    assert ev["updated"] is False
+    assert "derived" in ev["reason"], ev
+    assert json.loads(path.read_text(encoding="utf-8"))["description"] == OLD

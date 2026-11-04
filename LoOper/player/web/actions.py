@@ -41,13 +41,21 @@ except Exception:  # pragma: no cover - dependency guard
     _SELENIUM_AVAILABLE = False
 
 # Canonical recorded modifiers -> Selenium Keys for the native chord path.
-MOD_KEYS = {
-    "Ctrl": Keys.CONTROL,
-    "Control": Keys.CONTROL,  # browser e.key name for a lone Ctrl press
-    "Alt": Keys.ALT,
-    "Shift": Keys.SHIFT,
-    "Meta": Keys.META,
-}
+# Built ONLY when selenium imported: the guard above leaves Keys = None, and
+# an eager table turned a missing dependency into "'NoneType' object has no
+# attribute 'CONTROL'" at import time — which killed every web import long
+# before the driver factory could raise its own "pip install selenium" error
+# (2026-10-29 defect).  Native chords cannot run without selenium anyway, so
+# the empty table is the honest state.
+MOD_KEYS = {}
+if _SELENIUM_AVAILABLE:
+    MOD_KEYS = {
+        "Ctrl": Keys.CONTROL,
+        "Control": Keys.CONTROL,  # browser e.key name for a lone Ctrl press
+        "Alt": Keys.ALT,
+        "Shift": Keys.SHIFT,
+        "Meta": Keys.META,
+    }
 
 # Browser-chrome chords: these drive the browser UI (back/forward, refresh,
 # tabs, omnibox), which untrusted synthetic JS events can never trigger - so
@@ -469,6 +477,15 @@ function __wvpTopmost(el) {
     // A control styled with pointer-events:none is driven by its <label>.
     if ((top.tagName || '').toLowerCase() === 'label'
         && (top.control === el || (el.id && top.htmlFor === el.id))) return true;
+    // A control WRAPPED in its own <label> (the usual custom radio / checkbox:
+    // the visible box is a sibling <span> inside that label) is on top when
+    // the hit element lives inside that label.  Without this the native input
+    // was "covered" by its own decoration, so every Yes/No and multi-select
+    // question was missing from the form tree and could never be picked.
+    try {
+      var wrap = el.closest ? el.closest('label') : null;
+      if (wrap && owns(top, wrap)) return true;
+    } catch (e) {}
     return false;
   } catch (e) {
     return true;

@@ -1,8 +1,9 @@
 """devtools.py — deterministic dev tools for the Code Node Studio agent.
 
-Scope: the code node's ONE script (script.py).  No workspace browsing, no
-other code nodes — the agent operates on the isolated script stored in the
-node, exactly as the user request demands.
+Scope: the code node's PROJECT.  script.py is the entry script; the other
+files in its workspace are project modules/data, reachable through the
+optional ``file`` argument of search_code / read_code — the agent never
+browses outside the node folder.
 
 Two layers:
 
@@ -62,10 +63,10 @@ TOOL_SCHEMAS = [
     {
         'name': 'search_code',
         'description': (
-            'Search the code node\'s script.py for a pattern and return the '
-            'matching lines with line numbers. Use it to find where an '
-            'identifier, error name, assignment or import appears in the '
-            'code before editing.'),
+            'Search the code node\'s script.py (or one project file) for a '
+            'pattern and return the matching lines with line numbers. Use it '
+            'to find where an identifier, error name, assignment or import '
+            'appears before editing.'),
         'parameters': {
             'type': 'object',
             'properties': {
@@ -75,6 +76,11 @@ TOOL_SCHEMAS = [
                     'description': "the exact text to find, e.g. 'result', "
                                    "'NameError', 'def calculate'",
                 },
+                'file': {
+                    'type': 'string',
+                    'description': 'optional project file (relative path); '
+                                   'omit it to search script.py',
+                },
             },
             'required': ['pattern'],
         },
@@ -82,8 +88,19 @@ TOOL_SCHEMAS = [
     {
         'name': 'read_code',
         'description': (
-            'Return the full current script.py with line numbers.'),
-        'parameters': {'type': 'object', 'properties': {}, 'required': []},
+            'Return the full current script.py (or one project file) with '
+            'line numbers.'),
+        'parameters': {
+            'type': 'object',
+            'properties': {
+                'file': {
+                    'type': 'string',
+                    'description': 'optional project file (relative path); '
+                                   'omit it to read script.py',
+                },
+            },
+            'required': [],
+        },
     },
     {
         'name': 'run_node',
@@ -200,6 +217,24 @@ def _format_run_record(record):
     return '\n'.join(lines) if lines else '(no output)'
 
 
+def _read_project_file(ctx, rel):
+    """Read one project file from the node workspace ('' if unsafe/missing)."""
+    rel = str(rel or '').replace('\\', '/').strip()
+    ws = str(ctx.get('workspace') or '')
+    if not rel or not ws:
+        return ''
+    try:
+        from player.code_agent_ops.parsing import _safe_join
+        path = _safe_join(ws, rel)
+    except Exception:
+        return ''
+    try:
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except Exception:
+        return ''
+
+
 def execute_call(name, arguments, ctx):
     """Run ONE deterministic tool call against the live node script.
 
@@ -212,9 +247,17 @@ def execute_call(name, arguments, ctx):
     a deterministic error string."""
     try:
         args = arguments or {}
+        rel = str(args.get('file') or '').strip()
         if name == 'search_code':
-            return _run_search(ctx['code'], args.get('pattern') or '')
+            code = _read_project_file(ctx, rel) if rel else ctx['code']
+            if rel and not code:
+                return '(no such project file: %s)' % rel
+            return _run_search(code, args.get('pattern') or '')
         if name == 'read_code':
+            if rel:
+                body = _read_project_file(ctx, rel)
+                return _read_code_text(body) if body else (
+                    '(no such project file: %s)' % rel)
             return _read_code_text(ctx['code'])
         if name == 'run_node':
             code = ctx['code']

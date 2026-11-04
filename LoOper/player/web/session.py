@@ -31,6 +31,14 @@ import urllib.request
 from pathlib import Path
 from typing import Iterable, Optional
 
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import CHROME_EXE, CHROMEDRIVER_EXE, exe_name
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import CHROME_EXE, CHROMEDRIVER_EXE, exe_name
+
+# psutil reports the process image name: chrome.exe on Windows, chrome on Linux.
+CHROME_PROCESS = exe_name("chrome")
+
 
 try:
     import undetected_chromedriver as uc
@@ -101,6 +109,22 @@ _ACTIVE_PROFILE_DIRS: set = set()
 _WORKBENCH_DRIVERS: dict = {}
 _WORKBENCH_DRIVERS_LOCK = threading.Lock()
 
+# ONE launch at a time PER SCOPE.  The driver cache is checked and published
+# under the lock above, but the launch itself is only serialized per scope:
+# concurrent same-scope callers wait for the in-flight launch instead of
+# racing a second chrome onto the same profile (the 2026-10-27 builder-chat
+# defect: the act loop and the merged teach overlay's watcher hit this point
+# together at cold start and put TWO windows on the profile - one correct,
+# one an initialization artifact).  Other scopes stay parallel.
+_LAUNCH_LOCKS: dict = {}
+_LAUNCH_LOCKS_GUARD = threading.Lock()
+
+
+def _scope_launch_lock(key: str) -> "threading.Lock":
+    """The launch gate for one scope (created lazily, never removed)."""
+    with _LAUNCH_LOCKS_GUARD:
+        return _LAUNCH_LOCKS.setdefault(key, threading.Lock())
+
 # Loggers that emit per-HTTP-request traffic (selenium POST /session/...,
 # urllib3 connection churn, uc's debug chatter).  With LoOper's root logger at
 # DEBUG these flood the terminal while the recorder polls the browser every
@@ -162,7 +186,7 @@ def _cleanup_stale_looper_browsers(
         try:
             name = (proc.info.get("name") or "").lower()
             cmd = " ".join(proc.info.get("cmdline") or [])
-            if name == "chrome.exe" and _PROFILE_MARKER in cmd:
+            if name == CHROME_PROCESS and _PROFILE_MARKER in cmd:
                 if any(ex in os.path.normcase(cmd) for ex in excludes_norm):
                     continue  # this is one of our own browsers (fresh or detached)
                 logger.info("Killing stale LoOper web browser (pid=%s)", proc.info.get("pid"))
@@ -205,89 +229,39 @@ def _consolidate_windows(driver) -> None:
 
 
 def _enumerate_top_windows() -> list[dict]:
-    """Visible top-level windows on the desktop (Win32 only).
+    """Visible top-level windows on the desktop (platform gate).
 
     Returns ``[{"hwnd", "pid", "title", "rect": (l, t, r, b)}]`` ordered by
-    z-order (top-most first).  Empty list on non-Windows or when the Win32
-    API is unavailable.
+    z-order (top-most first).  Empty list when the gate cannot enumerate.
     """
-    if os.name != "nt":
-        return []
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import list_windows
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import list_windows
+
     try:
-        import ctypes
-        from ctypes import wintypes
-    except Exception:
+        return [{"hwnd": w["handle"], "pid": w.get("pid"),
+                 "title": w.get("title") or "", "rect": w.get("rect")}
+                for w in list_windows() if w.get("rect")]
+    except Exception as exc:
+        logger.debug("Window enumeration unavailable: %s", exc)
         return []
-    user32 = ctypes.windll.user32
-    results: list[dict] = []
-
-    def _callback(hwnd, _unused):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if not length:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        rect = wintypes.RECT()
-        user32.GetWindowRect(hwnd, ctypes.byref(rect))
-        results.append({
-            "hwnd": hwnd,
-            "pid": pid.value,
-            "title": buf.value,
-            "rect": (rect.left, rect.top, rect.right, rect.bottom),
-        })
-        return True
-
-    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    user32.EnumWindows(WNDENUMPROC(_callback), 0)
-    return results
 
 
 def _cursor_monitor_work_area() -> Optional[tuple[int, int, int, int]]:
     """Work area ``(left, top, width, height)`` of the monitor the cursor is on.
 
     A run is STARTED from the screen the user is looking at, so that is where
-    the browser is opened and maximised - rather than on whichever monitor
-    Windows cascades the new window to.  None when the Win32 API is
-    unavailable (non-Windows host).
+    the browser is opened and maximised.  On X11 the gate reports the root
+    window (single-screen model).  None when the gate cannot read it.
     """
-    if os.name != "nt":
-        return None
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except Exception:
-        return None
-    try:
-        user32 = ctypes.windll.user32
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import cursor_work_area
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import cursor_work_area
 
-        class MONITORINFO(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD),
-                ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT),
-                ("dwFlags", wintypes.DWORD),
-            ]
-
-        point = wintypes.POINT()
-        if not user32.GetCursorPos(ctypes.byref(point)):
-            return None
-        user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
-        user32.MonitorFromPoint.restype = ctypes.c_void_p
-        MONITOR_DEFAULTTONEAREST = 2
-        monitor = user32.MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST)
-        if not monitor:
-            return None
-        info = MONITORINFO()
-        info.cbSize = ctypes.sizeof(MONITORINFO)
-        if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-            return None
-        work = info.rcWork
-        return (work.left, work.top,
-                work.right - work.left, work.bottom - work.top)
+    try:
+        return cursor_work_area()
     except Exception:
         return None
 
@@ -344,8 +318,6 @@ def _prune_extra_browser_windows(driver, profile_dir: str) -> None:
     positively identified (a failed match leaves everything alone so the
     recording window can never be killed).
     """
-    if os.name != "nt":
-        return
     try:
         import psutil
     except Exception:
@@ -357,7 +329,7 @@ def _prune_extra_browser_windows(driver, profile_dir: str) -> None:
     chrome_pids: set[int] = set()
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
-            if (proc.info.get("name") or "").lower() == "chrome.exe":
+            if (proc.info.get("name") or "").lower() == CHROME_PROCESS:
                 cmd = " ".join(proc.info.get("cmdline") or [])
                 if profile_norm in os.path.normcase(cmd):
                     chrome_pids.add(proc.info["pid"])
@@ -432,7 +404,7 @@ def _bundled_chrome_dir() -> Optional[Path]:
         # relative to this module (LoOper/player/web/session.py).
         candidates = [Path(__file__).resolve().parents[2] / "AI" / "bin" / "chrome"]
     for cand in candidates:
-        if (cand / "chrome.exe").is_file():
+        if (cand / CHROME_EXE).is_file():
             return cand
     return None
 
@@ -446,6 +418,24 @@ def _version_main_from_exe(exe_path: Optional[str]) -> Optional[int]:
     """
     if not exe_path or not os.path.isfile(exe_path):
         return None
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import IS_WINDOWS
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import IS_WINDOWS
+
+    if not IS_WINDOWS:
+        # On X11 `chrome --version` is a normal short-lived process (no
+        # hand-off to a running browser), so read the banner directly.
+        try:
+            import re
+            import subprocess
+
+            out = subprocess.run([exe_path, "--version"], capture_output=True,
+                                 text=True, timeout=5).stdout or ""
+            match = re.search(r"(\d+)\.", out)
+            return int(match.group(1)) if match else None
+        except Exception:
+            return None
     try:
         import ctypes
         from ctypes import wintypes
@@ -496,7 +486,7 @@ def _detect_chrome_version_main() -> Optional[int]:
     # chromedriver matches it, so pin the pair and never consult the registry.
     bundled = _bundled_chrome_dir()
     if bundled is not None:
-        major = _version_main_from_exe(str(bundled / "chrome.exe"))
+        major = _version_main_from_exe(str(bundled / CHROME_EXE))
         if major:
             return major
 
@@ -586,10 +576,15 @@ def _uc_launch_and_wait(executable: str, *args: str) -> int:
             port = int(match.group(1))
             break
     creationflags = 0
+    detached = {}
     if os.name == "nt":
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP - no console window and
         # the browser survives the parent; uc's own dprocess uses the same.
         creationflags = 0x00000008 | 0x00000200
+    else:
+        # X11 twin: a new session detaches the browser from our process group,
+        # so it survives Arrow and takes no console signals.
+        detached["start_new_session"] = True
     last_exit = None
     for attempt in (1, 2):
         proc = subprocess.Popen(
@@ -599,6 +594,7 @@ def _uc_launch_and_wait(executable: str, *args: str) -> int:
             stderr=subprocess.DEVNULL,
             close_fds=os.name != "nt",
             creationflags=creationflags,
+            **detached,
         )
         if port is None:
             return proc.pid  # no port to wait for - plain detached start
@@ -734,7 +730,7 @@ def _find_workbench_browser(chain_key: Optional[str] = None) -> Optional[dict]:
     candidates: list[dict] = []
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
-            if (proc.info.get("name") or "").lower() != "chrome.exe":
+            if (proc.info.get("name") or "").lower() != CHROME_PROCESS:
                 continue
             cmd = " ".join(proc.info.get("cmdline") or [])
             if "--type=" in cmd:
@@ -828,16 +824,16 @@ def ensure_workbench_session(chain_key: Optional[str] = None) -> "uc.Chrome":
     wrapper is memoized per scope: the SAME chromedriver serves the whole run
     instead of a fresh one being spawned (and leaked) on every call.  A dead
     wrapper (browser closed, session gone) is dropped and rebuilt.
+
+    The cache itself is read and published under its own lock, but that lock
+    is NEVER held while launching: an attach can burn its full 30s timeout
+    and a relaunch can retry for another minute, and holding it froze every
+    other web caller.  Instead the launch is serialized PER SCOPE (see
+    ``_scope_launch_lock``): same-scope callers wait for the in-flight launch
+    and then reuse its driver — never a duplicate window on the shared
+    profile — while other scopes stay parallel.
     """
     key = chain_key or ""
-    # The cache is read and published under the lock, but the lock is NEVER
-    # held while launching: an attach can burn its full 30s timeout and a
-    # relaunch can retry for another minute, and every other web caller
-    # (conditionals, form filler, OCR/page-text, picker, recorder) would block
-    # behind the lock for that whole time — one bad browser state froze the
-    # whole app instead of failing once.  ponytail: unsynchronised launches can
-    # race into two drivers; the loser is dropped from the cache (worst case one
-    # extra chromedriver) which beats serialising every caller behind a hang.
     with _WORKBENCH_DRIVERS_LOCK:
         cached = _WORKBENCH_DRIVERS.get(key)
     if cached is not None and _driver_alive(cached):
@@ -846,10 +842,17 @@ def ensure_workbench_session(chain_key: Optional[str] = None) -> "uc.Chrome":
         with _WORKBENCH_DRIVERS_LOCK:
             if _WORKBENCH_DRIVERS.get(key) is cached:
                 _WORKBENCH_DRIVERS.pop(key, None)
-    driver = _launch_workbench_session(chain_key)
-    with _WORKBENCH_DRIVERS_LOCK:
-        _WORKBENCH_DRIVERS[key] = driver
-    return driver
+    with _scope_launch_lock(key):
+        # Re-check under the launch gate: a concurrent caller may have
+        # finished launching while we waited on it.
+        with _WORKBENCH_DRIVERS_LOCK:
+            cached = _WORKBENCH_DRIVERS.get(key)
+        if cached is not None and _driver_alive(cached):
+            return cached
+        driver = _launch_workbench_session(chain_key)
+        with _WORKBENCH_DRIVERS_LOCK:
+            _WORKBENCH_DRIVERS[key] = driver
+        return driver
 
 
 def existing_workbench_driver(chain_key: Optional[str] = None):
@@ -1097,8 +1100,8 @@ def create_session(
     if bundled is not None:
         # Ship the browser+driver pair next to the app: deterministic and
         # offline-capable web nodes (no dependence on an installed Chrome).
-        bundled_exe = bundled / "chrome.exe"
-        bundled_driver = bundled / "chromedriver.exe"
+        bundled_exe = bundled / CHROME_EXE
+        bundled_driver = bundled / CHROMEDRIVER_EXE
         if bundled_exe.is_file():
             kwargs["browser_executable_path"] = str(bundled_exe)
             options.binary_location = str(bundled_exe)

@@ -130,40 +130,35 @@ class AgentExportDialog(ModernDialog):
     # ── System chain detection ──────────────────────────────────────
 
     def _detect_system_chain(self):
-        """Find the system chain (collection='System') in the chains directory."""
-        try:
-            from ..i18n import _
-            from ..constants import ACCENT_COLOR
+        """Find the agent to export: the active workspace's pinned brain.
 
-            # Find chains directory
+        Workspaces replaced the ``collection='System'`` tag (player/
+        workspace.py).  An agent that COMPOSES its chains has no single file
+        to package, so it is reported as not exportable instead of shipping a
+        random chain as the brain.
+        """
+        try:
+            from player import workspace as ws
+
             project_root = os.path.abspath(
                 os.path.join(os.path.dirname(__file__), "..", "..")
             )
             chains_dir = os.path.join(project_root, "chains")
-            if not os.path.isdir(chains_dir):
-                # Try from project root
-                chains_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                    "chains",
-                )
-
-            if os.path.isdir(chains_dir):
-                for fname in os.listdir(chains_dir):
-                    if not fname.endswith(".json"):
-                        continue
-                    fpath = os.path.join(chains_dir, fname)
-                    try:
-                        import json
-
-                        with open(fpath, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                        if (data.get("collection") or "").lower() == "system":
-                            self._system_chain_path = fpath
-                            break
-                    except Exception:
-                        continue
+            workspaces_root = ws.root_for_chains(chains_dir)
+            slug = ws.active_slug(workspaces_root)
+            if not slug:
+                return
+            manifest = ws.load(workspaces_root, slug)
+            brain = str((manifest.get("agent") or {}).get("legacy_brain")
+                        or "").strip()
+            if brain and os.path.isfile(brain):
+                self._system_chain_path = brain
+            else:
+                logger.info(
+                    "Agent export: workspace %r composes its chains, so there "
+                    "is no single brain to package", slug)
         except Exception as e:
-            logger.warning("Failed to detect system chain: %s", e)
+            logger.warning("Failed to detect the agent's brain chain: %s", e)
 
     # ── UI Build ────────────────────────────────────────────────────
 
@@ -204,7 +199,8 @@ class AgentExportDialog(ModernDialog):
             info_layout.addWidget(
                 self._make_info_row(
                     _("System Chain:"),
-                    _("Not detected — create a chain with collection='System'"),
+                    _("Not detected — pin a brain chain in this workspace's "
+                      "agent (a composed agent has no single file to export)"),
                 )
             )
 
@@ -510,7 +506,9 @@ class AgentExportDialog(ModernDialog):
 
         if not self._system_chain_path or not os.path.exists(self._system_chain_path):
             self._log_output.append(
-                _("ERROR: System chain not found. Create a chain with collection='System'.")
+                _("ERROR: no brain chain to export. Pin a chain as this "
+                    "workspace agent's brain first (a composed agent has no single "
+                    "file to package).")
             )
             return
 

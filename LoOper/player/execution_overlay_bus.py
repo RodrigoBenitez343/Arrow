@@ -10,6 +10,7 @@ Pure data, no Qt import: ``player`` must stay importable without the GUI.
 """
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from collections import deque
@@ -36,6 +37,64 @@ class _ExecutionBus:
         # they run even when capture_hook is None (a notch-only run creates no
         # execution overlay).
         self.extra_capture_hooks = []
+        # The APP's own windows (main window, standalone chat overlay) must leave
+        # the screen for a screen ACCESS - not only for a capture: a desktop
+        # click or keystroke must not land on our window either, and a template
+        # match must not read it.  Refcounted, because nested chains and the
+        # per-capture poke share one hide/restore pair; the GUI side applies the
+        # linger so back-to-back actions do not flicker.
+        self.screen_hide_hook = None
+        self.screen_show_hook = None
+        self._screen_depth = 0
+        self._screen_lock = threading.Lock()
+
+    def set_screen_hooks(self, hide=None, show=None) -> None:
+        """Register the app-window hide/restore pair for screen access."""
+        self.screen_hide_hook = hide
+        self.screen_show_hook = show
+
+    @property
+    def screen_busy(self) -> bool:
+        """True while the runtime owns the screen (acting, not thinking)."""
+        with self._screen_lock:
+            return self._screen_depth > 0
+
+    def _begin_screen_access(self) -> None:
+        with self._screen_lock:
+            self._screen_depth += 1
+            first = self._screen_depth == 1
+        if first and self.screen_hide_hook is not None:
+            try:
+                self.screen_hide_hook()
+            except Exception:
+                pass
+
+    def _end_screen_access(self) -> None:
+        with self._screen_lock:
+            self._screen_depth = max(0, self._screen_depth - 1)
+            last = self._screen_depth == 0
+        if last and self.screen_show_hook is not None:
+            try:
+                self.screen_show_hook()
+            except Exception:
+                pass
+
+    @contextlib.contextmanager
+    def screen_access(self):
+        """Keep this app off the screen while the runtime touches the desktop.
+
+        Wrap a desktop/visual node (sequence, handle, form fill, visual
+        conditional) in this: the window is gone for the whole node, so long
+        actions never click through it, and it comes back - showing progress -
+        for every node that only thinks (LLM, orchestrator, code, web, ...).
+        Nested use (a chain inside a chain, a capture inside a sequence) shares
+        one hide/restore pair.
+        """
+        self._begin_screen_access()
+        try:
+            yield
+        finally:
+            self._end_screen_access()
 
     def set_action(self, text: str) -> None:
         """Name the action about to run (e.g. ``"3: click"``)."""
@@ -79,23 +138,29 @@ class _ExecutionBus:
             self._clicks.clear()
 
     def hide_overlay_for_capture(self) -> None:
-        """Take the cosmetic overlay off the screen for a screen read.
+        """Take this app off the screen for a screen read.
 
         Called from the replay thread right before the screen is captured for
-        template matching / OCR.  The hook marshals to the GUI thread and blocks
-        until the window is hidden, so the capture can never contain it.
+        template matching / OCR.  The hooks marshal to the GUI thread and block
+        until the window is hidden, so the capture can never contain it.  The
+        app window is restored by the GUI side after a short linger (so a burst
+        of reads stays hidden as one block).
         """
-        hook = self.capture_hook
-        if hook is not None:
-            try:
-                hook()
-            except Exception:
-                pass
-        for extra in list(self.extra_capture_hooks):
-            try:
-                extra()
-            except Exception:
-                pass
+        self._begin_screen_access()
+        try:
+            hook = self.capture_hook
+            if hook is not None:
+                try:
+                    hook()
+                except Exception:
+                    pass
+            for extra in list(self.extra_capture_hooks):
+                try:
+                    extra()
+                except Exception:
+                    pass
+        finally:
+            self._end_screen_access()
 
 
 bus = _ExecutionBus()

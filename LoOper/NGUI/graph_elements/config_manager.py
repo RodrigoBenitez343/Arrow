@@ -2,7 +2,9 @@ import json
 import logging
 import os
 
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt5.QtWidgets import QMessageBox
+
+from player import chain_brief
 
 from ..nodes import (
     ActionNode,
@@ -69,8 +71,20 @@ class ConfigManager:
                 "web_sequences": [],
             }
             self._current_chain_description = ""
-            self._current_chain_collection = ""
+            # The workspace this chain belongs to (player/workspace.py).  A
+            # chain OPENED from workspace A keeps A even when the canvas is
+            # later scoped to B: saving must never re-home it silently.
+            self._current_chain_workspace = ""
             self._current_chain_file = ""
+            # The chain's permanent flow metadata (summary / sections / steps;
+            # player/builder/flow.py).  It rides through the editor's load-save
+            # cycles, so a chain keeps describing itself after the session that
+            # wrote it.
+            self._current_chain_flow = {}
+            # Serialised node id -> the live node the loader created for it.
+            # NodeGraphQt mints fresh ids on every build, so this is the only
+            # bridge between a chain file's ids and this session's nodes.
+            self._node_id_map = {}
             # Accumulated routing examples (written by the player's orchestrator:
             # the verified steps each chain served).  Held with the chain through
             # editor load/save so the reinforcement is not silently erased.
@@ -155,9 +169,26 @@ class ConfigManager:
                 "mcp_nodes": [],
                 "output_nodes": [],
                 "web_sequences": [],
-                "collection": getattr(self, "_current_chain_collection", ""),
-                "description": getattr(self, "_current_chain_description", ""),
+                "workspace": self._active_workspace(),
+                "description": "",
             }
+            # The Builder's flow metadata is part of the chain: keep it, so a
+            # plain chain save does not erase the chain's own description.
+            # It is stored in the CHAIN's id space (set_flow translated it) and
+            # pruned of refs this chain does not have — one id space per file,
+            # the same one the node entries below serialise (``node_id``).
+            _flow = self._prune_flow(
+                dict(getattr(self, "_current_chain_flow", {}) or {}))
+            if _flow:
+                self._current_chain_flow = _flow
+                self.chain_config["flow"] = _flow
+            # The routing line is DERIVED, never typed: the chain's own flow
+            # metadata plus its input/output nodes produce it
+            # (player/chain_brief.py).  Manual description writing is retired,
+            # so a saved chain always describes what it actually contains.
+            self.chain_config["description"] = chain_brief.brief(
+                self.chain_config)
+            self._current_chain_description = self.chain_config["description"]
             # The orchestrator writes routing.examples into the chain file;
             # dropping them here would erase the accumulated reinforcement on the
             # next GUI save, so they ride through the editor untouched.
@@ -217,7 +248,11 @@ class ConfigManager:
                 else:
                     logger.warning(f"Unknown node type: {type(node).__name__}")
 
-                logger.info(
+            # One pass, every type: the Builder's per-node sentence is node
+            # metadata, not a field of one saver (see _attach_descriptions).
+            self._attach_descriptions(all_nodes)
+
+            logger.info(
                 f"Successfully saved current state: {len(self.chain_config['sequences'])} sequences, {len(self.chain_config['conditional_nodes'])} conditional nodes, {len(self.chain_config['llm_nodes'])} LLM nodes, {len(self.chain_config['chain_import_nodes'])} chain import nodes, {len(self.chain_config['form_filler_nodes'])} form filler nodes, {len(self.chain_config['code_nodes'])} code nodes, {len(self.chain_config.get('container_nodes', []))} container nodes, {len(self.chain_config.get('context_nodes', []))} context nodes, {len(self.chain_config.get('input_nodes', []))} input nodes, {len(self.chain_config.get('handle_nodes', []))} handle nodes, {len(self.chain_config.get('mcp_nodes', []))} mcp nodes, {len(self.chain_config.get('output_nodes', []))} output nodes"
             )
 
@@ -286,6 +321,146 @@ class ConfigManager:
             # Restore original config
             self.chain_config = backup_config
 
+    def _workspace_of(self, chain_path):
+        """The workspace whose chains folder holds *chain_path* ('' when none)."""
+        try:
+            from player import workspace as wsmod
+            root = getattr(self.parent_widget, 'workspaces_root', '')
+            return wsmod.workspace_of(root, chain_path) if root else ''
+        except Exception:
+            logger.debug('workspace of %r not resolvable', chain_path,
+                         exc_info=True)
+            return ''
+
+    def _active_workspace(self):
+        """The workspace this chain is saved into.
+
+        A chain that came from a file keeps its own workspace; a brand new one
+        belongs to whatever workspace the canvas is scoped to.
+        """
+        stored = str(getattr(self, "_current_chain_workspace", "") or "")
+        if stored:
+            return stored
+        getter = getattr(self.parent_widget, "workspace_slug", None)
+        return str(getter() or "") if callable(getter) else ""
+
+    def get_flow(self):
+        """The chain's own flow metadata, with refs resolved to LIVE node ids.
+
+        The stored metadata names the ids a chain FILE holds; a loaded chain
+        has different ones, and ``_node_id_map`` (kept by the loader) maps the
+        file's ids onto this session's nodes.
+        """
+        return self._to_live(
+            dict(getattr(self, "_current_chain_flow", {}) or {}))
+
+    def _to_live(self, flow):
+        """A flow object's refs, the chain's own ids -> LIVE canvas ids."""
+        flow = dict(flow or {})
+        mapping = dict(getattr(self, "_node_id_map", {}) or {})
+        if not flow or not mapping:
+            return flow
+
+        def _live(ref):
+            node = mapping.get(str(ref))
+            return str(getattr(node, "id", "") or ref)
+
+        out = dict(flow)
+        out["sections"] = [dict(section, nodes=[_live(ref) for ref in
+                                               section.get("nodes") or []])
+                           for section in flow.get("sections") or []]
+        out["steps"] = [dict(step, node=_live(step.get("node")))
+                        for step in flow.get("steps") or []]
+        # The per-node descriptions name nodes too: leaving them on the FILE's
+        # ids made a reopened chain's own metadata unresolvable.
+        out["nodes"] = [dict(entry, node=_live(entry.get("node")))
+                        for entry in flow.get("nodes") or []]
+        return out
+
+    def _live_to_chain_ids(self):
+        """``{live id: the id this chain's next save writes}``.
+
+        The savers write ``node.id`` (container/context keep the id they were
+        loaded with in ``_config_node_id``), so the chain's id space is read
+        from the NODES, never from ``_node_id_map``: that map's keys are the
+        ids of a previous save and drift on every load, which is how a file
+        ended up with its sections in one id space and its nodes in another.
+        """
+        inverse = {}
+        try:
+            nodes = self.parent_widget.graph_manager.get_all_nodes() or []
+        except Exception:
+            nodes = []
+        for node in nodes:
+            live = str(getattr(node, "id", "") or "")
+            if not live or live in inverse:
+                continue
+            # A node this file never carried: its entry is saved under the same
+            # key the per-type savers write.
+            inverse[live] = str(
+                self._node_property(node, "_config_node_id") or live)
+        return inverse
+
+    def _to_chain_ids(self, flow):
+        """A flow object's refs, LIVE ids -> the chain's own ids."""
+        flow = dict(flow or {})
+        inverse = self._live_to_chain_ids()
+        if not flow or not inverse:
+            return flow
+
+        def _ref(ref):
+            return inverse.get(str(ref), str(ref))
+
+        flow["sections"] = [
+            dict(section, nodes=[_ref(r) for r in section.get("nodes") or []])
+            for section in flow.get("sections") or []]
+        flow["steps"] = [dict(step, node=_ref(step.get("node")))
+                         for step in flow.get("steps") or []]
+        flow["nodes"] = [dict(entry, node=_ref(entry.get("node")))
+                         for entry in flow.get("nodes") or []]
+        return flow
+
+    def _prune_flow(self, flow):
+        """Drop refs naming nodes this chain does not contain.
+
+        A description written by an older build carries live ids the file never
+        had; kept, they make every box undrawable on the next open.
+        """
+        flow = self._to_live(dict(flow or {}))
+        inverse = self._live_to_chain_ids()
+        if not flow or not inverse:
+            return flow
+
+        def _alive(ref):
+            # Only a ref that still names a node on this canvas survives, and
+            # it leaves in the id space this save writes.
+            return inverse.get(str(ref))
+
+        sections = []
+        for section in flow.get("sections") or []:
+            ids = [nid for nid in (_alive(r) for r in section.get("nodes") or [])
+                   if nid]
+            if ids:
+                sections.append(dict(section, nodes=ids))
+        flow["sections"] = sections
+        flow["steps"] = [dict(step, node=_alive(step.get("node")))
+                         for step in flow.get("steps") or []
+                         if _alive(step.get("node"))]
+        flow["nodes"] = [dict(entry, node=_alive(entry.get("node")))
+                         for entry in flow.get("nodes") or []
+                         if _alive(entry.get("node"))]
+        return flow
+
+    def set_flow(self, metadata):
+        """Hold the chain's flow metadata in the CHAIN's own id space.
+
+        The Builder works with LIVE canvas ids, the file names its own; storing
+        the live ones made a reopened chain's sections name ids that no longer
+        exist (``no node matches '0x…'``), so they are translated here, beside
+        the loader's file->live map (``get_flow`` translates back).
+        """
+        self._current_chain_flow = self._to_chain_ids(metadata)
+
     def load_chain(self, file_path=None):
         """Load a chain configuration from file."""
         logger.info(
@@ -293,13 +468,10 @@ class ConfigManager:
         )
         try:
             if not file_path:
-                logger.debug("No file path provided, opening file dialog")
-                file_path, selected_filter = QFileDialog.getOpenFileName(
-                    self.parent_widget,
-                    "Load Chain",
-                    self.parent_widget.chains_folder,
-                    "JSON files (*.json)",
-                )
+                logger.debug("No file path provided, opening the chain picker")
+                from ..dialogs.chain_files_dialog import ask_open_chain
+                file_path = ask_open_chain(
+                    self.parent_widget, self.parent_widget)
                 logger.debug(f"User selected file: {file_path}")
 
             if file_path and os.path.exists(file_path):
@@ -316,7 +488,11 @@ class ConfigManager:
                 self._migrate_orchestrator_nodes(loaded_config)
 
                 self._current_chain_description = loaded_config.get("description", "")
-                self._current_chain_collection = loaded_config.get("collection", "")
+                # A chain lives in a workspace; ``collection`` is the retired
+                # tag this file may still carry from an older build.
+                self._current_chain_workspace = str(
+                    loaded_config.get("workspace") or "")
+                self._current_chain_flow = loaded_config.get("flow") or {}
                 self._current_chain_routing = loaded_config.get("routing") or {}
                 self._current_chain_is_default = bool(loaded_config.get("is_default"))
                 self._current_chain_file = file_path
@@ -346,6 +522,8 @@ class ConfigManager:
                 }
                 if self._current_chain_routing:
                     self.chain_config["routing"] = self._current_chain_routing
+                if self._current_chain_flow:
+                    self.chain_config["flow"] = self._current_chain_flow
                 if self._current_chain_is_default:
                     self.chain_config["is_default"] = True
 
@@ -381,14 +559,10 @@ class ConfigManager:
             self.save_current_state()
 
             if not file_path:
-                logger.debug("No file path provided, opening save dialog")
-                file_path, _ = QFileDialog.getSaveFileName(
-                    self.parent_widget,
-                    "Save Chain",
-                    self.parent_widget.chains_folder,
-                    "JSON files (*.json)",
-                )
-                logger.debug(f"User selected save path: {file_path}")
+                logger.debug("No file path provided, opening the chain picker")
+                from ..dialogs.chain_files_dialog import ask_save_chain
+                file_path = ask_save_chain(self.parent_widget,
+                                           self.parent_widget)
 
             if file_path:
                 # Record the shared web browser scope in the file for
@@ -404,11 +578,20 @@ class ConfigManager:
 
                 # The chain now has a real identity: remember it.
                 self._current_chain_file = file_path
+                # The file's own folder decides the workspace it belongs to:
+                # the tag written beside the nodes must match where they live.
+                self._current_chain_workspace = self._workspace_of(file_path)
                 logger.debug("Chain web scope kept on save: %s", self._chain_scope_key)
 
                 # Clear entire cache to ensure all chains are updated immediately
                 logger.debug("Clearing entire cache to ensure all chains are updated")
                 clear_cache()
+
+                # The chain has a NAME now, so it is described HERE: the next
+                # run routes on its own lines instead of discovering it cold.
+                # (No model: describe_file derives from the file itself.)
+                from player import chain_refresh
+                chain_refresh.describe_file(file_path)
 
                 logger.info(f"Successfully saved chain to: {file_path}")
                 return True
@@ -423,10 +606,17 @@ class ConfigManager:
 
         return False
 
-    def build_graph_from_config(self):
-        """Build the node graph from the current configuration."""
+    def build_graph_from_config(self, config=None):
+        """Build the node graph from a chain configuration.
+
+        ``config`` defaults to the manager's own ``chain_config``; passing one
+        (session resume) builds that chain without a second assignment at every
+        call site.
+        """
         logger.info("Building node graph from configuration")
         try:
+            if config is not None:
+                self.chain_config = dict(config)
             # Ensure the graph and view are properly initialized before building
             if (
                 not hasattr(self.parent_widget, "node_graph")
@@ -484,6 +674,8 @@ class ConfigManager:
 
             # Store node references for connections
             node_map = {}
+            # The previous chain's ids mean nothing on this canvas.
+            self._node_id_map = {}
             logger.debug("Created node map for connection restoration")
 
             # Create sequence nodes
@@ -538,9 +730,21 @@ class ConfigManager:
             logger.debug("Creating Output nodes")
             self._create_output_nodes(node_map)
 
+            # ...and their descriptions, for every type at once.
+            self._restore_descriptions(node_map)
+
             # Restore connections
             logger.debug("Restoring node connections")
             self._restore_connections(node_map)
+            # Keep the serialised-id -> live-node bridge: the chain's own flow
+            # metadata names the ids its file holds, and this is how they are
+            # resolved onto the nodes built right now (see get_flow).
+            self._node_id_map = dict(node_map)
+
+            # Type-based pipe colors (exec green / loopback red / context blue /
+            # conditional dashed / orchestrator orange) once the full graph exists
+            from .pipe_styling import restyle_pipes
+            restyle_pipes(self.parent_widget.node_graph)
 
             # Refresh current view
             if hasattr(self.parent_widget, "view_manager"):
@@ -1029,11 +1233,18 @@ class ConfigManager:
                 "instruction": config.get("instruction", ""),
                 "fields_include": config.get("fields_include", ""),
                 "fields_skip": config.get("fields_skip", ""),
-                "probe_top_k": config.get("probe_top_k", 3),
-                "probe_char_budget": config.get("probe_char_budget", 1500),
-                "probe_context_chars": config.get("probe_context_chars", 6000),
-                "consolidate": bool(config.get("consolidate", True)),
-                "probe_cycles": config.get("probe_cycles", 3),
+                "crag_enabled": bool(config.get("crag_enabled", True)),
+                "crag_evaluator": config.get("crag_evaluator", "auto"),
+                "crag_upper_threshold": config.get("crag_upper_threshold", 0.60),
+                "crag_lower_threshold": config.get("crag_lower_threshold", 0.40),
+                "crag_decompose_mode": config.get("crag_decompose_mode", "excerption"),
+                "crag_top_k": config.get("crag_top_k", 6),
+                "crag_max_strips": config.get("crag_max_strips", 12),
+                "crag_top_n_internal": config.get("crag_top_n_internal", 6),
+                "crag_top_n_external": config.get("crag_top_n_external", 5),
+                "crag_external": bool(config.get("crag_external", True)),
+                "crag_rewrite": bool(config.get("crag_rewrite", True)),
+                "crag_char_budget": config.get("crag_char_budget", 4000),
                 "verify": bool(config.get("verify", True)),
                 "repair": bool(config.get("repair", True)),
                 "repair_attempts": config.get("repair_attempts", 2),
@@ -1077,6 +1288,7 @@ class ConfigManager:
                 "description": config.get("description", ""),
                 "input_vars": config.get("input_vars", []),
                 "output_vars": config.get("output_vars", []),
+                "project_files": config.get("project_files", {}),
                 "node_id": node.id,
                 "position": node.pos(),
                 "connections": self._get_node_connections(node),
@@ -1334,6 +1546,68 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"Error saving Output node {node.id}: {e}")
             raise
+
+    #: Every per-type list a saved node entry can live in.
+    _SAVED_NODE_LISTS = (
+        "sequences", "web_sequences", "conditional_nodes", "llm_nodes",
+        "chain_import_nodes", "form_filler_nodes", "code_nodes",
+        "container_nodes", "context_nodes", "input_nodes", "handle_nodes",
+        "mcp_nodes", "output_nodes",
+    )
+
+    @staticmethod
+    def _node_entry_id(entry):
+        """The id a saved node entry was stored under."""
+        return str(entry.get("node_id") or entry.get("id") or "")
+
+    @staticmethod
+    def _node_property(node, name):
+        """One property, flat or nested under NodeGraphQt's ``custom`` bag."""
+        props = node.properties() or {}
+        if props.get(name) not in (None, ""):
+            return props.get(name)
+        custom = props.get("custom")
+        if isinstance(custom, dict):
+            return custom.get(name)
+        return None
+
+    def _attach_descriptions(self, nodes):
+        """Copy every node's ``description`` property onto its saved entry.
+
+        The description is node METADATA: the Builder writes it on the canvas
+        and the node dialog edits it.  Riding through one pass (instead of a
+        line in thirteen savers) is also what makes a node type added later
+        round-trip it without anyone remembering to wire it.
+        """
+        by_id = {}
+        for node in nodes or ():
+            text = str(self._node_property(node, "description") or "")
+            by_id[str(getattr(node, "id", ""))] = text
+            config_id = str(self._node_property(node, "_config_node_id") or "")
+            if config_id:
+                by_id[config_id] = text
+        for key in self._SAVED_NODE_LISTS:
+            for entry in self.chain_config.get(key) or []:
+                if isinstance(entry, dict):
+                    entry["description"] = by_id.get(
+                        self._node_entry_id(entry), "")
+
+    def _restore_descriptions(self, node_map):
+        """Put each saved entry's description back on its live node."""
+        for key in self._SAVED_NODE_LISTS:
+            for entry in self.chain_config.get(key) or []:
+                if not isinstance(entry, dict):
+                    continue
+                node = node_map.get(self._node_entry_id(entry))
+                if node is None:
+                    continue
+                try:
+                    node.set_property(
+                        "description", str(entry.get("description") or ""))
+                except Exception:
+                    logger.warning(
+                        "node %s (%s) cannot carry a description",
+                        entry.get("node_id"), type(node).__name__)
 
     def _create_output_nodes(self, node_map):
         """Create Output nodes from configuration."""
@@ -2143,11 +2417,18 @@ class ConfigManager:
                     node.set_property("instruction", ff_data.get("instruction", ""))
                     node.set_property("fields_include", ff_data.get("fields_include", ""))
                     node.set_property("fields_skip", ff_data.get("fields_skip", ""))
-                    node.set_property("probe_top_k", str(ff_data.get("probe_top_k", 3)))
-                    node.set_property("probe_char_budget", str(ff_data.get("probe_char_budget", 1500)))
-                    node.set_property("probe_context_chars", str(ff_data.get("probe_context_chars", 6000)))
-                    node.set_property("consolidate", "true" if ff_data.get("consolidate", True) else "false")
-                    node.set_property("probe_cycles", str(ff_data.get("probe_cycles", 3)))
+                    node.set_property("crag_enabled", "true" if ff_data.get("crag_enabled", True) else "false")
+                    node.set_property("crag_evaluator", ff_data.get("crag_evaluator", "auto"))
+                    node.set_property("crag_upper_threshold", str(ff_data.get("crag_upper_threshold", 0.60)))
+                    node.set_property("crag_lower_threshold", str(ff_data.get("crag_lower_threshold", 0.40)))
+                    node.set_property("crag_decompose_mode", ff_data.get("crag_decompose_mode", "excerption"))
+                    node.set_property("crag_top_k", str(ff_data.get("crag_top_k", 6)))
+                    node.set_property("crag_max_strips", str(ff_data.get("crag_max_strips", 12)))
+                    node.set_property("crag_top_n_internal", str(ff_data.get("crag_top_n_internal", 6)))
+                    node.set_property("crag_top_n_external", str(ff_data.get("crag_top_n_external", 5)))
+                    node.set_property("crag_external", "true" if ff_data.get("crag_external", True) else "false")
+                    node.set_property("crag_rewrite", "true" if ff_data.get("crag_rewrite", True) else "false")
+                    node.set_property("crag_char_budget", str(ff_data.get("crag_char_budget", 4000)))
                     node.set_property("verify", "true" if ff_data.get("verify", True) else "false")
                     node.set_property("repair", "true" if ff_data.get("repair", True) else "false")
                     node.set_property("repair_attempts", str(ff_data.get("repair_attempts", 2)))
@@ -2211,6 +2492,7 @@ class ConfigManager:
                     # Custom IO ports
                     node.set_property("input_vars", json.dumps(code_data.get("input_vars", [])))
                     node.set_property("output_vars", json.dumps(code_data.get("output_vars", [])))
+                    node.set_property("project_files", json.dumps(code_data.get("project_files", {})))
                     try:
                         node.rebuild_ports()
                     except Exception:

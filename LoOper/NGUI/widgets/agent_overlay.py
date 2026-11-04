@@ -6,9 +6,9 @@ agent dispatch — same backend as the full-screen agent mode.
 """
 
 import base64
-import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -23,13 +23,15 @@ from PyQt5.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QThread,
     QTimer,
     pyqtSignal,
     pyqtSlot,
 )
-from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap, QTextDocument
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -53,8 +55,10 @@ from ..constants import (
 from ..i18n import _
 from ..icons import tabler_qicon
 from .agent_web_server import AgentWebServer, start_sidecar
+from .chain_avatar import chain_avatar_qicon
 from .hover_button import HoverGlowButton
 from .memory_graph_panel import MemoryGraphPanel
+from .mitosis_loader import MitosisLoader
 from .scheduler_panel import SchedulerPanel
 from . import ui_motion
 
@@ -67,6 +71,8 @@ logger = logging.getLogger(__name__)
 
 # ── constants ──────────────────────────────────────────────────────────
 OVERLAY_WIDTH = 500          # wide horizontal for compact look
+BUBBLE_MAX_PX = 560          # readable measure: a wider bubble only lengthens lines
+BUBBLE_LABEL_INSET = 6       # QLabel's text area is a couple px narrower than the widget
 EXPANDED_WIDTH = 620         # expanded: coworker sidebar + chat side by side
 SIDEBAR_WIDTH = 152          # left rail listing the System chains (coworkers)
 OVERLAY_HEIGHT = 480
@@ -86,24 +92,9 @@ USER_BUBBLE_BORDER = "rgba(34, 211, 238, 0.28)"
 AGENT_BUBBLE_BG = "rgba(255, 255, 255, 0.05)"
 AGENT_BUBBLE_BORDER = "rgba(255, 255, 255, 0.07)"
 
-# Vector avatars each System chain gets, so coworkers read as people rather
-# than as a bare chain name. Picked deterministically (stable per chain).
+# Procedural vector avatars each System chain gets, so coworkers read as unique
+# people rather than as a bare chain name (see chain_avatar.py).
 _AVATAR_PX = 18
-_COWORKER_AVATARS = (
-    "ROBOT", "USER_CIRCLE", "STAR", "ROCKET", "BOLT", "BULB", "WAND", "PUZZLE",
-    "GHOST", "PLANET", "CAMERA", "CHART_BAR", "SHIELD", "COIN", "CLOUD", "MUG",
-    "LEAF", "CROWN", "SPARKLES", "BRAIN", "HEART", "CAT", "FLAME", "MOON",
-    "SUN", "TREE", "DIAMOND", "BATTERY",
-)
-
-
-def _avatar_name(seed: str) -> str:
-    """Stable pseudo-random avatar for a coworker (same chain -> same icon)."""
-    try:
-        idx = int(hashlib.md5(str(seed).encode("utf-8")).hexdigest(), 16)
-    except Exception:
-        idx = sum(ord(ch) for ch in str(seed))
-    return _COWORKER_AVATARS[idx % len(_COWORKER_AVATARS)]
 
 # ── Persistent agent-mode remote key (Pear pubkey) ──────────────────────
 _AGENT_IP_KEY = "AGENT_PEAR_PUBKEY"
@@ -356,6 +347,9 @@ class AgentOverlay(QFrame):
     closed = pyqtSignal()
     collapsed = pyqtSignal()
     execution_state_changed = pyqtSignal(bool)  # True=executing, False=done
+    # Emitted (and blocked on) from the runtime thread so a standalone agent is
+    # really off screen before a capture/click - same contract as AgentNotch.
+    _screenHideRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -390,7 +384,7 @@ class AgentOverlay(QFrame):
         self._request_stop = None
         self._request_seq = 0
         self._stop_requested = False
-        self._thinking_label = None
+        self._thinking_loader = None
         self._placeholder = None
         # One reusable QWebEngineView for HTML artifacts.  Creating a renderer
         # per artifact kept ~150 MB alive forever and OOM'd the app across
@@ -443,9 +437,11 @@ class AgentOverlay(QFrame):
         self._embedded = False
 
         # ── Automation hide state ──
-        self._was_visible_for_automation = False
-        self._window_minimize_cb = None
-        self._window_restore_cb = None
+        self._hidden_by_runtime = False
+        # hide_for_screen_access() runs on the runtime thread; block until the
+        # hide has landed so a capture can never contain this panel.
+        self._screenHideRequested.connect(
+            self._screen_hide_now, Qt.BlockingQueuedConnection)
 
         # ── Per-output rating state ──
         self._pending_output_ratings = {}  # seq → {tool_chain_path, tool_alias, content}
@@ -512,10 +508,11 @@ class AgentOverlay(QFrame):
     # ── Coworkers (System chains) ────────────────────────────────────
 
     def _refresh_coworkers(self):
-        """Repopulate the sidebar from the System chains on disk.
+        """Repopulate the sidebar from the workspace AGENTS on disk.
 
-        Also resolves a default selection (the first System chain) so a
-        message always has a chain to run even before the user clicks one.
+        A workspace IS an agent (``player/workspace.py``: one agent plus its
+        own chains folder), so this lists workspaces, not System chains, and
+        resolves a default selection so a message is runnable before any click.
         """
         try:
             ctrl = self._chat_controller
@@ -534,7 +531,7 @@ class AgentOverlay(QFrame):
             listw.blockSignals(True)
             listw.clear()
             if not chains:
-                empty = QListWidgetItem(_("No System chains"))
+                empty = QListWidgetItem(_("No agents"))
                 empty.setFlags(Qt.NoItemFlags)
                 listw.addItem(empty)
             for c in chains:
@@ -542,10 +539,9 @@ class AgentOverlay(QFrame):
                 item.setData(Qt.UserRole, c["path"])
                 item.setData(Qt.UserRole + 1, c["id"])
                 item.setToolTip(c["description"] or c["name"])
-                # A stable vector avatar so coworkers read as people.
+                # A stable procedural avatar so coworkers read as unique people.
                 try:
-                    _ico = tabler_qicon(_avatar_name(c["id"] or c["path"]),
-                                        _AVATAR_PX, ACCENT_COLOR)
+                    _ico = chain_avatar_qicon(c["id"] or c["path"], _AVATAR_PX)
                     if not _ico.isNull():
                         item.setIcon(_ico)
                 except Exception:
@@ -559,15 +555,100 @@ class AgentOverlay(QFrame):
                 self._active_chain_id = new_active
                 self._render_active_conversation()
             self._update_title()
+            self._update_model_button(chains, new_active)
         except Exception:
             logger.exception("_refresh_coworkers: error")
 
-    def _reload_system_chains(self):
-        """Re-read System chains from disk and apply them to agent mode now.
+    def _active_agent_slug(self) -> str:
+        """The workspace slug agent mode is bound to ('' when none)."""
+        ctrl = self._chat_controller
+        getter = getattr(ctrl, "active_agent", None) if ctrl else None
+        try:
+            return str(getter() or "") if callable(getter) else ""
+        except Exception:
+            logger.debug("active_agent() failed", exc_info=True)
+            return ""
 
-        Lets chain edits (added/renamed/removed System chains, changed
-        descriptions) take effect without leaving and re-entering agent mode.
+    def _update_model_button(self, agents=None, active_id=""):
+        """Show the ACTIVE agent's planner model on the sidebar button.
+
+        The model is stored per workspace (``agent.model``), so the label has
+        to follow the selected agent — one agent's model must never look like
+        another's.
         """
+        if agents is None:
+            ctrl = self._chat_controller
+            agents = ctrl.list_system_chains() if ctrl else []
+            active_id = active_id or self._active_agent_slug()
+        model = ""
+        for agent in agents or ():
+            if agent.get("id") == active_id:
+                model = str(agent.get("model") or "")
+                break
+        self._agent_model = model
+        self._model_btn.setText(_("model: %s") % (model or _("not set")))
+        self._model_btn.setToolTip(_(
+            "The model this agent reasons with (engine + model, any provider). "
+            "Stored in the workspace. Click to choose.")
+            if model else _(
+                "No reasoner model chosen yet: without one the agent can only "
+                "run a single tool. Click to choose one."))
+
+    def _edit_agent_model(self):
+        """Choose the active agent's reasoner model (engine + model, all providers).
+
+        The same selector the rest of the app uses: an ENGINE list (llama.cpp,
+        Ollama, every configured BYOK provider) and the models that engine
+        serves.  No implicit default — the user picks, and the choice is stored
+        in the workspace (``agent.model``) so the router uses it on every run.
+        """
+        slug = self._active_agent_slug()
+        if not slug:
+            self._add_bubble(
+                _("No agent is selected: pick a workspace in the sidebar "
+                  "first, then set its model."), False, mode="system")
+            return
+        from .agent_model_dialog import AgentModelDialog
+        dialog = AgentModelDialog(
+            self, model=str(getattr(self, "_agent_model", "") or ""),
+            title=_("Agent model — %s") % slug)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        model = dialog.model()
+        try:
+            from player import workspace as wsmod
+            root = getattr(self._chat_controller, "_workspaces_root", "") or ""
+            if not root:
+                raise RuntimeError("agent mode has no workspaces root")
+            wsmod.set_agent_model(root, slug, model)
+        except Exception as exc:
+            logger.exception("saving the agent model failed")
+            self._add_bubble(_("Could not save the model: %s") % exc, False,
+                             mode="system")
+            return
+        self._agent_model = model
+        self._reload_system_chains()
+        self._update_model_button()
+        self._add_bubble(
+            _("Reasoner model set to %s. It reads each request, writes the "
+              "task list and checks what is still missing.")
+            % (model or _("none — the agent can only run one tool")), False,
+            mode="system")
+
+    def _reload_system_chains(self):
+        """Re-read the workspace agents from disk and apply them now.
+
+        Lets chain/workspace edits (a new agent, a changed planner model) take
+        effect without leaving and re-entering agent mode.  The chains' own
+        descriptions are caught up first (``player/chain_refresh``): a chain
+        edited since it was described would otherwise route on the old one.
+        """
+        refresher = getattr(self._chat_controller, "refresh_descriptions", None)
+        if callable(refresher):
+            try:
+                refresher()
+            except Exception:
+                logger.exception("refreshing chain descriptions failed")
         self._refresh_coworkers()
         logger.info(
             "Agent mode: reloaded system chains (active: '%s')",
@@ -592,15 +673,13 @@ class AgentOverlay(QFrame):
         except Exception:
             logger.exception("_on_coworker_selected: error")
 
-    def current_chain_avatar(self) -> str:
-        """Tabler icon name for the SELECTED system chain ("" when none).
+    def current_chain_seed(self) -> str:
+        """Chain id of the SELECTED system chain ("" when none).
 
-        The compact notch shows this so the user can see who they are talking
-        to.  It is the same avatar the coworker list uses, so the two always
-        agree (see _avatar_name).
+        The compact notch hashes this into the same procedural avatar the
+        coworker list uses, so the two always agree (see chain_avatar.py).
         """
-        chain_id = getattr(self, '_active_chain_id', '') or ''
-        return _avatar_name(chain_id) if chain_id else ""
+        return getattr(self, '_active_chain_id', '') or ''
 
     def _update_title(self):
         """Reflect the active coworker in the header title."""
@@ -652,9 +731,15 @@ class AgentOverlay(QFrame):
         # ── Install event filter for Enter key and Ctrl+A on input ──
         self._input_field.installEventFilter(self)
 
-        # The app-wide QWidget rule paints a DARK_GREY box behind labels; keep
-        # every label in the overlay transparent so bubbles/text have no mat.
-        self.setStyleSheet("QLabel { background: transparent; }")
+        # The app-wide QWidget rule paints a DARK_GREY box behind every widget,
+        # which in-window turned the translucent card into a flat opaque slab
+        # (the chat viewport, sidebar and labels each repainted it).  Keep the
+        # panel's descendants see-through: every surface that wants a colour
+        # declares its own rule, and those win over this one.
+        self.setStyleSheet(
+            "QWidget#agentOverlay QWidget { background: transparent; }"
+            "QLabel { background: transparent; }"
+        )
 
     def _build_header(self) -> QFrame:
         header = QFrame(self)
@@ -930,6 +1015,25 @@ class AgentOverlay(QFrame):
         self._coworker_list.currentItemChanged.connect(self._on_coworker_selected)
         layout.addWidget(self._coworker_list, 1)
 
+        # The agent's planner model lives in the WORKSPACE (agent.model); this
+        # is where it is set, because a composed agent needs a model for the
+        # requests neither a learned plan nor a Laya verdict covers.
+        self._model_btn = QPushButton(_("model: not set"), bar)
+        self._model_btn.setCursor(Qt.PointingHandCursor)
+        self._model_btn.setToolTip(_(
+            "The model this agent plans with when no learned plan or Laya "
+            "verdict decides. Stored in the workspace."))
+        self._model_btn.setStyleSheet(
+            "QPushButton { background: rgba(255,255,255,0.05);"
+            "  color: rgba(255,255,255,0.72); border: 1px solid"
+            "  rgba(255,255,255,0.10); border-radius: 8px;"
+            "  padding: 6px 8px; font-size: 11px; text-align: left; }"
+            f"QPushButton:hover {{ color: {ACCENT_COLOR};"
+            f"  border-color: {ACCENT_COLOR}; }}"
+        )
+        self._model_btn.clicked.connect(self._edit_agent_model)
+        layout.addWidget(self._model_btn)
+
         return bar
 
     def _build_chat_area(self) -> QScrollArea:
@@ -1083,9 +1187,7 @@ class AgentOverlay(QFrame):
             x: (optional) global X to place the overlay (skips _position_top_right).
             y: (optional) global Y to place the overlay.
         """
-        # User explicitly showing — clear automation flag so _automation_restore
-        # doesn't pop it back later.
-        self._was_visible_for_automation = False
+        # User explicitly showing — nothing to restore afterwards.
         # Always start in compact mode
         self._set_compact_mode(True)
         if x is not None and y is not None:
@@ -1161,15 +1263,7 @@ class AgentOverlay(QFrame):
         self._stop_event.set()
         self._release_pending_asks()
         self._stop_recording()
-        self._was_visible_for_automation = False
         self._animate_away(then=lambda: self.closed.emit())
-
-    # ── Automation hide/restore ──────────────────────────────────────
-
-    def set_window_manager(self, minimize_cb=None, restore_cb=None):
-        """Register callbacks to minimize/restore the main application window."""
-        self._window_minimize_cb = minimize_cb
-        self._window_restore_cb = restore_cb
 
     def embed(self, parent):
         """Present as a child filling *parent* (in-window agent mode) instead of
@@ -1309,13 +1403,11 @@ class AgentOverlay(QFrame):
     def _switch_to_gui(self):
         """Switch back to main GUI mode — hide overlay, do NOT stop server."""
         self._stop_recording()
-        self._was_visible_for_automation = False
         self._animate_away(then=lambda: self.closed.emit())
 
     def _collapse_to_dot(self):
         """Collapse overlay back to minimal dot state (stay in agent mode)."""
         self._stop_recording()
-        self._was_visible_for_automation = False
         # The phone-facing server keeps running regardless of overlay state.
         self._animate_away(then=lambda: self.collapsed.emit(), into_notch=True)
 
@@ -1445,36 +1537,34 @@ class AgentOverlay(QFrame):
         except Exception:
             pass
 
-    def _automation_hide(self):
-        """Hide overlay + main window for automation — no server stop side effects."""
-        self._was_visible_for_automation = self.isVisible()
-        if self._was_visible_for_automation:
-            self.hide()
-        if self._window_minimize_cb:
-            self._window_minimize_cb()
+    # ── Screen-access hide (a standalone agent owns no main window) ───
 
-    def _automation_restore(self):
-        """Restore overlay expanded and restore main window if it was minimized."""
-        if self._was_visible_for_automation:
-            self._was_visible_for_automation = False
-            # Restore expanded so the user sees the agent's response
-            self._set_compact_mode(False)
-            if not self._embedded:
-                self._position_top_right()
-            self.show()
-            self.raise_()
-            if not self._embedded:
-                self.activateWindow()
-                self._input_field.setFocus()
-            # Restore main window if a restore callback was registered
-            if self._window_restore_cb:
-                try:
-                    self._window_restore_cb()
-                except Exception:
-                    pass
-            QTimer.singleShot(
-                80, lambda: (self.activateWindow(), self._input_field.setFocus())
-            )
+    def hide_for_screen_access(self):
+        """Leave the screen while the runtime reads or drives the desktop.
+
+        Only a STANDALONE agent registers this (the in-window panel rides its
+        main window's own guard).  Blocks until hidden, like AgentNotch.
+        """
+        try:
+            if QThread.currentThread() == self.thread():
+                self._screen_hide_now()
+            else:
+                self._screenHideRequested.emit()
+        except Exception:
+            logger.exception("AgentOverlay.hide_for_screen_access failed")
+
+    def _screen_hide_now(self):
+        if not self.isVisible():
+            return
+        self._hidden_by_runtime = True
+        self.hide()
+
+    def show_for_screen_access(self):
+        """Come back once the runtime no longer needs the screen."""
+        if not self._hidden_by_runtime:
+            return
+        self._hidden_by_runtime = False
+        self.show()
 
     # ── Resize / hide events ────────────────────────────────────────
 
@@ -1800,8 +1890,9 @@ class AgentOverlay(QFrame):
         # Notify main_window so dot turns red during execution
         self.execution_state_changed.emit(True)
 
-        # Hide overlay so the floating window doesn't interfere with automation
-        self._automation_hide()
+        # Nothing is hidden here on purpose: the runtime takes this app (and
+        # this chat) off screen only while a node actually reads or drives the
+        # desktop, so the loader stays visible through LLM/code/web work.
 
         # Reset mid-execution tracking for this request
         self._last_callback_content = ""
@@ -1854,9 +1945,8 @@ class AgentOverlay(QFrame):
                 )
             finally:
                 if self._finish_request(my_seq):
-                    self._post_ui(self._hide_thinking)
+                    self._post_ui(self._finish_thinking)
                     self._post_ui(lambda: self.execution_state_changed.emit(False))
-                    self._post_ui(self._automation_restore)
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
@@ -1934,10 +2024,9 @@ class AgentOverlay(QFrame):
         self._request_stop = None
         self._request_chain_id = ""
         self._executing = False
-        self._post_ui(self._hide_thinking)
+        self._post_ui(self._finish_thinking)
         self._post_ui(self._update_stop_btn)
         self._post_ui(lambda: self.execution_state_changed.emit(False))
-        self._post_ui(self._automation_restore)
         # Web clients: this turn is over even if the worker is still unwinding.
         self._web_send_json({"type": "agent_done"})
         logger.info("Agent overlay: execution stop requested")
@@ -1948,16 +2037,6 @@ class AgentOverlay(QFrame):
             self._stop_btn.setVisible(bool(self._executing))
         except Exception:
             pass
-
-    def _ask_completed_hide(self):
-        """Re-hide the overlay after an ask — unless the run was stopped.
-
-        After a stop the user is typing again, so the overlay must stay
-        visible instead of being tucked away for the next tool execution.
-        """
-        if self._stop_requested:
-            return
-        self._automation_hide()
 
     # ── Inline ask options (click a choice instead of typing it) ────────
 
@@ -2028,6 +2107,7 @@ class AgentOverlay(QFrame):
             )
             box.addWidget(btn)
         self._chat_layout.addWidget(holder, 0, Qt.AlignLeft)
+        self._keep_thinking_last()
         self._ask_options_widget = holder
         self._scroll_to_bottom()
 
@@ -2136,7 +2216,8 @@ class AgentOverlay(QFrame):
         if mode == 'image':
             img_label = QLabel(bubble)
             img_label.setObjectName("chatBubbleLabel")
-            img_label.setStyleSheet(f"color: {TEXT_COLOR};")
+            img_label.setStyleSheet(
+                f"QLabel {{ color: {TEXT_COLOR}; background: transparent; border: none; }}")
             pix = self._load_pixmap(asset) if asset else QPixmap()
             if pix and not pix.isNull():
                 img_label.setPixmap(
@@ -2164,7 +2245,10 @@ class AgentOverlay(QFrame):
 
         bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         align = Qt.AlignRight if is_user else Qt.AlignLeft
-        self._chat_layout.addWidget(bubble, 0, align)
+        # AlignTop too: an item aligned only horizontally may take the cell's
+        # whole height, which is how a one-line bubble became a tall empty box.
+        self._chat_layout.addWidget(bubble, 0, align | Qt.AlignTop)
+        self._keep_thinking_last()
         # A bubble materialising at full size is the other half of the flicker;
         # it pushes the transcript open instead.  HTML artifacts are skipped:
         # their web view is a native child that resizes badly mid-animation.
@@ -2323,18 +2407,21 @@ class AgentOverlay(QFrame):
         label = QLabel(text, self._chat_container)
         label.setObjectName("chatBubbleLabel")
         label.setWordWrap(True)
-        label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
         # Set font programmatically so fontMetrics() is immediately correct
         font = label.font()
         font.setPixelSize(13)
         label.setFont(font)
-        label.setStyleSheet(f"color: {TEXT_COLOR};")
-        label.setMaximumWidth(max_width)
+        label.setStyleSheet(
+            # QLabel is a QFrame, so the bubble's own semi-transparent rule paints
+            # a second, lighter mat inside it: keep the text area see-through.
+            f"QLabel {{ color: {TEXT_COLOR}; background: transparent; border: none; }}")
         if plain is not None:
             # Rich text: size the bubble from the plain source, not raw HTML.
             label.setProperty("plainText", plain)
-        min_width = self._apply_label_width(label, max_width)
-        label.setMinimumWidth(min_width)
+        # Text labels only: the fit pass and the resize pass both look for it.
+        label.setProperty("bubbleText", True)
+        self._apply_label_width(label, max_width)
         return label
 
     def _load_pixmap(self, asset):
@@ -2355,21 +2442,47 @@ class AgentOverlay(QFrame):
         try:
             viewport = self._chat_scroll.viewport()
             if viewport:
-                return max(180, int(viewport.width() * 0.82))
+                return max(180, min(BUBBLE_MAX_PX, int(viewport.width() * 0.82)))
         except Exception:
             pass
-        return OVERLAY_WIDTH - 60
+        return min(BUBBLE_MAX_PX, OVERLAY_WIDTH - 60)
 
     def _apply_label_width(self, label, max_width):
+        """Fit a text label to its own wrapped text, capped at ``max_width``.
+
+        Measuring the wrapped block (not the whole string's single-line advance)
+        keeps a short reply small and stops a long one from filling the panel.
+        """
         try:
-            fm = label.fontMetrics()
-            plain = label.property("plainText")
-            text = plain if plain is not None else (label.text() or "")
-            text_width = fm.horizontalAdvance(text)
-            target = min(max_width, text_width + 16)
-            if target < 100:
-                target = min(max_width, 100)
-            return target
+            # The stylesheet can still change the effective font: measure the
+            # polished label, or the pin ends up one line short.
+            label.ensurePolished()
+            rich = (label.textFormat() == Qt.RichText
+                    or label.property("plainText") is not None)
+            doc = QTextDocument(label)
+            doc.setDocumentMargin(0)
+            doc.setDefaultFont(label.font())
+            if rich:
+                doc.setHtml(label.text() or "")
+            else:
+                doc.setPlainText(label.text() or "")
+            # QLabel paints its text a few px inside the widget, so measuring at
+            # the inset width is what keeps the document's wrap equal to the
+            # painted one (otherwise a borderline line wraps and gets clipped).
+            doc.setTextWidth(max(24, max_width - BUBBLE_LABEL_INSET))
+            width = max(24, min(max_width,
+                                math.ceil(doc.idealWidth()) + BUBBLE_LABEL_INSET))
+            doc.setTextWidth(max(24, width - BUBBLE_LABEL_INSET))
+            # Label and document share one text engine, so the widest laid-out
+            # line is the exact width that keeps the wrap while hugging the text.
+            height = max(1, math.ceil(doc.size().height()))
+            if height > 3 * max_width:      # a wrapped text cannot be this tall
+                logger.warning(
+                    "agent_overlay: bubble fit looks wrong "
+                    "(chars=%d max_w=%d w=%d h=%d rich=%s)",
+                    len(label.text() or ""), max_width, width, height, rich)
+            label.setFixedSize(width, height)
+            return width
         except Exception:
             return 100
 
@@ -2377,9 +2490,10 @@ class AgentOverlay(QFrame):
         try:
             max_width = self._bubble_max_width()
             for label in self._chat_container.findChildren(QLabel, "chatBubbleLabel"):
-                label.setMaximumWidth(max_width)
-                min_width = self._apply_label_width(label, max_width)
-                label.setMinimumWidth(min_width)
+                if label.property("bubbleText"):
+                    self._apply_label_width(label, max_width)
+                else:
+                    label.setMaximumWidth(max_width)
         except Exception:
             pass
 
@@ -2503,7 +2617,6 @@ class AgentOverlay(QFrame):
                 self._post_ui(self._end_voice_ask)
             # Post-stop the UI belongs to the user: keep the overlay visible,
             # and drop the now-answered option buttons.
-            self._post_ui(self._ask_completed_hide)
             self._post_ui(self._clear_ask_options)
             return resp
         return ask_user
@@ -2524,7 +2637,6 @@ class AgentOverlay(QFrame):
                 return
             # Store for duplicate check in _dispatch
             self._last_callback_content = msg
-            self._post_ui(self._automation_restore)  # Ensure overlay visible for rating widget
             # Store tool info in a dict keyed by a simple counter
             self._output_seq += 1
             seq = self._output_seq
@@ -2601,6 +2713,7 @@ class AgentOverlay(QFrame):
             star.mousePressEvent = lambda evt, i=idx: _on_star_click(i)
     
         self._chat_layout.addWidget(row, 0, Qt.AlignLeft)
+        self._keep_thinking_last()
         QTimer.singleShot(0, self._scroll_to_bottom)
     
     def _add_final_rating_widget(self, goal_id: str):
@@ -2651,6 +2764,7 @@ class AgentOverlay(QFrame):
             star.mousePressEvent = lambda evt, i=idx: _on_star_click(i)
     
         self._chat_layout.addWidget(row, 0, Qt.AlignLeft)
+        self._keep_thinking_last()
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _show_feedback_input(self, seq: int, tool_chain_path: str, tool_alias: str,
@@ -2703,6 +2817,7 @@ class AgentOverlay(QFrame):
         fb_layout.addWidget(fb_submit, 0, Qt.AlignRight)
 
         self._chat_layout.addWidget(feedback_frame, 0, Qt.AlignLeft)
+        self._keep_thinking_last()
         QTimer.singleShot(0, self._scroll_to_bottom)
 
     def _start_description_repair(self, chain_path: str, alias: str, stars: int,
@@ -2768,10 +2883,9 @@ class AgentOverlay(QFrame):
         Previously called ``QApplication.processEvents()`` from the UI thread.
         That nested event processing is REMOVED on purpose: it ran inside
         ``_drain_ui_queue`` and re-entered the event loop, which let functions
-        posted LATER (e.g. the output node's ``_automation_restore`` and the
-        ask-user tail ``_automation_hide``) execute out of order.  The result
-        was a subchain output bubble being added while a stale hide left the
-        overlay invisible.  The UI thread is never blocked while ask_user
+        posted LATER execute out of order.  The result was a subchain output
+        bubble being added before an earlier queued UI update landed.  The UI
+        thread is never blocked while ask_user
         waits (only the chain worker thread blocks), so the queued question
         and ``_show_for_input`` are rendered promptly by the normal event loop.
         """
@@ -2779,19 +2893,56 @@ class AgentOverlay(QFrame):
     # ── Thinking indicator ───────────────────────────────────────────
 
     def _show_thinking(self):
-        self._thinking_label = QLabel(_("Thinking"), self._chat_container)
-        self._thinking_label.setStyleSheet(
-            f"color: rgba(255,255,255,0.4); font-size: 11px; padding: 4px 10px;"
-        )
-        self._chat_layout.addWidget(self._thinking_label, 0, Qt.AlignLeft)
+        """The runtime tree fills the empty part of the chat while the turn runs.
+
+        A layout widget, not an overlay: it can never cover a bubble, it just
+        takes whatever height the messages leave free.  `finish()` recolours it
+        cyan and collapses it into the centre once the answer is in.
+        """
+        if self._thinking_loader is not None:
+            self._hide_thinking()
+        self._thinking_loader = MitosisLoader(self._chat_container)
+        # A reply-sized box under the last message — not the whole empty panel.
+        self._thinking_loader.setFixedSize(320, 200)
+        self._thinking_loader.finished.connect(self._hide_thinking)
+        self._chat_layout.addWidget(self._thinking_loader, 0, Qt.AlignHCenter)
+        self._thinking_loader.show()
+        self._thinking_loader.start()
         self._scroll_to_bottom()
+
+    def _keep_thinking_last(self):
+        """Hold the loader in the slot the next response will take.
+
+        Every chat widget is added above it, so the tree always sits directly
+        under the newest message and never below a fresh status row or bubble.
+        """
+        loader = self._thinking_loader
+        if loader is None:
+            return
+        lay = self._chat_layout
+        for i in range(lay.count()):
+            item = lay.itemAt(i)
+            if item is not None and item.widget() is loader:
+                if i != lay.count() - 1:
+                    lay.removeWidget(loader)
+                    lay.addWidget(loader, 0, Qt.AlignHCenter)
+                return
+
+    def _finish_thinking(self):
+        """Turn over: the tree goes cyan and collapses into its centre."""
+        loader = self._thinking_loader
+        if loader is not None:
+            loader.finish()
 
     def _hide_thinking(self):
         try:
-            if self._thinking_label:
-                self._thinking_label.setParent(None)
-                self._thinking_label.deleteLater()
-                self._thinking_label = None
+            loader = self._thinking_loader
+            self._thinking_loader = None
+            if loader is not None:
+                self._chat_layout.removeWidget(loader)
+                loader.stop()
+                loader.setParent(None)
+                loader.deleteLater()
         except Exception:
             pass
 
@@ -3799,9 +3950,8 @@ class AgentOverlay(QFrame):
                     )
             finally:
                 if self._finish_request(my_seq):
-                    self._post_ui(self._hide_thinking)
+                    self._post_ui(self._finish_thinking)
                     self._post_ui(lambda: self.execution_state_changed.emit(False))
-                    self._post_ui(self._automation_restore)  # Restore overlay + main window
                     # (agent_done was broadcast by _finish_request)
 
         thread = threading.Thread(target=worker, daemon=True)

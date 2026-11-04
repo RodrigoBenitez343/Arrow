@@ -11,6 +11,20 @@ except Exception:
         logger.log(level, "=== %s ===\n%s", title, text)
 
 
+def _ctx_row_key(source_type, from_id):
+    """The pool row KEY: ``<type>/<node id>``, never the node's description.
+
+    A node description is workspace-agent text ABOUT a node ("fills a web form
+    ... answers written by \"Qwen3.8-2B-Q8_0.gguf\" ... verifies what it
+    typed"), not source material.  Keying rows by it put that text in the pool
+    every consumer reads, and the form filler's intent planner then wrote
+    probes about the description instead of the field it was filling.
+    """
+    st = str(source_type or "").strip() or "unknown"
+    fid = str(from_id or "").strip()
+    return f"{st}/{fid}" if fid else st
+
+
 class ContextMixin:
     """Port-scoped context node execution — turn-based history + SQLite persistence.
 
@@ -343,6 +357,75 @@ class ContextMixin:
             ContextMixin._format_turn(t) for t in turns
         )
 
+    def _ff_dupe_canonical(self, label, existing, answer=None):
+        """The stored key that asks the SAME question as *label* ('' = new).
+
+        ONE QUESTION = ONE ANSWER: the same question arrives worded differently
+        ("how much experience you have with cloud providers like aws?" vs "how
+        many years of experience do you have with aws?"), and keyed by the raw
+        label each wording became its own record with its OWN answer.  A
+        reworded question is therefore LINKED to the record it duplicates (an
+        ``alias/<wording>`` row) instead of being written as a second answer.
+
+        A lexical prefilter picks the candidates; the Laya engine decides,
+        because no lexical or embedding score separates "with aws" from "with
+        azure".  A TRANSLATION shares no word with the label at all, so a record
+        that already holds the SAME *answer* is a candidate too (ask twice in
+        two languages, answer once) and the engine's undecided band is lifted
+        for exactly that kind of pair.  No engine -> no dedupe (keep both),
+        never a merge.
+        """
+        try:
+            from .form_filler_modules.common import _ff_dupe_score, _ff_norm
+        except Exception:
+            return ""
+        key = _ff_norm(label or "").strip("*? .:")
+        if not key:
+            return ""
+        for _prefix in ("verified/", "learned/"):
+            if (_prefix + key) in existing:
+                return _prefix + key
+        _wanted = _ff_norm(answer or "").strip()
+        cands, _same_answer = [], []
+        for _k in existing:
+            if not (_k.startswith("learned/") or _k.startswith("verified/")):
+                continue
+            _other = _k.split("/", 1)[1]
+            _score = _ff_dupe_score(key, _other)
+            if _score >= 0.55:
+                cands.append((_score, _k))
+            elif _wanted and _ff_norm(existing.get(_k) or "").strip() == _wanted:
+                # No shared word, but the record already holds THIS answer: the
+                # shape of a cross-language duplicate.  Without this the encoder
+                # never saw it (the lexical prefilter dropped it) and the same
+                # question was stored twice, once per language.
+                _same_answer.append((_score, _k))
+        cands.sort(reverse=True)
+        _pool = cands[:4] + _same_answer[:4]
+        if not _pool:
+            return ""
+        _labels = [k.split("/", 1)[1] for _s, k in _pool]
+        try:
+            from AI.laya_hooks import same_question_or
+        except Exception:
+            return ""
+
+        def _agree(cand):
+            """The stored record for *cand* holds the answer being written."""
+            for _s, _k in _pool:
+                if _k.split("/", 1)[1] == cand:
+                    return bool(_wanted) and \
+                        _ff_norm(existing.get(_k) or "").strip() == _wanted
+            return False
+
+        picked = same_question_or(key, _labels, None, _agree)
+        if not picked:
+            return ""
+        for _s, _k in _pool:
+            if _k.split("/", 1)[1] == picked:
+                return _k
+        return ""
+
     def _execute_context_node(self, node, stop_flag):
         """Execute a context node: collect inputs, store, and output recent entries.
 
@@ -488,15 +571,16 @@ class ContextMixin:
         else:
             logger.debug("[CTX] node %s has NO connected upstream data", node_id)
 
-        # Learned-answer entries already stored (key 'learned/<label>'): a
-        # repeated push of the SAME answer is NOT duplicated (the pool is
-        # append-only otherwise).
+        # Learned / verified answer entries already stored (keys
+        # 'learned/<label>' and 'verified/<label>'): a repeated push of the SAME
+        # answer is NOT duplicated (the pool is append-only otherwise).
         _existing_learned = {}
         try:
             _priorrows = context_db.pull(chain_id=chain_id, node_id=node_id,
                                          limit=_pull_limit)
             for _k, _vs in (_priorrows or {}).items():
-                if _k.startswith("learned/") and _vs:
+                if (_k.startswith("learned/") or _k.startswith("verified/")
+                        or _k.startswith("alias/")) and _vs:
                     _existing_learned[_k] = str(_vs[0])
         except Exception:
             _existing_learned = {}
@@ -511,10 +595,10 @@ class ContextMixin:
             if hasattr(self, 'workflow_graph') and self.workflow_graph:
                 upstream_node = self.workflow_graph.get(from_id, {}) or {}
                 source_type = upstream_node.get('type', 'unknown')
-            upstream_data_node = upstream_node.get('data', {}) or {}
-            semantic_desc = (upstream_data_node.get('label', '')
-                             or upstream_data_node.get('description', '') or '')
-            key = f"{source_type}/{semantic_desc}" if semantic_desc else source_type
+            # The row KEY is a STABLE IDENTITY, never the node's description
+            # (see _ctx_row_key): a description belongs to the workspace agent
+            # and must not reach a node's execution context at all.
+            key = _ctx_row_key(source_type, from_id)
             value_str = str(val) if val else ""
             # A value carrying a learned-answers block is SPLIT: each answer is
             # stored as its OWN 'learned/<label>' entry (so the audit dialog
@@ -522,10 +606,14 @@ class ContextMixin:
             # the upstream value.  The block is re-rendered on serve, so a
             # consumer (the form filler) still reads its own format.
             try:
-                from .form_filler_modules.common import _ff_split_corrections
+                from .form_filler_modules.common import (
+                    _ff_split_corrections, _ff_split_verified)
                 value_str, _learned = _ff_split_corrections(value_str)
+                # A HUMAN-verified entry rides its own key so the serve step can
+                # re-render it into the verified block (authoritative tier).
+                value_str, _verified = _ff_split_verified(value_str)
             except Exception:
-                _learned = {}
+                _learned, _verified = {}, {}
             if value_str.strip():
                 context_db.push(
                     chain_id=chain_id,
@@ -538,18 +626,61 @@ class ContextMixin:
             for _lab, _ans in (_learned or {}).items():
                 _lk = "learned/%s" % _lab
                 _av = str(_ans)
-                if not _av.strip() or _existing_learned.get(_lk) == _av:
+                if not _av.strip():
+                    continue
+                # ONE QUESTION = ONE ANSWER: a reworded question is LINKED to
+                # the record it duplicates instead of being written as a second
+                # (and possibly conflicting) answer.
+                _canon = self._ff_dupe_canonical(_lab, _existing_learned, _av)
+                if _canon and _canon != _lk:
+                    _have = _existing_learned.get(_canon, "")
+                    if not _have or _have == _av:
+                        _ak = "alias/%s" % str(_lab).strip()
+                        if _existing_learned.get(_ak) != _canon:
+                            context_db.push(
+                                chain_id=chain_id, node_id=node_id,
+                                key=_ak, value=_canon,
+                                source_node_id=from_id, source_type='alias',
+                            )
+                            _existing_learned[_ak] = _canon
+                            logger.info(
+                                "[CTX] linked reworded question %r -> %r "
+                                "(one answer)", str(_lab)[:70], _canon[:70],
+                            )
+                    else:
+                        logger.info(
+                            "[CTX] %r is the same question as %r and they "
+                            "DISAGREE (%r vs %r) - keeping the stored one",
+                            str(_lab)[:60], _canon[:60], _av[:40], _have[:40],
+                        )
+                    continue
+                if _existing_learned.get(_lk) == _av:
                     continue
                 context_db.push(
                     chain_id=chain_id, node_id=node_id, key=_lk, value=_av,
                     source_node_id=from_id, source_type='learned',
                 )
                 _existing_learned[_lk] = _av
+            for _lab, _ans in (_verified or {}).items():
+                _lk = "verified/%s" % _lab
+                _av = str(_ans)
+                if not _av.strip() or _existing_learned.get(_lk) == _av:
+                    continue
+                context_db.push(
+                    chain_id=chain_id, node_id=node_id, key=_lk, value=_av,
+                    source_node_id=from_id, source_type='verified',
+                )
+                _existing_learned[_lk] = _av
             logger.debug("[CTX] Stored [%s] key='%s' from %s (%s)", scope, key, from_id, source_type)
 
-        # Learned entries (key 'learned/<label>') are collected below for the
-        # re-render; they never appear as raw rows in the plain output.
+        # Learned entries (key 'learned/<label>'), the human-verified ones
+        # (key 'verified/<label>') and the reworded-question links
+        # (key 'alias/<wording>' -> the canonical record key) are collected
+        # below for the re-render; they never appear as raw rows in the plain
+        # output.
         _learned_pairs = {}
+        _verified_pairs = {}
+        _alias_pairs = {}
 
         # -- Output --
         clear_on_finish = bool(node_data.get('clear_on_finish', False))
@@ -865,6 +996,18 @@ class ContextMixin:
                             if v and str(v).strip():
                                 _learned_pairs[key[len("learned/"):]] = str(v).strip()
                         continue
+                    if key.startswith("verified/"):
+                        # Human-verified entries: their own block, parsed first.
+                        for v in values:
+                            if v and str(v).strip():
+                                _verified_pairs[key[len("verified/"):]] = str(v).strip()
+                        continue
+                    if key.startswith("alias/"):
+                        # A reworded question pointing at the record it duplicates.
+                        for v in values:
+                            if v and str(v).strip():
+                                _alias_pairs[key[len("alias/"):]] = str(v).strip()
+                        continue
                     for v in values:
                         if v and str(v).strip():
                             # Full value — no per-entry truncation so shared
@@ -902,6 +1045,24 @@ class ContextMixin:
                 "Context feed merge failed for %s: %s", node_id, _feed_err,
             )
 
+        # -- Reworded questions are LINKED, not copied: each alias resolves to
+        # its canonical record's answer and is served as one more heading in
+        # that record's block.  The store keeps ONE answer per question; the
+        # form filler gets an exact match for every wording it has ever seen.
+        if _alias_pairs:
+            for _wording, _target in _alias_pairs.items():
+                _tgt = str(_target or "")
+                if _tgt.startswith("verified/"):
+                    _bucket = _verified_pairs
+                    _val = _bucket.get(_tgt[len("verified/"):])
+                else:
+                    _bucket = _learned_pairs
+                    _val = _bucket.get(_tgt[len("learned/"):])
+                    if _val is None:
+                        _val = _verified_pairs.get(_tgt[len("learned/"):])
+                        _bucket = _verified_pairs
+                if _val and _wording not in _bucket:
+                    _bucket[_wording] = _val
         # -- Learned stream: re-render the per-answer rows as ONE sentinel block
         # so a consumer (the form filler) reads them in the format it wrote.
         if _learned_pairs:
@@ -914,29 +1075,56 @@ class ContextMixin:
                 output_value = (f"{output_value}\n\n{_lb}"
                                 if output_value and str(output_value).strip()
                                 else _lb)
+        # ...and the human-verified answers in their OWN block, which the form
+        # filler parses FIRST and never overrides.
+        if _verified_pairs:
+            try:
+                from .form_filler_modules.common import _ff_render_verified
+                _vb = _ff_render_verified(list(_verified_pairs.items()))
+            except Exception:
+                _vb = ""
+            if _vb:
+                output_value = (f"{output_value}\n\n{_vb}"
+                                if output_value and str(output_value).strip()
+                                else _vb)
 
         # -- Documents / Skills streams: file-backed knowledge (or literal notes)
         # held ALONGSIDE history and served as their OWN streams, so a downstream
         # node gets the material over ctx_out WITHOUT attaching anything itself.
         # They are part of the SAME pool as the rows / learned / history above.
+        #
+        # The Documents stream is served LAST, on purpose: a consumer splits the
+        # pool on its header and takes EVERYTHING after it, so anything appended
+        # afterwards would silently become part of "the documents" - and the
+        # content hash this node indexes the documents under (see
+        # _ctx_index_streams) would no longer be the hash the consumer asks for.
         try:
             from .form_filler_modules.common import (
                 _FF_DOCS_HEADER as _dh, _FF_SKILLS_HEADER as _sh,
             )
         except Exception:
             _dh, _sh = "## Documents", "## Skills"
-        _docs_text = self._ctx_list_text(node_data.get('documents'))
-        if _docs_text:
-            _docs_block = _dh + "\n" + _docs_text
-            output_value = (f"{_docs_block}\n\n{output_value}"
-                            if output_value and str(output_value).strip()
-                            else _docs_block)
         _skills_text = self._ctx_list_text(node_data.get('skills'))
         if _skills_text:
             _skills_block = _sh + "\n" + _skills_text
             output_value = (f"{_skills_block}\n\n{output_value}"
                             if output_value and str(output_value).strip()
                             else _skills_block)
+        _docs_text = self._ctx_list_text(node_data.get('documents'))
+        if _docs_text:
+            _docs_block = _dh + "\n" + _docs_text
+            output_value = (f"{output_value}\n\n{_docs_block}"
+                            if output_value and str(output_value).strip()
+                            else _docs_block)
+
+        # -- VECTORS for the model, TEXT for the user: the streams above are
+        # served exactly as before (the node's dialog stays the editing surface),
+        # and their blocks are ALSO stored embedded once per content version so a
+        # consumer ranks by cosine against the persisted index instead of
+        # re-embedding the whole document per field (see _ctx_index_streams).
+        self._ctx_index_streams(chain_id, node_id,
+                                [("documents", _docs_text),
+                                 ("skills", _skills_text)])
 
         # -- Store output (both port_store + legacy for migration) --
         # 'ctx_out' is the node's REAL output port: a consumer wired
@@ -1179,15 +1367,7 @@ class ContextMixin:
         Backs the Documents and Skills streams: a resume file, a skill file, or
         a plain typed note all live in ONE list and are served as their stream.
         """
-        if isinstance(raw, str):
-            try:
-                raw = json.loads(raw)
-            except Exception:
-                raw = [raw] if raw.strip() else []
-        items = [str(p) for p in (raw or []) if str(p).strip()]
-        if not items:
-            return ""
-        key = tuple(items)
+        key = self._ctx_list_key(raw)
         cache = getattr(self, '_ctx_list_text_cache', None)
         if not isinstance(cache, dict):
             cache = {}
@@ -1198,28 +1378,97 @@ class ContextMixin:
         if key in cache:
             return cache[key]
         texts = []
-        for it in items:
-            if not os.path.exists(it):
-                texts.append(it)          # a literal note, used verbatim
-                continue
-            try:
-                from ...llm_executor_resources import rag_utils as _rag
-                ext = os.path.splitext(it)[1].lower()
-                if ext in ('.txt', '.md', '.csv', '.json', '.log'):
-                    t = _rag._read_text_file(it)
-                elif ext == '.docx':
-                    t = _rag._extract_docx_text(it)
-                elif ext == '.pdf':
-                    t = _rag._extract_pdf_text(it)
-                else:
-                    t = ""
-                if t:
-                    texts.append(t)
-            except Exception as exc:
-                logger.debug("[CTX] list text unavailable: %s", exc)
+        for it in self._ctx_list_items(raw):
+            t = self._ctx_read_item(it)
+            if t:
+                texts.append(t)
         out = "\n\n".join(texts).strip()
         cache[key] = out
         return out
+
+    def _ctx_list_items(self, raw):
+        """The parsed JSON list behind a stream (paths / literal notes)."""
+        if isinstance(raw, str):
+            try:
+                return json.loads(raw)
+            except Exception:
+                return [raw] if raw.strip() else []
+        return list(raw or [])
+
+    def _ctx_list_key(self, raw):
+        """The cache key for a stream: its entries, in order, as strings."""
+        return tuple(str(p) for p in self._ctx_list_items(raw)
+                     if str(p).strip())
+
+    def _ctx_read_item(self, it):
+        """One stream entry -> text: a file path extracted, a note verbatim."""
+        if not it or not str(it).strip():
+            return ""
+        it = str(it)
+        if not os.path.exists(it):
+            return it              # a literal note, used verbatim
+        try:
+            from ...llm_executor_resources import rag_utils as _rag
+            ext = os.path.splitext(it)[1].lower()
+            if ext in ('.txt', '.md', '.csv', '.json', '.log'):
+                return _rag._read_text_file(it) or ""
+            if ext == '.docx':
+                return _rag._extract_docx_text(it) or ""
+            if ext == '.pdf':
+                return _rag._extract_pdf_text(it) or ""
+        except Exception as exc:
+            logger.debug("[CTX] list text unavailable: %s", exc)
+        return ""
+
+    def _ctx_index_streams(self, chain_id, node_id, streams):
+        """Store the vectors of this node's file-backed streams, once per version.
+
+        The pool KEEPS being served as text: the user edits and adds knowledge in
+        this node's dialog at any time and every consumer still reads the served
+        pool.  This adds only the embedding side, so a document is chunked and
+        embedded ONCE per content version instead of once per field per run (the
+        form filler used to send all 53 block texts of a resume to the embedding
+        server for every single field, then throw the ranking away).
+
+        Keyed by content hash, so an edit re-indexes and a re-run costs one COUNT.
+        Best-effort by design: with no index the consumer ranks locally, which is
+        slower but still answers - a stream is never dropped because the store was
+        unreachable.
+        """
+        try:
+            from AI import context_index
+            from AI.crag import corpus as _corpus
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("[CTX] document index modules unavailable: %s", exc)
+            return
+        docs = []
+        for origin, text in (streams or []):
+            body = str(text or "").strip()
+            # A typed note is knowledge, not a corpus: it costs nothing to rank
+            # inline and indexing it would only churn the store.
+            if len(body) < 200:
+                continue
+            _entries, meta = _corpus.shape(body, origin=origin)
+            if not meta:
+                continue
+            docs.append({"sha": _corpus.sha256_text(body), "blocks": meta,
+                         "doc_path": "", "text": body, "origin": origin})
+        if not docs:
+            return
+        try:
+            from .form_filler_modules.common import _FFEmbedClient
+            client = _FFEmbedClient("llamacpp", "")
+            model_id = context_index.local_embedding_model_id()
+            out = context_index.ensure_index(
+                docs,
+                embed=lambda texts: client.embeddings("", list(texts)) or [],
+                model_id=model_id, chain_id=chain_id or "", node_id=node_id or "")
+            if out.get("failed"):
+                logger.info(
+                    "[CTX] %d stream(s) could not be embedded (%s) - consumers "
+                    "rank them locally this run", len(out["failed"]), model_id)
+        except Exception as exc:  # noqa: BLE001 - indexing never breaks a serve
+            logger.debug("[CTX] document indexing failed: %s", exc)
 
     def _get_context_next_node(self, node, port):
         connections = node.get('connections', {})

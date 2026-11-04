@@ -1,10 +1,14 @@
-"""Self-checks for the OS-cursor glide and the ONE element it aims at.
+"""Self-checks for pointer movement and the ONE element it aims at.
 
-A web replay used to drive only the browser's virtual pointer, so the
-automation read as a teleport while desktop sequences walked the real pointer.
-The overlay box and the pointer walk must also describe the element the action
+A web sequence must NEVER steer the real pointer: the cursor that walks to each
+target lives inside the browser (``exec_overlay``), the way the desktop player's
+animated cursor walks on screen for a desktop sequence.  The OS glide is for the
+paths that really click on screen (desktop), and stays parked under the suite's
+``LOOPER_OS_CURSOR=off`` pin.
+
+The overlay box and the walked cursor must also describe the element the action
 ACTUALLY hits: a recorded css that now also matches a sibling (a "Back" button
-where "Next" used to sit) must not move the pointer onto that lookalike.
+where "Next" used to sit) must not aim at that lookalike.
 """
 import sys
 import types
@@ -76,24 +80,50 @@ def test_target_geometry_without_a_locator_is_none():
     assert web_actions.target_geometry(_driver(None), Event(type="navigate", ts=0)) is None
 
 
-def test_engine_glides_only_when_it_may_move_the_pointer(monkeypatch):
+def test_web_replay_walks_the_page_cursor_and_never_the_os_pointer(monkeypatch):
+    """The web path asks the PAGE to walk its own cursor, then paces the action
+    behind it - the real mouse is never moved."""
     moved = []
-    monkeypatch.setattr(web_engine, "glide_os_cursor",
+    monkeypatch.setattr(human_cursor, "glide_os_cursor",
                         lambda x, y: moved.append((x, y)))
+    walked = []
+
+    def _fake_mark(driver, event, act, geometry=None):
+        walked.append((event.type, act, geometry))
+        return 0.25
+
+    monkeypatch.setattr(exec_overlay, "mark", _fake_mark)
+    slept = []
+    monkeypatch.setattr(web_engine.time, "sleep", lambda s: slept.append(s))
+
     engine = web_engine.ReplayEngine(_driver(None), web_engine.ReplayConfig())
-    chrome = Event(type="chrome", ts=0, action="chrome_click",
-                   context={"screen_x": 15, "screen_y": 25})
+    click = Event(type="click", ts=0,
+                  locator=Locator(tag="button", text="Next"))
+    geom = {"rect": [10.0, 20.0, 30.0, 40.0], "point": (1.0, 2.0)}
 
-    # conftest pins LOOPER_OS_CURSOR=off for the whole suite.
-    assert engine._cursor_moves is False
-    engine._glide_to_action(chrome)
-    assert moved == []
+    assert engine._glide_to_action(click, geom, "3: click") == 0.25
+    assert walked == [("click", "3: click", geom)]
+    assert slept == [0.25]          # the action waits for the cursor to arrive
+    assert moved == []              # and the OS pointer is untouched
 
-    engine._cursor_moves = True
-    engine._glide_to_action(Event(type="key", ts=0, key="a"))  # bursts never glide
-    assert moved == []
-    engine._glide_to_action(chrome)
-    assert moved == [(15.0, 25.0)]
+    # Key bursts never walk: they arrive in batches and would read as jitter.
+    assert engine._glide_to_action(Event(type="key", ts=0, key="a")) == 0.0
+    assert len(walked) == 1
+
+
+def test_mark_returns_the_walk_seconds_so_the_action_waits():
+    """mark() reports the in-page walk so the caller paces the action behind it."""
+    assert exec_overlay._walk_seconds(320) == 0.32
+    assert exec_overlay._walk_seconds(None) == 0.0     # no walk, no wait
+    assert exec_overlay._walk_seconds("junk") == 0.0   # a bad reply never stalls
+
+    class _Driver:
+        def execute_script(self, script, *args):
+            return 420
+
+    event = Event(type="click", ts=0, locator=Locator(tag="button", text="Go"))
+    assert exec_overlay.mark(_Driver(), event, "1: click",
+                             {"rect": [1.0, 2.0, 3.0, 4.0]}) == 0.42
 
 
 def test_mark_boxes_the_resolved_rect_not_a_lookalike():

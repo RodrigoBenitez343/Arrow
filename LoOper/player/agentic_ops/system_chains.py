@@ -1,14 +1,20 @@
-"""system_chains.py — reads chain files and the System-chain ("coworker") list.
+"""system_chains.py — the LEGACY "System chain" reader (kept for migration).
 
-A **System chain** is a chain JSON whose ``collection`` is ``"System"`` (any
-case).  Each one is an independent agent brain — coding, marketing, daily
-tasks, anything the user designs — so the agent mode can offer several of them
-in a left sidebar and let the user pick who to talk to.  Nothing here is
-hardcoded: the list is whatever the user has in their chains directory.
+A chain whose ``collection`` was ``"System"`` used to be an agent brain, and
+agent mode listed those chains as coworkers.  Workspaces replaced that
+(``player/workspace.py``): one workspace is one agent plus its own chains, and
+a workspace can still pin one chain as its ``legacy_brain``.
+
+``read_chains`` is still the plain reader of a chains folder (agent mode's
+catalogue and the workspace migration both need it).  ``is_system_chain`` /
+``read_system_chains`` exist only to recognise the old tag while those chains
+are migrated; nothing new should branch on a collection again.
 """
 
 import json
 import os
+
+from player import chain_brief
 
 SYSTEM_COLLECTION = "system"
 
@@ -23,7 +29,10 @@ def read_chains(chains_dir) -> list:
 
     Each entry: ``{id, name, description, path, collection}``.  ``id`` is the
     filename without the ``.json`` extension, ``name`` falls back to ``id``
-    when the file has no ``name`` field.  Invalid/unreadable files are skipped.
+    when the file has no ``name`` field, and ``description`` is the chain's
+    DERIVED routing line (``player/chain_brief.py``) — never hand-written
+    prose, so a stale sentence cannot steer a router.
+    Invalid/unreadable files are skipped.
     """
     chains = []
     if not chains_dir or not os.path.isdir(chains_dir):
@@ -38,13 +47,17 @@ def read_chains(chains_dir) -> list:
         except Exception:
             continue
         chain_id = fname[:-5]
+        flow = data.get("flow") if isinstance(data.get("flow"), dict) else {}
+        summary = str((flow or {}).get("summary") or "").strip()
         chains.append({
             "id": chain_id,
             "name": (data.get("name") or chain_id),
-            "description": (data.get("description") or "").strip(),
+            "description": chain_brief.brief(data),
+            "flow_summary": summary,
             "path": fpath,
             "collection": (data.get("collection") or ""),
-            # ``is_default`` marks the root brain (the Orchestrator chain)
+            # ``is_default`` marked the old root brain (retired; a workspace
+            # pins a brain with ``agent.legacy_brain`` instead).
             "is_default": bool(data.get("is_default", False)),
         })
     return chains

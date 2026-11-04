@@ -22,7 +22,7 @@ from player.code_agent_ops.devtools import (
     NeedleRouter,
     execute_call,
 )
-from player.code_agent_ops.parsing import _clip
+from player.code_agent_ops.parsing import _clip, _looks_like_tool_request
 from player.code_agent_ops.prompts import no_tool_text, tool_results_text
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,13 @@ class ToolsMixin(object):
         if not text:
             return False
         if self._loop_aborted or not self._request_goal:
+            return False
+        # Prose is NOT a tool request.  Without this gate any rambling reply
+        # was routed to the tools, the model rambled again, and the budget
+        # died with "the agent did not produce an implementation".
+        if not _looks_like_tool_request(text):
+            self._append_console(_('No code and not a tool request - asking '
+                                   'for the code again.'))
             return False
         if getattr(self, '_invest_worker', None) is not None \
                 and self._invest_worker.isRunning():
@@ -112,21 +119,21 @@ class ToolsMixin(object):
         if not text or payload.get('empty'):
             # Nothing tool-able: the coding model must restate or produce code.
             self._retry_turn(_('The request did not match any dev tool.'),
-                             no_tool_text(), show_protocol=True)
+                             no_tool_text())
             return
         self._last_tool_results = text
         self._append_chat('execution',
                           '### Dev tools\n' + _clip(text, 6000))
         self._append_console('### Dev tools\n' + _clip(text, 4000))
         self._await_main = True
-        self._send_agent_turn(tool_results_text(), show_protocol=True)
+        self._send_agent_turn(tool_results_text(self._tool_turns >= 3))
 
     # ------------------------------------------------------------------
-    # Context for the tool executor (single-script snapshot)
+    # Context for the tool executor (project snapshot)
     # ------------------------------------------------------------------
 
     def _tool_ctx(self):
-        """Read-only view of the node script at route time."""
+        """Read-only view of the node project at route time."""
         code = self._main_code          # snapshot: never mutate mid-chain
         ws = self._workspace_root()
         node_id = str(getattr(self._node, 'id', '') or 'studio_code')
@@ -146,6 +153,7 @@ class ToolsMixin(object):
 
         return {
             'code': code,
+            'workspace': ws,
             'run_node_dict': node_dict,
             'player': self._last_player,
             'chain_root': os.path.dirname(os.path.dirname(ws)),
@@ -179,5 +187,5 @@ class ToolsMixin(object):
         self._append_chat('execution', '### Dev tools\n' + _clip(res, 6000))
         self._append_console('### Dev tools\n' + _clip(res, 4000))
         self._await_main = True
-        self._send_agent_turn(tool_results_text(), show_protocol=True)
+        self._send_agent_turn(tool_results_text(self._tool_turns >= 3))
         return True

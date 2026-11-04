@@ -1637,30 +1637,22 @@ def test_desktop_digest_reads_the_cursor_monitor(monkeypatch):
         2: ('On-cursor window', (100, 100, 700, 500)),        # cursor monitor
     }
 
-    class _FakeWin32Gui:
-        @staticmethod
-        def GetForegroundWindow():
-            return 1
+    # Patch the module the LoOper package resolves at runtime (LoOper/ is on
+    # sys.path for the test run, so `player.*` imports it as top-level).
+    import platform_gate as gate
 
-        @staticmethod
-        def GetWindowText(hwnd):
-            return windows.get(int(hwnd), ('', (0, 0, 0, 0)))[0]
+    def _info(handle):
+        title, rect = windows.get(int(handle), ('', (0, 0, 0, 0)))
+        return {"handle": int(handle), "title": title, "pid": None,
+                "rect": rect, "visible": True}
 
-        @staticmethod
-        def GetWindowRect(hwnd):
-            return windows.get(int(hwnd), ('', (0, 0, 0, 0)))[1]
-
-        @staticmethod
-        def IsWindowVisible(hwnd):
-            return True
-
-        @staticmethod
-        def EnumWindows(callback, extra):
-            for hwnd in windows:
-                if callback(hwnd, extra) is False:
-                    break
-
-    monkeypatch.setitem(sys.modules, 'win32gui', _FakeWin32Gui)
+    # The gate is what both backends implement: fake its primitives, so the
+    # digest logic is exercised the same way on Windows and X11.
+    monkeypatch.setattr(gate, 'active_window', lambda: _info(1))
+    monkeypatch.setattr(gate, 'window_rect',
+                        lambda h: windows.get(int(h), ('', None))[1])
+    monkeypatch.setattr(gate, 'list_windows',
+                        lambda: [_info(h) for h in windows])
 
     digest = _Harness()._orchestrator_desktop_state()
     assert 'On-cursor window' in digest

@@ -1,54 +1,48 @@
 # main.py - Entry point for the modularized recorder
-import mouse
-from pynput import keyboard
+#
+# Global hooks come from pynput (one dependency, Windows and Linux/X11 alike)
+# instead of the `mouse` package, which needs root on Linux.
+from pynput import keyboard, mouse
+
 from .element_recorder import ElementRecorder
 
 
 def start_recording():
     """Initialize and start the recording system"""
-    
+
     # Initialize recorder
     recorder = ElementRecorder()
+    state = {"scroll_dx": 0, "scroll_dy": 0}
 
-    # Callback functions for listeners
-    def on_click(event):
-        if isinstance(event, mouse.ButtonEvent):
-            # Get current mouse position since ButtonEvent doesn't have x,y attributes
-            x, y = mouse.get_position()
-            if event.event_type == mouse.DOWN:
-                recorder.on_mouse_press(x, y, event.button, True)
-            else:
-                recorder.on_mouse_release(x, y, event.button)
+    def on_click(x, y, button, pressed):
+        name = getattr(button, "name", str(button))
+        if pressed:
+            recorder.on_mouse_press(x, y, name, True)
+        else:
+            recorder.on_mouse_release(x, y, name)
 
-    def on_scroll(event):
-        """Handle scroll events from mouse library"""
-        if isinstance(event, mouse.WheelEvent):
-            # Get current mouse position for scroll event
-            x, y = mouse.get_position()
-            dy = event.delta  # WheelEvent has delta attribute
-            dx = 0  # mouse library typically only provides vertical scroll
-            recorder.record_scroll(x, y, dx, dy)
+    def on_scroll(x, y, dx, dy):
+        # pynput reports fractional steps; keep the whole-notch shape the
+        # recorder's scroll grouping expects.
+        state["scroll_dx"] += dx
+        state["scroll_dy"] += dy
+        step_y = int(state["scroll_dy"]) or (1 if dy > 0 else -1 if dy < 0 else 0)
+        step_x = int(state["scroll_dx"])
+        if step_y or step_x:
+            state["scroll_dx"] -= step_x
+            state["scroll_dy"] -= step_y
+            recorder.record_scroll(x, y, step_x, step_y)
 
-    def on_mouse_event(event):
-        """Handle all mouse events from mouse library"""
-        if isinstance(event, mouse.ButtonEvent):
-            on_click(event)
-        elif isinstance(event, mouse.WheelEvent):
-            on_scroll(event)
-        elif hasattr(mouse, 'MoveEvent') and isinstance(event, mouse.MoveEvent):
-            try:
-                x = getattr(event, 'x', None)
-                y = getattr(event, 'y', None)
-                if x is None or y is None:
-                    x, y = mouse.get_position()
-                recorder.on_mouse_move(x, y)
-            except Exception:
-                pass
+    def on_move(x, y):
+        try:
+            recorder.on_mouse_move(x, y)
+        except Exception:
+            pass
 
     def on_press(key):
         if key == keyboard.Key.esc:
             recorder.save_sequence()
-            mouse.unhook_all()  # Stop mouse listener (includes scroll)
+            mouse_listener.stop()
             return False  # Stop keyboard listener
         recorder.handle_keypress(key)
 
@@ -62,9 +56,11 @@ def start_recording():
     print("⌨ Any key combo works (Ctrl+Alt+Shift+X, Win+R, F-keys...)")
     print("⏹ ESC to save and exit")
 
-    # Start listeners - use mouse library for all mouse events (better compatibility)
-    mouse.hook(on_mouse_event)  # Hook all mouse events including scroll
-    
+    # Start listeners
+    mouse_listener = mouse.Listener(
+        on_click=on_click, on_scroll=on_scroll, on_move=on_move)
+    mouse_listener.start()
+
     keyboard_listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     keyboard_listener.start()
     keyboard_listener.join()  # Will block until ESC

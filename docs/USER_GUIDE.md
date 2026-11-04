@@ -489,6 +489,16 @@ A parked goal additionally sets the `blocked` port value / `node_<id>_blocked` v
 
 Document-grounded multi-field completion: field discovery on live pages/apps, knowledge-file lookups (including learned ask-user answers), dropdown/multiple-choice rails, per-field validation, page-rejected field repair, and a review gate before submission.
 
+Retrieval per field is **CRAG** (`AI/crag`, the port of the CRAG reference implementation): the field's own question is the query, every retrieved passage is SCORED against it, and the score decides what the field reads —
+
+| CRAG verdict | what the field gets |
+|---|---|
+| `correct` | the best passages, decomposed into sentence strips and reranked (verbatim, so an exact email/URL survives) |
+| `ambiguous` | those strips **plus** the corrective store (the pool's learned/verified records, then a rewritten re-read of the documents) |
+| `incorrect` | the corrective store only — and when that holds nothing either, the field is asked, never guessed |
+
+The score comes from the embedded Laya engine (a calibrated probability per passage, ~2 s each on CPU), falling back to embeddings when the engine is unavailable. Node settings: `crag_enabled`, `crag_evaluator`, `crag_upper_threshold` / `crag_lower_threshold`, `crag_decompose_mode` (`excerption` / `selection` / `fixed_num`), `crag_top_k`, `crag_max_strips`, `crag_top_n_internal` / `crag_top_n_external`, `crag_external`, `crag_rewrite`, `crag_char_budget`.
+
 ### 4.15 Container Node
 
 VM-based grouping node. Subgraph containers and auto-layout are deprecated — use it to group nodes into a sub-VM, not to author nested graphs.
@@ -902,6 +912,7 @@ flowchart LR
 
 - Chain Import node → `run_in_sandbox: true`; `show_sandbox_window` decides whether the session is visible or hidden.
 - Sandbox context propagates to every imported chain, so nested runs stay in the same session.
+- Needs administrator rights: the session is created by adding the `LoOperAgent` account and a logon task, so start Arrow as administrator when a chain runs in the sandbox. Every other feature runs as a standard user (no UAC prompt, no elevation on launch).
 
 ### Agent HTTP API (`POST /action`)
 

@@ -930,6 +930,12 @@ def _finalize_actions(
     # Chrome-band clicks (bookmark bar / top strip) that ALSO reached the page
     # are page-owned too - drop the OS twin so replay never clicks twice.
     actions = _dedupe_os_chrome_clicks(actions)
+    # Replay focuses by CLICKING (FocusHandler calls element.click()), so a
+    # stray focus toggles a checkbox/radio and an SPA re-render stealing focus
+    # becomes a phantom action.  A click already focuses its target and typing
+    # focuses the field it writes into, so keep a focus only as the step
+    # straight before a type (keyboard-only navigation into a field).
+    actions = _drop_redundant_focuses(actions)
     actions = _collapse_cold_start_navigation(actions)
     actions = _collapse_mid_session_navigation(actions)
     # Interactions on Chrome-internal pages (the new-tab search box, tiles,
@@ -1007,6 +1013,34 @@ def _drop_superseded_pair_marks(actions: list[Event]) -> list[Event]:
             ent.pop("supersedes_ts", None)
             ent.pop("supersedes_type", None)
             a.entity = ent
+        kept.append(a)
+    return kept
+
+
+def _drop_redundant_focuses(actions: list[Event]) -> list[Event]:
+    """Keep a recorded focus only when it opens a field the user then types into.
+
+    Replay focuses by CLICKING (``FocusHandler`` calls ``element.click()``), so a
+    bare focus on a checkbox/radio/label toggles that control on playback, and a
+    single-page-app re-render that steals focus produces exactly such a phantom
+    action.  A click already focuses its own target and the type handler focuses
+    the field it writes into, so a standalone focus earns its place only as the
+    step straight before a ``type`` (keyboard-only navigation into a field);
+    every other focus is dropped so replay never performs an unasked click.
+    """
+    kept: list[Event] = []
+    n = len(actions)
+    for i, a in enumerate(actions):
+        if a.type == "focus":
+            nxt = actions[i + 1] if i + 1 < n else None
+            if nxt is not None and nxt.type == "type":
+                kept.append(a)
+            else:
+                logger.info(
+                    "Dropped standalone focus at ts=%s (no following type; "
+                    "replay would click the element)", a.ts,
+                )
+            continue
         kept.append(a)
     return kept
 
@@ -1115,19 +1149,26 @@ def _dedupe_os_chrome_clicks(actions: list[Event]) -> list[Event]:
 def _install_global_esc_listener(stop_event: threading.Event):
     """Global ESC hook so recording stops even when the terminal has focus.
 
-    Returns the `keyboard` module on success, None when unavailable (the
-    in-page ESC listener and browser-close detection still work then).
+    Uses the platform gate's key hook (pynput: no root on Linux).  Returns the
+    hook handle (``.stop()`` detaches it) or None when unavailable - the
+    in-page ESC listener and browser-close detection still work then.
     """
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import key_hook
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import key_hook
+
+    def _on_event(event):
+        if event.event_type == "down" and event.name in ("escape", "esc"):
+            stop_event.set()
+
     try:
-        import keyboard
-    except Exception:
+        return key_hook(_on_event)
+    except Exception as exc:
         logger.warning(
-            "Global ESC hook unavailable (install the 'keyboard' package); "
-            "press ESC inside the page or close the browser window to stop."
-        )
+            "Global ESC hook unavailable (%s); press ESC inside the page or "
+            "close the browser window to stop.", exc)
         return None
-    keyboard.on_press_key("esc", lambda _event: stop_event.set(), suppress=False)
-    return keyboard
 
 
 def record_web_session(
@@ -1432,9 +1473,14 @@ def record_web_session(
                 chrome_mouse_hook.stop()
             except Exception:
                 pass
+        if chrome_key_hook is not None:
+            try:
+                chrome_key_hook.stop()
+            except Exception:
+                pass
         if keyboard_hook is not None:
             try:
-                keyboard_hook.unhook_all()
+                keyboard_hook.stop()
             except Exception:
                 pass
         # Leave the browser open for the next recording in this session

@@ -9,6 +9,32 @@ from ._test_support import (
 )
 
 
+def test_repair_rewrites_a_markdown_value_without_asking_the_model():
+    """Live: a learned '**1**' sits in a digits-only question, the page accepts
+    the read-back, and Laya agrees the value answers the field - so the field
+    is skipped forever.  The correction is deterministic (the value minus its
+    markup) and must not spend a probe or a model call: the pass used to pay
+    both and change nothing."""
+    h = _Harness()
+    field = {"id": "f", "label": "Years", "kind": "text", "tag": "input"}
+    writes = []
+    h._ff_write_web = lambda f, val, sf, driver=None: (
+        writes.append(val), True)[1]
+    calls = []
+    h._ff_llm_call = lambda *a, **k: (calls.append(1), "x")[1]
+    h._ff_field_state = lambda f, sf, driver=None: {
+        "found": True, "value": "1", "valid": True, "message": ""}
+    res = {"id": "f", "label": "Years", "value": "**1**",
+           "status": "filled"}
+    assert h._ff_repair_markup(
+        field, res, {"found": True, "value": "**1**", "valid": True,
+                    "message": ""}, None) is True
+    assert writes == ["1"]
+    assert calls == []                 # no probe, no model call
+    assert res["status"] == "repaired" and res["value"] == "1"
+
+
+
 def test_repair_does_not_treat_an_unresolved_control_as_a_rejection():
     """'field not found' says nothing about the VALUE, so it must not start a
     re-probe/re-answer loop on a field the form already accepted (live: "Form
@@ -268,10 +294,11 @@ def test_repair_probe_gets_the_format_not_the_rejected_value():
           current="September 2026", value="2017", reads=["2017"])
     hints = []
 
-    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint=""):
+    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint="",
+               learned_hint="", field=None):
         hints.append(repair_hint)
         return "evidence text"
-    h._ff_probe = _probe
+    h._ff_retrieve = _probe
 
     prompts = []
 
@@ -379,6 +406,25 @@ def test_semantic_pass_fails_open_on_an_unparseable_verdict():
                 "value": "Springfield"}]
     assert h._ff_semantic_reasons(
         targets, {"a": {"id": "a", "label": "City"}}, {}, None) == {}
+
+
+def test_a_semantic_verdict_never_rewrites_a_verbatim_source_value():
+    """Live: the judge answered NO ('city is too specific') for 'Buenos Aires' in
+    a 'Location (city)' field, and the repair pass replaced a CORRECT,
+    source-verbatim answer with 'N/A'.  A copy of the source is not a judgement
+    call - the page's own rejection still is."""
+    h = _Harness()
+    _wire(h, fields=[{"id": "f0", "label": "Location (city)"}],
+          evidence="Buenos Aires, Argentina", value="Buenos Aires",
+          reads=["Buenos Aires"], llm_value="Buenos Aires")
+    h._ff_gather_source_text = lambda node: (
+        "# Rodrigo David Benitez\nBuenos Aires, Argentina\nOxnard, USA\n")
+    h._ff_semantic_reasons = lambda *a, **k: {
+        "f0": "the answer does not fit the field: city is too specific"}
+    h._execute_form_filling_node(_node(), None)
+    summary = json.loads(h.get_variable("node_ff1_output"))
+    assert summary["repaired"] == 0
+    assert h.writes == [("f0", "Buenos Aires")]
 
 
 def test_semantic_verdict_drives_a_repair_of_a_wrong_but_valid_answer():

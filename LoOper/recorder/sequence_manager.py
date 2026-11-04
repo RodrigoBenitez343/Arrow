@@ -25,61 +25,26 @@ class SequenceManager:
 
     def _get_active_app_context(self):
         try:
-            import pygetwindow as gw
-        except Exception:
-            gw = None
-
-        try:
             import psutil
         except Exception:
             psutil = None
 
-        try:
-            import win32gui
-            import win32process
-        except Exception:
-            win32gui = None
-            win32process = None
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import active_window
+        except ImportError:  # imported as LoOper.*
+            from ...platform_gate import active_window
 
-        hwnd = None
-        title = ""
+        info = active_window() or {}
+        title = str(info.get("title") or "")
+        hwnd = info.get("handle")
+        rect_bounds = info.get("rect")
         rect = {}
-        try:
-            if gw is not None:
-                w = gw.getActiveWindow()
-                if w is not None:
-                    title = str(getattr(w, "title", "") or "")
-                    hwnd = getattr(w, "_hWnd", None)
-                    rect = {
-                        "left": w.left,
-                        "top": w.top,
-                        "width": w.width,
-                        "height": w.height
-                    }
-        except Exception:
-            pass
+        if rect_bounds:
+            l, t, r, b = rect_bounds
+            rect = {"left": l, "top": t,
+                    "width": r - l, "height": b - t}
 
-        try:
-            if hwnd is None and win32gui is not None:
-                hwnd = win32gui.GetForegroundWindow()
-                title = str(win32gui.GetWindowText(hwnd) or "")
-                if not rect:
-                     l, t, r, b = win32gui.GetWindowRect(hwnd)
-                     rect = {
-                        "left": l,
-                        "top": t,
-                        "width": r - l,
-                        "height": b - t
-                     }
-        except Exception:
-            pass
-
-        pid = None
-        try:
-            if hwnd and win32process is not None:
-                _tid, pid = win32process.GetWindowThreadProcessId(int(hwnd))
-        except Exception:
-            pid = None
+        pid = info.get("pid")
 
         proc_name = ""
         exe = ""

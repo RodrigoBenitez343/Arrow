@@ -367,6 +367,14 @@ def _valid_desc(desc: str) -> bool:
 
 # ------------------------------------------------------------------ public
 
+def _has_derived_brief(cfg: dict) -> bool:
+    """True when the chain's routing line comes from its own flow metadata."""
+    flow = cfg.get('flow') if isinstance(cfg, dict) else None
+    if not isinstance(flow, dict):
+        return False
+    return any(flow.get(key) for key in ('summary', 'sections', 'steps'))
+
+
 def repair_description(chain_path: str, alias: str, stars, feedback_text: str = "",
                        goal_text: str = "", output_excerpt: str = "",
                        model: str = "") -> dict:
@@ -403,6 +411,14 @@ def repair_description(chain_path: str, alias: str, stars, feedback_text: str = 
             return event
         if _repair_disabled():
             event["reason"] = "LOOPER_DESC_REPAIR=off"
+            _append_audit(event)
+            return event
+        if _has_derived_brief(cfg):
+            # The chain carries flow metadata, so its routing line is DERIVED
+            # from its own topology (player/chain_brief.py) and the next save
+            # rewrites ``description`` anyway.  Rewording prose here would be
+            # thrown away, so the rating is recorded and nothing is rewritten.
+            event["reason"] = "description is derived from the chain's flow"
             _append_audit(event)
             return event
 

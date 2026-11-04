@@ -69,11 +69,13 @@ class InputOperationsMixin:
             }
 
             dialog = InputPropertiesDialog(self.parent_widget, current_config)
+            dialog.add_description(node.get_property('description') or '')
             if dialog.exec_() != dialog.Accepted:
                 logger.debug("Dialog cancelled")
                 return
 
             config = dialog.get_config()
+            node.set_property('description', dialog.description())
             node.set_property('label', config['label'])
             node.set_property('default_value', config['default_value'])
             node.set_property('user_prompt', config['user_prompt'])

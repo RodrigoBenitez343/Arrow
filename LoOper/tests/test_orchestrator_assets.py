@@ -269,25 +269,28 @@ def test_system_chains_have_exactly_one_entry_node():
         )
 
 
-def test_default_system_chain_selection_prefers_is_default(tmp_path):
-    """SimpleChainRouter must pick the is_default System chain over the
-    first one on disk (with the old behavior as fallback)."""
-    for name, is_default in (("AAA_FIRST.json", False), ("ROOT.json", True)):
-        (tmp_path / name).write_text(
-            json.dumps({
-                "sequences": [],
-                "collection": "System",
-                "is_default": is_default,
-                "name": name,
-            }),
-            encoding="utf-8",
-        )
+def test_a_workspace_pinned_brain_is_what_agent_mode_runs(tmp_path):
+    """``is_default`` moved into the workspace: the agent's pinned brain runs."""
+    from player import workspace as ws
+
+    chains_dir = tmp_path / "chains"
+    chains_dir.mkdir()
+    root = ws.root_for_chains(str(chains_dir))
+    manifest = ws.create(root, "Job hunt", "Scout")
+    brain = os.path.join(ws.chains_dir(root, manifest["slug"]), "ROOT.json")
+    with open(brain, "w", encoding="utf-8") as handle:
+        json.dump({"sequences": [], "name": "ROOT"}, handle)
+    stored = ws.load(root, manifest["slug"])
+    stored["agent"]["legacy_brain"] = brain
+    ws.save(root, stored)
+
     from player.agentic_ops.simple_agent import SimpleChainRouter
-    router = SimpleChainRouter(model_path="", chains_dir=str(tmp_path))
+    router = SimpleChainRouter(model_path="", chains_dir=str(chains_dir),
+                               workspace_slug=manifest["slug"])
     picked = {}
 
     def _fake_run(query, stop_flag=None):
-        picked["path"] = router._system_chain_path
+        picked["path"] = router._brain_path
         return "ok"
 
     router._run_system_chain = _fake_run

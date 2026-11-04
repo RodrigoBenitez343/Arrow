@@ -8,6 +8,40 @@ Handles conditional node execution and workflow branching logic.
 import json
 import os
 
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import (
+        IS_WINDOWS,
+        activate_window,
+        active_window,
+        is_admin,
+        list_windows,
+        sandbox_shared_dir,
+        screen_size,
+        screenshot,
+        start_sandbox_agent,
+        venv_python,
+        venv_site_packages,
+    )
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import (
+        IS_WINDOWS,
+        activate_window,
+        active_window,
+        is_admin,
+        list_windows,
+        sandbox_shared_dir,
+        screen_size,
+        screenshot,
+        start_sandbox_agent,
+        venv_python,
+        venv_site_packages,
+    )
+
+
+def _is_admin() -> bool:
+    """True when this process holds an elevated/root token (platform gate)."""
+    return is_admin()
+
 
 class NodeExecutor:
     """Handles conditional node execution and workflow branching"""
@@ -93,20 +127,6 @@ class NodeExecutor:
             return True
 
         try:
-            import pygetwindow as gw
-        except Exception:
-            gw = None
-
-        try:
-            import win32gui
-            import win32process
-            import win32con
-        except Exception:
-            win32gui = None
-            win32process = None
-            win32con = None
-
-        try:
             from pywinauto import Application
         except Exception:
             Application = None
@@ -128,21 +148,8 @@ class NodeExecutor:
         deadline = time.time() + float(timeout or 0.0)
 
         def _foreground_hwnd():
-            try:
-                if gw is not None:
-                    w = gw.getActiveWindow()
-                    if w is not None:
-                        h = getattr(w, "_hWnd", None)
-                        if h:
-                            return int(h)
-            except Exception:
-                pass
-            try:
-                if win32gui is not None:
-                    return int(win32gui.GetForegroundWindow())
-            except Exception:
-                return None
-            return None
+            info = active_window()
+            return int(info["handle"]) if info and info.get("handle") else None
 
         def _matches_process(p):
             try:
@@ -186,54 +193,13 @@ class NodeExecutor:
             return out
 
         def _window_candidates_for_pid(pid):
-            wins = []
+            """Visible titled windows of *pid* as (handle, title), top-most first."""
             try:
-                if gw is not None:
-                    for w in gw.getAllWindows():
-                        try:
-                            hwnd = getattr(w, "_hWnd", None)
-                            if not hwnd:
-                                continue
-                            hwnd = int(hwnd)
-                            if win32process is None:
-                                continue
-                            _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                            if int(wpid) != int(pid):
-                                continue
-                            if win32gui is not None and not win32gui.IsWindowVisible(hwnd):
-                                continue
-                            t = str(getattr(w, "title", "") or "")
-                            wins.append((hwnd, t))
-                        except Exception:
-                            continue
+                return [(w["handle"], w["title"])
+                        for w in list_windows()
+                        if w.get("pid") == int(pid)]
             except Exception:
-                wins = []
-
-            if wins:
-                return wins
-
-            try:
-                if win32gui is None or win32process is None:
-                    return wins
-
-                def cb(hwnd, _):
-                    try:
-                        if not win32gui.IsWindowVisible(hwnd):
-                            return
-                        _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                        if int(wpid) != int(pid):
-                            return
-                        t = str(win32gui.GetWindowText(hwnd) or "")
-                        if not t:
-                            return
-                        wins.append((int(hwnd), t))
-                    except Exception:
-                        return
-
-                win32gui.EnumWindows(cb, None)
-            except Exception:
-                pass
-            return wins
+                return []
 
         def _pick_window(wins):
             if not wins:
@@ -264,19 +230,7 @@ class NodeExecutor:
                 pass
 
             try:
-                if win32gui is not None:
-                    try:
-                        if win32con is not None:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    except Exception:
-                        pass
-                    try:
-                        win32gui.SetForegroundWindow(hwnd)
-                    except Exception:
-                        try:
-                            win32gui.BringWindowToTop(hwnd)
-                        except Exception:
-                            pass
+                activate_window(hwnd)
             except Exception:
                 pass
 
@@ -301,12 +255,24 @@ class NodeExecutor:
             if subprocess is None:
                 logger.error("subprocess module is not available")
                 return False
-                
+
             if sandboxed:
                 try:
+                    # The sandbox session needs an administrator token on
+                    # Windows: `schtasks /rl HIGHEST` for another user,
+                    # `logoff`, `icacls /grant`.  Say so instead of dying
+                    # halfway.  X11 needs none of that (see below).
+                    if IS_WINDOWS and not _is_admin():
+                        logger.error(
+                            "RDP sandbox requires administrator rights: start "
+                            "Arrow as administrator, or run this chain on the "
+                            "desktop (sandbox disabled)."
+                        )
+                        return False
+
                     logger.info("Launching Concurrent RDP Agent Session for fallback node...")
-                    
-                    temp_dir = "C:\\TempShared"
+
+                    temp_dir = sandbox_shared_dir()
                     os.makedirs(temp_dir, exist_ok=True)
 
                     for name in ("agent_info.json", "agent_error.txt", "agent_log.txt", "agent_status.txt"):
@@ -347,8 +313,7 @@ class NodeExecutor:
                     # --- Resolve Python interpreter (same logic as sequence_executor.py) ---
                     safe_python = ""
                     _py_candidates = [
-                        os.path.join(project_root, ".venv", "Scripts", "python.exe"),
-                        os.path.join(project_root, ".venv", "scripts", "python.exe"),
+                        venv_python(os.path.join(project_root, ".venv")),
                     ]
                     if getattr(sys, 'frozen', False):
                         _py_candidates.append(sys.executable)
@@ -372,6 +337,33 @@ class NodeExecutor:
                             port = int(s.getsockname()[1])
                     except Exception:
                         port = 8000
+
+                    # X11 twin of the RDP dance below: the desktop is already
+                    # interactive, so the agent is started in THIS session and
+                    # polled on its port - the same handshake `mstsc` ends with.
+                    if not IS_WINDOWS:
+                        _extra_env = {}
+                        if not getattr(sys, 'frozen', False):
+                            _extra_env["PYTHONPATH"] = project_root
+                        agent_url = start_sandbox_agent(
+                            safe_python, agent_script, port,
+                            work_dir=temp_dir, extra_env=_extra_env)
+                        if not agent_url:
+                            return False
+                        for target in (app_context,
+                                       getattr(self, "global_app_context_override", None)):
+                            try:
+                                if isinstance(target, dict):
+                                    target["sandbox_agent_url"] = agent_url
+                                    target["rdp_agent_url"] = agent_url
+                            except Exception:
+                                pass
+                        try:
+                            from player.computer_vision import set_sandbox_agent_url
+                            set_sandbox_agent_url(agent_url)
+                        except Exception:
+                            pass
+                        return True
 
                     # --- Create .bat runner script for RDP alternate shell ---
                     runner_bat = os.path.join(temp_dir, f"agent_runner_fallback_{os.getpid()}.bat")
@@ -469,12 +461,9 @@ class NodeExecutor:
                     screen_mode = "1" if show_window else "2"
                     # Get current screen resolution dynamically for RDP session
                     try:
-                        import ctypes
-                        desktop_w = int(ctypes.windll.user32.GetSystemMetrics(0))
-                        desktop_h = int(ctypes.windll.user32.GetSystemMetrics(1))
+                        desktop_w, desktop_h = screen_size()
                     except Exception:
-                        desktop_w = 1920
-                        desktop_h = 1080
+                        desktop_w, desktop_h = 1920, 1080
                     with open(rdp_file, "w") as f:
                         f.write(f'''screen mode id:i:{screen_mode}
 use multimon:i:0
@@ -691,12 +680,12 @@ enablecredsspsupport:i:1
                     runtime_root = os.path.join(os.getcwd(), 'runtime')
                     venv_dir = os.path.join(runtime_root, 'venvs', 'conditional_fallback')
                     os.makedirs(venv_dir, exist_ok=True)
-                    py_exe = os.path.join(venv_dir, 'Scripts', 'python.exe')
+                    py_exe = venv_python(venv_dir)
                     if not os.path.exists(py_exe):
                         builder = venv.EnvBuilder(with_pip=True)
                         builder.create(venv_dir)
-                    py_exe = os.path.join(venv_dir, 'Scripts', 'python.exe')
-                    sp = os.path.join(venv_dir, 'Lib', 'site-packages')
+                    py_exe = venv_python(venv_dir)
+                    sp = venv_site_packages(venv_dir)
                     if os.path.isdir(sp) and sp not in sys.path:
                         sys.path.insert(0, sp)
 
@@ -1099,7 +1088,7 @@ enablecredsspsupport:i:1
                 if pyautogui is None:
                     return None
                 try:
-                    screen = pyautogui.screenshot()
+                    screen = screenshot()
                 except Exception:
                     return None
     

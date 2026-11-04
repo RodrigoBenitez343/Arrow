@@ -107,29 +107,26 @@ _CONTROL_TYPES = {
 }
 
 # COM objects are apartment-bound, so the IUIAutomation instance is per-thread.
-_uia_local = threading.local()
+# The platform gate owns that singleton.
+_uia_warned = False
 
 
 def _get_uia():
-    """Per-thread ``IUIAutomation`` instance, or None when unavailable."""
-    if getattr(_uia_local, "tried", False):
-        return getattr(_uia_local, "uia", None)
-    _uia_local.tried = True
-    _uia_local.uia = None
-    try:
-        import comtypes
-        import comtypes.client
+    """Per-thread ``IUIAutomation`` instance from the gate, or None."""
+    global _uia_warned
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import uia, uia_available
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import uia, uia_available
 
-        comtypes.CoInitialize()
-        comtypes.client.GetModule("UIAutomationCore.dll")
-        from comtypes.gen import UIAutomationClient
-
-        _uia_local.uia = comtypes.client.CreateObject(
-            UIAutomationClient.CUIAutomation
-        )
-    except Exception as exc:
-        logger.debug("UIA unavailable (%s) - using a cursor reticle", exc)
-    return _uia_local.uia
+    if not uia_available():
+        if not _uia_warned:
+            _uia_warned = True
+            logger.info(
+                "UI Automation is Windows-only: recording captures image crops "
+                "only, element descriptors are not recorded on this platform.")
+        return None
+    return uia()
 
 
 def _safe(el, name, default=""):
@@ -227,9 +224,12 @@ def element_descriptor_at(x, y):
     if uia is None:
         return None
     try:
-        from ctypes import wintypes
+        try:  # LoOper/ on sys.path: the app and the test suite both run that way
+            from platform_gate import point
+        except ImportError:  # imported as LoOper.*
+            from LoOper.platform_gate import point
 
-        el = uia.ElementFromPoint(wintypes.POINT(int(x), int(y)))
+        el = uia.ElementFromPoint(point(int(x), int(y)))
         r = el.CurrentBoundingRectangle
         left, top, right, bottom = int(r.left), int(r.top), int(r.right), int(r.bottom)
         if right - left < 2 or bottom - top < 2:
@@ -278,10 +278,14 @@ class RecordingOverlay(QWidget):
     """Click-through element marker + modifier cheat sheet for recording."""
 
     def __init__(self, stop_event: threading.Event,
-                 mouse_down_event: threading.Event, parent=None):
+                 mouse_down_event: threading.Event, parent=None, title=''):
         super().__init__(parent)
         self._stop = stop_event
         self._mouse_down = mouse_down_event
+        # The teach context: when the builder asks the user to record ONE
+        # action, the asked action rides the top-right controls card so the
+        # user sees WHAT is being taught while they record it.
+        self._title = ' '.join(str(title or '').split())[:70]
         self._kill = threading.Event()
         self._hit = None
         self._hit_lock = threading.Lock()
@@ -326,7 +330,10 @@ class RecordingOverlay(QWidget):
 
         self._cheat = QLabel(self)
         self._cheat.setStyleSheet(_CHEAT_QSS)
-        self._cheat.setText(_CHEAT_TEXT)
+        if self._title:
+            self._cheat.setText('TEACH: %s\n%s' % (self._title, _CHEAT_TEXT))
+        else:
+            self._cheat.setText(_CHEAT_TEXT)
         self._cheat.adjustSize()
 
         self._timer = QTimer(self)
@@ -335,7 +342,23 @@ class RecordingOverlay(QWidget):
 
         self._worker = threading.Thread(target=self._hit_loop, daemon=True)
 
+        # Paused while the user acts INSIDE the shared browser: the merged
+        # teach overlay hands the marks over to the web overlay then, and
+        # resumes them the moment anything outside the browser is used.
+        self._active = True
+
     # ------------------------------------------------------------------ API
+
+    def set_active(self, active: bool) -> None:
+        """Pause/resume the marks (browser-interaction handoff).  Inactive
+        hides every mark but keeps the overlay alive for the next switch."""
+        self._active = bool(active)
+        if not self._active:
+            self._box.hide()
+            self._label.hide()
+            self._crop.hide()
+            self._crop_label.hide()
+            self._cheat.hide()
 
     def start(self) -> None:
         """Cover the virtual desktop and begin marking elements."""
@@ -497,6 +520,10 @@ class RecordingOverlay(QWidget):
             self._crop.hide()
             self._crop_label.hide()
             self._cheat.hide()
+            return
+
+        # Paused (the user is inside the shared browser): no desktop marks.
+        if not self._active:
             return
 
         if self._cheat.isHidden():

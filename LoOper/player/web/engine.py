@@ -35,7 +35,6 @@ from .session import cleanup_session, create_session, detach_session
 from . import actions
 from . import exec_overlay
 from .handlers import HANDLERS
-from ..human_cursor import glide_os_cursor, moves_enabled
 
 try:
     from selenium.common.exceptions import NoSuchWindowException
@@ -98,13 +97,18 @@ _DISPATCHERS = {type_name: handler.execute for type_name, handler in HANDLERS.it
 # run for pointer actions - never before every keystroke/typing action.
 _OVERLAY_MARK_TYPES = frozenset({"click", "dblclick", "contextmenu", "hover", "drag"})
 
-# Actions that own a POINT on screen: the OS cursor walks to it before the
-# action runs, the way a desktop sequence does.  ``key`` is deliberately out -
-# keystrokes arrive in bursts, and gliding for each one reads as jitter.
+# Actions that own a POINT in the page: the virtual cursor walks to it before
+# the action runs, the way a desktop sequence's pointer does.  ``key`` is
+# deliberately out - keystrokes arrive in bursts, and walking for each one reads
+# as jitter.
 _CURSOR_TYPES = frozenset({
     "click", "dblclick", "contextmenu", "hover", "drag",
     "focus", "type", "select", "submit", "chrome",
 })
+
+# Actions worth boxing in the overlay (and worth walking the cursor to when the
+# action is not already a cursor type).
+_MARK_TYPES = _OVERLAY_MARK_TYPES | _CURSOR_TYPES
 
 
 def _story_host(url: Optional[str]) -> str:
@@ -275,15 +279,14 @@ class ReplayEngine:
         # factory so a reconnect reuses the chain's persistent browser.
         self._driver_factory = driver_factory
         self._retried: set[int] = set()
-        # Gliding the OS pointer needs a visible browser on this machine: a
-        # headless session has no window to walk to, and the replay suite runs
-        # fake drivers (it pins LOOPER_OS_CURSOR=off in conftest).
+        # The cursor walk happens INSIDE the page, so it needs no visible window
+        # - but a headless one shows nothing, so its duration is never waited
+        # out there (the walk itself is harmless and still boxes the element).
         try:
             from .session import run_headless
-            headless = bool(config.headless) or bool(run_headless())
+            self._headless = bool(config.headless) or bool(run_headless())
         except Exception:
-            headless = bool(config.headless)
-        self._cursor_moves = not headless and moves_enabled()
+            self._headless = bool(config.headless)
 
     def _pause(self, fast: bool = False) -> None:
         """Wait a small random delay between actions, like desktop sequences.
@@ -312,16 +315,29 @@ class ReplayEngine:
         """
         return actions.target_geometry(self.driver, evt)
 
-    def _glide_to_action(self, evt: Event, geometry=None) -> None:
-        """Walk the OS pointer to the action's target (desktop-sequence feel)."""
-        if not self._cursor_moves or evt.type not in _CURSOR_TYPES:
-            return
-        if geometry is None:
-            geometry = self._action_geometry(evt)
-        point = (geometry or {}).get("point")
-        if point is None:
-            return  # nothing on screen to walk to (offscreen target, no locator)
-        glide_os_cursor(point[0], point[1])
+    def _glide_to_action(self, evt: Event, geometry=None, label: str = "") -> float:
+        """Walk the PAGE's virtual cursor onto the action's target.
+
+        A web sequence must never steer the real pointer: gliding the OS cursor
+        dragged the user's own mouse (and the desktop player's animated cursor)
+        across the screen while the click was actually dispatched in the DOM.
+        The cursor lives inside the page instead (exec_overlay), so the run
+        keeps the desktop read without hijacking the pointer.
+
+        The action waits for the walk (scaled by ``speed``) instead of firing
+        before the cursor arrives.  Returns the walk in seconds (0.0 = nothing
+        to walk to, or not a pointer action).
+        """
+        if evt.type not in _MARK_TYPES:
+            return 0.0
+        try:
+            walk = float(exec_overlay.mark(
+                self.driver, evt, label or evt.type, geometry) or 0.0)
+        except (TypeError, ValueError):
+            walk = 0.0  # an overlay that cannot report its walk never stalls
+        if walk > 0 and not self._headless:
+            time.sleep(walk / max(0.01, float(self.config.speed or 1.0)))
+        return walk
 
     def _dispatch(self, index: int, evt: Event) -> dict[str, Any]:
         """Run one action; never raises (returns a per-action result dict).
@@ -701,20 +717,15 @@ class ReplayEngine:
                         entity_total, entity_info.get("total", 0)
                     )
                 self._pause(fast=evt.type in ("key", "type"))
-                # One resolution serves BOTH the overlay box and the pointer
-                # walk, so they can never describe different elements.
+                # One resolution serves the overlay box, the cursor walk and the
+                # action itself, so they can never describe different elements.
                 geometry = None
-                if evt.type in _OVERLAY_MARK_TYPES or (
-                        self._cursor_moves and evt.type in _CURSOR_TYPES):
+                if evt.type in _MARK_TYPES:
                     geometry = self._action_geometry(evt)
-                # Show what this action is about to hit before it runs (pointer
-                # actions only - see _OVERLAY_MARK_TYPES).
-                if evt.type in _OVERLAY_MARK_TYPES:
-                    exec_overlay.mark(self.driver, evt, f"{index}: {evt.type}",
-                                      geometry)
-                # Walk the real pointer to the target first, so a web replay
-                # reads like the desktop player instead of teleporting focus.
-                self._glide_to_action(evt, geometry)
+                # Box what this action is about to hit and walk the page's OWN
+                # cursor onto it (pointer actions only - see _MARK_TYPES).  The
+                # action then runs behind the cursor, never ahead of it.
+                self._glide_to_action(evt, geometry, f"{index}: {evt.type}")
                 result = self._dispatch(index, evt)
                 # The browser window died mid-run ("no such window"): reconnect
                 # through the factory and retry the SAME action once, so a

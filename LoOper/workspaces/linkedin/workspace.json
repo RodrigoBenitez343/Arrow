@@ -1,0 +1,16 @@
+{
+ "version": 1,
+ "slug": "linkedin",
+ "name": "linkedin",
+ "agent": {
+  "name": "linkedin",
+  "avatar": 0,
+  "model": "deepseek:deepseek-flash",
+  "legacy_brain": "",
+  "policy": {
+   "max_steps": 6
+  }
+ },
+ "updated": "2026-10-30T16:12:48",
+ "created": "2026-10-30T14:03:33"
+}

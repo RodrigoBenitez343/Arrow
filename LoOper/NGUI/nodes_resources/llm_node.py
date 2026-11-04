@@ -201,6 +201,9 @@ class LLMNode(BaseNode):
         # lives on a Context node and is wired in via the 'context' port.
         self.create_property("tool_descriptions", "{}")
         self.create_property("semantic_description", "")
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property("description", "")
         # Context consolidation (ComoRAG-inspired)
         self.create_property("use_context_consolidation", "false")
         self.create_property("consolidation_chunk_size", "1000")
@@ -635,7 +638,11 @@ class LLMNode(BaseNode):
             os.makedirs(screenshots_dir, exist_ok=True)
 
             # Take screenshot
-            screenshot = pyautogui.screenshot()
+            try:  # LoOper/ on sys.path: the app and the test suite both run that way
+                from platform_gate import screenshot as _capture_screen
+            except ImportError:  # imported as LoOper.*
+                from LoOper.platform_gate import screenshot as _capture_screen
+            screenshot = _capture_screen()
 
             # Save with timestamp
             timestamp = int(time.time())

@@ -35,44 +35,12 @@ def _agent_key_name(name):
 
 
 def _set_clipboard_text(text):
-    """Set the clipboard to *text* (Unicode-safe) using whatever works."""
-    text = "" if text is None else str(text)
-    try:
-        import pyperclip
-        pyperclip.copy(text)
-        return
-    except Exception:
-        pass
-    try:
-        import ctypes
-        u32 = ctypes.windll.user32
-        CF_UNICODETEXT = 13
-        u32.OpenClipboard(None)
-        try:
-            u32.EmptyClipboard()
-            buf = ctypes.create_unicode_buffer(text)
-            h = ctypes.windll.kernel32.GlobalAlloc(0x0042, ctypes.sizeof(buf))
-            if h:
-                locked = ctypes.windll.kernel32.GlobalLock(h)
-                if locked:
-                    ctypes.memmove(locked, buf, ctypes.sizeof(buf))
-                    ctypes.windll.kernel32.GlobalUnlock(h)
-                # On success the system owns the handle; do NOT free it.
-                u32.SetClipboardData(CF_UNICODETEXT, h)
-        finally:
-            u32.CloseClipboard()
-        return
-    except Exception:
-        pass
-    try:
-        import subprocess
-        p = subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command",
-             "[Console]::InputEncoding=[Console]::OutputEncoding=[Text.Encoding]::UTF8; Set-Clipboard -Value $input"],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        p.communicate(text.encode("utf-8"), timeout=10)
-    except Exception:
-        pass
+    """Set the clipboard to *text* through the platform gate."""
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import clipboard_copy
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import clipboard_copy
+    return clipboard_copy("" if text is None else str(text))
 
 
 def _press_modifiers(mods):
@@ -382,7 +350,11 @@ class AgentHandler(BaseHTTPRequestHandler):
 
 def run():
     # Write a quick status file to show we're starting
-    shared_dir = "C:\\TempShared"
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import sandbox_shared_dir
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import sandbox_shared_dir
+    shared_dir = sandbox_shared_dir()
     if not os.path.exists(shared_dir):
         os.makedirs(shared_dir, exist_ok=True)
     with open(os.path.join(shared_dir, "agent_status.txt"), "w") as f:

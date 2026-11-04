@@ -218,6 +218,7 @@ class AISettingsDialog(ModernDialog):
         self.setup_ui()
         self.load_settings()
         self._load_byok_into_ui()
+        self._load_description_settings()
 
         # Check API status
         QTimer.singleShot(100, self.check_api_status)
@@ -472,10 +473,137 @@ class AISettingsDialog(ModernDialog):
         route_group.setLayout(route_form)
         lay.addWidget(route_group)
 
+        self._build_description_group(lay, byok)
+
         lay.addStretch()
         scroll.setWidget(host)
         outer.addWidget(scroll)
         return tab
+
+    def _build_description_group(self, parent_layout, byok):
+        """Provider + model that WRITE the chain descriptions.
+
+        Describing a chain is a bounded job — the topology comes from the
+        canvas, the model only writes the wording — so a small local model is
+        enough, but the choice is the user's.  This edits the Builder's own
+        settings file (``player/builder/settings.py``), which is the single
+        place its model call reads.
+        """
+        group = QGroupBox(_("Descriptions — the model that writes them"))
+        form = QFormLayout(group)
+
+        self.description_provider_combo = QComboBox()
+        if byok is not None:
+            for choice in byok.provider_choices():
+                self.description_provider_combo.addItem(choice["label"],
+                                                        choice["id"])
+                if choice["coming_soon"]:
+                    item = self.description_provider_combo.model().item(
+                        self.description_provider_combo.count() - 1)
+                    if item is not None:
+                        item.setEnabled(False)
+                        item.setToolTip(_("Coming soon"))
+
+        self.description_model_combo = QComboBox()
+        self.description_model_combo.setEditable(True)
+        self.description_model_combo.setInsertPolicy(QComboBox.NoInsert)
+        refresh = QPushButton(_("Refresh Models"))
+        refresh.clicked.connect(self._refresh_description_models)
+        model_row = QWidget()
+        model_lay = QHBoxLayout(model_row)
+        model_lay.setContentsMargins(0, 0, 0, 0)
+        model_lay.addWidget(self.description_model_combo, 1)
+        model_lay.addWidget(refresh)
+
+        form.addRow(_("Provider:"), self.description_provider_combo)
+        form.addRow(_("Model:"), model_row)
+        self.description_provider_combo.currentIndexChanged.connect(
+            lambda _index: self._refill_description_models())
+
+        note = QLabel(_(
+            "The Builder reads the canvas itself and asks this model for the "
+            "wording only, so a small local model is enough. A cloud model "
+            "needs room for the whole prompt (a few thousand tokens) — a "
+            "tiny one answers 'please reduce the length of the messages'. A "
+            "blank model means the provider's default. Stored with the "
+            "Builder's own settings."))
+        note.setWordWrap(True)
+        form.addRow(note)
+        parent_layout.addWidget(group)
+        return group
+
+    def _load_description_settings(self):
+        """Show the Builder's stored provider/model in the two combos."""
+        from player.builder import settings as builder_settings
+
+        try:
+            saved = builder_settings.load()
+        except Exception as exc:            # a broken file is shown, not hidden
+            QMessageBox.critical(self, _("Builder settings"), str(exc))
+            return
+        engine = str(saved.get("engine") or "")
+        index = self.description_provider_combo.findData(engine)
+        if index < 0 and engine:
+            # A provider this build does not list (a hand-edited file): show it
+            # rather than pretend the stored value is something else.
+            self.description_provider_combo.addItem(engine, engine)
+            index = self.description_provider_combo.count() - 1
+        self.description_provider_combo.setCurrentIndex(max(index, 0))
+
+        model = str(saved.get("model") or "")
+        self.description_model_combo.clear()
+        if model:
+            self.description_model_combo.addItem(model)
+        self.description_model_combo.setCurrentText(model)
+
+    def _refresh_description_models(self):
+        """List the models the SELECTED provider serves (never a merged list)."""
+        from player.builder import reasoning as builder_reasoning
+
+        try:
+            names = builder_reasoning.list_models()
+        except Exception as exc:
+            QMessageBox.critical(self, _("Builder model list"), str(exc))
+            return
+        self._description_models = list(names)
+        self._refill_description_models()
+
+    def _refill_description_models(self):
+        """Show the chosen provider's models; a GGUF belongs to llama.cpp."""
+        from NGUI.dialogs.engine_options import models_for_engine
+        engine = str(self.description_provider_combo.currentData() or "")
+        names = models_for_engine(
+            getattr(self, "_description_models", None) or [], engine)
+        current = self.description_model_combo.currentText().strip()
+        if current and not models_for_engine([current], engine):
+            # A model that belongs to ANOTHER provider would keep routing
+            # there (its prefix wins), so the provider switch would be a no-op.
+            current = ""
+        self.description_model_combo.blockSignals(True)
+        try:
+            self.description_model_combo.clear()
+            for name in names:
+                self.description_model_combo.addItem(name)
+            if current:
+                # Never blank a chosen model: an empty box means "provider
+                # default", which is not what clearing the list for a refresh
+                # asked for.
+                self.description_model_combo.setCurrentText(current)
+        finally:
+            self.description_model_combo.blockSignals(False)
+
+    def _save_description_settings(self):
+        """Persist the two combos into the Builder's settings file."""
+        from player.builder import settings as builder_settings
+        from NGUI.dialogs.engine_options import store_model
+
+        engine = str(self.description_provider_combo.currentData() or "")
+        # The model is stored in the form the gateway ROUTES: a bare pick under
+        # a cloud provider becomes ``provider:model``.  A stored pair that
+        # disagrees (deepseek + a groq model) sent a groq model to DeepSeek.
+        model = store_model(engine,
+                            self.description_model_combo.currentText().strip())
+        builder_settings.save({"engine": engine, "model": model})
 
     def _add_provider_row(self, parent_layout, choice):
         """One provider as its own row: enable toggle + its family fields.
@@ -820,6 +948,10 @@ class AISettingsDialog(ModernDialog):
 
             # Persist BYOK providers + routing into byok.json.
             self._save_byok()
+
+            # ...and the model that writes the descriptions (the Builder reads
+            # its own settings file, not this dialog's).
+            self._save_description_settings()
 
             QMessageBox.information(
                 self, _("Success"), _("Settings saved successfully!")

@@ -1,4 +1,7 @@
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_api_url() -> str:
@@ -48,7 +51,7 @@ def get_default_llm_model(engine: str = "llamacpp") -> str:
             from AI.config_loader import get_llamacpp_config
             path = str(get_llamacpp_config().get("model_path") or "").strip()
             if path:
-                return path
+                return resolve_llamacpp_model_path(path)
         except Exception:
             pass
     try:
@@ -82,14 +85,31 @@ def get_default_llm_model(engine: str = "llamacpp") -> str:
 
 
 def resolve_llamacpp_model_path(model: str) -> str:
-    """Resolve a relative GGUF name against ``AI/models`` (mirrors the LLM
-    executor's resolution).  Absolute paths and unknown names pass through."""
+    """Resolve a GGUF reference to a file that exists (absolute paths included).
+
+    A relative name resolves against ``AI/models``.  An ABSOLUTE path that no
+    longer exists is a checkout that moved: the configured model is looked up
+    by its BASENAME in this install's ``AI/models`` (the same repair the chain
+    importer applies to moved chains) — otherwise the configured
+    ``D:\\LoOperV2\\...\\SmolLM3-Q4_K_M.gguf`` from an older tree is handed to
+    the engine and every default-model call dies on a missing file.  An
+    unknown name passes through untouched so the caller reports it.
+    """
     m = str(model or "").strip()
-    if not m or os.path.isabs(m):
+    if not m:
         return m
     try:
         from AI.config_loader import get_models_dir
-        path = os.path.normpath(os.path.join(get_models_dir(), m))
-        return path if os.path.exists(path) else m
+        models_dir = get_models_dir()
+        if not os.path.isabs(m):
+            path = os.path.normpath(os.path.join(models_dir, m))
+            return path if os.path.exists(path) else m
+        if os.path.exists(m):
+            return m
+        moved = os.path.join(models_dir, os.path.basename(m))
+        if os.path.exists(moved):
+            logger.info("Model moved: %s -> %s", m, moved)
+            return moved
+        return m
     except Exception:
         return m

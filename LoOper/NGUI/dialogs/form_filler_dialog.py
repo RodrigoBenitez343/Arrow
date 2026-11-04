@@ -24,6 +24,7 @@ from .engine_options import (
     engine_from_config,
     engine_id,
     fill_engine_combo,
+    models_for_engine,
     select_engine,
     store_model,
 )
@@ -158,8 +159,10 @@ class FormFillerDialog(ModernDialog):
         self.ollama_model_combo.setEditable(True)
         _constrain_combo(self.ollama_model_combo)
         try:
+            # The gateway list merges GGUFs + Ollama tags + provider entries:
+            # this is the Ollama combo, so only the tags belong here.
             self.ollama_model_combo.addItems(
-                get_real_cached_models(timeout=5.0) or []
+                models_for_engine(get_real_cached_models(timeout=5.0), "ollama")
             )
         except Exception:
             pass
@@ -238,52 +241,111 @@ class FormFillerDialog(ModernDialog):
         task_layout.addWidget(self.fields_skip_edit)
         layout.addWidget(task_group)
 
-        # ── Retrieval (ComoRAG, per field) ──
-        retr_group = QGroupBox(_("Retrieval (ComoRAG, per field)"))
+        # ── Retrieval (CRAG, per field) ──
+        retr_group = QGroupBox(_("Retrieval (CRAG, per field)"))
         retr_layout = QGridLayout(retr_group)
         retr_layout.setContentsMargins(8, 12, 8, 8)
         retr_layout.setSpacing(6)
-        retr_layout.addWidget(QLabel(_("Probe top-k chunks:")), 0, 0)
-        self.probe_top_k_spin = QSpinBox()
-        self.probe_top_k_spin.setRange(1, 20)
-        retr_layout.addWidget(self.probe_top_k_spin, 0, 1)
-        retr_layout.addWidget(QLabel(_("Probe char budget:")), 1, 0)
-        self.probe_char_budget_spin = QSpinBox()
-        self.probe_char_budget_spin.setRange(200, 20000)
-        self.probe_char_budget_spin.setSingleStep(100)
-        retr_layout.addWidget(self.probe_char_budget_spin, 1, 1)
-        retr_layout.addWidget(QLabel(_("Probe context chars:")), 2, 0)
-        self.probe_context_chars_spin = QSpinBox()
-        self.probe_context_chars_spin.setRange(1000, 12000)
-        self.probe_context_chars_spin.setSingleStep(500)
-        retr_layout.addWidget(self.probe_context_chars_spin, 2, 1)
-        retr_layout.addWidget(QLabel(_("Retrieval cycles:")), 3, 0)
-        self.probe_cycles_spin = QSpinBox()
-        self.probe_cycles_spin.setRange(1, 12)
-        self.probe_cycles_spin.setToolTip(
-            _("MAX ComoRAG cycles per field; the field's probe stops as soon "
-              "as the judge's answer is grounded or a cycle adds nothing "
-              "new. 1 = single-pass top-k.")
+        self.crag_enabled_checkbox = ModernToggle(
+            text=_("Use CRAG (evaluate the retrieval, correct it when wrong)")
         )
-        retr_layout.addWidget(self.probe_cycles_spin, 3, 1)
-        self.consolidate_checkbox = ModernToggle(
-            text=_("Use ComoRAG consolidation (multi-cycle probing)")
+        self.crag_enabled_checkbox.setToolTip(
+            _("On (default): every retrieved passage is SCORED against the "
+              "field's question. A correct verdict ships the passages, an "
+              "ambiguous one adds the corrective store, an incorrect one "
+              "replaces them - or hands the field to the user.\n"
+              "Off: one plain embedding retrieval per field.")
         )
-        self.consolidate_checkbox.setToolTip(
-            _("On (default): each field's probe runs the iterative ComoRAG "
-              "engine over several cycles for stronger grounding - slower and "
-              "it spends more model calls.\n"
-              "Off: one single-pass embedding retrieval per field - lighter, "
-              "for a bigger model that needs less scaffolding.")
+        retr_layout.addWidget(self.crag_enabled_checkbox, 0, 0, 1, 3)
+        retr_layout.addWidget(QLabel(_("Scored by:")), 1, 0)
+        self.crag_evaluator_combo = QComboBox()
+        self.crag_evaluator_combo.addItems(["auto", "laya", "embed", "llm"])
+        self.crag_evaluator_combo.setToolTip(
+            _("auto: the embedded Laya engine (a calibrated relevance "
+              "probability per passage), falling back to embeddings when it "
+              "is unavailable.\n"
+              "laya / embed / llm force one backend.")
         )
-        retr_layout.addWidget(self.consolidate_checkbox, 4, 0, 1, 2)
+        retr_layout.addWidget(self.crag_evaluator_combo, 1, 1)
+        retr_layout.addWidget(QLabel(_("Decompose mode:")), 2, 0)
+        self.crag_decompose_combo = QComboBox()
+        self.crag_decompose_combo.addItems(
+            ["excerption", "selection", "fixed_num"])
+        self.crag_decompose_combo.setToolTip(
+            _("How a passage is split before it is reranked.\n"
+              "excerption: sentences, three per strip (CRAG's default)\n"
+              "selection: the passage is kept whole\n"
+              "fixed_num: fixed 50-word windows")
+        )
+        retr_layout.addWidget(self.crag_decompose_combo, 2, 1)
+        retr_layout.addWidget(QLabel(_("Passages scored (top-k):")), 3, 0)
+        self.crag_top_k_spin = QSpinBox()
+        self.crag_top_k_spin.setRange(2, 20)
+        retr_layout.addWidget(self.crag_top_k_spin, 3, 1)
+        retr_layout.addWidget(QLabel(_("Strip scoring budget:")), 4, 0)
+        self.crag_max_strips_spin = QSpinBox()
+        self.crag_max_strips_spin.setRange(3, 40)
+        self.crag_max_strips_spin.setToolTip(
+            _("How many decomposed strips may be scored per field.")
+        )
+        retr_layout.addWidget(self.crag_max_strips_spin, 4, 1)
+        retr_layout.addWidget(QLabel(_("Keep (internal / external):")), 5, 0)
+        self.crag_top_n_internal_spin = QSpinBox()
+        self.crag_top_n_internal_spin.setRange(1, 20)
+        self.crag_top_n_external_spin = QSpinBox()
+        self.crag_top_n_external_spin.setRange(1, 20)
+        retr_layout.addWidget(self.crag_top_n_internal_spin, 5, 1)
+        retr_layout.addWidget(self.crag_top_n_external_spin, 5, 2)
+        retr_layout.addWidget(QLabel(_("Correct at score:")), 6, 0)
+        self.crag_upper_spin = QDoubleSpinBox()
+        self.crag_upper_spin.setRange(0.0, 1.0)
+        self.crag_upper_spin.setSingleStep(0.05)
+        self.crag_upper_spin.setDecimals(2)
+        retr_layout.addWidget(self.crag_upper_spin, 6, 1)
+        retr_layout.addWidget(QLabel(_("Wrong below score:")), 7, 0)
+        self.crag_lower_spin = QDoubleSpinBox()
+        self.crag_lower_spin.setRange(0.0, 1.0)
+        self.crag_lower_spin.setSingleStep(0.05)
+        self.crag_lower_spin.setDecimals(2)
+        self.crag_lower_spin.setToolTip(
+            _("Two thresholds, as in CRAG: at or above the first the "
+              "retrieval is CORRECT, at or above the second it is "
+              "AMBIGUOUS (internal + corrective knowledge), below both it is "
+              "INCORRECT (corrective knowledge, else ask the user).")
+        )
+        retr_layout.addWidget(self.crag_lower_spin, 7, 1)
+        retr_layout.addWidget(QLabel(_("Material char budget:")), 8, 0)
+        self.crag_char_budget_spin = QSpinBox()
+        self.crag_char_budget_spin.setRange(500, 20000)
+        self.crag_char_budget_spin.setSingleStep(100)
+        retr_layout.addWidget(self.crag_char_budget_spin, 8, 1)
+        self.crag_external_checkbox = ModernToggle(
+            text=_("Corrective store (context pool + a rewritten re-read)")
+        )
+        self.crag_external_checkbox.setToolTip(
+            _("On (default): an ambiguous or wrong retrieval is corrected "
+              "from the pool's own learned/verified records and from a "
+              "second read of the documents with a rewritten query.\n"
+              "Off: only the attached material is used.")
+        )
+        retr_layout.addWidget(self.crag_external_checkbox, 9, 0, 1, 3)
+        self.crag_rewrite_checkbox = ModernToggle(
+            text=_("Rewrite the query for the corrective step")
+        )
+        self.crag_rewrite_checkbox.setToolTip(
+            _("On (default): the field's question is first rewritten into "
+              "keywords (CRAG's search-query step) before the corrective "
+              "store is read.")
+        )
+        retr_layout.addWidget(self.crag_rewrite_checkbox, 10, 0, 1, 3)
         retr_help = QLabel(
-            _("Each field's label is the probe; only the most relevant slices "
-              "of the wired-in context reach the model (keeps the window small).")
+            _("Each field's own question is the query; only the passages CRAG "
+              "evaluated reach the model, so the window stays small and an "
+              "unanswerable field escalates to the user instead of guessing.")
         )
         retr_help.setWordWrap(True)
         retr_help.setStyleSheet("color: #888; font-size: 10px; margin-top: 3px;")
-        retr_layout.addWidget(retr_help, 5, 0, 1, 2)
+        retr_layout.addWidget(retr_help, 11, 0, 1, 3)
         layout.addWidget(retr_group)
 
         # ── Page scope (web): confine field detection to a picked container ──
@@ -497,11 +559,18 @@ class FormFillerDialog(ModernDialog):
             'instruction': self.instruction_edit.toPlainText().strip(),
             'fields_include': self.fields_include_edit.text().strip(),
             'fields_skip': self.fields_skip_edit.text().strip(),
-            'probe_top_k': self.probe_top_k_spin.value(),
-            'probe_char_budget': self.probe_char_budget_spin.value(),
-            'probe_context_chars': self.probe_context_chars_spin.value(),
-            'probe_cycles': self.probe_cycles_spin.value(),
-            'consolidate': self.consolidate_checkbox.isChecked(),
+            'crag_enabled': self.crag_enabled_checkbox.isChecked(),
+            'crag_evaluator': self.crag_evaluator_combo.currentText(),
+            'crag_decompose_mode': self.crag_decompose_combo.currentText(),
+            'crag_top_k': self.crag_top_k_spin.value(),
+            'crag_max_strips': self.crag_max_strips_spin.value(),
+            'crag_top_n_internal': self.crag_top_n_internal_spin.value(),
+            'crag_top_n_external': self.crag_top_n_external_spin.value(),
+            'crag_upper_threshold': self.crag_upper_spin.value(),
+            'crag_lower_threshold': self.crag_lower_spin.value(),
+            'crag_char_budget': self.crag_char_budget_spin.value(),
+            'crag_external': self.crag_external_checkbox.isChecked(),
+            'crag_rewrite': self.crag_rewrite_checkbox.isChecked(),
             'verify': self.verify_checkbox.isChecked(),
             'answer_no': self.answer_no_checkbox.isChecked(),
             'answer_na': self.answer_na_checkbox.isChecked(),
@@ -551,15 +620,36 @@ class FormFillerDialog(ModernDialog):
                 return int(cfg.get(key, default))
             except Exception:
                 return default
-        self.probe_top_k_spin.setValue(_int('probe_top_k', 3))
-        self.probe_char_budget_spin.setValue(_int('probe_char_budget', 1500))
-        self.probe_context_chars_spin.setValue(_int('probe_context_chars', 6000))
-        self.probe_cycles_spin.setValue(_int('probe_cycles', 3))
+        self.crag_top_k_spin.setValue(_int('crag_top_k', 6))
+        self.crag_max_strips_spin.setValue(_int('crag_max_strips', 12))
+        self.crag_top_n_internal_spin.setValue(_int('crag_top_n_internal', 6))
+        self.crag_top_n_external_spin.setValue(_int('crag_top_n_external', 5))
+        self.crag_char_budget_spin.setValue(_int('crag_char_budget', 4000))
         self.context_size_spin.setValue(_int('context_size', 0))
-        consolidate = cfg.get('consolidate', True)
-        self.consolidate_checkbox.setChecked(
-            consolidate if isinstance(consolidate, bool) else str(consolidate).lower() in ('true', '1', 'yes', 'on')
-        )
+
+        def _float(key, default):
+            try:
+                return float(cfg.get(key, default))
+            except Exception:
+                return default
+        self.crag_upper_spin.setValue(_float('crag_upper_threshold', 0.60))
+        self.crag_lower_spin.setValue(_float('crag_lower_threshold', 0.40))
+        _mode_text = str(cfg.get('crag_decompose_mode') or 'excerption')
+        if _mode_text not in ('excerption', 'selection', 'fixed_num'):
+            _mode_text = 'excerption'
+        self.crag_decompose_combo.setCurrentText(_mode_text)
+        _eval_text = str(cfg.get('crag_evaluator') or 'auto').lower()
+        if _eval_text not in ('auto', 'laya', 'embed', 'llm'):
+            _eval_text = 'auto'
+        self.crag_evaluator_combo.setCurrentText(_eval_text)
+
+        def _flag(key, default=True):
+            value = cfg.get(key, default)
+            return (value if isinstance(value, bool)
+                    else str(value).lower() in ('true', '1', 'yes', 'on'))
+        self.crag_enabled_checkbox.setChecked(_flag('crag_enabled', True))
+        self.crag_external_checkbox.setChecked(_flag('crag_external', True))
+        self.crag_rewrite_checkbox.setChecked(_flag('crag_rewrite', True))
         self.max_fields_spin.setValue(_int('max_fields', 40))
 
         verify = cfg.get('verify', True)
@@ -574,7 +664,7 @@ class FormFillerDialog(ModernDialog):
         self.answer_na_checkbox.setChecked(
             answer_na if isinstance(answer_na, bool) else str(answer_na).lower() in ('true', '1', 'yes', 'on')
         )
-        ask_user = cfg.get('ask_user', False)
+        ask_user = cfg.get('ask_user', True)
         self.ask_user_checkbox.setChecked(
             ask_user if isinstance(ask_user, bool) else str(ask_user).lower() in ('true', '1', 'yes', 'on')
         )

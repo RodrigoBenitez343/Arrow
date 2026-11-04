@@ -80,13 +80,14 @@ class KeyboardMonitor:
     
     @staticmethod
     def _stop_tts_audio():
-        """Immediately stop any playing TTS audio output."""
+        """Immediately stop any playing TTS audio output (platform gate)."""
         try:
-            import sys
-            if sys.platform == "win32":
-                import winsound
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                logger.debug("TTS audio purged via winsound")
+            try:  # LoOper/ on sys.path: the app and the test suite both run that way
+                from platform_gate import stop_audio
+            except ImportError:  # imported as LoOper.*
+                from LoOper.platform_gate import stop_audio
+            stop_audio()
+            logger.debug("TTS audio purged")
         except Exception as e:
             logger.debug(f"Failed to stop TTS audio: {e}")
 

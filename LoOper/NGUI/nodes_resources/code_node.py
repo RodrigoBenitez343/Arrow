@@ -83,6 +83,9 @@ class CodeNode(BaseNode):
         # Custom IO port declarations (per-instance var table)
         self.create_property('input_vars', '[]')   # JSON: [{"name": "...", "type": "string"}, ...]
         self.create_property('output_vars', '[]')  # JSON: [{"name": "...", "type": "string"}, ...]
+        # Project files (JSON: {"rel/path.py": "content"}) - script.py is the
+        # entry 'code'; everything else here travels with the node/chain.
+        self.create_property('project_files', '{}')
         
         # Track custom port names for cleanup on rebuild
         self._custom_input_ports = []
@@ -110,6 +113,13 @@ class CodeNode(BaseNode):
             output_vars = json.loads(ov_raw) if isinstance(ov_raw, str) else []
         except Exception:
             output_vars = []
+        pf_raw = self.get_property('project_files') or '{}'
+        try:
+            project_files = json.loads(pf_raw) if isinstance(pf_raw, str) else {}
+        except Exception:
+            project_files = {}
+        if not isinstance(project_files, dict):
+            project_files = {}
         return {
             'code': self.get_property('code'),
             'file_path': self.get_property('file_path'),
@@ -129,6 +139,7 @@ class CodeNode(BaseNode):
             'memory_context': memory_context,
             'input_vars': input_vars,
             'output_vars': output_vars,
+            'project_files': project_files,
         }
 
     def rebuild_ports(self):

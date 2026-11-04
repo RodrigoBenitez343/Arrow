@@ -9,47 +9,28 @@ operations with visual template matching capabilities.
 This is the main entry point that launches the GUI application.
 """
 
-import ctypes
 import io
 import os
 import sys
 
-# ── CRITICAL: Set Windows DPI awareness BEFORE any Win32 GDI/USER32 calls ──
-# This ensures pyautogui.size(), pyautogui.screenshot(), and mss.capture()
-# all agree on the coordinate space (physical pixels) on high-DPI displays.
-# Without this, pyautogui.size() returns LOGICAL pixels while screenshots
-# return PHYSICAL pixels, causing template matching to find coordinates in
-# the wrong space and clicks to land at incorrect positions.
-if sys.platform == "win32":
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()  # Legacy fallback (Vista+)
-        except Exception:
-            pass
+# ── CRITICAL: DPI awareness is set through the platform gate right after
+# sys.path is prepared (below), BEFORE pygame/pyautogui/mss are imported.
+# This ensures pyautogui.size(), pyautogui.screenshot() and mss.capture() all
+# agree on one physical-pixel coordinate space on high-DPI displays.
 
-if sys.platform == "win32":
-    try:
-        if sys.stdout is None:
-            sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
-        else:
-            try:
-                if hasattr(sys.stdout, "reconfigure"):
-                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
+# ── UTF-8 console streams (a detached or frozen launch can hand us None)
+try:
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    elif hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-        if sys.stderr is None:
-            sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
-        else:
-            try:
-                if hasattr(sys.stderr, "reconfigure"):
-                    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-            except Exception:
-                pass
-    except Exception:
-        pass
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8", errors="replace")
+    elif hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 # Fix for Intel OpenMP runtime duplicate error
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -65,19 +46,9 @@ import time
 
 # Standard PyInstaller support for multiprocessing
 if __name__ == "__main__":
-    if (sys.platform == "win32" and "--elevated" not in sys.argv
-            and "--install-deps" not in sys.argv):
-        try:
-            if not bool(ctypes.windll.shell32.IsUserAnAdmin()):
-                params = subprocess.list2cmdline(
-                    [os.path.abspath(__file__), "--elevated", *sys.argv[1:]]
-                )
-                ctypes.windll.shell32.ShellExecuteW(
-                    None, "runas", sys.executable, params, None, 1
-                )
-                sys.exit(0)
-        except Exception:
-            pass
+    # The app runs as a standard user - no UAC relaunch, no administrator
+    # token.  Older shortcuts / MSI builds still pass --elevated; drop it so
+    # it never reaches the interpreter-mode argument checks below.
     if "--elevated" in sys.argv:
         try:
             sys.argv.remove("--elevated")
@@ -155,6 +126,61 @@ if getattr(sys, "frozen", False):
 else:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# ── Platform gate: one API for Win32 / X11 window, input and screen primitives ──
+try:
+    from platform_gate import (  # frozen/script run: LoOper/ is on sys.path
+        PLATFORM,
+        error_box,
+        is_admin,
+        session_ok,
+        set_dpi_awareness,
+    )
+except ImportError:  # imported as the LoOper package (tests, tooling)
+    from .platform_gate import (
+        PLATFORM,
+        error_box,
+        is_admin,
+        session_ok,
+        set_dpi_awareness,
+    )
+
+# DPI awareness must precede every GDI/USER32 screenshot or coordinate call.
+set_dpi_awareness()
+
+
+# ── Vendored library patches: MUST run before NodeGraphQt is imported ──
+# pip install restores the stock wheels and that throws away the LoOper canvas:
+# node cards grow a title bar again, port labels overlap the body and runtime
+# port changes (LLM -> Orchestrator) push ports off the card.  LoOper/patches
+# mirrors site-packages, so copy any stale file over the installed one now.
+# Idempotent (a few file compares); frozen builds get the same files at build
+# time -- build_pipeline/build_msi.ps1 runs this script before PyInstaller.
+def _apply_vendored_patches() -> list:
+    """Re-copy stale files from LoOper/patches into site-packages (dev mode)."""
+    if getattr(sys, "frozen", False):
+        return []
+    script = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "patches", "apply_patches.py"
+    )
+    if not os.path.exists(script):
+        return []
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "_looper_vendored_patches", script
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.apply_patches(mod.site_packages())
+    except Exception as e:
+        print(f"[patches] WARNING: vendored library patches not applied: {e}")
+        return []
+
+
+_PATCHED_FILES = _apply_vendored_patches()
+
+
 import requests
 from AI.config_loader import get_api_url, load_ai_config, should_auto_start_api
 from AI.model_cache import get_model_cache, load_models_at_startup
@@ -198,7 +224,9 @@ def start_api_server():
     """Start the LLM API server"""
     try:
         api_url = get_api_url()
-        # Kill any stale API process on our port (app runs elevated, so this works)
+        # Kill any stale API process left on our port.  Only processes owned by
+        # this user can be killed from a standard-user session; a leftover
+        # process from another user / elevated session is reported below.
         try:
             port = int(os.getenv("API_PORT", "8000"))
             result = subprocess.run(
@@ -210,8 +238,18 @@ def start_api_server():
                 if parts and parts[-1].isdigit():
                     pid = parts[-1]
                     if int(pid) != os.getpid():
-                        subprocess.run(f"taskkill /F /PID {pid}", shell=True, capture_output=True)
-                        logger.info(f"Killed stale PID {pid} on port {port}")
+                        kill = subprocess.run(
+                            f"taskkill /F /PID {pid}", shell=True,
+                            capture_output=True, text=True,
+                        )
+                        if kill.returncode == 0:
+                            logger.info(f"Killed stale PID {pid} on port {port}")
+                        else:
+                            logger.warning(
+                                f"Cannot stop PID {pid} on port {port} (owned by "
+                                f"another user or an elevated session): "
+                                f"{(kill.stderr or kill.stdout or '').strip()}"
+                            )
             time.sleep(1)
         except Exception:
             pass
@@ -366,11 +404,8 @@ def start_api_server():
 
 
 def _show_license_error(title: str, message: str):
-    """Show a Windows message box for license errors (reliable in frozen builds)."""
-    try:
-        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
-    except Exception:
-        logger.error(f"ERROR: {title} - {message}")
+    """Show the platform's error dialog for license errors (frozen builds)."""
+    error_box(title, message)
 
 
 def _check_license() -> bool:
@@ -396,7 +431,11 @@ def _check_license() -> bool:
         return False
 
     # Try to run the validator to check the license
-    validator_path = os.path.join(exe_dir, "license_validator.exe")
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import exe_name
+    except ImportError:  # imported as LoOper.*
+        from .platform_gate import exe_name
+    validator_path = os.path.join(exe_dir, exe_name("license_validator"))
     if os.path.exists(validator_path):
         try:
             result = subprocess.run(
@@ -483,6 +522,67 @@ def _log_native_deps() -> None:
         pass
 
 
+def _log_vendored_patch_state() -> None:
+    """Report whether the imported NodeGraphQt is the patched (LoOper) copy.
+
+    Nothing else detects this: an unpatched wheel silently renders the stock
+    canvas (title bar, overlapping port labels, ports hanging off the card),
+    so the wrong-looking nodes would be the only symptom.
+    """
+    try:
+        from NodeGraphQt.qgraphics import node_base
+    except Exception:
+        return
+    if not hasattr(node_base, "SQUARE_NODE_SIZE"):
+        logger.error(
+            "NodeGraphQt is NOT patched - canvas nodes will render with the "
+            "stock layout (title bar, overlapping port labels, ports off the "
+            "card). Run `%s %s` and restart.",
+            sys.executable,
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "patches", "apply_patches.py"),
+        )
+    elif _PATCHED_FILES:
+        logger.info("Vendored library patches re-applied: %s",
+                    ", ".join(_PATCHED_FILES))
+    else:
+        logger.info("Vendored library patches: up to date.")
+
+
+def _platform_preflight() -> bool:
+    """Refuse to run on a platform/session the gate cannot drive.
+
+    Wayland and unsupported OSes fail loudly here (exit code 1 + a visible
+    dialog) instead of starting a GUI whose input layer is dead.
+    """
+    ok, reason = session_ok()
+    if ok:
+        logger.info("Platform: %s", PLATFORM)
+        return True
+    logger.error("Unsupported platform: %s", reason)
+    error_box("Arrow cannot start here", reason)
+    print(f"Arrow cannot start here: {reason}", file=sys.stderr)
+    return False
+
+
+def _log_privilege_mode() -> None:
+    """Log what the current integrity level allows.
+
+    Arrow runs as a standard user by default (no UAC prompt).  A few features
+    need elevation and say so instead of failing silently: the RDP sandbox
+    (creates a user + logon task) and automating windows owned by elevated
+    processes (UIPI blocks synthetic input on Windows).
+    """
+    if is_admin():
+        logger.info("Privilege mode: elevated (administrator).")
+    else:
+        logger.info(
+            "Privilege mode: standard user. Everything runs, except the RDP "
+            "sandbox and automation of elevated windows - start Arrow as "
+            "administrator only if a chain needs those."
+        )
+
+
 def run_install_deps() -> int:
     """`arrow.exe --install-deps`: provision every runtime asset, then exit.
 
@@ -510,6 +610,8 @@ def run_app():
     """Main function to start the application logic"""
     # Install the unified telemetry dispatch (console colors + logs/ + session md)
     setup_logging()
+    _log_privilege_mode()
+    _log_vendored_patch_state()
     # Validate license before starting (skip in dev mode)
     if not _check_license():
         logger.error("Exiting due to invalid license.")
@@ -621,4 +723,6 @@ if __name__ == "__main__":
             sys.exit(1)
 
     # Start the application
+    if not _platform_preflight():
+        sys.exit(1)
     run_app()

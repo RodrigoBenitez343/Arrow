@@ -13,6 +13,7 @@ from player.code_agent_ops.constants import MAIN_FILE
 from player.code_agent_ops.execution import _ModelRefreshWorker
 from player.code_agent_ops.parsing import (
     _effective_ctx_tokens,
+    _materialize_project_files,
     _safe_join,
 )
 
@@ -56,6 +57,15 @@ class NodeMixin(object):
 
         # Main code buffer: node.code is the source of truth for script.py.
         self._main_code = self._config.get('code', '')
+        # Materialise the node's carried project (helper modules/data) into
+        # its workspace.  Existing files win: the workspace can hold newer
+        # unsaved edits than the node property.
+        try:
+            _materialize_project_files(
+                self._workspace_root(),
+                self._config.get('project_files') or {})
+        except Exception:
+            pass
         self._active_file = MAIN_FILE
         self._code_edit.blockSignals(True)
         self._code_edit.setPlainText(self._main_code)
@@ -117,6 +127,13 @@ class NodeMixin(object):
             if it.isRunning():
                 self._detach_worker(it)
             self._invest_worker = None
+        pt = getattr(self, '_pipeline_thread', None)
+        if pt is not None:
+            if self._chat_stop_ref is not None:
+                self._chat_stop_ref['flag'] = True   # abort between calls
+            if pt.isRunning():
+                self._detach_worker(pt)
+        self._pipeline_thread = None
         st = self._shell_thread
         if st is not None and st.isRunning():
             self._detach_worker(st)
@@ -131,7 +148,7 @@ class NodeMixin(object):
             pending = None          # nothing unsaved on the main file
         self._sessions[sid] = {
             'history': list(self._chat_history),
-            'chat_html': self._chat_view.toHtml(),
+            'chat_log': list(self._chat_log),
             'last_run': (dict(self._last_run_record)
                          if self._last_run_record else None),
             'tool_results': self._last_tool_results,
@@ -143,7 +160,7 @@ class NodeMixin(object):
         self._reset_loop()
         self._last_run_record = None
         self._last_tool_results = None
-        self._chat_view.clear()
+        self._chat_clear()
         self._console.clear()
 
     def _restore_incoming_session(self):
@@ -152,9 +169,9 @@ class NodeMixin(object):
         rec = self._sessions.get(self._loaded_node_id)
         if rec:
             self._chat_history = list(rec.get('history') or [])
-            html = rec.get('chat_html') or ''
-            if html:
-                self._chat_view.setHtml(html)
+            self._chat_log = list(rec.get('chat_log') or [])
+            if self._chat_log:
+                self._replay_chat_log()
             self._last_run_record = rec.get('last_run')
             self._last_tool_results = rec.get('tool_results')
             console = rec.get('console') or ''
@@ -169,14 +186,12 @@ class NodeMixin(object):
                 self._code_edit.blockSignals(True)
                 self._code_edit.setPlainText(pending)
                 self._code_edit.blockSignals(False)
-        if not self._chat_view.toPlainText().strip():
+        if not self._chat_log:
             self._append_chat('info', _('Node loaded. Just tell the agent what '
                                         'to change - accepted code is saved to '
                                         'the node automatically. Open Files to '
                                         'add helpers.'))
-        sb = self._chat_view.verticalScrollBar()
-        if sb is not None:
-            sb.setValue(sb.maximum())
+        self._chat_scroll_bottom()
 
     def _detach_worker(self, worker):
         """Keep a still-running worker alive and self-deleting after a node
@@ -295,18 +310,18 @@ class NodeMixin(object):
             self._model_combo.setCurrentText(current)
 
     def _apply_engine_visibility(self):
+        # Labels are gone (tooltips replace them); the two model pickers swap
+        # in the same slot and the refresh button only applies to Ollama.
         use_llamacpp = (self._engine_combo.currentText() == 'llama.cpp')
-        for w in (self._model_lbl, self._model_combo, self._refresh_btn):
-            w.setVisible(not use_llamacpp)
-        for w in (self._gguf_lbl, self._gguf_combo):
-            w.setVisible(use_llamacpp)
+        self._model_combo.setVisible(not use_llamacpp)
+        self._refresh_btn.setVisible(not use_llamacpp)
+        self._gguf_combo.setVisible(use_llamacpp)
 
     def _refresh_models(self):
         """Refresh the Ollama model list off the UI thread."""
         if getattr(self, '_refresh_worker', None) is not None:
             return
         self._refresh_btn.setEnabled(False)
-        self._refresh_btn.setText('...')
         worker = _ModelRefreshWorker()
         worker.finished_models.connect(self._on_models_refreshed)
         self._refresh_worker = worker
@@ -314,7 +329,6 @@ class NodeMixin(object):
 
     def _on_models_refreshed(self, models):
         self._refresh_btn.setEnabled(True)
-        self._refresh_btn.setText('\u21bb')
         self._refresh_worker = None
         if not models:
             return
@@ -464,6 +478,10 @@ class NodeMixin(object):
                 'input_vars', json.dumps(self._collect_rows(self._in_rows)))
             self._node.set_property(
                 'output_vars', json.dumps(self._collect_rows(self._out_rows)))
+            try:
+                self._persist_project_files()   # whole workspace onto the node
+            except Exception:
+                pass
             self._node.set_property(
                 'output_variable', self._config.get('output_variable', 'result'))
             self._node.set_property(

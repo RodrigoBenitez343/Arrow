@@ -118,7 +118,7 @@ class FormFillerWebMixin:
                     # - and a site that gives every popup the same hashed classes
                     # re-resolves them to a lookalike container, which is how a
                     # control OUTSIDE the picked div keeps entering the field
-                    # table, the read-back and the ComoRAG context (live:
+                    # table, the read-back and the CRAG context (live:
                     # 'Resolved via div > dialog.dj9me5...' -> '[combo] Search').
                     # The pinned position outranks the resemblance.
                     break
@@ -297,54 +297,25 @@ class FormFillerWebMixin:
         Reuses the engine's own ``JS_EXEC_MARK`` with the field's selector
         ladder (the runtime's identity for the control), so the overlay, the
         write and the repair all agree on WHICH element is being acted on.
+        The mark also walks the page's OWN virtual cursor onto the field, which
+        is why a web fill never steers the user's real pointer.
+
+        Returns the cursor walk in seconds (0.0 when there is nothing to walk).
         """
         if driver is None:
-            return
+            return 0.0
         try:
             from .....web import exec_overlay
-            driver.execute_script(
+            return exec_overlay._walk_seconds(driver.execute_script(
                 exec_overlay.JS_EXEC_MARK,
                 selectors if selectors is not None
                 else self._ff_field_selectors(field),
                 int(field.get("type_index") or 0),
                 str(caption or ""),
-            )
+            ))
         except Exception as exc:
             logger.debug("[FORM] Execution overlay mark failed: %s", exc)
-
-    def _ff_glide(self, driver, field, selectors=None):
-        """Walk the OS pointer to the field the fill is about to touch.
-
-        The desktop substrate clicks through the bot, which already travels a
-        human path; the web substrate touched fields purely in the page, so a
-        form fill read as a teleport.  Uses the SAME selector ladder the write
-        uses, so the pointer lands on the control that is actually written -
-        never on a sibling the recorded identity happens to match.  Purely
-        visual and best-effort: the write itself is unchanged.
-        """
-        if driver is None:
-            return
-        try:
-            from .....human_cursor import glide_os_cursor, moves_enabled
-            from .....web import actions as web_actions
-        except Exception as exc:
-            logger.debug("[FORM] Cursor glide unavailable: %s", exc)
-            return
-        if not moves_enabled():
-            return
-        try:
-            geometry = web_actions.deep_geometry(
-                driver,
-                selectors if selectors is not None
-                else self._ff_field_selectors(field),
-                int(field.get("type_index") or 0),
-            )
-        except Exception as exc:
-            logger.debug("[FORM] Field geometry unavailable: %s", exc)
-            return
-        point = (geometry or {}).get("point")
-        if point:
-            glide_os_cursor(point[0], point[1])
+            return 0.0
 
     def _ff_mark_processing(self, field, label):
         """Name the field being WORKED ON in the overlay (best-effort).
@@ -378,15 +349,16 @@ class FormFillerWebMixin:
         want = int(field.get("type_index") or 0)
         kind = (field.get("kind") or "text").lower()
         # Box the field in the in-page execution overlay BEFORE the value lands,
-        # exactly like a web node boxes the element it is about to hit.
-        self._ff_mark(
+        # exactly like a web node boxes the element it is about to hit.  The
+        # mark walks the PAGE's cursor onto the field, so the fill keeps the
+        # desktop read without moving the user's real pointer.
+        walk = self._ff_mark(
             driver, field,
             "form: %s" % (field.get("label") or field.get("id") or ""),
             selectors=selectors,
         )
-        # Walk the real pointer onto the control, exactly like a desktop fill's
-        # click does before it types.
-        self._ff_glide(driver, field, selectors=selectors)
+        if walk:
+            time.sleep(walk)
         try:
             if kind in ("choice", "switch"):
                 ok = driver.execute_script(
@@ -540,7 +512,7 @@ class FormFillerWebMixin:
         dropdown failure (observed: 4 of 6 fields skipped on a form whose selects
         all sat on their prompt option).
         """
-        state = self._ff_field_state(field, stop_flag, driver)
+        state = self._ff_state(field, stop_flag, driver)
         if not state or not state.get("found", True):
             return ""
         value = state.get("value")

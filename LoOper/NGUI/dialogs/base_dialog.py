@@ -681,6 +681,44 @@ class ModernDialog(QDialog):
         self.setMinimumWidth(self._min_w)
         self.resize(self._std_w, self._min_h)
 
+    # -- description ---------------------------------------------------
+
+    def add_description(self, text=''):
+        """A read/write box for the node's OWN description.
+
+        The Builder fills it (``player/builder``) with the full sentence it
+        derived for that node; the user reads and edits it here.  It sits
+        above the button row when the dialog ended its content with one, so
+        every node editor carries it without touching its own layout.
+        """
+        from PyQt5.QtWidgets import QDialogButtonBox, QTextEdit
+        from ..i18n import _
+
+        box = QWidget()
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(QLabel(
+            _("Description (what this node does — filled by the Builder):")))
+        self.description_edit = QTextEdit()
+        self.description_edit.setMaximumHeight(90)
+        self.description_edit.setPlainText(str(text or ''))
+        layout.addWidget(self.description_edit)
+
+        count = self.content_layout.count()
+        last = self.content_layout.itemAt(count - 1) if count else None
+        widget = last.widget() if last is not None else None
+        if isinstance(widget, QDialogButtonBox):
+            self.content_layout.insertWidget(count - 1, box)
+        else:
+            self.content_layout.addWidget(box)
+        return self.description_edit
+
+    def description(self):
+        """The description text in the box ('' when the dialog has none)."""
+        edit = getattr(self, 'description_edit', None)
+        return edit.toPlainText().strip() if edit is not None else ''
+
     def showEvent(self, event):
         super().showEvent(event)
         # Soft white->cyan glow on every interactive element (once, after the

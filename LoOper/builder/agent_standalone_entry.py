@@ -234,15 +234,18 @@ class StandaloneAgentApp(QObject):
         self._dot = AgentDot()
         self._dot.hide()
         # Leave every screen read out of the picture - the arrow rides the cursor
-        # and must never land in a capture.
+        # and must never land in a capture.  The panel itself is the app here
+        # (no main window), so it is what the runtime takes off screen while a
+        # node needs the desktop.
         try:
             from player.execution_overlay_bus import bus as _bus
             _bus.extra_capture_hooks.append(self._dot.hide_for_capture)
+            _bus.set_screen_hooks(
+                self._overlay.hide_for_screen_access,
+                self._overlay.show_for_screen_access,
+            )
         except Exception:
             pass
-
-        # No main window to minimize/restore during automation
-        self._overlay.set_window_manager(None, None)
 
         # A distributed agent has no build tree — hide the export button
         self._overlay._gear_btn.hide()

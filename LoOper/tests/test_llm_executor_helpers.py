@@ -341,6 +341,44 @@ def test_reselect_tool_with_model_skipped_off_the_llamacpp_path(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# executor._generate_llamacpp_probe — a probe must be a QUESTION
+# ---------------------------------------------------------------------------
+
+
+def test_probe_generator_never_returns_code_or_statements(monkeypatch):
+    """Observed: a plan that drifted into python made the next probe
+    "def pipeline_plan():" — rejected downstream after a full model call."""
+    cfg = {"use_llamacpp": True, "llamacpp_model_path": "m.gguf"}
+    monkeypatch.setattr(
+        llm_exec, "_llamacpp_raw_completion",
+        lambda *a, **k: "def pipeline_plan():\n    GOAL = 'email'\n")
+    out = llm_exec._generate_llamacpp_probe(
+        "GOAL (user request): find the email address in the resume",
+        "", cfg, "http://x", user_prompt="find the email address")
+    assert out is None
+
+    monkeypatch.setattr(
+        llm_exec, "_llamacpp_raw_completion",
+        lambda *a, **k: "What email address is listed in the resume?\n")
+    out = llm_exec._generate_llamacpp_probe(
+        "GOAL (user request): find the email address in the resume",
+        "", cfg, "http://x", user_prompt="find the email address")
+    assert out == "What email address is listed in the resume?"
+
+
+def test_probe_generator_rejects_plan_statements(monkeypatch):
+    # A SEARCH PLAN item echoed as a statement is not a probe (missing '?').
+    monkeypatch.setattr(
+        llm_exec, "_llamacpp_raw_completion",
+        lambda *a, **k: "Search for 'email' in the resume header\n")
+    out = llm_exec._generate_llamacpp_probe(
+        "GOAL (user request): find the email address in the resume",
+        "", {"use_llamacpp": True, "llamacpp_model_path": "m.gguf"},
+        "http://x", user_prompt="find the email address")
+    assert out is None
+
+
+# ---------------------------------------------------------------------------
 # executor._stop_active_inference — provider-agnostic ESC stop
 # ---------------------------------------------------------------------------
 

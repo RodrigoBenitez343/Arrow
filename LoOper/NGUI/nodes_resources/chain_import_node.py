@@ -94,6 +94,9 @@ class ChainImportNode(BaseNode):
         # orchestrator's 'brains' port; otherwise it is a DETERMINISTIC chain
         # for the 'chains' port.  Re-derived whenever a file is attached.
         self.create_property('import_kind', 'chain')
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
         
     def set_chain_import_data(self, chain_file_path, import_mode='full', prefix='', loop_count=1, extra_delay=0, enabled=True):
         """Set the chain import data for this node"""

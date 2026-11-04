@@ -5,10 +5,12 @@ import pytest
 from .common import (
     _ff_fragment_of_evidence,
     _ff_na_value,
+    _ff_norm,
     _ff_option_exact,
     _ff_option_match,
     _ff_parse_learned_answers,
     _ff_placeholder_value,
+    _ff_plain_text,
     _ff_pool_corrections,
     _ff_render_corrections,
     _ff_split_corrections,
@@ -19,6 +21,96 @@ from .common import (
 from ._test_support import (
     _Harness,
 )
+
+
+def test_plain_text_prunes_markup_but_keeps_the_content():
+    """A form value is typed VERBATIM, so markdown must be gone before the
+    write - never from the prompt alone, because a small model bolds its answer
+    whatever the prompt says."""
+    assert _ff_plain_text("**2**") == "2"
+    assert _ff_plain_text("`2`") == "2"
+    assert _ff_plain_text("### Skills") == "Skills"
+    assert _ff_plain_text("- Python\n- Django") == "Python\nDjango"
+    assert _ff_plain_text("1. Python") == "Python"
+    assert _ff_plain_text("> quoted") == "quoted"
+    assert _ff_plain_text("__2 years__") == "2 years"
+    assert _ff_plain_text("[CV](https://x.test/cv)") == "CV"
+    # Content that merely LOOKS like markup survives.
+    assert _ff_plain_text("5-7 years") == "5-7 years"
+    assert _ff_plain_text("2024. Started at Acme") == "2024. Started at Acme"
+    assert _ff_plain_text("first_name") == "first_name"
+    # Nothing but markup is nothing at all.
+    assert _ff_plain_text("**") == ""
+    assert _ff_plain_text("---") == ""
+
+
+def test_a_learned_answer_is_pruned_of_markdown_on_read_and_on_render():
+    """A record learned as '**1**' was replayed into every later form, and a
+    digits-only question rejected it forever (live: '¿Cuántos años de
+    experiencia tienes con Modelo de datos?' holding '**1**').  Both directions
+    of the memory are pruned."""
+    label = "¿Cuántos años de experiencia tienes con Modelo de datos?*"
+    parsed = _ff_parse_learned_answers("## %s\n**1**" % label)
+    assert parsed[_ff_norm(label).strip("*? .:")] == "1"
+    rendered = _ff_render_corrections([(label, "**1**")])
+    assert "**1**" not in rendered
+    assert "\n1\n" in rendered
+
+
+def test_a_repeated_label_keeps_only_its_newest_answer():
+    """The pool is append-only, so the same question accumulates blocks.  The
+    NEWEST block must win: appending to the older value produced BOTH answers
+    at once ("Yes No", "6000 6000"), which matched no option - so the field was
+    re-asked and re-learned on every pass."""
+    label = "Do you have hands-on experience with JavaScript?*"
+    key = _ff_norm(label).strip("*? .:")
+    both = _ff_render_corrections([(label, "No")]) + "\n" + \
+        _ff_render_corrections([(label, "Yes")])
+    parsed = _ff_parse_learned_answers(_ff_pool_corrections(both))
+    assert parsed[key] == "Yes"
+
+
+def test_the_learned_block_is_not_source_material():
+    """Learned answers are a KEYED memory: the pool BODY (documents, rows) is
+    what a probe may retrieve.  Live, the JS/TS experience question pulled in
+    the neighbouring "... led engineering teams / No" block and answered No for
+    a resume that states the skill."""
+    from .common import _ff_pool_body
+
+    pool = (
+        "## Documents\n# Resume\nPython, TypeScript, Node.js.\n\n"
+        + _ff_render_corrections([("Have you led teams?", "No")])
+    )
+    body = _ff_pool_body(pool)
+    assert "Python, TypeScript, Node.js" in body
+    assert "[[FORM_CORRECTIONS]]" not in body
+    assert "Have you led teams?" not in body
+    # A pool without a block passes through untouched.
+    assert _ff_pool_body("just a resume") == "just a resume"
+
+
+def test_verified_and_auto_answers_ride_separate_blocks():
+    """Provenance: an answer the USER fixed is not the same as one the pipeline
+    guessed.  They must round-trip through their own blocks, and neither may be
+    retrievable as evidence (the pool body excludes both)."""
+    from .common import _ff_pool_body, _ff_pool_verified, _ff_render_verified
+
+    auto = _ff_render_corrections([("Salary", "6000")])
+    manual = _ff_render_verified([("English level", "Intermedio")])
+    assert manual.startswith("[[FORM_VERIFIED]]")
+    assert manual.endswith("[[/FORM_VERIFIED]]")
+
+    pool = "## Documents\n# Resume\nPython, AWS.\n\n" + auto + "\n\n" + manual
+    split = _ff_split_pool(pool)
+    assert split["learned"].get("salary") == "6000"
+    assert split["verified"].get("english level") == "Intermedio"
+    # The verified stream is parseable on its own (what the node merges first).
+    assert _ff_parse_learned_answers(
+        _ff_pool_verified(pool)).get("english level") == "Intermedio"
+    # Neither block is source material.
+    body = _ff_pool_body(pool)
+    assert "Python, AWS." in body
+    assert "6000" not in body and "Intermedio" not in body
 
 
 def test_the_nodes_own_output_row_is_not_source_material():
@@ -77,12 +169,12 @@ def test_na_value_only_writes_a_literal_a_free_text_field_can_hold():
 def test_cfg_parsing_tolerates_strings_and_bools():
     h = _Harness()
     cfg = h._ff_cfg({
-        "mode": "Web", "verify": "false", "probe_top_k": "5",
+        "mode": "Web", "verify": "false", "crag_top_k": "5",
         "max_fields": "10", "temperature": "0.2",
     })
     assert cfg["mode"] == "web"
     assert cfg["verify"] is False
-    assert cfg["probe_top_k"] == 5
+    assert cfg["crag_top_k"] == 5
     assert cfg["max_fields"] == 10
     assert cfg["temperature"] == pytest.approx(0.2)
 
@@ -105,18 +197,6 @@ def test_placeholder_markers_are_caught_but_markdown_links_are_not():
         assert not rx.search(text), text
 
 
-def test_exact_values_stay_fatal_but_inferences_are_dynamic():
-    """A URL / email / phone the excerpts do not contain is an invention and
-    stays fatal; anything else may be a correct INFERENCE (a count computed
-    from dates, a paraphrase), so the grounding verdict is dynamic."""
-    from .probe import _ff_exact_value_token
-    assert _ff_exact_value_token("https://x/y")
-    assert _ff_exact_value_token("fake@example.com")
-    assert _ff_exact_value_token("+15550100")
-    assert not _ff_exact_value_token("Francisco")
-    assert not _ff_exact_value_token("2017")
-
-
 def test_grounding_verdict_fails_closed_without_the_engine():
     """The dynamic verdict returns None (caller keeps its own rule) rather than
     raising or silently passing when Laya is unavailable."""
@@ -125,13 +205,20 @@ def test_grounding_verdict_fails_closed_without_the_engine():
     assert grounding_or("", "some evidence") is None
 
 
-def test_probe_keeps_an_inferred_composition_but_never_an_invented_value():
-    """The composed answer is DROPPED only for an exact-value term (or when the
-    dynamic verdict fails closed) - an inferred one is kept."""
-    from . import probe as probe_mod
-    src = open(probe_mod.__file__, encoding="utf-8").read()
-    assert "_fatal = [t for t in _viol if _ff_exact_value_token(t)]" in src
-    assert "_ff_synth_supported(_synth, _excerpts) is True" in src
+def test_the_probe_stack_is_gone_from_the_node():
+    """CRAG replaced it: no probe module, no composer, no consolidator.
+
+    The old per-field loop (intent plan -> probe generator -> composer ->
+    judge -> synthesis) is what made a field cost 10-14 completions; the CRAG
+    pipeline is the only retrieval path left."""
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    assert not os.path.exists(os.path.join(here, "probe.py"))
+    from . import crag as crag_mod
+    assert hasattr(crag_mod.FormFillerCragMixin, "_ff_retrieve")
+    for name in ("_ff_probe", "_ff_probe_consolidate", "_ff_ground_unknown",
+                 "_ff_batch_judgment", "_ff_positive_findings"):
+        assert not hasattr(crag_mod.FormFillerCragMixin, name), name
 
 
 def test_option_exact_is_not_the_lenient_option_match():
@@ -265,18 +352,18 @@ def test_skip_sentinel_is_the_one_literal_the_prompt_names():
     assert _extract("n/a", off) == ""
 
 
-def test_doc_head_is_read_bounded_and_cached(tmp_path):
+def test_document_text_is_extracted_once_per_set(tmp_path):
+    """The corpus builder reads each attached document ONCE per pass: the file
+    is opened through the shared extractor and cached on the node."""
     ff = _Harness()
     p = tmp_path / "d.txt"
-    p.write_text("Alex Doe\nalex@example.com\n" + "x" * 500,
-                 encoding="utf-8")
-    head = ff._ff_doc_head([str(p)], 40)
-    assert head.startswith("Alex Doe")
-    assert len(head) == 40
-    assert ff._ff_doc_head([str(p)], 40) == head  # cached
-    # Missing file / no documents -> empty (no crash).
-    assert ff._ff_doc_head([str(tmp_path / "nope.txt")], 40) == ""
-    assert ff._ff_doc_head([], 40) == ""
+    p.write_text("Alex Doe\nalex@example.com\n", encoding="utf-8")
+    first = ff._ff_doc_texts([str(p)])
+    assert first and first[0].startswith("Alex Doe")
+    assert ff._ff_doc_texts([str(p)]) is first      # cached list, not re-read
+    # Missing file / no documents -> nothing (no crash).
+    assert ff._ff_doc_texts([str(tmp_path / "nope.txt")]) == []
+    assert ff._ff_doc_texts([]) == []
 
 
 def test_filter_matches_skip_against_name_id_and_placeholder():

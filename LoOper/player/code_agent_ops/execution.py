@@ -28,6 +28,8 @@ __all__ = [
     '_StudioLLM',
     '_run_node_via',
     '_CodeRunWorker',
+    '_GuiCheckWorker',
+    '_IntentWorker',
     '_ShellWorker',
     '_ModelRefreshWorker',
 ]
@@ -200,6 +202,74 @@ class _CodeRunWorker(QThread):
                       'terminal': '', 'result': None, 'mode': 'error',
                       'digest': []}
         self.finished_run.emit(record)
+
+
+# ---------------------------------------------------------------------------
+# GUI check worker (launch the window, let the vision model look at it)
+# ---------------------------------------------------------------------------
+
+class _GuiCheckWorker(QThread):
+    """Run a windowed script, screenshot it, return the vision report as a run
+    record - so the same bounded fix loop handles GUI code as headless code."""
+
+    finished_run = pyqtSignal(object)
+
+    def __init__(self, script_path, code, python_exe, api_url=''):
+        super().__init__()
+        self._script = script_path
+        self._code = code or ''
+        self._python = python_exe
+        self._api_url = api_url
+
+    def run(self):
+        from player.code_agent_ops.gui_check import run_gui_check
+        record = {'ok': False, 'result': None, 'stdout': '', 'stderr': '',
+                  'terminal': '', 'error': None, 'mode': 'gui', 'digest': []}
+        try:
+            with open(self._script, 'w', encoding='utf-8') as f:
+                f.write(self._code)
+            res = run_gui_check(self._script, self._python, self._api_url)
+            report = str(res.get('report') or '')
+            title = str(res.get('title') or '')
+            ok = bool(res.get('ok'))
+            record.update({
+                'ok': ok,
+                'terminal': report,
+                'stderr': str(res.get('stderr') or ''),
+                'error': None if ok else report,
+                'digest': (['window: ' + title] if title else []),
+            })
+        except Exception as e:  # never leave the UI waiting on a raise
+            record.update({'ok': False, 'error': str(e),
+                           'terminal': traceback.format_exc()})
+        self.finished_run.emit(record)
+
+
+# ---------------------------------------------------------------------------
+# Intent worker (Laya decides: build/change code, or only answer a question)
+# ---------------------------------------------------------------------------
+
+class _IntentWorker(QThread):
+    """One encoder pass off the UI thread - the engine may cold-start.
+
+    Emits True (coding request), False (question) or None (engine unavailable,
+    the panel falls back to its own heuristic).
+    """
+
+    finished_intent = pyqtSignal(object)
+
+    def __init__(self, text):
+        super().__init__()
+        self._text = str(text or '')
+
+    def run(self):
+        verdict = None
+        try:
+            from AI.laya_hooks import coding_intent
+            verdict = coding_intent(self._text)
+        except Exception as exc:  # engine missing/broken: heuristic decides
+            logger.info('intent verdict unavailable: %s', exc)
+        self.finished_intent.emit(verdict)
 
 
 # ---------------------------------------------------------------------------

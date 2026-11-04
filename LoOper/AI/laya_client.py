@@ -114,24 +114,29 @@ def _find_model() -> str:
 
 
 def _find_exe() -> str:
-    """Resolve laya.exe: LOOPER_LAYA_EXE, else the frozen bundle layouts,
-    else the source tree (LoOper/AI/bin/laya.exe)."""
+    """Resolve the laya binary: LOOPER_LAYA_EXE, else the frozen bundle
+    layouts, else the source tree (LoOper/AI/bin/laya[.exe])."""
     override = (os.environ.get("LOOPER_LAYA_EXE") or "").strip()
     if override and os.path.exists(override):
         return override
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import exe_name
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import exe_name
+    name = exe_name("laya")
     candidates: List[str] = []
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
         candidates += [
-            os.path.join(meipass, "bin", "laya.exe"),
-            os.path.join(meipass, "LoOper", "AI", "bin", "laya.exe"),
-            os.path.join(meipass, "laya.exe"),
+            os.path.join(meipass, "bin", name),
+            os.path.join(meipass, "LoOper", "AI", "bin", name),
+            os.path.join(meipass, name),
         ]
     if getattr(sys, "frozen", False):
-        candidates.append(os.path.join(os.path.dirname(sys.executable), "bin", "laya.exe"))
+        candidates.append(os.path.join(os.path.dirname(sys.executable), "bin", name))
     else:
         candidates.append(os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "bin", "laya.exe"))
+            os.path.dirname(os.path.abspath(__file__)), "bin", name))
     for cand in candidates:
         if cand and os.path.exists(cand):
             return cand
@@ -254,8 +259,20 @@ def ensure_running() -> bool:
     # normal) or the daemon dies (a real failure).  A fixed grace made a slow
     # start look like an unavailable engine, so the pipeline gave up mid-load
     # (measured 2026-10-03).  We want the run to proceed, not to be fast.
+    #
+    # ``_PROC`` is read through a LOCAL each pass: the idle unloader and
+    # ``release()`` clear the module global from another thread, and the bare
+    # ``_PROC.poll()`` was an AttributeError ('NoneType' has no 'poll') that
+    # killed a form pass the moment a scoring burst raced the 2 s unload
+    # (measured 2026-11-01 on a live run).
     while not _READY:
-        if _PROC.poll() is not None:
+        proc = _PROC
+        if proc is None:
+            # Another thread released the engine (burst end / explicit
+            # release): this is a stop, not a fault - do NOT disable the
+            # session, the next request simply relaunches it.
+            return False
+        if proc.poll() is not None:
             _disable_for_session("daemon exited during startup — check AI/bin/laya.exe")
             return False
         time.sleep(0.2)

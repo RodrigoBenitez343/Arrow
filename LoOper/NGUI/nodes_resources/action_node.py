@@ -55,6 +55,8 @@ class ActionNode(BaseNode):
         # Register properties without rendering inline input widgets
         self.create_property('action_type', '')
         self.create_property('details', '')
+        # What this node does, in full — the Builder fills it.
+        self.create_property('description', '')
         
     def set_action_data(self, sequence_idx, action_idx, action_data, has_fallback=False):
         """Set the action data for this node"""

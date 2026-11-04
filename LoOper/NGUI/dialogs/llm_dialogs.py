@@ -78,10 +78,12 @@ def get_llamacpp_models():
             return []
 
         gguf_models = []
-        # Walk through the models directory to find .gguf files
+        # Walk through the models directory to find .gguf files.  An mmproj
+        # file is a vision PROJECTOR, not a loadable model, so it is not a
+        # choice (the engine rejects it as --model).
         for root, dirs, files in os.walk(models_dir):
             for file in files:
-                if file.endswith(".gguf"):
+                if file.endswith(".gguf") and "mmproj" not in file.lower():
                     # Get relative path from models directory
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, models_dir)
@@ -250,7 +252,11 @@ class LLMPropertiesDialog(ModernDialog):
                 models = models_for_engine(self.get_available_models(), engine)
                 self.model_combo.clear()
                 self.model_combo.addItems(models)
-                if current_model:
+                # Keep the current pick ONLY when this engine serves it.  An
+                # editable combo re-inserts whatever text it is given, which
+                # is how a "groq:..." model ended up listed under Ollama (and
+                # then got saved, silently switching the node's provider).
+                if current_model and models_for_engine([current_model], engine):
                     self.model_combo.setCurrentText(current_model)
             except Exception:
                 pass
@@ -479,9 +485,10 @@ class LLMPropertiesDialog(ModernDialog):
         self.engine_combo.currentTextChanged.connect(self.on_engine_changed)
         model_layout.addWidget(self.engine_combo, 0, 1)
 
-        # Ollama model selection
-        model_layout.addWidget(QLabel(_("Ollama Model:")), 1, 0)
-        self.model_label = model_layout.itemAtPosition(1, 0).widget()
+        # Model selection (the label follows the engine: a provider engine is
+        # not an "Ollama Model").
+        self.model_label = QLabel(_("Model:"))
+        model_layout.addWidget(self.model_label, 1, 0)
         self.model_combo = QComboBox()
         self.model_combo.setEditable(True)
         # Populate model list from cache only (no API calls on dialog open),

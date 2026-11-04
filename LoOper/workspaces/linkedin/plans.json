@@ -1,0 +1,126 @@
+{
+ "version": 1,
+ "plans": [
+  {
+   "goal": "navigate to linkedin",
+   "steps": [
+    {
+     "chain": "open linkedin",
+     "inputs": {}
+    }
+   ],
+   "runs": 3,
+   "ok": 3,
+   "fail": 0,
+   "updated": "2026-10-30T14:47:09"
+  },
+  {
+   "goal": "open linkedin then check my network and then check my jobs",
+   "steps": [
+    {
+     "chain": "open linkedin",
+     "why": "open linkedin then check my network and then check my jobs",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 1,
+   "fail": 0,
+   "updated": "2026-10-30T15:37:36"
+  },
+  {
+   "goal": "navigate to linkedin, click on the jobs section and then check my network",
+   "steps": [
+    {
+     "chain": "open linkedin",
+     "why": "navigate to linkedin",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 0,
+   "fail": 1,
+   "updated": "2026-10-30T16:13:50"
+  },
+  {
+   "goal": "click on the jobs section",
+   "steps": [
+    {
+     "chain": "jobs",
+     "why": "click on the jobs section",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 1,
+   "fail": 0,
+   "updated": "2026-10-30T16:16:11"
+  },
+  {
+   "goal": "navigate to linkedin and open my network",
+   "steps": [
+    {
+     "chain": "open linkedin",
+     "why": "navigate to linkedin",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 0,
+   "fail": 1,
+   "updated": "2026-10-30T16:17:10"
+  },
+  {
+   "goal": "check my network on linkedin and then the jobs section",
+   "steps": [
+    {
+     "chain": "network",
+     "why": "check my network on linkedin",
+     "inputs": {}
+    },
+    {
+     "chain": "jobs",
+     "why": "check the jobs section",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 1,
+   "fail": 0,
+   "updated": "2026-10-30T16:44:36"
+  },
+  {
+   "goal": "navigate to linkedin.com, click on the jobs section",
+   "steps": [
+    {
+     "chain": "open linkedin",
+     "why": "navigate to linkedin.com",
+     "inputs": {}
+    },
+    {
+     "chain": "jobs",
+     "why": "click on the jobs section",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 1,
+   "fail": 0,
+   "updated": "2026-10-31T13:14:48"
+  }
+ ],
+ "transitions": {
+  "network": {
+   "jobs": {
+    "ok": 1,
+    "fail": 0
+   }
+  },
+  "open linkedin": {
+   "jobs": {
+    "ok": 1,
+    "fail": 0
+   }
+  }
+ }
+}

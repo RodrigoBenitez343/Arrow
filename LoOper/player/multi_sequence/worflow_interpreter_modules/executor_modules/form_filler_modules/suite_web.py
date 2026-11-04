@@ -555,10 +555,11 @@ def test_overlay_names_the_field_being_processed(monkeypatch):
     _wire(h, fields=[{"id": "a", "label": "First name"},
                      {"id": "b", "label": "Why this role"}])
 
-    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint=""):
+    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint="",
+               learned_hint="", field=None):
         events.append(("probe", label))
         return "evidence"
-    h._ff_probe = _probe
+    h._ff_retrieve = _probe
     h._ff_shared_driver()          # enumeration opened the session (memoised)
     h._execute_form_filling_node(_node(), None)
 

@@ -312,55 +312,20 @@ def _wav_duration(wav_path: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 def play_wav(wav_path: str, wait: bool = True, stop_event: threading.Event | None = None):
-    """Play a WAV file.
+    """Play a WAV file through the platform gate.
 
-    On Windows the built-in ``winsound`` module is used.  Playback always
-    uses ``SND_ASYNC`` internally so that it can be reliably interrupted by
-    calling ``winsound.PlaySound(None, SND_PURGE)`` (triggered by the ESC
-    key via the keyboard monitor).  When *wait* is True the function blocks
-    the caller by polling until the sound finishes or *stop_event* is set.
+    Windows uses ``winsound`` (async, purgeable), Linux/X11 the system player
+    (paplay / aplay / ffplay).  The gate keeps the playback handle, so the ESC
+    stop hook can cut it: ``platform_gate.stop_audio()``.  When *wait* is True
+    this blocks until the sound ends or *stop_event* is set.
     """
-    if sys.platform == "win32":
-        import winsound
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import play_audio
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import play_audio
 
-        # Always start playback asynchronously so we can stop it reliably.
-        winsound.PlaySound(wav_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
-
-        if not wait:
-            return
-
-        # --- simulate synchronous wait, honouring stop_event -----------
-        # Get WAV duration from the file header so we know when to stop.
-        duration = _wav_duration(wav_path)
-        if duration is None:
-            # Fallback: just block on a generous timeout
-            duration = 600.0  # 10 min safety cap
-
-        deadline = time.monotonic() + duration
-        poll_interval = 0.05  # 50 ms
-
-        while time.monotonic() < deadline:
-            if stop_event is not None and stop_event.is_set():
-                winsound.PlaySound(None, winsound.SND_PURGE)  # stop async sound immediately
-                logger.info("TTS playback interrupted by stop event")
-                return
-            time.sleep(poll_interval)
-
-    else:
-        # Linux / macOS fallback
-        import subprocess
-        proc = subprocess.Popen(
-            ["aplay", wav_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if not wait:
-            return
-        # Poll so we can honour stop_event
-        while proc.poll() is None:
-            if stop_event is not None and stop_event.is_set():
-                proc.terminate()
-                proc.wait(timeout=2)
-                logger.info("TTS playback interrupted by stop event")
-                return
-            time.sleep(0.05)
+    handle = play_audio(wav_path)
+    if not wait:
+        return
+    if not handle.wait(stop_event):
+        logger.info("TTS playback interrupted by stop event")

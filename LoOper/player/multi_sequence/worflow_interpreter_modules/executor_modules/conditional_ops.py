@@ -10,6 +10,20 @@ except Exception:
 from ...llm_executor_resources.executor import _strip_think_tags
 from ...llm_executor_resources.config_utils import get_default_api_url
 from ....screenshot_cleanup import cleanup_screenshot
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import (
+        activate_window,
+        active_window,
+        list_windows,
+        screenshot,
+    )
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import (
+        activate_window,
+        active_window,
+        list_windows,
+        screenshot,
+    )
 
 class ConditionalMixin:
     def _verify_app_running(self, app_context, timeout=2.0):
@@ -108,20 +122,6 @@ class ConditionalMixin:
             return True
 
         try:
-            import pygetwindow as gw
-        except Exception:
-            gw = None
-
-        try:
-            import win32gui
-            import win32process
-            import win32con
-        except Exception:
-            win32gui = None
-            win32process = None
-            win32con = None
-
-        try:
             from pywinauto import Application
         except Exception:
             Application = None
@@ -137,21 +137,8 @@ class ConditionalMixin:
         deadline = time.time() + float(timeout or 0.0)
 
         def _foreground_hwnd():
-            try:
-                if gw is not None:
-                    w = gw.getActiveWindow()
-                    if w is not None:
-                        h = getattr(w, "_hWnd", None)
-                        if h:
-                            return int(h)
-            except Exception:
-                pass
-            try:
-                if win32gui is not None:
-                    return int(win32gui.GetForegroundWindow())
-            except Exception:
-                return None
-            return None
+            info = active_window()
+            return int(info["handle"]) if info and info.get("handle") else None
 
         def _matches_process(p):
             try:
@@ -195,54 +182,13 @@ class ConditionalMixin:
             return out
 
         def _window_candidates_for_pid(pid):
-            wins = []
+            """Visible titled windows of *pid* as (handle, title), top-most first."""
             try:
-                if gw is not None:
-                    for w in gw.getAllWindows():
-                        try:
-                            hwnd = getattr(w, "_hWnd", None)
-                            if not hwnd:
-                                continue
-                            hwnd = int(hwnd)
-                            if win32process is None:
-                                continue
-                            _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                            if int(wpid) != int(pid):
-                                continue
-                            if win32gui is not None and not win32gui.IsWindowVisible(hwnd):
-                                continue
-                            t = str(getattr(w, "title", "") or "")
-                            wins.append((hwnd, t))
-                        except Exception:
-                            continue
+                return [(w["handle"], w["title"])
+                        for w in list_windows()
+                        if w.get("pid") == int(pid)]
             except Exception:
-                wins = []
-
-            if wins:
-                return wins
-
-            try:
-                if win32gui is None or win32process is None:
-                    return wins
-
-                def cb(hwnd, _):
-                    try:
-                        if not win32gui.IsWindowVisible(hwnd):
-                            return
-                        _tid, wpid = win32process.GetWindowThreadProcessId(hwnd)
-                        if int(wpid) != int(pid):
-                            return
-                        t = str(win32gui.GetWindowText(hwnd) or "")
-                        if not t:
-                            return
-                        wins.append((int(hwnd), t))
-                    except Exception:
-                        return
-
-                win32gui.EnumWindows(cb, None)
-            except Exception:
-                pass
-            return wins
+                return []
 
         def _pick_window(wins):
             if not wins:
@@ -273,19 +219,7 @@ class ConditionalMixin:
                 pass
 
             try:
-                if win32gui is not None:
-                    try:
-                        if win32con is not None:
-                            win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                    except Exception:
-                        pass
-                    try:
-                        win32gui.SetForegroundWindow(hwnd)
-                    except Exception:
-                        try:
-                            win32gui.BringWindowToTop(hwnd)
-                        except Exception:
-                            pass
+                activate_window(hwnd)
             except Exception:
                 pass
 
@@ -594,7 +528,7 @@ class ConditionalMixin:
                 if pyautogui is None:
                     return None
                 try:
-                    screen = pyautogui.screenshot()
+                    screen = screenshot()
                 except Exception:
                     return None
 
@@ -1158,9 +1092,15 @@ class ConditionalMixin:
                 if not text_clean:
                     text_clean = text_lower
                 
-                # Find all standalone occurrences of "true" and "false" (whole words)
-                true_matches = list(_re.finditer(r'\btrue\b', text_clean))
-                false_matches = list(_re.finditer(r'\bfalse\b', text_clean))
+                # Find all standalone verdict words: true/false first, and
+                # yes/no as the same last-occurrence signal — small local
+                # models answer "Yes, because..." / "No, it is not" more
+                # often than bare True/False, and an unparsable answer used
+                # to silently route the FALSE branch (measured 2026-10-27:
+                # the taught chain ran its 'check failed' output because
+                # the criterion got prose back).
+                true_matches = list(_re.finditer(r'\btrue\b|\byes\b', text_clean))
+                false_matches = list(_re.finditer(r'\bfalse\b|\bno\b', text_clean))
                 
                 result_value = None
                 

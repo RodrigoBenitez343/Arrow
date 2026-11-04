@@ -2,7 +2,7 @@
 
 
 
-def test_dialog_is_themed_with_model_dropdown_and_documents():
+def test_dialog_is_themed_with_the_model_dropdowns():
     from PyQt5.QtWidgets import QApplication
     _app = QApplication.instance() or QApplication([])
 
@@ -12,25 +12,26 @@ def test_dialog_is_themed_with_model_dropdown_and_documents():
     cfg = {
         "mode": "desktop", "engine": "ollama", "model": "llama3.2:latest",
         "instruction": "fill", "fields_include": "email",
-        "probe_top_k": 4, "max_fields": 12, "verify": False,
-        "rag_documents": ["/tmp/a.pdf", "/tmp/b.docx"],
+        "crag_top_k": 4, "max_fields": 12, "verify": False,
     }
     dlg = FormFillerDialog(None, cfg)
 
-    # Themed base + the LLM-node-style dropdown + a Documents section.
+    # Themed base + the LLM-node-style dropdown.  The DOCUMENTS are the Context
+    # node's now (the pool the filler is wired to), so the dialog has no
+    # document list of its own.
     assert isinstance(dlg, ModernDialog)
     assert dlg.mode_combo.currentText() == "desktop"
     assert dlg.engine_combo.currentText() == "Ollama"
-    assert dlg.rag_documents_list.count() == 2
+    assert not hasattr(dlg, "rag_documents_list")
 
     out = dlg.get_config()
     assert out["engine"] == "ollama"
     assert out["model"] == "llama3.2:latest"
     assert out["mode"] == "desktop"
-    assert out["probe_top_k"] == 4
+    assert out["crag_top_k"] == 4
     assert out["max_fields"] == 12
     assert out["verify"] is False
-    assert out["rag_documents"] == ["/tmp/a.pdf", "/tmp/b.docx"]
+    assert "rag_documents" not in out
 
 
 def test_dialog_round_trips_cycles_and_answer_no():
@@ -39,10 +40,10 @@ def test_dialog_round_trips_cycles_and_answer_no():
 
     from NGUI.dialogs.form_filler_dialog import FormFillerDialog
 
-    dlg = FormFillerDialog(None, {"probe_cycles": 5, "answer_no": False,
-                               "answer_na": False})
+    dlg = FormFillerDialog(None, {"crag_top_n_external": 2,
+                                 "answer_no": False, "answer_na": False})
     out = dlg.get_config()
-    assert out["probe_cycles"] == 5
+    assert out["crag_top_n_external"] == 2
     assert out["answer_no"] is False
     assert out["answer_na"] is False
 
@@ -53,49 +54,45 @@ def test_dialog_round_trips_ask_user_without_any_path_property():
 
     from NGUI.dialogs.form_filler_dialog import FormFillerDialog
 
-    dlg = FormFillerDialog(None, {"ask_user": True})
+    dlg = FormFillerDialog(None, {"ask_user": False})
     out = dlg.get_config()
-    assert out["ask_user"] is True
-    # Default off: an unanswered question must never be asked by surprise.
-    assert FormFillerDialog(None, {}).get_config()["ask_user"] is False
+    assert out["ask_user"] is False
+    # UNSURE -> ASK is the DEFAULT: a field the pipeline cannot decide is the
+    # user's to answer, so a fresh node asks unless it is switched off.
+    assert FormFillerDialog(None, {}).get_config()["ask_user"] is True
     # The corrections document is node-owned: there is NO path property at all.
     assert "knowledge_file" not in out
 
 
-def test_dialog_shows_the_node_owned_corrections_path_not_an_editor():
-    """The dialog must NOT ask the user to point at a file: the corrections
-    document is owned by the node, so the row is READ-ONLY (no line edit, no
-    Browse), and with nothing set in the chain it names where the node keeps
-    it."""
+def test_dialog_offers_no_knowledge_file_row():
+    """Learned answers live in the Context pool the user wires, so the dialog
+    offers NO file to point at: no read-only corrections row, no path editor,
+    and no knowledge_file key in the config it round-trips."""
     from PyQt5.QtWidgets import QApplication
     _app = QApplication.instance() or QApplication([])
 
     from NGUI.dialogs.form_filler_dialog import FormFillerDialog
 
-    owned = r"C:\chains\ff1_corrections.md"
-    dlg = FormFillerDialog(None, {}, corrections_path=owned)
+    dlg = FormFillerDialog(None, {})
     assert not hasattr(dlg, "knowledge_file_edit")
-    assert owned in dlg.corrections_label.text()
+    assert not hasattr(dlg, "corrections_label")
     assert "knowledge_file" not in dlg.get_config()
-    # No chain saved yet: it still names the node-owned location.
-    dlg2 = FormFillerDialog(None, {})
-    assert dlg2.corrections_label.text()
 
 
 def test_chain_save_and_load_keep_new_form_properties():
     """Regression: the save/load allowlists must carry EVERY form property.
 
-    probe_cycles/answer_no were silently dropped (the same class of bug that
-    lost web_scope), so a configured node reverted to defaults on reload.
+    crag_top_n_external/answer_no were silently dropped (the same class of
+    bug that lost web_scope), so a configured node reverted to defaults.
     """
     from NGUI.graph_elements import config_manager as cm
     from NGUI.graph_elements.config_manager import ConfigManager
 
     cfg = {
         "mode": "web", "instruction": "fill", "fields_include": "",
-        "fields_skip": "date", "probe_top_k": 1, "probe_char_budget": 1500,
-        "probe_context_chars": 6000, "consolidate": False,
-        "probe_cycles": 7, "verify": True,
+        "fields_skip": "date", "crag_top_k": 1, "crag_char_budget": 1500,
+        "crag_max_strips": 12, "crag_enabled": False,
+        "crag_top_n_external": 7, "verify": True,
         "repair": True, "repair_attempts": 3,
         "answer_no": False, "answer_na": False, "max_fields": 40,
         "engine": "ollama",
@@ -124,8 +121,8 @@ def test_chain_save_and_load_keep_new_form_properties():
     saver = _Save()
     ConfigManager._save_form_filler_node(saver, _Node())
     saved = saver.chain_config["form_filler_nodes"][0]
-    assert saved["probe_cycles"] == 7
-    assert saved["consolidate"] is False
+    assert saved["crag_top_n_external"] == 7
+    assert saved["crag_enabled"] is False
     assert saved["answer_no"] is False
     assert saved["answer_na"] is False
     assert saved["ask_user"] is True
@@ -137,7 +134,8 @@ def test_chain_save_and_load_keep_new_form_properties():
     src = open(cm.__file__, encoding="utf-8").read()
     loader = src[src.index("def _create_form_filler_nodes"):]
     loader = loader[: loader.index("def _create_code_nodes")]
-    for key in ("consolidate", "probe_cycles", "answer_no", "answer_na",
+    for key in ("crag_enabled", "crag_top_n_external", "answer_no",
+                "answer_na",
                 "repair", "repair_attempts", "context_size", "fields_skip",
                 "max_tokens", "ask_user"):
         assert f'ff_data.get("{key}"' in loader, key
@@ -151,7 +149,9 @@ def test_form_filler_clipboard_whitelist_covers_web_scope():
 
     wl = ClipboardManager.get_property_whitelist(
         None, "form_filler.FormFillerNode")
-    for key in ("web_scope", "probe_cycles", "consolidate", "repair",
+    for key in ("web_scope", "crag_top_k", "crag_enabled", "crag_evaluator",
+                "crag_upper_threshold", "crag_lower_threshold",
+                "crag_decompose_mode", "repair",
                 "repair_attempts", "answer_no", "answer_na", "context_size",
                 "ask_user"):
         assert key in wl, key

@@ -27,6 +27,11 @@ except ImportError:
     Image = None
     ImageGrab = None
 
+try:  # LoOper/ on sys.path: the app and the test suite both run that way
+    from platform_gate import screenshot as capture_screen
+except ImportError:  # imported as LoOper.*
+    from LoOper.platform_gate import screenshot as capture_screen
+
 class OllamaClient:
     """Client for interacting with Ollama API Gateway"""
     
@@ -140,8 +145,19 @@ class OllamaClient:
         if stream:
             return self._post_stream_text('/generate', payload)
         result = self._post_json('/generate', payload)
+        # A provider-routed model ("groq:llama-3.3") can only run on that
+        # provider: replaying it against the local Ollama daemon always 404s
+        # and its failure would mask the provider's real error.
+        try:
+            from AI import byok
+            _pfx, _bare = byok.split_model_ref(model)
+            _provider_routed = bool(_pfx) and _pfx not in ("ollama", "llamacpp")
+        except Exception:
+            _provider_routed = False
         # Fallback to direct Ollama if gateway is unavailable or returned an error/invalid format
         try:
+            if _provider_routed:
+                raise RuntimeError("provider-routed model: no local fallback")
             if (not isinstance(result, dict)) or (isinstance(result, dict) and result.get('error')):
                 host = os.getenv('OLLAMA_HOST', 'localhost')
                 port = os.getenv('OLLAMA_PORT', '11434')
@@ -461,10 +477,6 @@ class OllamaClient:
                 continue
             try:
                 response = self.session.post(url, json=payload)
-                # Fail fast on 404 (Not Found) - usually means wrong endpoint, retrying won't help
-                if response.status_code == 404:
-                    detail = self._read_error_detail(response)
-                    return {"error": f"404 Client Error: Not Found for url: {url}" + (f" - {detail}" if detail else "")}
                 if response.status_code == 503:
                     # Extract API error detail from FastAPI JSON response
                     detail = self._read_error_detail(response)
@@ -479,10 +491,15 @@ class OllamaClient:
                         attempts += 1
                         continue
                     return {"error": f"503 Service Unavailable for url: {url}" + (f" - {detail}" if detail else "")}
-                if response.status_code == 500:
+                if response.status_code >= 400:
+                    # ANY other failure (400 bad model/key, 502 provider error,
+                    # 404 wrong route): surface the gateway's `detail`.  Going
+                    # through raise_for_status() reported a bare "502 Bad
+                    # Gateway" and retried a permanent failure four times,
+                    # hiding WHY the provider refused (bad key, quota, model).
                     detail = self._read_error_detail(response)
-                    return {"error": f"500 Internal Server Error for url: {url}" + (f" - {detail}" if detail else "")}
-                
+                    return {"error": f"{response.status_code} {response.reason or ''} for url: {url}"
+                                     + (f" - {detail}" if detail else "")}
                 response.raise_for_status()
                 self._fail_counts = 0
                 self._breaker_until = None
@@ -578,13 +595,21 @@ class OllamaClient:
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
                     continue
+                obj = None
                 try:
                     obj = json.loads(line)
-                    delta = obj.get('response') or obj.get('text') or (obj.get('message', {}) or {}).get('content')
-                    if delta:
-                        yield delta
                 except Exception:
                     continue
+                # The gateway reports a provider failure mid-stream as
+                # {'error': ...}.  Swallowing it showed up as an EMPTY reply
+                # (the coding agent then retried six times and gave up).
+                if isinstance(obj, dict) and obj.get('error'):
+                    raise RuntimeError(str(obj.get('error')))
+                if isinstance(obj, dict):
+                    delta = (obj.get('response') or obj.get('text')
+                             or (obj.get('message') or {}).get('content'))
+                    if delta:
+                        yield delta
 
     def chat_stream(self, model: str, prompt: str,
                     temperature: Optional[float] = None,
@@ -658,6 +683,9 @@ class OllamaClient:
                             except Exception:
                                 continue
         except requests.exceptions.RequestException as e:
+            return {"error": str(e)}
+        except RuntimeError as e:
+            # A provider error line from the gateway (see _post_stream_iter).
             return {"error": str(e)}
         return {"response": accumulated}
     
@@ -757,7 +785,7 @@ class OllamaClient:
             
         try:
             # Capture the screen
-            screenshot = ImageGrab.grab()
+            screenshot = capture_screen()
             
             # Resize if max_size is specified
             if max_size and (screenshot.width > max_size or screenshot.height > max_size):

@@ -18,8 +18,9 @@ Two rules keep it out of trouble:
   * Motion never gates state.  Entries show the widget first and animate from
     there; only *_away* finishes with hide(), and any new show() cancels a
     pending away so the widget cannot vanish behind the user's back.
-  * Nothing animates on a capture path (hide_for_capture / _automation_hide):
-    a screen read must never contain a half-morphed panel.
+  * Nothing animates on a screen path (hide_for_capture / hide_for_screen_access
+    / the main window's screen-access guard): a screen read must never contain
+    a half-morphed panel.
 
 Size is driven through the widget's own maximum *during* the animation and the
 original min/max are restored on landing (Qt never re-grows a widget whose

@@ -22,14 +22,21 @@
 .PARAMETER SkipNpmInstall
   Skip `npm install` (deps already present).
 
+.PARAMETER Install
+  After the build, `adb install -r` the APK and pre-grant the runtime
+  permissions (RECORD_AUDIO, POST_NOTIFICATIONS) so a fresh install never
+  starts from a dismissed permission dialog.
+
 .EXAMPLE
   pwsh build_pipeline/build_phone_apk.ps1
   pwsh build_pipeline/build_phone_apk.ps1 -Configuration Release
+  pwsh build_pipeline/build_phone_apk.ps1 -Install
 #>
 param(
   [ValidateSet("Debug", "Release")] [string]$Configuration = "Debug",
   [string]$BareKitVersion = "v2.5.5",
-  [switch]$SkipNpmInstall
+  [switch]$SkipNpmInstall,
+  [switch]$Install
 )
 
 $ErrorActionPreference = "Stop"
@@ -168,4 +175,30 @@ if ($apk) {
   Info "Done. APK: $($apk.FullName)"
 } else {
   Warn "Build finished but no APK found under $apkDir"
+}
+
+# --- optional install + permission pre-grant ---
+if ($Install -and $apk) {
+  $adb = Join-Path $sdk "platform-tools\adb.exe"
+  if (-not (Test-Path $adb)) {
+    $adbCmd = Get-Command adb -ErrorAction SilentlyContinue
+    if ($adbCmd) { $adb = $adbCmd.Source } else { $adb = $null }
+  }
+  if (-not $adb) {
+    Warn "adb not found -> install manually: adb install -r $($apk.FullName)"
+  } else {
+    Info "Installing $($apk.Name) ..."
+    & $adb install -r $apk.FullName
+    if ($LASTEXITCODE -ne 0) {
+      Warn "adb install failed (no device? check 'adb devices')."
+    } else {
+      # Pre-grant the runtime permissions: a dismissed launch dialog otherwise
+      # leaves the app in "User fixed" / "User set" state where the OS prompt
+      # never reappears, so the mic stays off even after reinstalling.
+      foreach ($p in 'android.permission.RECORD_AUDIO', 'android.permission.POST_NOTIFICATIONS') {
+        & $adb shell pm grant to.looper.phone $p 2>&1 | Out-Null
+      }
+      Info "Permissions pre-granted: RECORD_AUDIO, POST_NOTIFICATIONS."
+    }
+  }
 }

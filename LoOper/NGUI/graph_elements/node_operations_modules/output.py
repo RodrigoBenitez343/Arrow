@@ -55,11 +55,13 @@ class OutputOperationsMixin:
             }
 
             dialog = OutputPropertiesDialog(self.parent_widget, current_config)
+            dialog.add_description(node.get_property('description') or '')
             if dialog.exec_() != dialog.Accepted:
                 logger.debug("Dialog cancelled")
                 return
 
             config = dialog.get_config()
+            node.set_property('description', dialog.description())
             node.set_property('label', config['label'])
             node.set_property('variable_name', config.get('variable_name', '') or '')
             node.set_property('agent_visible', config['agent_visible'])

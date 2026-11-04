@@ -115,8 +115,11 @@ class ClipboardManager:
             # a missing 'web_scope' turned a scoped node into a whole-page one
             # (and the picker result was lost every time the node was copied).
             return {"mode", "instruction", "fields_include", "fields_skip",
-                    "probe_top_k", "probe_char_budget", "probe_context_chars",
-                    "probe_cycles", "consolidate", "verify", "repair",
+                    "crag_enabled", "crag_evaluator", "crag_upper_threshold",
+                    "crag_lower_threshold", "crag_decompose_mode",
+                    "crag_top_k", "crag_max_strips", "crag_top_n_internal",
+                    "crag_top_n_external", "crag_external", "crag_rewrite",
+                    "crag_char_budget", "verify", "repair",
                     "repair_attempts", "answer_no", "answer_na", "ask_user",
                     "max_fields", "engine", "model", "temperature",
                     "max_tokens", "context_size", "typing_batch_size",

@@ -10,6 +10,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 
 import pytest
 
@@ -1392,9 +1394,13 @@ def test_recorder_payload_stamps_fingerprint():
 
 
 def test_inject_or_refresh_reloads_stale_recorder():
-    """A stale in-page recorder in a long-lived SPA tab is replaced by ONE page
-    reload (re-evaluation is a no-op thanks to the recorder's own guard); an
-    up-to-date one is left alone, and an absent one is injected directly."""
+    """A stale in-page recorder is KEPT (no reload), an up-to-date one is
+    left alone, and an absent one is injected directly.
+
+    The stale case deliberately does NOT reload: a reload wipes the page
+    state and flashes the document white on every action — fatal for the
+    teach overlay, which polls this path every surface switch while the
+    user is mid-task on the page."""
     from player.web import recorder as rec_mod
 
     class _D:
@@ -1424,10 +1430,12 @@ def test_inject_or_refresh_reloads_stale_recorder():
     rec_mod._inject_or_refresh(d, "PAYLOAD")
     assert d.injected == 1 and d.refreshed == 0
 
-    # Stale recorder -> exactly one reload.
+    # Stale recorder -> kept as-is: NEVER a reload (page state preserved);
+    # the payload is re-evaluated into the document (the recorder's own
+    # guard makes that a no-op).
     d = _D({"ready": True, "fp": "old"})
     rec_mod._inject_or_refresh(d, "PAYLOAD")
-    assert d.refreshed == 1 and d.injected == 0
+    assert d.refreshed == 0 and d.injected == 1
 
 
 def test_recorder_consume_drained_never_truncates_on_stop():
@@ -2042,6 +2050,63 @@ def test_ensure_workbench_reuses_one_driver_per_scope(tmp_path, monkeypatch):
     assert web_session._WORKBENCH_DRIVERS.get("scope-r") is None
 
 
+def test_ensure_workbench_serializes_concurrent_same_scope_launches(
+    tmp_path, monkeypatch
+):
+    """TWO concurrent callers at cold start must produce ONE browser window.
+
+    The 2026-10-27 builder-chat defect: the act loop and the merged teach
+    overlay's watcher both resolved the browser at the same moment and two
+    concurrent launches put TWO chrome windows on the shared profile (one
+    correct, one an initialization artifact that later closed).  Same-scope
+    callers now wait on the in-flight launch and reuse its driver."""
+    web_session = _patch_session_boilerplate(monkeypatch, tmp_path)
+    monkeypatch.setattr(web_session, "_WORKBENCH_DRIVERS", {})
+    monkeypatch.setattr(web_session, "_LAUNCH_LOCKS", {})
+    launches = []
+
+    class FakeChrome:
+        def __init__(self, **kwargs):
+            launches.append(kwargs)
+            # Widen the race window: without the gate, the second caller
+            # enters _launch_workbench_session while this one is mid-launch.
+            time.sleep(0.2)
+            self.browser_pid = len(launches)
+
+        def execute_script(self, *a, **k):
+            return 1
+
+    monkeypatch.setattr(web_session.uc, "Chrome", FakeChrome)
+    monkeypatch.setattr(web_session, "_find_workbench_browser",
+                        lambda key=None: None)
+    monkeypatch.setattr(web_session, "_write_workbench_state",
+                        lambda driver, chain_key=None: None)
+    monkeypatch.setattr(web_session, "_consolidate_windows",
+                        lambda *a, **k: None)
+    monkeypatch.setattr(web_session, "_prune_extra_browser_windows",
+                        lambda *a, **k: None)
+
+    results = []
+    errors = []
+
+    def _call():
+        try:
+            results.append(
+                web_session.ensure_workbench_session(chain_key="race-scope"))
+        except Exception as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [threading.Thread(target=_call) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors
+    assert len(launches) == 1          # ONE window, never two
+    assert results[0] is results[1]     # both callers reuse the same driver
+
+
 def test_workbench_attach_failure_rescans_instead_of_relaunching(
     tmp_path, monkeypatch
 ):
@@ -2487,7 +2552,9 @@ def test_sequence_executor_web_profile_key_uses_durable_chain_profile(tmp_path, 
     assert ex._web_session_released is False
     ex.close_web_session()  # quits; durable profile dir is kept by cleanup
 
-    # Visible run with no live chain browser: launches on the durable dir.
+    # Visible run with no live chain browser: launches on the durable dir and
+    # STAYS open - it is the shared workbench browser the next recording or
+    # playback must reattach to (two instances was the 2026-11-03 defect).
     visible_cfg = type("C", (), {"headless": False})()
     calls.clear()
     ex2 = SequenceExecutor(chain_file_dir=str(tmp_path))
@@ -2497,7 +2564,11 @@ def test_sequence_executor_web_profile_key_uses_durable_chain_profile(tmp_path, 
     created = [c[1] for c in calls if c[0] == "create"]
     assert created and created[-1]["headless"] is False
     assert os.path.basename(str(created[-1]["profile_dir"])) == "chain-xyz"
-    assert ex2._web_session_released is False
+    assert ex2._web_session_released is True
+    closed = []
+    monkeypatch.setattr(web_session, "cleanup_session", lambda drv: closed.append(drv))
+    ex2.close_web_session()
+    assert closed == []  # durable visible browser is never quit at chain end
 
     # Visible run with the chain's browser already open: ATTACH, never kill it.
     def fake_find_live(chain_key=None):
@@ -2514,6 +2585,49 @@ def test_sequence_executor_web_profile_key_uses_durable_chain_profile(tmp_path, 
     assert ex3._web_session_released is True
     ex3.close_web_session()  # attached browser is left open (no cleanup quit)
     assert calls[-1] == ("ensure", "chain-xyz")
+
+
+def test_player_relay_keeps_nested_chain_on_shared_browser():
+    """GUI playback keys AND agent-run keep_web_browser survive into a nested
+    player construction: chain-import and loop children must run on the same
+    shared browser and never quit it at their end (the two-instance defect)."""
+    from player.multi_sequence.worflow_interpreter_modules.executor_modules import chain_ops
+    from player.multi_sequence.conditional_fallback_resources import conditional_loop
+    import inspect
+
+    # Chain-import child inherits the parent's browser scope and keeps it open.
+    src = inspect.getsource(chain_ops)
+    assert "web_chain_key=_parent_web_key" in src
+    assert "keep_web_browser=True" in src
+
+    # Loop child keeps the shared browser open too.
+    src = inspect.getsource(conditional_loop)
+    assert "keep_web_browser=True" in src
+
+    # The player forwards the keep flag to its executor.
+    from player.multi_sequence_player import MultiSequencePlayer
+    player = MultiSequencePlayer({"sequences": [], "web_sequences": []})
+    assert player.web_isolated is False
+    player = MultiSequencePlayer({"sequences": []}, web_chain_key="default",
+                                 keep_web_browser=True)
+    assert player.sequence_executor.web_chain_key == "default"
+    assert player.sequence_executor.keep_web_browser is True
+
+    # The three run modes route the executor flags chain_ops reads back:
+    # GUI playback -> shared chain key; agent/scheduled -> durable profile;
+    # isolated (playback during a capture) -> web_isolated, no shared key.
+    gui = MultiSequencePlayer({"sequences": []}, web_chain_key="default")
+    assert gui.sequence_executor.web_chain_key == "default"
+    assert gui.sequence_executor.web_profile_key is None
+    assert gui.sequence_executor.web_isolated is False
+    agent = MultiSequencePlayer({"sequences": []}, chain_file_path="a.json")
+    assert agent.sequence_executor.web_chain_key is None
+    assert agent.sequence_executor.web_profile_key == "default"
+    assert agent.sequence_executor.web_isolated is False
+    iso = MultiSequencePlayer({"sequences": []}, web_isolated=True)
+    assert iso.sequence_executor.web_chain_key is None
+    assert iso.sequence_executor.web_profile_key is None
+    assert iso.sequence_executor.web_isolated is True
 
 
 def test_match_session_window_prefers_top_most_equal_size_window():
@@ -3651,6 +3765,43 @@ def test_recorder_session_starting_on_real_page_never_navigates():
     ]
     final = _finalize_actions(events, saw_chrome_enter=False, final_url=None)
     assert [e.type for e in final] == ["click", "key"]
+
+
+def test_finalize_drops_standalone_focuses():
+    """A focus with no following type is phantom replay noise - FocusHandler
+    focuses by CLICKING, so a stray focus (or an SPA re-render stealing it onto a
+    checkbox) would toggle that control on playback.  It is dropped, keeping only
+    the real clicks (the jobs.json shape: 3 clicks recorded alongside 2 focuses)."""
+    from player.web.events import Event, Locator
+    from player.web.recorder import _finalize_actions
+
+    url = "https://www.linkedin.com/jobs/"
+    events = [
+        Event(type="click", ts=1000.0, url=url, locator=Locator(tag="a", text="Jobs")),
+        Event(type="click", ts=2000.0, url=url, locator=Locator(tag="a", text="Show all")),
+        Event(type="click", ts=3000.0, url=url, locator=Locator(tag="label", text="Easy Apply")),
+        Event(type="focus", ts=3017.0, url=url, locator=Locator(tag="input", id="_r_bt_")),
+        Event(type="focus", ts=4301.0, url=url, locator=Locator(tag="input", id="_r_il_")),
+    ]
+    final = _finalize_actions(events, saw_chrome_enter=False, final_url=url)
+    assert [e.type for e in final] == ["click", "click", "click"]
+
+
+def test_finalize_keeps_focus_that_opens_a_type_field():
+    """A focus immediately before a type is keyboard-only navigation into a
+    field - the one case a standalone focus earns its place - so it is kept."""
+    from player.web.events import Event, Locator
+    from player.web.recorder import _finalize_actions
+
+    url = "https://example.com/form"
+    events = [
+        Event(type="key", ts=1000.0, key="Tab", state="down", url=url),
+        Event(type="focus", ts=1100.0, url=url, locator=Locator(tag="input", name="q")),
+        Event(type="type", ts=1200.0, url=url, value="hi",
+              locator=Locator(tag="input", name="q")),
+    ]
+    final = _finalize_actions(events, saw_chrome_enter=False, final_url=url)
+    assert [e.type for e in final] == ["key", "focus", "type"]
 
 
 def test_recorder_ctrl_l_prefix_does_not_fake_a_cold_start():

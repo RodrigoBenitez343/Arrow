@@ -1,12 +1,17 @@
 // In-page EXECUTION overlay for web replay - the orange twin of recorder.js's
 // recording overlay.  Shown WHILE a web sequence replays: an orange box + name
-// over the element each action is about to hit, a virtual cursor trail to that
-// element, a ring pulsed at the action point, and a top-left action banner.
+// over the element each action is about to hit, a VIRTUAL CURSOR that walks to
+// that element, a ring pulsed at the action point, and a top-left action banner.
 //
 // The recorder's overlay is driven by pointermove; replay dispatches DOM events
 // WITHOUT moving the OS cursor, so this one is driven by explicit calls from the
 // Python engine (window.__wvpExecMark).  Every node is pointer-events:none (and
 // tagged data-wvp-exec) so it never intercepts or re-records anything.
+//
+// The cursor is the whole point: the browser owns its own pointer here, so a web
+// sequence never drags the user's real mouse (and the desktop player's animated
+// cursor with it) across the screen.  Its glide carries the same human read the
+// desktop path has - a curved, eased, distance-timed path (player/human_cursor).
 //
 // Gated on a sessionStorage flag (per-origin, survives same-origin navigation)
 // exactly like the recording overlay, and re-asserted on every page / DOM
@@ -26,11 +31,20 @@
   var ON_KEY = 'looper.web.execOverlay';
   var TTL = 5000;            // ms a mark / trail point stays visible
   var COLOR = '255,140,0';   // orange
+  // Virtual-cursor glide, mirroring player/human_cursor.py: a nearby target
+  // still reads as motion, a far one never reads as "scripted slow".
+  var GLIDE_MIN_MS = 180;
+  var GLIDE_MAX_MS = 550;
+  var GLIDE_PX_PER_S = 1600;
+  var TRAIL_SAMPLE_MS = 45;  // how often the walked path drops a trail point
 
   var canvas = null;
   var banner = null;
   var pts = [];              // {x, y, t} cursor trail
   var marks = [];            // {x, y, w, h, t, label, click}
+  var cursor = null;         // {x, y} where the virtual pointer rests
+  var glide = null;          // in-flight walk to the action's target
+  var trailedAt = 0;
   var action = '';
   var raf = null;
   var observed = false;
@@ -114,6 +128,9 @@
     try { if (canvas && canvas.parentNode) canvas.parentNode.removeChild(canvas); } catch (e) {}
     try { if (banner && banner.parentNode) banner.parentNode.removeChild(banner); } catch (e) {}
     canvas = banner = null;
+    // The walk dies with the canvas: a later enable() must not resume it from a
+    // position this page no longer shows.
+    cursor = glide = null;
   }
 
   function start() {
@@ -126,6 +143,71 @@
   function prune(now) {
     while (pts.length && now - pts[0].t > TTL) pts.shift();
     while (marks.length && now - marks[0].t > TTL) marks.shift();
+  }
+
+  function easeInOut(t) {
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  }
+
+  // Start walking the virtual cursor to (x, y) and return the duration in ms.
+  // The path is a quadratic Bezier through a jittered midpoint - the same
+  // "noisy hand" read human_cursor.glide_os_cursor gives, just drawn in-page.
+  function startGlide(x, y) {
+    var from = cursor || {
+      x: Math.round(window.innerWidth / 2),
+      y: Math.round(window.innerHeight / 2),
+    };
+    var dx = x - from.x, dy = y - from.y;
+    var dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 1) { cursor = { x: x, y: y }; return 0; }
+    var dur = Math.min(GLIDE_MAX_MS,
+                       Math.max(GLIDE_MIN_MS, dist / GLIDE_PX_PER_S * 1000));
+    glide = {
+      x0: from.x, y0: from.y,
+      cx: (from.x + x) / 2 + (Math.random() - 0.5) * 0.24 * dist,
+      cy: (from.y + y) / 2 + (Math.random() - 0.5) * 0.16 * dist,
+      x1: x, y1: y, t0: Date.now(), dur: dur,
+    };
+    return dur;
+  }
+
+  // Advance the walk; returns the cursor position for THIS frame.
+  function stepGlide(now) {
+    if (!glide) return cursor;
+    var u = Math.min(1, (now - glide.t0) / Math.max(1, glide.dur));
+    var e = easeInOut(u), m = 1 - e;
+    cursor = {
+      x: m * m * glide.x0 + 2 * m * e * glide.cx + e * e * glide.x1,
+      y: m * m * glide.y0 + 2 * m * e * glide.cy + e * e * glide.y1,
+    };
+    // Sample the path as it is WALKED, so the trail is the cursor's own line
+    // instead of one straight hop between action points.
+    if (now - trailedAt > TRAIL_SAMPLE_MS) {
+      trailedAt = now;
+      pts.push({ x: cursor.x, y: cursor.y, t: now });
+    }
+    if (u >= 1) glide = null;
+    return cursor;
+  }
+
+  function drawCursor(ctx, x, y) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, y + 17);
+    ctx.lineTo(x + 4.5, y + 12.5);
+    ctx.lineTo(x + 7.6, y + 19);
+    ctx.lineTo(x + 10.6, y + 17.2);
+    ctx.lineTo(x + 7.6, y + 11);
+    ctx.lineTo(x + 13, y + 11);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fill();
+    ctx.lineWidth = 1.4;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(' + COLOR + ',0.95)';
+    ctx.stroke();
+    ctx.restore();
   }
 
   function draw() {
@@ -142,6 +224,7 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     var now = Date.now();
+    var pen = stepGlide(now);
 
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
@@ -183,30 +266,44 @@
 
     // The action sits BESIDE the EXECUTING tag (one line), not under it.
     if (banner) banner.textContent = 'EXECUTING  \u00b7  ' + (action || '...');
+    if (pen) drawCursor(ctx, pen.x, pen.y);
     prune(now);
     // Keep animating only while there is something to show (marks / trail fade
-    // out after TTL).  A permanent 60 fps loop on every replayed page is pure
-    // interference - __wvpExecMark re-arms it when a new action arrives.
-    if (pts.length || marks.length) raf = window.requestAnimationFrame(draw);
+    // out after TTL, the cursor keeps walking until it reaches its target).
+    // A permanent 60 fps loop on every replayed page is pure interference -
+    // __wvpExecMark re-arms it when a new action arrives.
+    if (pts.length || marks.length || glide) raf = window.requestAnimationFrame(draw);
   }
 
   // Called once per replayed action from the Python engine: box the element the
-  // action is about to hit and extend the virtual cursor trail to its center.
+  // action is about to hit and walk the virtual cursor onto its center.  Returns
+  // the walk's duration in ms so the caller can pace the action behind it (a web
+  // sequence reads like a desktop one without touching the real pointer).
   window.__wvpExecMark = function (rect, label, act) {
     if (act) action = String(act);
     var now = Date.now();
+    var dur = 0;
     if (rect && rect.w > 0 && rect.h > 0) {
       prune(now);
-      pts.push({ x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, t: now });
+      var tx = rect.x + rect.w / 2, ty = rect.y + rect.h / 2;
       marks.push({ x: rect.x, y: rect.y, w: rect.w, h: rect.h, t: now,
                    label: label || '', click: true });
+      // The overlay is gated on the sessionStorage flag: with it OFF nothing is
+      // drawn, so parking the cursor (no walk) is the honest state.
+      if (wanted()) {
+        dur = startGlide(tx, ty);
+      } else {
+        cursor = { x: tx, y: ty };
+        pts.push({ x: tx, y: ty, t: now });
+      }
     }
     ensure();
+    return dur;
   };
 
   window.__wvpExecOn = function () {
     try { sessionStorage.setItem(ON_KEY, 'on'); } catch (e) {}
-    pts = []; marks = []; action = '';
+    pts = []; marks = []; action = ''; cursor = null; glide = null;
     try { reassert(); } catch (e) {}
   };
   window.__wvpExecOff = function () {

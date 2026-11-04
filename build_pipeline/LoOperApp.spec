@@ -33,6 +33,8 @@ pathex = [looper_dir, ai_dir, ngui_dir, player_dir, recorder_dir,
          os.path.join(base_dir, 'utils', 'nano-graphrag')]
 
 hiddenimports = [
+    'platform_gate',          # OS gate: Win32 / X11 backend selection
+    'platform_gate_atspi',    # Linux element-tree twin of UI Automation
     'PyQt5',
     'PyQt5.QtCore',
     'PyQt5.QtGui',

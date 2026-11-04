@@ -1,8 +1,8 @@
 """Unit tests for the OS-level browser-chrome capture (player/web/chrome_capture).
 
-The OS hooks (``keyboard`` / pynput) are environment-dependent, so the tests
-exercise the pure classification logic and the hook state machines through
-faked packages - never by installing real global hooks.
+The OS hooks (pynput, via the platform gate) are environment-dependent, so the
+tests exercise the pure classification logic and the hook state machines
+through a faked gate hook - never by installing real global hooks.
 """
 
 import sys
@@ -94,7 +94,7 @@ def test_bare_chrome_keys_are_special_keys_only():
 
 
 # ---------------------------------------------------------------------------
-# ChromeKeyHook (fake keyboard package)
+# ChromeKeyHook (fake gate key hook)
 # ---------------------------------------------------------------------------
 
 
@@ -105,15 +105,19 @@ class FakeKeyboardEvent:
 
 
 def _install_fake_keyboard(monkeypatch):
-    """Patch sys.modules['keyboard'] so ChromeKeyHook never touches the OS."""
-    fake_keyboard = types.ModuleType("keyboard")
+    """Patch the platform gate's key_hook so ChromeKeyHook never touches the OS."""
+    import platform_gate as gate
+
     captured = []
 
-    def fake_hook(callback, suppress=False):
-        captured.append(callback)
+    class _FakeHook:
+        def __init__(self, callback):
+            captured.append(callback)
 
-    fake_keyboard.hook = fake_hook
-    monkeypatch.setitem(sys.modules, "keyboard", fake_keyboard)
+        def stop(self):
+            pass
+
+    monkeypatch.setattr(gate, "key_hook", lambda callback: _FakeHook(callback))
     return captured
 
 

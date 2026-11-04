@@ -31,6 +31,12 @@ class _Harness(FormFillerMixin):
     def set_variable(self, key, value):
         self._vars[key] = value
 
+    # Laya seam: a unit run has no engine, so no line is scored as the answer.
+    # The document's own order stands and a body section may answer - the
+    # suites that test the ordering stub this with their own score table.
+    def _ff_answer_scores(self, question, texts):
+        return [0.0] * len(list(texts or []))
+
 
 def _node(mode="web", **overrides):
     data = {
@@ -38,8 +44,9 @@ def _node(mode="web", **overrides):
         "instruction": "fill the form",
         "verify": True,
         "max_fields": 40,
-        "probe_top_k": 3,
-        "probe_char_budget": 1500,
+        "crag_top_k": 3,
+        "crag_char_budget": 1500,
+        "crag_evaluator": "embed",
         "engine": "llamacpp",
         "model": "",
         "temperature": 0.1,
@@ -59,10 +66,11 @@ def _wire(h, fields, evidence="evidence text", value="My Value",
     h._ff_enumerate_web = lambda cfg, sf: list(fields)
     h._ff_enumerate_desktop = lambda cfg, sf: list(fields)
 
-    def _probe(label, cfg, src, docs=None, stop_flag=None, repair_hint=""):
+    def _retrieve(label, cfg, src, docs=None, stop_flag=None, repair_hint="",
+                  learned_hint="", field=None):
         h.probes.append(label)
         return evidence
-    h._ff_probe = _probe
+    h._ff_retrieve = _retrieve
 
     def _llm(prompt, system, cfg, sf):
         h.llm_calls.append(prompt)
@@ -73,7 +81,7 @@ def _wire(h, fields, evidence="evidence text", value="My Value",
         h.writes.append((field.get("id"), val))
         return True
     h._ff_write_web = _write
-    h._ff_write_desktop = lambda field, val, cfg, sf: (h.writes.append((field.get("id"), val)), True)[1]
+    h._ff_write_desktop = _write
 
     seq = list(reads) if reads is not None else [value]
 
@@ -81,6 +89,7 @@ def _wire(h, fields, evidence="evidence text", value="My Value",
         h.reads.append(field.get("id"))
         return seq.pop(0) if seq else value
     h._ff_read_web = _read
+    h._ff_read_desktop = _read
     # The pre-fill read (the harness's "already filled -> skip" rule).
     h._ff_current_value = lambda field, sf, driver=None, **kw: current
 
@@ -89,3 +98,4 @@ def _wire(h, fields, evidence="evidence text", value="My Value",
     # overrides it.
     h._ff_field_state = lambda field, sf, driver=None: {
         "found": True, "valid": True, "message": ""}
+    h._ff_state_desktop = h._ff_field_state

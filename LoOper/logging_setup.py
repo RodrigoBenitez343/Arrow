@@ -115,7 +115,12 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _enable_windows_vt() -> bool:
-    """Turn on VT processing for the console so ANSI codes render."""
+    """Turn on VT processing for the Windows console so ANSI codes render.
+
+    X11 terminals render ANSI natively, so there is nothing to enable there.
+    """
+    if sys.platform != "win32":
+        return True
     try:
         h = ctypes.windll.kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
         mode = ctypes.c_uint32()
@@ -138,16 +143,10 @@ def _console_supports_color() -> bool:
     except Exception:
         is_tty = False
     if not is_tty:
-        # The app relaunches itself elevated (ShellExecuteW runas): the child's
-        # stdout may not report as a tty even though it owns a real console
-        # window.  Treat a live console window as a terminal.
-        if sys.platform == "win32":
-            try:
-                if not ctypes.windll.kernel32.GetConsoleWindow():
-                    return False
-            except Exception:
-                return False
-        else:
+        # Child processes (the API subprocess, the --run-main launcher child)
+        # may have a redirected stdout while still owning a real console
+        # window.  Treat a live console window / controlling tty as a terminal.
+        if not _has_console_window():
             return False
     if sys.platform == "win32":
         return _enable_windows_vt()
@@ -155,12 +154,12 @@ def _console_supports_color() -> bool:
 
 
 def _get_rich_console():
-    """A Rich console for the app's own terminal (elevated console included).
+    """A Rich console for the app's own terminal (console window included).
 
     Uses an explicit file handle that is never the stdout bridge, and forces
     terminal mode whenever the process owns a console window even if stdout
-    does not report as a tty (the elevated relaunch case) — Rich's native
-    Windows console color fallback then renders colors without VT.
+    does not report as a tty (redirected stdout in a child process) — Rich's
+    native Windows console color fallback then renders colors without VT.
     """
     global _RICH_CONSOLE, _RICH_CHECKED
     if _RICH_CHECKED:
@@ -177,12 +176,7 @@ def _get_rich_console():
         is_tty = bool(target is not None and target.isatty())
     except Exception:
         is_tty = False
-    has_console = False
-    if sys.platform == "win32":
-        try:
-            has_console = bool(ctypes.windll.kernel32.GetConsoleWindow())
-        except Exception:
-            has_console = False
+    has_console = _has_console_window()
     if not (is_tty or has_console):
         # No terminal to render to — headless or piped, e.g. the API
         # subprocess spawned with CREATE_NO_WINDOW and PIPE stdout.  Building
@@ -199,8 +193,15 @@ def _get_rich_console():
 
 
 def _has_console_window() -> bool:
+    """True when this process can render to a terminal (console window / tty)."""
     if sys.platform != "win32":
-        return False
+        # POSIX: a controlling terminal may exist while stdout is redirected
+        # (the API subprocess), so probe /dev/tty instead of GetConsoleWindow.
+        try:
+            with open("/dev/tty", "w"):
+                return True
+        except Exception:
+            return False
     try:
         return bool(ctypes.windll.kernel32.GetConsoleWindow())
     except Exception:

@@ -3,6 +3,12 @@ import json
 from PyQt5.QtWidgets import QMessageBox
 
 from ...dialogs import LLMPropertiesDialog
+from ...dialogs.engine_options import (
+    engine_from_config,
+    engine_id,
+    select_engine,
+    store_model,
+)
 from .utils import get_logger
 
 try:
@@ -130,12 +136,27 @@ class LLMOperationsMixin:
         try:
             logger.debug("Creating LLM dialog")
             dialog = LLMPropertiesDialog(self.parent_widget)
+            dialog.add_description(node.get_property('description') or '')
 
             # Set current values - Basic tab
             logger.debug("Loading current values into dialog")
-            dialog.model_combo.setCurrentText(
-                node.get_property("model") or ""
+            # Engine FIRST: it filters the model list, and a provider engine
+            # only exists as the model's "provider:" prefix — reopening a
+            # groq node used to show "Ollama" because only the prefix was
+            # restored (and that prefix then depended on the combo contents).
+            _stored_model = node.get_property("model") or ""
+            _stored_llamacpp = str(
+                node.get_property("use_llamacpp") or "false"
+            ).lower() in ("true", "1", "yes", "on")
+            select_engine(
+                dialog.engine_combo,
+                engine_from_config(
+                    node.get_property("engine"), _stored_llamacpp, _stored_model
+                ),
             )
+            dialog.on_engine_changed(dialog.engine_combo.currentText())
+            if _stored_model:
+                dialog.model_combo.setCurrentText(_stored_model)
             dialog.api_url_entry.setText(node.get_property("api_url") or "")
             dialog.temperature_spin.setValue(
                 float(node.get_property("temperature") or 0.7)
@@ -357,10 +378,8 @@ class LLMOperationsMixin:
             )
 
             # ----- llama.cpp config (load) -----
-            use_llamacpp_str = str(node.get_property("use_llamacpp") or "false")
-            use_llamacpp = use_llamacpp_str.lower() in ("true", "1", "yes", "on")
-            if use_llamacpp:
-                dialog.engine_combo.setCurrentText("llama.cpp")
+            # (the engine itself is restored above, from the model prefix +
+            # the legacy use_llamacpp flag)
             llamacpp_model_path = node.get_property("llamacpp_model_path") or ""
             if llamacpp_model_path:
                 dialog.llamacpp_model_combo.setCurrentText(llamacpp_model_path)
@@ -369,8 +388,17 @@ class LLMOperationsMixin:
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
 
+                node.set_property('description', dialog.description())
+
                 # Basic tab properties
-                node.set_property("model", dialog.model_combo.currentText())
+                # The engine IS the model's provider prefix — persist both
+                # together so a reopen (and the executor) resolve the same
+                # engine the dialog showed.
+                _engine = engine_id(dialog.engine_combo)
+                node.set_property(
+                    "model",
+                    store_model(_engine, dialog.model_combo.currentText().strip()),
+                )
                 node.set_property("api_url", dialog.api_url_entry.text())
                 node.set_property("temperature", str(dialog.temperature_spin.value()))
                 node.set_property(
@@ -506,7 +534,7 @@ class LLMOperationsMixin:
                 # ----- llama.cpp config (save) -----
                 node.set_property(
                     "use_llamacpp",
-                    str(dialog.engine_combo.currentText() == "llama.cpp").lower(),
+                    str(_engine == "llamacpp").lower(),
                 )
                 node.set_property(
                     "llamacpp_model_path", dialog.llamacpp_model_combo.currentText()

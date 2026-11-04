@@ -263,8 +263,8 @@ def test_edit_operation_persists_web_scope(monkeypatch):
     picked = {"locator": {"css": "#apply-form"}, "frame_path": []}
     cfg = {
         "mode": "web", "instruction": "x", "fields_include": "",
-        "fields_skip": "", "probe_top_k": 3, "probe_char_budget": 1500,
-        "probe_context_chars": 6000, "verify": True, "max_fields": 40,
+        "fields_skip": "", "crag_top_k": 3, "crag_char_budget": 1500,
+        "crag_max_strips": 12, "verify": True, "max_fields": 40,
         "engine": "ollama", "model": "m", "temperature": 0.1,
         "max_tokens": 256, "rag_documents": [],
         "web_scope": json.dumps(picked),
@@ -272,10 +272,16 @@ def test_edit_operation_persists_web_scope(monkeypatch):
 
     class _FakeDialog:
         def __init__(self, *a, **k):
-            pass
+            self._desc = ""
 
         def exec_(self):
             return 1  # QDialog.Accepted
+
+        def add_description(self, text):
+            self._desc = text or ""
+
+        def description(self):
+            return self._desc
 
         def get_config(self):
             return cfg

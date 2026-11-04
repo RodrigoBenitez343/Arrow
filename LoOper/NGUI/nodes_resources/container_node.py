@@ -65,6 +65,9 @@ class ContainerNode(BaseNode):
         self.create_property('execute_on_input', 'true')
         self.create_property('output_variable', 'container_result')
         self.create_property('timeout', '300')
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
         
     def get_container_config(self):
         """Get the configuration for this node"""

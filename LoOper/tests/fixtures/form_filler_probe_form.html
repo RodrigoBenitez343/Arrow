@@ -1,0 +1,211 @@
+<!doctype html>
+<!--
+  Form Filler / CRAG end-to-end fixture.
+
+  One page, every control KIND the node's web substrate claims to handle, and
+  nothing that needs a login or a network: the point is to measure the RETRIEVAL
+  (AI/crag through the player's form filler) against a resume, not to fight a
+  live site.  Labels are plain <label for> so field identity is unambiguous.
+
+  Several fields are deliberately TRAPS:
+    * "Location (city)"        - the resume holds FOUR cities; only one is the
+                                 candidate's own (Buenos Aires).  A mixed pack
+                                 used to answer "Buenos Aires, Saint Paul".
+    * "Desired annual salary"  - the resume holds NOTHING.  Any number written
+                                 here is a hallucination.
+    * "Which areas ... experience" - three true options and two absurd ones, so
+                                 a checkbox group must be SELECTIVE, not greedy.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Application - Blend12 (fill fixture)</title>
+<style>
+  body { font: 14px/1.5 -apple-system, Segoe UI, sans-serif; background: #f4f2ef;
+         margin: 0; padding: 24px; }
+  form { max-width: 720px; margin: 0 auto; background: #fff; border-radius: 8px;
+         padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.intro { color: #57534e; margin: 0 0 18px; }
+  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+  legend { font-weight: 600; margin-bottom: 6px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  .opt { font-weight: 400; display: flex; gap: 6px; align-items: center;
+         margin: 2px 0; }
+  input[type=text], input[type=email], input[type=tel], select, textarea {
+    width: 100%; padding: 7px 9px; border: 1px solid #a8a29e;
+    border-radius: 4px; font: inherit; box-sizing: border-box; }
+  textarea { min-height: 78px; }
+  .grid { display: flex; gap: 14px; }
+  .grid > div { flex: 1; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
+  .switch .track { width: 40px; height: 22px; border-radius: 11px; border: 0;
+                   background: #a8a29e; position: relative; cursor: pointer;
+                   padding: 0; flex: none; }
+  .switch .track[aria-checked=true] { background: #0f766e; }
+  .switch .track::after { content: ""; position: absolute; top: 3px; left: 3px;
+                          width: 16px; height: 16px; border-radius: 50%;
+                          background: #fff; transition: left .12s; }
+  .switch .track[aria-checked=true]::after { left: 21px; }
+  #submit { margin-top: 8px; padding: 9px 16px; border: 0; border-radius: 4px;
+            background: #0f766e; color: #fff; font-weight: 600; }
+</style>
+</head>
+<body>
+<form id="apply-form" autocomplete="off" onsubmit="return false;">
+  <h1>Forward Deployed AI Engineer — Blend12</h1>
+  <p class="intro">Easy Apply · contact info &amp; qualifications</p>
+
+  <fieldset>
+    <div class="grid">
+      <div>
+        <label for="first-name">First name</label>
+        <input type="text" id="first-name" name="firstName" required>
+      </div>
+      <div>
+        <label for="last-name">Last name</label>
+        <input type="text" id="last-name" name="lastName" required>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <label for="email">Email address</label>
+    <input type="email" id="email" name="email" required>
+  </fieldset>
+
+  <fieldset>
+    <div class="grid">
+      <div>
+        <label for="country-code">Phone country code</label>
+        <select id="country-code" name="countryCode" required>
+          <option value=""></option>
+          <option value="1">United States (+1)</option>
+          <option value="54">Argentina (+54)</option>
+          <option value="34">Spain (+34)</option>
+          <option value="55">Brazil (+55)</option>
+          <option value="33">France (+33)</option>
+          <option value="81">Japan (+81)</option>
+        </select>
+      </div>
+      <div>
+        <label for="phone">Mobile phone number</label>
+        <input type="tel" id="phone" name="phone" required>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <label for="location">Location (city)</label>
+    <input type="text" id="location" name="location" required
+           placeholder="City, country">
+  </fieldset>
+
+  <fieldset>
+    <label for="company">Current company</label>
+    <input type="text" id="company" name="company" role="combobox"
+           aria-autocomplete="list" aria-expanded="false" list="company-list">
+    <datalist id="company-list">
+      <option value="Synopsys Inc."></option>
+      <option value="DigPatho"></option>
+      <option value="Dialog One"></option>
+      <option value="Accenture"></option>
+      <option value="Google"></option>
+    </datalist>
+  </fieldset>
+
+  <fieldset>
+    <label for="job-title">Current job title</label>
+    <input type="text" id="job-title" name="jobTitle">
+  </fieldset>
+
+  <fieldset>
+    <div class="grid">
+      <div>
+        <label for="experience">Total years of experience</label>
+        <select id="experience" name="experience">
+          <option value=""></option>
+          <option value="1">1 to 2 years</option>
+          <option value="3">3 to 5 years</option>
+          <option value="6">6 to 8 years</option>
+          <option value="9">9 or more years</option>
+        </select>
+      </div>
+      <div>
+        <label for="education">Highest level of education</label>
+        <select id="education" name="education">
+          <option value=""></option>
+          <option value="none">No degree</option>
+          <option value="bs">Bachelor's degree</option>
+          <option value="ms">Master's degree</option>
+          <option value="phd">Doctorate</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Do you prefer remote work?</legend>
+    <label class="opt"><input type="radio" name="remote-pref" value="yes"> Yes</label>
+    <label class="opt"><input type="radio" name="remote-pref" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Are you legally authorized to work in Argentina?</legend>
+    <label class="opt"><input type="radio" name="work-auth" value="yes"> Yes</label>
+    <label class="opt"><input type="radio" name="work-auth" value="no"> No</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Which areas do you have experience with?</legend>
+    <label class="opt"><input type="checkbox" name="areas" value="rag">
+      Retrieval-augmented generation (RAG)</label>
+    <label class="opt"><input type="checkbox" name="areas" value="cicd">
+      CI/CD pipelines</label>
+    <label class="opt"><input type="checkbox" name="areas" value="vit">
+      Vision transformers</label>
+    <label class="opt"><input type="checkbox" name="areas" value="payroll">
+      Payroll processing</label>
+    <label class="opt"><input type="checkbox" name="areas" value="forklift">
+      Forklift operation</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Marketing consent</legend>
+    <span class="switch">
+      <button type="button" id="consent" role="switch" aria-checked="false"
+              class="track"></button>
+      <label for="consent">I consent to be contacted about this application</label>
+    </span>
+  </fieldset>
+
+  <fieldset>
+    <label for="salary">Desired annual salary (USD)</label>
+    <input type="text" id="salary" name="salary" placeholder="e.g. 120000">
+  </fieldset>
+
+  <fieldset>
+    <label for="fit">Why are you a fit for this role?</label>
+    <textarea id="fit" name="fit" maxlength="300"></textarea>
+  </fieldset>
+
+  <button type="submit" id="submit">Submit application</button>
+</form>
+
+<script>
+  // The ARIA switch toggles on click / Space, like any real widget.
+  document.querySelectorAll('[role="switch"]').forEach(function (el) {
+    function flip() {
+      el.setAttribute('aria-checked',
+        el.getAttribute('aria-checked') === 'true' ? 'false' : 'true');
+      el.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    el.addEventListener('click', flip);
+    el.addEventListener('keydown', function (e) {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); }
+    });
+  });
+</script>
+</body>
+</html>

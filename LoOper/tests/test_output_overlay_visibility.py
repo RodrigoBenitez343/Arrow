@@ -97,6 +97,49 @@ def test_manual_mode_popup_unaffected_by_overlay_toggle():
     assert h.get_variable('_agent_mid_execution_outputs_shown') is None
 
 
+def test_play_run_tag_wins_over_ask_callback():
+    # Manual GUI playback also passes an ask_user callback, so the run tag is
+    # what decides the popup gate — not the callback heuristic.
+    h = _Harness(agent_mode=True)
+    h._vars['_run_source'] = 'play'
+    _seed_upstream(h)
+    h._execute_output_node(_node(overlay_visible=False), None)
+
+    assert len(h.calls) == 1
+    assert h.get_variable('_agent_mid_execution_outputs_shown') is None
+
+
+def test_agent_run_tag_keeps_overlay_gate():
+    h = _Harness(agent_mode=True)
+    h._vars['_run_source'] = 'agent'
+    _seed_upstream(h)
+    h._execute_output_node(_node(overlay_visible=False), None)
+
+    assert h.calls == []
+
+
+def test_manual_popup_gets_the_untruncated_value():
+    # The popup is the only reader of a manual result: no chat-bubble cap.
+    h = _Harness(agent_mode=False)
+    h._vars['_run_source'] = 'play'
+    long_text = 'x' * 5000
+    h.port_store.set_output('t', '0xup', 'data', long_text)
+    h._execute_output_node(_node(overlay_visible=True), None)
+
+    assert h.calls[0]['content'] == long_text
+    assert h.port_store.get_output('t', '0xout', 'output') == long_text
+
+
+def test_agent_chat_still_caps_the_bubble():
+    h = _Harness(agent_mode=True)
+    h._vars['_run_source'] = 'agent'
+    h.port_store.set_output('t', '0xup', 'data', 'x' * 5000)
+    h._execute_output_node(_node(overlay_visible=True), None)
+
+    assert len(h.calls[0]['content']) == 2003
+    assert h.calls[0]['content'].endswith('...')
+
+
 def _static_node(overlay_visible=True):
     """A dead-end Output node carrying only its predefined static text."""
     return {

@@ -23,9 +23,7 @@ ponytail: a single small polygon repainted at ~60 fps; stop repainting
 """
 
 import atexit
-import ctypes
 import logging
-import sys
 import time
 
 from PyQt5.QtCore import QPointF, Qt, QThread, QTimer, pyqtSignal
@@ -34,6 +32,7 @@ from PyQt5.QtGui import (QBrush, QColor, QLinearGradient, QPainter, QPen,
 from PyQt5.QtWidgets import QWidget
 
 from ..constants import ACCENT_COLOR
+from .mitosis_loader import MitosisLoader
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +41,7 @@ ARROW_H = 28
 ARROW_TIP = (3.0, 3.0)   # hotspot: the arrow point, aligned to the cursor
 POLL_INTERVAL = 16       # ms (~60 fps tracking)
 _CAPTURE_HIDE_S = 0.3    # stay blank this long after a screen read
+THINK_BOX = 72           # the node animation that stands in for the cursor
 
 # Execution-state colours
 DOT_EXECUTE_COLOR = "#ef4444"   # red while a chain is running
@@ -61,14 +61,9 @@ def _arrow_points():
             for (x, y) in _ARROW]
 
 
-# ── OS cursor blanking (Windows) ─────────────────────────────────────
+# ── OS pointer blanking (platform gate: Win32 cursors, X11 XFixes) ───
 # The hardware cursor is always composited above every window, so the arrow can
 # only read as "on top" by hiding the real pointer while it is up.
-_SPI_SETCURSORS = 0x0057
-# Every OCR_* shape the pointer can take; blanking OCR_NORMAL alone leaves an
-# I-beam / hand / resize cursor stuck on top of the arrow.
-_OCR_IDS = (32512, 32513, 32514, 32515, 32516, 32642, 32643, 32644,
-            32645, 32646, 32648, 32649, 32650, 32651)
 _cursors_hidden = False
 _startup_reset_done = False
 
@@ -77,11 +72,17 @@ _startup_reset_done = False
 _HIDE_OS_CURSOR = True
 
 
-def _win_user32():
-    """user32 on Windows, else None (this feature is Windows-only)."""
-    if sys.platform != "win32":
-        return None
-    return ctypes.windll.user32
+def _set_pointer_visible(visible: bool) -> None:
+    """Hide/show the OS pointer through the platform gate."""
+    try:  # LoOper/ on sys.path: the app and the test suite both run that way
+        from platform_gate import set_pointer_visible
+    except ImportError:  # imported as LoOper.*
+        from LoOper.platform_gate import set_pointer_visible
+    try:
+        set_pointer_visible(visible)
+    except Exception:
+        logger.exception("Could not %s the OS pointer",
+                         "show" if visible else "hide")
 
 
 def _blank_system_cursors():
@@ -89,36 +90,8 @@ def _blank_system_cursors():
     global _cursors_hidden
     if _cursors_hidden:
         return
-    u = _win_user32()
-    if u is None:
-        return
-    try:
-        import ctypes.wintypes as wt
-        u.CreateCursor.argtypes = [wt.HINSTANCE, ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_int, ctypes.c_int,
-                                   ctypes.c_void_p, ctypes.c_void_p]
-        u.CreateCursor.restype = wt.HANDLE
-        u.CopyIcon.argtypes = [wt.HANDLE]
-        u.CopyIcon.restype = wt.HANDLE
-        u.SetSystemCursor.argtypes = [wt.HANDLE, wt.DWORD]
-        u.SetSystemCursor.restype = wt.BOOL
-        u.DestroyCursor.argtypes = [wt.HANDLE]
-        n = 32 * 32 // 8
-        and_mask = (ctypes.c_ubyte * n)(*([0xFF] * n))   # keep the screen
-        xor_mask = (ctypes.c_ubyte * n)(*([0x00] * n))   # no invert -> invisible
-        base = u.CreateCursor(None, 0, 0, 32, 32, and_mask, xor_mask)
-        if not base:
-            return
-        try:
-            for ocr in _OCR_IDS:
-                copy = u.CopyIcon(base)   # SetSystemCursor takes ownership
-                if copy:
-                    u.SetSystemCursor(copy, ocr)
-        finally:
-            u.DestroyCursor(base)
-        _cursors_hidden = True
-    except Exception:
-        logger.exception("Could not blank the system cursors")
+    _cursors_hidden = True
+    _set_pointer_visible(False)
 
 
 def _restore_system_cursors():
@@ -127,20 +100,12 @@ def _restore_system_cursors():
     if not _cursors_hidden:
         return
     _cursors_hidden = False
-    _force_restore_system_cursors()
+    _set_pointer_visible(True)
 
 
 def _force_restore_system_cursors():
-    """Unconditionally reload the system cursors (also clears a stale blank)."""
-    u = _win_user32()
-    if u is None:
-        return
-    try:
-        u.SystemParametersInfoW.argtypes = [ctypes.c_uint, ctypes.c_uint,
-                                            ctypes.c_void_p, ctypes.c_uint]
-        u.SystemParametersInfoW(0x0057, 0, None, 0)
-    except Exception:
-        logger.exception("Could not restore the system cursors")
+    """Unconditionally show the pointer (also clears a stale blank)."""
+    _set_pointer_visible(True)
 
 
 def _reset_system_cursors_once():
@@ -187,6 +152,9 @@ class AgentDot(QWidget):
 
         # ponytail: simple bool flag for execute vs idle appearance
         self._execute_mode = False
+        # Thinking: the cursor IS the node animation.  Acting: the arrow.
+        self._thinking = False
+        self._loader = None
         # While set, the arrow stays blank (a recording button is held).
         self._suppress_event = None
         # Blank until this timestamp (a screen read is in flight).
@@ -206,20 +174,59 @@ class AgentDot(QWidget):
         super().showEvent(event)
         self._follow_mouse()
         self._timer.start()
+        if self._thinking and self._loader is not None:
+            self._loader.start()
 
     def hideEvent(self, event):
         self._timer.stop()
+        if self._loader is not None:
+            self._loader.stop()
         _restore_system_cursors()
         super().hideEvent(event)
+
+    # ── Thinking / acting appearance ────────────────────────────────
+
+    def set_thinking(self, thinking: bool):
+        """Thinking: the node animation replaces the cursor.
+
+        Acting (a sequence is driving the screen): the plain arrow, so the
+        user can see what the runtime is doing with the pointer.
+        """
+        if self._thinking == thinking:
+            return
+        self._thinking = bool(thinking)
+        if self._thinking:
+            if self._loader is None:
+                self._loader = MitosisLoader(self, size=THINK_BOX)
+            self._loader.setGeometry(0, 0, THINK_BOX, THINK_BOX)
+            self._loader.show()
+            if self.isVisible():
+                self._loader.start()
+            self.setFixedSize(THINK_BOX, THINK_BOX)
+        else:
+            if self._loader is not None:
+                self._loader.stop()
+                self._loader.hide()
+            self.setFixedSize(ARROW_W, ARROW_H)
+        self._follow_mouse()
+        self.update()
 
     # ── Mouse following ──────────────────────────────────────────────
 
     def _follow_mouse(self):
-        """Track the cursor: the arrow tip rides the cursor hotspot."""
+        """Track the cursor: the arrow tip rides the hotspot, the animation centres on it."""
         try:
             cursor = QCursor.pos()
-            self.move(cursor.x() - int(ARROW_TIP[0]),
-                      cursor.y() - int(ARROW_TIP[1]))
+            if self._thinking:
+                half = THINK_BOX // 2
+                self.move(cursor.x() - half, cursor.y() - half)
+            else:
+                self.move(cursor.x() - int(ARROW_TIP[0]),
+                          cursor.y() - int(ARROW_TIP[1]))
+            if self._loader is not None:
+                blank = self._is_blank()
+                if self._loader.isVisible() == blank:
+                    self._loader.setVisible(not blank)
             self.update()
         except Exception:
             pass
@@ -270,7 +277,7 @@ class AgentDot(QWidget):
     # ── Painting ─────────────────────────────────────────────────────
 
     def paintEvent(self, event):
-        if self._is_blank():
+        if self._thinking or self._is_blank():
             return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)

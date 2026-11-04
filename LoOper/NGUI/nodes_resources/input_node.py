@@ -101,6 +101,9 @@ class InputNode(BaseNode):
         self.create_property('tts_voice_model', '')
         self.create_property('tts_speed', 1.0)
         self.create_property('tts_speaker_id', None)
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.
+        self.create_property('description', '')
 
     # ------------------------------------------------------------------
     # Passthrough / decision helpers

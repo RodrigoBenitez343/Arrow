@@ -30,6 +30,7 @@ _POINTER_DISPATCH_HARNESS = Path(__file__).parent / "js" / "pointer_dispatch_har
 _FORM_SCOPE_HARNESS = Path(__file__).parent / "js" / "form_scope_topmost_harness.js"
 _ROOT_DOC_HARNESS = Path(__file__).parent / "js" / "root_doc_harness.js"
 _FIELD_STATE_HARNESS = Path(__file__).parent / "js" / "field_state_error_harness.js"
+_LABEL_FORWARD_HARNESS = Path(__file__).parent / "js" / "label_forward_harness.js"
 
 
 class _FakeDriver:
@@ -1180,6 +1181,28 @@ def test_web_recorder_hover_hold_js():
     assert data["formSelector"] == 'form#survey input[name="q1"]'
     assert data["textInputSelector"] == 'input[type="text"]'
     assert data["switchSelector"] == 'div#settings div[role="switch"]'
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
+def test_web_label_forward_js():
+    """recorder.js label-forwarding: one physical click on a <label> makes the
+    browser forward a click AND a focusin to its control.  The recorder must
+    collapse them to a single action - else replay toggles a checkbox twice (the
+    jobs.json defect: 3 clicks recorded as 6).  A direct press on the control is
+    kept, and the guard never leaks onto a later, unrelated control."""
+    proc = subprocess.run(
+        ["node", str(_LABEL_FORWARD_HARNESS)], capture_output=True, text=True,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    data = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert data["forClicks"] == 1          # the label press, forwarded click dropped
+    assert data["forFocuses"] == 0         # forwarded focus dropped
+    assert data["wrapClicks"] == 1         # wrapping-label form, collapsed too
+    assert data["wrapFocuses"] == 0
+    assert data["soloClicks"] == 1         # direct control click still recorded
+    assert data["leakClicks"] == 2         # label press + real later checkbox
+    assert data["ok"] is True
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")

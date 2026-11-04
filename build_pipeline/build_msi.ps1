@@ -44,6 +44,28 @@ if (Test-Path $ReqFile) {
     }
 }
 
+# 2.3b. Re-apply the vendored library patches (LoOper\patches mirrors site-packages).
+#       `pip install` above just restored the STOCK wheels, and PyInstaller
+#       compiles whatever sits in site-packages into the bundle's PYZ archive --
+#       so an unpatched venv ships a frozen app whose canvas nodes lose the
+#       LoOper look (title bar, overlapping port labels, ports off the card)
+#       plus the paint/teardown crash guards.  Same script the app and
+#       Arrow_setup.bat run; idempotent.
+$PatchScript = Join-Path $ProjectRoot "LoOper\patches\apply_patches.py"
+$PatchWasStale = $false
+if (Test-Path $PatchScript) {
+    Write-Host "Applying vendored library patches (NodeGraphQt)..." -ForegroundColor Green
+    & $PythonExe $PatchScript --check | Out-Null
+    $PatchWasStale = ($LASTEXITCODE -ne 0)
+    & $PythonExe $PatchScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to apply vendored library patches from $PatchScript"
+        exit 1
+    }
+} else {
+    Write-Warning "Vendored patch script not found: $PatchScript (canvas nodes will ship with the stock layout)"
+}
+
 # Remove PyQt5's bundled (stale) VC++ runtime DLLs from PyQt5/Qt5/bin.
 # The PyQt5-Qt5 wheel ships its own msvcp140/vcruntime140 copies, built for
 # an older toolset than torch 2.9.1 requires.  PyInstaller 6.x imports every
@@ -251,6 +273,12 @@ if (-not (Test-Path $AppExe)) {
         Write-Error "Failed to build arrow.exe into $DistDir"
         exit 1
     }
+} elseif ($PatchWasStale) {
+    # The patches were stale in site-packages, so the existing arrow.exe was
+    # compiled WITHOUT them; the incremental path reuses it and the MSI would
+    # ship the stock canvas.  Not deleted automatically - a full PyInstaller
+    # rebuild is expensive - but never silent.
+    Write-Warning "$AppExe was built before the vendored library patches were applied, so the installer would ship the STOCK NodeGraphQt canvas (wrong node cards, floating ports). Delete $DistDir and re-run this script to rebuild with the patches."
 }
 
 # Stage web node resources into dist for WiX bundling.  A full PyInstaller

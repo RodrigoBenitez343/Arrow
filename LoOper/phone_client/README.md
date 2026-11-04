@@ -104,10 +104,17 @@ alive and shows an ongoing "Connected" notification. Notifications are
 suppressed while the UI is in the foreground (nothing to alert about).
 
 Permissions requested at launch: `RECORD_AUDIO` (voice input) and, on Android
-13+, `POST_NOTIFICATIONS`.
+13+, `POST_NOTIFICATIONS`. The launcher label is **Arrow**, with the desktop
+build's icon (`LoOper/LoOper.png` -> `res/mipmap-*/ic_launcher.png`).
 
 ## Voice
 
+- **Startup self-test**: on the first link-up after pairing the page proves
+  notifications and audio input work, printing one `PASS`/`FAIL` line per check
+  with the reason (permission flag, channel state, captured peak level, exact
+  `getUserMedia` error). A failing run is a red bubble in the chat plus a system
+  notification; `Re-test` runs it again. Logcat tag `LoOperWeb` mirrors it under
+  `[selftest]`.
 - **Text-to-speech**: every agent output (and every ask question) is spoken via
 the host's `/tts`, per message — not only when a run ends.
 - **Speech-to-text**: hold (or tap, during an ask) the mic button; audio is
@@ -128,8 +135,27 @@ captured at the device rate, resampled to 16 kHz, and POSTed to `/stt`.
   wrapper), or run `gradle wrapper` in `android/` with any Gradle.
 - **No microphone / voice** — the page must be a secure context for
   `getUserMedia`; it is served over `https://appassets.androidplatform.net`.
-  If the mic still fails, check logcat tag `LoOperWeb` for `[mic]` lines (they
-  log the exact `getUserMedia` error name).
+  If the mic still fails, check logcat tag `LoOperWeb` for `[mic]` and `[perm]`
+  lines (they log the exact `getUserMedia` error name).
+- **Mic denied right after install** — WebView re-checks the *OS* grant when it
+  hands out the mic, so granting the web-level request while the OS permission
+  is still missing is silently rejected. `onPermissionRequest` now holds the
+  request and replays the answer in `onRequestPermissionsResult`. Re-granting
+  from Settings also works because `onResume` re-reads the permission. Build
+  with `-Install` to pre-grant both permissions over adb.
+- **`NotReadableError: Could not start audio source`** — permission granted but
+  the audio subsystem refuses to hand the mic to WebView. Needs
+  `MODIFY_AUDIO_SETTINGS` in the manifest plus communication mode while
+  capturing (`Android.micBegin()/micEnd()` around getUserMedia, restored after).
+  The self-test retries once after `NotReadableError` and prints
+  `MODIFY_AUDIO_SETTINGS=... audioMode=...` so a second failure is diagnosable.
+- **`STT request failed: failed to fetch`** — the page lives on
+  `https://appassets.androidplatform.net`, so `/stt` and `/tts` on the loopback
+  host are cross-origin. The host (`agent_web_server.py`) must send
+  `Access-Control-Allow-Origin` (plus `Access-Control-Allow-Private-Network`);
+  without it the WebSocket keeps working while `fetch()` dies, because a WS
+  handshake is not CORS-checked. The self-test's `host API reachable (/status)`
+  line reports this directly.
 - **No notifications** — grant the notification permission (Android 13+), and
   keep the ongoing "Connected" notification (the foreground service) running.
 

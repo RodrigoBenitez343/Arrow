@@ -11,6 +11,7 @@ import re
 from NGUI.constants import (
     ACCENT_COLOR,
     ACCENT_HOVER,
+    ACCENT_SOFT,
     BLOCK_HOVER,
     BTN_PRIMARY_TEXT,
     CARD_BG,
@@ -36,6 +37,19 @@ RESERVED_INPUT_PORTS = {'input', 'args', 'code', 'input_data', 'os', 'print',
 RESERVED_OUTPUT_PORTS = {'output', 'error'}
 
 MAIN_FILE = 'script.py'        # executed entry file of the node workspace
+
+# --- project files carried inside the node/chain (text only) ---
+# A code node is a small project: script.py is the entry script, every other
+# file lives beside it (importable modules, data, assets-as-text).  Files are
+# stored in the node property 'project_files' so a chain travels whole.
+PROJECT_MAX_FILE_BYTES = 200_000      # skip any single larger file
+PROJECT_MAX_TOTAL_BYTES = 2_000_000   # hard cap for the whole node project
+PROJECT_SKIP_DIRS = {'__pycache__', '.git', '.venv', 'venv', 'node_modules',
+                     '.idea', '.vscode', '.mypy_cache', '.pytest_cache'}
+PROJECT_SKIP_EXTS = {'.pyc', '.pyo', '.pyd', '.exe', '.dll', '.so', '.dylib',
+                     '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico',
+                     '.zip', '.7z', '.tar', '.gz', '.pdf', '.db', '.sqlite',
+                     '.gguf', '.onnx', '.pt', '.bin'}
 
 # --- loop budgets (small models: bounded turns beat open-ended autonomy) ---
 MAX_CHAT_TURNS = 6             # aider-style ring memory (last exchanges only)
@@ -92,9 +106,15 @@ _MAX_HISTORY_TURNS = 2      # prior exchanges folded into the next context
 _MAX_HISTORY_CHARS = 320
 
 # Stylesheet matching the app's plane system (canvas -> card -> well) and its
-# single cyan accent, so the studio reads like the rest of the NGUI.
+# single cyan accent, so the studio reads like the rest of the NGUI. Buttons use
+# the same translucent-white-on-card idiom as the actions bar / agent overlay
+# (no solid boxy fills), and the tab strip uses a soft accent checked state.
 _STUDIO_QSS = f"""
 #CodeStudioRoot {{ background: {DARK_GREY}; }}
+/* The host window paints its descendants with QWidget {{ GRAPH_PLANE }}, a
+   lighter grey; these ID rules keep every studio surface on the page plane. */
+QWidget#StudioPage {{ background: {DARK_GREY}; }}
+QStackedWidget#StudioStack {{ background: {DARK_GREY}; }}
 /* Labels and plain frames must be transparent: the app-wide QWidget rule paints
    a DARK_GREY box behind them, which reads as a dark mat inside the CARD_BG
    sections (the "wrong background box around the text"). */
@@ -102,41 +122,77 @@ QLabel {{ color: {TEXT_SECONDARY}; background: transparent; font-size: 11px; }}
 QFrame {{ background: transparent; }}
 QLabel#StudioTitle {{ color: {TEXT_COLOR}; font-size: 13px; font-weight: 700; }}
 QLabel#StudioSub {{ color: {TEXT_MUTED}; font-size: 10px; }}
-QLabel#SectionLabel {{ color: {TEXT_MUTED}; font-size: 10px; font-weight: 700; }}
 QLabel#FileLabel {{ color: {ACCENT_COLOR}; font-size: 11px; font-family: Consolas; }}
+QFrame#StudioRule {{ background: {HAIRLINE}; max-height: 1px; border: none; }}
 QPushButton {{
-    background-color: {CONTROL_BG}; color: {TEXT_COLOR};
+    background-color: rgba(255, 255, 255, 0.05); color: {TEXT_COLOR};
     border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
     padding: 4px 10px; font-size: 11px;
 }}
-QPushButton:hover {{ background-color: {CONTROL_HOVER}; border-color: {ACCENT_COLOR}; }}
-QPushButton:pressed {{ background-color: {BLOCK_HOVER}; }}
-QPushButton:disabled {{ color: {TEXT_MUTED}; border-color: {HAIRLINE}; }}
+QPushButton:hover {{ background-color: rgba(255, 255, 255, 0.09); border-color: {ACCENT_COLOR}; }}
+QPushButton:pressed {{ background-color: rgba(255, 255, 255, 0.13); }}
+QPushButton:disabled {{ color: {TEXT_MUTED}; border-color: {HAIRLINE}; background: transparent; }}
 QPushButton#primary {{
-    background-color: {ACCENT_COLOR}; color: {BTN_PRIMARY_TEXT};
-    font-weight: 600; border: none;
+    background-color: {ACCENT_SOFT}; color: {TEXT_COLOR};
+    border: 1px solid {ACCENT_COLOR};
 }}
-QPushButton#primary:hover {{ background-color: {ACCENT_HOVER}; }}
+QPushButton#primary:hover {{ background-color: rgba(34, 211, 238, 0.22); }}
 QPushButton#danger {{
     background-color: transparent; color: {DANGER_COLOR};
     border: 1px solid {DANGER_COLOR};
 }}
 QPushButton#danger:hover {{ background-color: rgba(239, 68, 68, 0.14); }}
-QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QTreeWidget {{
+QPushButton#danger:disabled {{ border-color: {HAIRLINE}; color: {TEXT_MUTED}; }}
+QPushButton#StudioTab {{ padding: 0; border-radius: {RADIUS_SM}px; }}
+QPushButton#StudioTab:checked {{ background-color: {ACCENT_SOFT}; border: 1px solid {ACCENT_COLOR}; }}
+QComboBox#StudioSelect {{
+    background-color: {WELL_BG}; color: {TEXT_COLOR};
+    border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
+    padding: 2px 8px; font-size: 11px;
+}}
+QComboBox#StudioSelect:hover, QComboBox#StudioSelect:focus {{ border-color: {ACCENT_COLOR}; }}
+QComboBox#StudioSelect::drop-down {{ border: none; width: 16px; }}
+QComboBox QAbstractItemView {{
+    background-color: {MEDIUM_GREY}; color: {TEXT_COLOR};
+    selection-background-color: {ACCENT_COLOR}; selection-color: {BTN_PRIMARY_TEXT};
+    border: 1px solid {HAIRLINE};
+}}
+QLineEdit, QPlainTextEdit, QTextEdit, QTreeWidget {{
     background-color: {WELL_BG}; color: {TEXT_COLOR};
     border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
     selection-background-color: {ACCENT_COLOR}; selection-color: {BTN_PRIMARY_TEXT};
 }}
-QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus,
-QTreeWidget:focus {{ border: 1px solid {ACCENT_COLOR}; }}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QTreeWidget:focus {{ border: 1px solid {ACCENT_COLOR}; }}
 QPlainTextEdit {{ font-family: Consolas; }}
-QComboBox QAbstractItemView {{
-    background-color: {MEDIUM_GREY}; color: {TEXT_COLOR};
-    selection-background-color: {ACCENT_COLOR}; selection-color: {BTN_PRIMARY_TEXT};
-}}
-QFrame#StudioSection {{ background: {CARD_BG}; border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}
+QFrame#StudioWell {{ background: {WELL_BG}; border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}
+/* Chat: real widget bubbles (QTextEdit rich text cannot do border-radius).
+   The conversation holder uses the PAGE colour (not WELL_BG) so the tinted
+   bubbles composite over the same plane as the rest of the studio instead of
+   sitting in a differently-coloured mat. */
+QScrollArea#ChatScroll {{ background: {DARK_GREY}; border: 1px solid {HAIRLINE};
+    border-radius: {RADIUS_MD}px; }}
+/* Transparent children: painting them would square off the rounded corners
+   and hide the holder's own surface. */
+QScrollArea#ChatScroll > QWidget {{ background: transparent; }}
+QScrollArea#ChatScroll > QWidget > QWidget {{ background: transparent; }}
+QWidget#ChatBody {{ background: transparent; }}
+QWidget#ChatRow {{ background: transparent; }}
+QFrame#ChatBubble {{ background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.07); border-radius: {RADIUS_MD}px; }}
+QFrame#ChatBubbleUser {{ background: rgba(34, 211, 238, 0.16);
+    border: 1px solid rgba(34, 211, 238, 0.28); border-radius: {RADIUS_MD}px; }}
+QFrame#ChatBubbleError {{ background: rgba(239, 68, 68, 0.10);
+    border: 1px solid rgba(239, 68, 68, 0.30); border-radius: {RADIUS_MD}px; }}
+QFrame#ChatBubbleInfo {{ background: rgba(255, 255, 255, 0.04);
+    border: 1px solid {HAIRLINE}; border-radius: {RADIUS_MD}px; }}
+QLabel#ChatRole {{ color: {TEXT_MUTED}; background: transparent;
+    font-size: 9px; font-weight: 600; }}
+QLabel#ChatText {{ color: {TEXT_COLOR}; background: transparent; font-size: 11px; }}
+QLabel#ChatCode {{ color: {TEXT_SECONDARY}; background: {DARK_GREY};
+    border: 1px solid {HAIRLINE}; border-radius: {RADIUS_SM}px;
+    font-family: Consolas; font-size: 11px; padding: 6px 8px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: #3a3f47; border-radius: 5px; min-height: 24px; }}
+QScrollBar::handle:vertical {{ background: {BLOCK_HOVER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar::handle:vertical:hover {{ background: {ACCENT_COLOR}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}

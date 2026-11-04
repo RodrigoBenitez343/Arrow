@@ -43,12 +43,14 @@ class ContainerOperationsMixin:
             
             from ...dialogs import ContainerNodeDialog
             dialog = ContainerNodeDialog(self.parent_widget, current_config)
+            dialog.add_description(node.get_property('description') or '')
             
             if dialog.exec_() == dialog.Accepted:
                 logger.debug("Dialog accepted, updating node properties")
                 config = dialog.get_config()
                 
                 # Update node properties
+                node.set_property('description', dialog.description())
                 node.set_property('iso_path', config['iso_path'])
                 node.set_property('memory_mb', str(config['memory_mb']))
                 node.set_property('cpu_cores', str(config['cpu_cores']))

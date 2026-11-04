@@ -4,11 +4,18 @@ Each file under this folder mirrors a path inside ``site-packages`` (for
 example ``NodeGraphQt/qgraphics/node_base.py``) and is copied over the same
 relative path in the running interpreter's site-packages.
 
-Why this exists: ``pip install`` always drops the *stock* wheel.  NodeGraphQt
-0.6.43 lays port labels out inward so they overlap the node body; the vendored
-copies fix the label X positions (``_align_ports_horizontal``).  Because a
-fresh setup (or any reinstall) restores the buggy wheel, the fixed files must
-be re-copied after every install -- Arrow_setup.bat does that automatically.
+Why this exists: ``pip install`` always drops the *stock* wheel.  The vendored
+NodeGraphQt copies carry the LoOper canvas look and its crash guards: uniform
+rounded-square icon-only node cards, port stacks centred on the card edge, and
+no ``viewer()``/proxy-mode paint crash during node teardown.  Without them the
+stock wheel draws title bars, inward port labels and ports that hang off the
+card ("floating things").  Any reinstall restores the buggy wheel, so the
+fixed files must be re-copied after every install.  Three callers:
+
+* ``Arrow_setup.bat`` - after provisioning the venv
+* ``LoOper/main.py``   - on every launch (dev mode, before NodeGraphQt loads)
+* ``build_pipeline/build_msi.ps1`` - before PyInstaller, so the frozen build
+  (which compiles site-packages into its PYZ archive) ships the patched code
 
 Idempotent and safe to re-run.  Only an already-installed target is
 overwritten; a package that is missing is skipped, never created.
@@ -48,30 +55,47 @@ def patch_map() -> dict:
     return out
 
 
-def run(check: bool, dest: Path) -> int:
-    applied, current, missing = [], [], []
+def scan(dest: Path) -> tuple:
+    """(stale, current, missing) - each a list of (relative_path, source_file)."""
+    stale, current, missing = [], [], []
     for rel, src in patch_map().items():
         dst = dest / rel
         if not dst.parent.is_dir():          # owning package not installed
-            missing.append(rel)
-            continue
-        if dst.is_file() and filecmp.cmp(src, dst, shallow=False):
-            current.append(rel)
-            continue
-        if not check:
-            shutil.copyfile(src, dst)
-        applied.append(rel)
+            missing.append((rel, src))
+        elif dst.is_file() and filecmp.cmp(src, dst, shallow=False):
+            current.append((rel, src))
+        else:
+            stale.append((rel, src))
+    return stale, current, missing
+
+
+def apply_patches(dest: Path) -> list:
+    """Copy every stale patch over ``dest``; return the rewritten rel paths.
+
+    Silent variant used by ``LoOper/main.py`` at launch (and by the MSI build),
+    so a fresh ``pip install`` never leaves the UI on stock wheels.
+    """
+    stale, _current, _missing = scan(dest)
+    for rel, src in stale:
+        shutil.copyfile(src, dest / rel)
+    return [rel for rel, _src in stale]
+
+
+def run(check: bool, dest: Path) -> int:
+    stale, current, missing = scan(dest)
+    if stale and not check:
+        apply_patches(dest)
 
     verb = "stale" if check else "patched"
-    for rel in applied:
+    for rel, _src in stale:
         print(f"  [{verb}] {rel}")
-    for rel in current:
+    for rel, _src in current:
         print(f"  [ok]    {rel}")
-    for rel in missing:
+    for rel, _src in missing:
         print(f"  [skip]  {rel}  (package not installed)")
-    print(f"[patches] {len(applied)} {verb}, {len(current)} already ok, "
+    print(f"[patches] {len(stale)} {verb}, {len(current)} already ok, "
           f"{len(missing)} skipped -> {dest}")
-    return 1 if (check and applied) else 0
+    return 1 if (check and stale) else 0
 
 
 def main() -> int:

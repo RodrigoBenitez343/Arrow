@@ -1,10 +1,12 @@
-"""Human-like OS pointer movement, shared by web replay and form filling.
+"""Human-like OS pointer movement for the paths that really click on screen.
 
 Desktop sequences walk the pointer through a noisy Bezier before every click
-(``base_bot.human_mouse_move``); the web and form-filling paths drove only the
-in-page/virtual pointer, so the automation looked like it teleported.  This is
-the one glide every non-desktop-path caller uses, so the feel cannot drift
-between them.
+(``base_bot.human_mouse_move``); a caller that drives the OS pointer directly
+(``handle_ops``) uses this one glide so the feel cannot drift between them.
+
+Web paths are NOT callers: a web sequence acts inside the browser, so its cursor
+lives in the page (``player/web/inject/exec_overlay.js``) and never steers the
+user's real pointer - see ``player/web/exec_overlay.py``.
 
 ``LOOPER_OS_CURSOR=off`` parks the pointer (the test suite pins it, so a
 fake-driver run never hijacks the developer's mouse).

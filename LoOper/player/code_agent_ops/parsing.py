@@ -4,12 +4,19 @@ Pure functions only (no Qt): reply splitting, SEARCH/REPLACE hunks, GREP over
 the workspace, path safety, reasoning-tag collapse, context-window probing.
 """
 import ast
+import importlib.util
+import json
 import os
 import re
+import sys
 
 from NGUI.i18n import _
 from player.code_agent_ops.constants import (
     MAIN_FILE,
+    PROJECT_MAX_FILE_BYTES,
+    PROJECT_MAX_TOTAL_BYTES,
+    PROJECT_SKIP_DIRS,
+    PROJECT_SKIP_EXTS,
     _GUI_HINTS,
     _MAX_DIGEST_HEAD,
     _MAX_DIGEST_TAIL,
@@ -21,9 +28,11 @@ __all__ = [
     '_resolve_chain_runtime_dir', '_resolve_venv_site_packages',
     '_resolve_workspace', '_safe_join', '_effective_ctx_tokens',
     '_parse_agent_reply', '_extract_fenced', '_list_workspace_files',
+    '_collect_project_files', '_materialize_project_files',
     '_is_gui_like', '_looks_like_shell_command', '_collapse_reasoning',
+    '_project_module_names', '_unresolved_imports',
     '_parse_hunks', '_apply_hunks', '_run_grep', '_file_digest',
-    '_is_question',
+    '_is_question', '_looks_like_tool_request',
 ]
 
 
@@ -259,6 +268,32 @@ def _parse_agent_reply(text):
     return (main_code, files)
 
 
+_TOOL_REQUEST_WORDS = (
+    'search', 'find', 'grep', 'show', 'read', 'open', 'look', 'list',
+    'run ', 'execute', 'inspect', 'check', 'print', 'cat ', 'where is',
+    'what is in', 'display', 'view ', 'see the',
+)
+
+
+def _looks_like_tool_request(text):
+    """True when a no-code reply is a short command to inspect/run the code.
+
+    A small model answers a build request with prose ("Here's how I'd
+    structure it...").  Routing that to the dev tools returns unrelated
+    results, the model rambles again, and the whole tool budget burns until
+    the loop reports "the agent did not produce an implementation".  Only a
+    terse one-line instruction counts as a tool request; everything else is
+    a stall that must be answered with "give me the code".
+    """
+    t = str(text or '').strip()
+    if not t or '```' in t:
+        return False
+    if len(t) > 400 or '\n' in t:
+        return False
+    low = t.lower()
+    return any(w in low for w in _TOOL_REQUEST_WORDS)
+
+
 def _extract_fenced(text):
     """Content of the first fenced block (any language tag), else ''."""
     m = re.search(r'```[A-Za-z0-9_+-]*\s*\n(.*?)```', str(text or ''),
@@ -277,10 +312,146 @@ def _list_workspace_files(root):
     return sorted(out)
 
 
+def _collect_project_files(root, skip=(MAIN_FILE,)):
+    """Text files under ``root`` as ``{rel: content}`` for the node/chain.
+
+    script.py is stored separately as the node 'code', so it is skipped by
+    default.  Caches, VCS dirs, binaries and oversized files are dropped: a
+    chain should carry source, not build output."""
+    out = {}
+    total = 0
+    skip = {str(s).replace('\\', '/') for s in skip}
+    try:
+        for base, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in PROJECT_SKIP_DIRS]
+            for n in names:
+                full = os.path.join(base, n)
+                rel = os.path.relpath(full, root).replace('\\', '/')
+                if rel in skip:
+                    continue
+                if os.path.splitext(n)[1].lower() in PROJECT_SKIP_EXTS:
+                    continue
+                try:
+                    size = os.path.getsize(full)
+                except Exception:
+                    continue
+                if size <= 0 or size > PROJECT_MAX_FILE_BYTES:
+                    continue
+                if total + size > PROJECT_MAX_TOTAL_BYTES:
+                    continue
+                try:
+                    with open(full, 'r', encoding='utf-8') as f:
+                        text = f.read()
+                except (UnicodeDecodeError, OSError):
+                    continue          # binary or unreadable
+                out[rel] = text
+                total += size
+    except Exception:
+        pass
+    return out
+
+
+def _materialize_project_files(root, files, overwrite=False):
+    """Write a node's ``project_files`` dict into its workspace.
+
+    *files* may also be the node property's raw JSON string (that is what a
+    chain carries), so the node's helper modules really land beside script.py.
+    Paths are sanitised through :func:`_safe_join` (no escapes), script.py is
+    never touched (the node's 'code' owns it), and existing files are kept
+    unless ``overwrite`` - a live workspace can hold newer unsaved edits
+    than the node property.  Returns the list of written relative paths."""
+    if isinstance(files, str):
+        try:
+            files = json.loads(files or '{}')
+        except Exception:
+            return []
+    if not isinstance(files, dict):
+        return []
+    written = []
+    for rel, content in files.items():
+        rel = str(rel or '').replace('\\', '/')
+        if not rel or rel == MAIN_FILE or not isinstance(content, str):
+            continue
+        try:
+            path = _safe_join(root, rel)
+        except Exception:
+            continue
+        if os.path.exists(path) and not overwrite:
+            continue
+        try:
+            d = os.path.dirname(path)
+            if d:
+                os.makedirs(d, exist_ok=True)
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            written.append(rel)
+        except Exception:
+            continue
+    return written
+
+
 def _is_gui_like(code):
     """True when the code opens a window or runs a persistent loop."""
     low = (code or '').lower()
     return any(h in low for h in _GUI_HINTS)
+
+
+def _project_module_names(project_files):
+    """Top-level import names the node's own project provides."""
+    names = set()
+    files = project_files
+    if isinstance(files, str):
+        try:
+            files = json.loads(files or '{}')
+        except Exception:
+            files = {}
+    for rel in (files or {}):
+        parts = str(rel or '').replace('\\', '/').split('/')
+        if not parts or not parts[0]:
+            continue
+        if len(parts) == 1:
+            if parts[0].endswith('.py'):
+                names.add(parts[0][:-3])
+        else:
+            names.add(parts[0])          # a package folder
+    return names
+
+
+def _unresolved_imports(code, project_files=None, extra_names=()):
+    """Top-level imports that exist nowhere: not stdlib, not a project file,
+    not importable here.
+
+    A small model invents module names that LOOK like packages (``parsers``,
+    ``task_manager``).  Nothing catches that until the chain runs, tries
+    ``pip install parsers``, gets "no matching distribution" and dies on
+    ModuleNotFoundError - long after the model saw the code.  This is the
+    static, offline pre-run check: pure name resolution, nothing executed.
+    """
+    try:
+        tree = ast.parse(code or '')
+    except SyntaxError:
+        return []
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name.split('.')[0] for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and not getattr(node, 'level', 0):
+            if node.module:
+                names.add(node.module.split('.')[0])
+    known = set(getattr(sys, 'stdlib_module_names', ()))
+    known |= set(sys.builtin_module_names)
+    known |= _project_module_names(project_files) | set(extra_names or ())
+    missing = []
+    for name in sorted(names):
+        if not name or name in known or name in sys.modules:
+            continue
+        try:
+            if importlib.util.find_spec(name) is not None:
+                continue
+        except Exception:
+            pass
+        missing.append(name)
+    return missing
 
 
 def _looks_like_shell_command(code):
@@ -430,13 +601,47 @@ def _collapse_reasoning(text):
 
 
 def _is_question(goal):
-    """True when a request is genuinely interrogative (a text answer is OK)."""
+    """True only when a request is genuinely interrogative.
+
+    A build request phrased politely ("can you make me a to-do app?") ends
+    with '?' and used to be answered with one prose turn - the node was never
+    built and the user's request was dropped.  An action word means "do it",
+    regardless of the question mark or the polite opener.
+    """
     g = str(goal or '').strip().lower()
     if not g:
         return False
-    if '?' in g:
-        return True
-    heads = ('what', 'why', 'how', 'when', 'which', 'who', 'where',
-             'explain', 'is there', 'does ', 'can you', 'do you',
-             'tell me', 'should ', 'is it ', 'are you')
-    return any(g.startswith(h) or (' ' + h.rstrip()) in g for h in heads)
+    words = re.findall(r"[a-z']+", g)
+    if not words:
+        return False
+    first = words[0]
+    has_action = any(w in _ACTION_WORDS for w in words)
+    polite = (first == 'please'
+              or (first in ('can', 'could', 'would', 'will')
+                  and len(words) > 1 and words[1] == 'you'))
+    if polite and has_action:
+        return False                    # "can you build me ..."
+    if has_action and re.search(r'\b(can|could|would|will) you\b', g):
+        return False                    # "why is it empty? can you fix it?"
+    if first in _QUESTION_HEADS:
+        return True                     # "how do i fix it", "does it build?"
+    if has_action:
+        return False                    # "something that watches a folder?"
+    return g.endswith('?')
+
+
+_ACTION_WORDS = frozenset((
+    'write', 'create', 'make', 'build', 'add', 'fix', 'implement',
+    'generate', 'refactor', 'change', 'update', 'remove', 'delete',
+    'install', 'design', 'convert', 'rename', 'move', 'run', 'debug',
+    'optimize', 'rewrite', 'extend', 'let', 'watch', 'track', 'show',
+    'display', 'handle', 'parse', 'read', 'save', 'load', 'compute',
+    'calculate', 'monitor', 'send', 'fetch', 'download', 'upload', 'play',
+    'draw', 'plot', 'sort', 'filter', 'search', 'split', 'merge',
+))
+
+_QUESTION_HEADS = frozenset((
+    'what', 'why', 'how', 'when', 'which', 'who', 'where', 'explain',
+    'tell', 'is', 'are', 'does', 'do', 'did', 'any', 'can', 'could',
+    'would', 'will', 'should',
+))

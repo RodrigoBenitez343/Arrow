@@ -60,6 +60,9 @@ class OutputNode(BaseNode):
 
         # Properties
         self.create_property('label', '')                     # Human-readable description
+        # What this node does, in full — the Builder fills it, the dialog
+        # edits it.  Never a headline: the box and the digest quote it.
+        self.create_property('description', '')
         # Identifier used when this chain is imported: each exposed Output
         # node becomes a data port named after this variable_name on the
         # chain import node (see player/chain_import_ports.py).

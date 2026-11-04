@@ -373,19 +373,50 @@ def test_the_source_truth_picks_the_option_when_the_answer_cannot(monkeypatch):
     h = _Harness()
     cfg = h._ff_cfg({"instruction": "fill"})
     opts = ["Buenos Aires Province, Argentina",
-            "Buenos Aires, Buenos Aires Province, Argentina"]
+            "Ciudad Autónoma de Buenos Aires, Argentina"]
     monkeypatch.setattr(hooks, "choose_option", lambda q, a, o: (None, True))
     seen = {}
     monkeypatch.setattr(
         hooks, "choose_option_by_source",
         lambda q, s, o: seen.update(source=s) or (1, True))
     h._ff_llm_call = lambda *a, **k: "Buenos Aires"
-    evidence = "Location: Buenos Aires, Buenos Aires Province, Argentina."
+    # No option appears verbatim here (that case is the literal rail's, tested
+    # below), so the answer has to be placed by the SOURCE phrasing.
+    evidence = ("Address: the city of Buenos Aires, Argentina (CABA). "
+                "Earlier address: Buenos Aires Province.")
     got = h._ff_extract("Location (city)*", evidence, cfg, None,
                         options=opts, kind="combo")
-    assert got == "Buenos Aires, Buenos Aires Province, Argentina"
-    # The scorer was handed the SOURCE's own complete phrasing, not the answer.
-    assert "Buenos Aires, Buenos Aires Province, Argentina" in seen["source"]
+    assert got == "Ciudad Autónoma de Buenos Aires, Argentina"
+    # The scorer was handed the SOURCE's own phrasing, not the model's answer.
+    assert "CABA" in seen["source"]
+
+
+def test_an_option_the_material_holds_verbatim_is_the_answer(monkeypatch):
+    """A select whose options are literal VALUES needs no semantics.
+
+    Live: LinkedIn's email picker lists the address itself; the pack held
+    'benitezrodrigo169@gmail.com'; the encoder scored the bare address below
+    its threshold against 'Email address*' and the field was handed to the
+    USER on every run.  The page's own text is the strongest possible
+    evidence, so it answers first.
+    """
+    import AI.laya_hooks as hooks
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    monkeypatch.setattr(
+        hooks, "decide_choice",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not score")))
+    h._ff_llm_call = lambda *a, **k: "benitezrodrigo169@gmail.com"
+    evidence = ("[Retrieved knowledge - CRAG verdict: correct]\n"
+                "- [header] benitezrodrigo169@gmail.com\n"
+                "- [Core Competencies] Applied AI/ML")
+    got = h._ff_extract("Email address*", evidence, cfg, None,
+                        options=["benitezrodrigo169@gmail.com"], kind="select")
+    assert got == "benitezrodrigo169@gmail.com"
+    # A yes/no pair is never decided this way: too short to be a value.
+    from . import extract as _ex
+    assert _ex._ff_option_literal("- [x] Yes, remote work is available",
+                                  ["Yes", "No"]) == ""
 
 
 def test_a_choice_keeps_the_whole_reply_not_just_the_first_line(monkeypatch):
@@ -449,6 +480,27 @@ def test_placeholder_note_is_never_written_and_falls_to_na():
 
 
 
+def test_a_bag_of_source_lines_is_not_an_answer():
+    """Live: 'Current job title' was answered with the tagline line, the skills
+    line and the NAME comma-joined.  Every part is real, the combination is not
+    a job title.  A textarea may quote several lines, so prose is exempt."""
+    from .common import _ff_value_rejection
+
+    ev = ("[Retrieved knowledge - CRAG verdict: correct]\n"
+          "- [Rodrigo David Benitez] Forward Deployed AI Engineer\n"
+          "- [Rodrigo David Benitez] Applied AI/ML (GenAI, RAG)\n"
+          "- [Rodrigo David Benitez] Enterprise & Regulated Environments\n")
+    val = ("Forward Deployed AI Engineer, Applied AI/ML (GenAI, RAG), "
+           "Enterprise & Regulated Environments")
+    assert "joined together" in _ff_value_rejection("Current job title",
+                                                    val, ev)
+    assert _ff_value_rejection("Why are you a fit", val, ev,
+                               multiline=True) == ""
+    # ONE line is an answer, whatever else the pack holds.
+    assert _ff_value_rejection("Current job title",
+                               "Forward Deployed AI Engineer", ev) == ""
+
+
 def test_explicit_na_is_confirmed_against_non_empty_evidence():
     """A model that reaches for N/A while it holds evidence is answered with
     N/A on a field that was answerable - and the repair pass never revisits it
@@ -508,3 +560,77 @@ def test_a_discarded_value_earns_one_grounded_retry_not_an_na():
     h2._ff_llm_call = lambda p, s, c, f: "https://example.com/nope"
     assert h2._ff_extract("Share links to apps", ev, cfg, None) == ""
     assert h2._ff_last_reject
+
+
+def test_a_choice_is_decided_by_the_material_not_by_the_models_echo(monkeypatch):
+    """Live: 12 resume chunks that never mention the company, and the model
+    answered "Sí" to "¿Ha trabajado anteriormente en PedidosYa?".  The answer
+    happened to BE one of the options, so the verbatim rail wrote it.  A choice
+    is now decided against the field's own material - and when the material
+    says nothing, the negative option is the answer."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    h._ff_llm_call = lambda *a, **k: "S\u00ed"
+    # A CRAG pack carries the verdict that produced it; this one was evaluated
+    # as answering the field, so the choice rail may consider an affirmative.
+    h._ff_last_action = "correct"
+
+    monkeypatch.setattr(laya_hooks, "decide_choice",
+                        lambda q, ev, opts, **k: (1, "negative"))
+    assert h._ff_extract("¿Ha trabajado anteriormente en PedidosYa?*",
+                         "12 unrelated resume chunks", cfg, None,
+                         options=["Sí", "No"]) == "No"
+
+    # Nothing supports any option and none reads as the negative: the model's
+    # sentence is NOT a licence to pick one.
+    monkeypatch.setattr(laya_hooks, "decide_choice",
+                        lambda q, ev, opts, **k: (None, "nothing"))
+    assert h._ff_extract("¿Ha trabajado anteriormente en PedidosYa?*",
+                         "12 unrelated resume chunks", cfg, None,
+                         options=["Sí", "No"]) == ""
+
+    # A grounded pick still lands.
+    monkeypatch.setattr(laya_hooks, "decide_choice",
+                        lambda q, ev, opts, **k: (0, "source"))
+    assert h._ff_extract("¿Ha trabajado anteriormente en PedidosYa?*",
+                         "worked at PedidosYa 2021-2022", cfg, None,
+                         options=["Sí", "No"]) == "Sí"
+
+
+def test_an_evaluated_pack_licenses_the_answer_and_a_rejected_one_does_not(
+        monkeypatch):
+    """Live: "Self-Taught" written into a disability/adjustments box.  The old
+    gate demanded a composed "Key Finding" line; CRAG replaces that with the
+    evaluator's verdict - material it scored as answering the field is
+    written, material it rejected ships nothing at all."""
+    from AI import laya_hooks
+
+    h = _Harness()
+    cfg = h._ff_cfg({"instruction": "fill"})
+    monkeypatch.setattr(laya_hooks, "absence_required", lambda text: False)
+
+    ev = ("[Retrieved knowledge - CRAG verdict: correct (top score 0.90).]\n"
+          "- Software Engineering - Self-Taught - learned by shipping.\n")
+    h._ff_llm_call = lambda *a, **k: "Self-Taught"
+    h._ff_last_action = "correct"
+    assert h._ff_extract("Describe your background briefly.", ev, cfg,
+                         None) == "Self-Taught"
+
+    # A rejected retrieval ships NO material, so the node never reaches the
+    # extractor with it (it is asked upstream - see suite_crag).  What this
+    # test pins is the licence: an evaluated pack writes, a caller's own
+    # evidence is left untouched.
+    h._ff_last_action = "correct"
+    h._ff_llm_call = lambda *a, **k: "benitezrodrigo169@gmail.com"
+    ev3 = ("[Retrieved knowledge - CRAG verdict: correct (top score 0.86).]\n"
+           "Email: benitezrodrigo169@gmail.com\n")
+    assert h._ff_extract("Email address*", ev3, cfg, None) == \
+        "benitezrodrigo169@gmail.com"
+
+    # A caller's own evidence (no CRAG pack behind it) is left alone.
+    h._ff_llm_call = lambda *a, **k: "Self-Taught"
+    h._ff_last_action = ""
+    assert h._ff_extract("Do you require any adjustment?", "ev", cfg,
+                         None) == "Self-Taught"

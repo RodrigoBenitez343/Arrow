@@ -1,42 +1,49 @@
-"""builder_panel.py — the chat that scaffolds system chains in the canvas.
+"""builder_panel.py — the chain analyst docked beside the canvas.
 
-A side-docked panel in the agent-mode visual language (same surface,
-bubbles, header and buttons as AgentOverlay): the chat sits on the RIGHT
-of the window while the chain canvas stays visible and editable on the
-left — the user watches the bot take shape and can edit it directly.
+The panel is a READ-ONLY assistant for the chain's BEHAVIOUR.  It cannot
+create, edit, wire, delete or record anything; it explains what the chain on
+the canvas does, from the chain's own topology (``player/builder/describe.py``).
 
-The builder is a MODE on the canvas, not a node: it creates Arrow's existing
-nodes, wires them, edits their properties, asks the user to teach steps via
-the recorders, and saves the result as a collection="System" chain.
+Two things it writes, and neither changes what the chain does:
+
+* **content the user hands it** — with a single node selected, the paperclip
+  opens a system file dialog and writes the chosen file into the field that
+  node reads at run time (``player/builder/content.py``);
+* **the chain's own flow metadata** (``player/builder/flow.py``) — the summary,
+  the section boxes and the per-step sentences, stored in the chain file so a
+  loose chain can describe itself to the agent later.  The same metadata is
+  drawn on the canvas as boxes, and a smoke test rings each executed node in
+  walk order while the chat explains it.  Nothing is executed: it is a visual
+  aid, not a run.
+
+Every failure is a HARD error: it is logged, shown in the chat and raised to a
+dialog.  Nothing degrades silently.
 """
 
 import logging
 import os
 import threading
-import time
+import traceback
 
 from PyQt5.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter, QPen
 from PyQt5.QtWidgets import (
-    QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
 from ..constants import (
     ACCENT_COLOR,
-    ACCENT_HOVER,
-    BTN_PRIMARY_TEXT,
     DANGER_COLOR,
     FONT_FAMILY,
     HAIRLINE,
@@ -57,90 +64,16 @@ from .agent_overlay import (
     USER_BUBBLE_BORDER,
 )
 from .hover_button import HoverGlowButton
+from .mitosis_loader import MitosisLoader
 
 logger = logging.getLogger(__name__)
 
-#: Same width as the agent overlay's chat column, so the panel reads as the
-#: same surface family.
+#: Same width as the agent overlay's chat column.
 PANEL_WIDTH = 500
 
 
-class _Spinner(QWidget):
-    """A small rotating arc that signals work in progress.
-
-    Procedural (a QTimer advances the angle), font-independent and themed
-    with the app accent — the same pattern as the overlay's SpectrogramBar.
-    """
-
-    def __init__(self, parent=None, size=14, color=ACCENT_COLOR, width=2):
-        super().__init__(parent)
-        self._color = color
-        self._width = width
-        self._angle = 0
-        self.setFixedSize(size, size)
-        self._timer = QTimer(self)
-        self._timer.setInterval(90)
-        self._timer.timeout.connect(self._tick)
-
-    def start(self):
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def stop(self):
-        self._timer.stop()
-        self._angle = 0
-        self.update()
-
-    def _tick(self):
-        self._angle = (self._angle + 30) % 360
-        self.update()
-
-    def paintEvent(self, event):
-        try:
-            p = QPainter(self)
-            p.setRenderHint(QPainter.Antialiasing)
-            pen = QPen(QColor(self._color))
-            pen.setWidth(self._width)
-            pen.setCapStyle(Qt.RoundCap)
-            p.setPen(pen)
-            r = self.rect().adjusted(self._width, self._width,
-                                     -self._width, -self._width)
-            p.drawArc(r, (90 - self._angle) * 16, 270 * 16)
-        except Exception:
-            pass
-
-
-class _ChatCard:
-    """Handle for an interactive card in the chat (buttons + status)."""
-
-    def __init__(self, frame, edit, buttons, status):
-        self.frame = frame
-        self.edit = edit
-        self.buttons = buttons
-        self.status = status
-        self.clicked = False
-
-    def disable(self):
-        for btn in self.buttons.values():
-            try:
-                btn.setEnabled(False)
-            except Exception:
-                pass
-
-    def set_status(self, text):
-        try:
-            self.status.setText(str(text or ''))
-            self.status.setVisible(bool(text))
-        except Exception:
-            pass
-
-
 class _GuiProxy(QObject):
-    """Marshal one callable onto the GUI thread and wait for its result.
-
-    Canvas operations (NodeGraphQt) are NOT thread-safe; the worker thread
-    blocks on a queued connection while the GUI thread executes the callable.
-    """
+    """Marshal one callable onto the GUI thread and wait for its result."""
 
     _job = pyqtSignal(object)
 
@@ -149,34 +82,51 @@ class _GuiProxy(QObject):
         self._job.connect(self._run, Qt.BlockingQueuedConnection)
 
     def _run(self, job):
-        fn, res, err = job
+        fn, result, error = job
         try:
-            res[0] = fn()
-        except Exception as e:  # surfaced to the worker, never the loop
-            err[0] = e
+            result[0] = fn()
+        except BaseException as exc:        # surfaced to the caller's thread
+            error[0] = exc
 
     def call(self, fn):
-        # Already on the proxy's own thread (the GUI thread): a blocking
-        # queued emit to itself trips Qt's deadlock detector ("Dead lock
-        # detected while activating a BlockingQueuedConnection") and never
-        # fills the result.  Run it inline instead — the canvas calls that
-        # reach here from the GUI thread (_make_ctx's chains_dir, the turn's
-        # start snapshot, _last_recorded_path) already touch widgets safely.
         if QThread.currentThread() is self.thread():
             return fn()
-        res, err = [None], [None]
-        self._job.emit((fn, res, err))
-        if err[0] is not None:
-            raise err[0]
-        return res[0]
+        result, error = [None], [None]
+        self._job.emit((fn, result, error))
+        if error[0] is not None:
+            raise error[0]
+        return result[0]
 
 
-class _BuilderWorker(QThread):
-    """Run ONE build turn: needle session (or legacy markers) + tool exec."""
+def _prose(flow):
+    """The wording of a flow object, ignoring ids' bookkeeping and stamps.
 
-    finished_turn = pyqtSignal(str)
+    What a reader sees: the summary, each box's title/note/members and each
+    node's sentence.  Two descriptions that compare equal here are the same
+    description, so "re-described" can be reported honestly instead of
+    claiming a rewrite that changed nothing.
+    """
+    flow = flow if isinstance(flow, dict) else {}
+    return (
+        str(flow.get('summary') or ''),
+        tuple((str(s.get('title') or ''), str(s.get('note') or ''),
+               tuple(str(nid) for nid in s.get('nodes') or ()))
+              for s in flow.get('sections') or ()),
+        tuple((str(n.get('node') or ''), str(n.get('does') or ''))
+              for n in flow.get('nodes') or ()),
+        tuple((str(s.get('node') or ''), str(s.get('does') or ''))
+              for s in flow.get('steps') or ()),
+    )
+
+
+class _TurnWorker(QThread):
+    """One analyst turn on the worker thread."""
+
+    finished_turn = pyqtSignal(object)
     status = pyqtSignal(str)
     trace = pyqtSignal(str)
+    reply_delta = pyqtSignal(str)
+    failed = pyqtSignal(str)
 
     def __init__(self, ctx, query, router, stop_event, parent=None):
         super().__init__(parent)
@@ -185,88 +135,116 @@ class _BuilderWorker(QThread):
         self._router = router
         self._stop = stop_event
 
-    def _note(self, event):
-        """Router progress ping -> queued to the GUI thread (thread-safe)."""
+    def run(self):
         try:
-            self.status.emit(str(event))
-        except Exception:
-            pass
+            payload = self._router.route(
+                self._query,
+                progress_cb=self.status.emit,
+                trace=self.trace.emit,
+                on_reply_delta=self.reply_delta.emit,
+            )
+        except BaseException as exc:        # a hard failure for the panel
+            logger.exception('builder turn failed')
+            self.failed.emit(str(exc) or exc.__class__.__name__)
+            return
+        self.finished_turn.emit(dict(payload or {}))
 
-    def _trace(self, message):
-        """A builder trace line -> queued to the GUI thread (thread-safe)."""
-        try:
-            self.trace.emit(str(message))
-        except Exception:
-            pass
+
+class _DescribeWorker(QThread):
+    """Re-describe the open chain ONE CONNECTION AT A TIME.
+
+    A single turn over the whole canvas needs the whole canvas in one prompt,
+    which is too much for a small local model.  This runs
+    ``staged.describe``: a node pass with no model, then one small call per
+    wire, then the assembly.  Slow, and every wire gets its own sentence.
+    """
+
+    progress = pyqtSignal(str)
+    done = pyqtSignal(object)
+    failed = pyqtSignal(str, str)
+
+    def __init__(self, ctx, stop_event, parent=None):
+        super().__init__(parent)
+        self._ctx = ctx
+        self._stop = stop_event
 
     def run(self):
         try:
-            if self._router is not None:
-                self._note('thinking')
-                payload = self._router.route(
-                    self._query, progress_cb=self._note, trace=self._trace)
-                text = str(payload.get('text') or '').strip()
-                if not payload.get('ok'):
-                    text = text or '(needle error: %s)' % payload.get('error')
-                if not text:
-                    text = '(the builder produced no output this turn)'
-                self.finished_turn.emit(text)
-                return
-            self.finished_turn.emit(self._legacy_turn())
-        except Exception as e:
-            logger.exception('builder turn failed')
-            self.finished_turn.emit('(builder turn failed: %s)' % e)
+            from player.builder import reasoning, snapshot as bsnapshot
+            from player.builder import settings as bsettings
+            from player.builder import staged
+            # The canvas is read on the GUI thread; everything after it is a
+            # plain snapshot this thread owns.
+            snap = self._ctx['run_on_gui'](
+                lambda: bsnapshot.build(self._ctx['graph_manager']()))
+            result = staged.describe(
+                snap, reasoning.generate, bsettings.load(),
+                progress=self.progress.emit, cancel=self._stop.is_set)
+        except BaseException as exc:        # a hard failure for the panel
+            logger.exception('staged describe failed')
+            self.failed.emit(str(exc) or exc.__class__.__name__,
+                             traceback.format_exc())
+            return
+        self.done.emit(result)
 
-    def _legacy_turn(self):
-        """needle.exe missing: strict marker directives only."""
-        from player.builder.devtools import (
-            execute_builder_call,
-            parse_legacy_directives,
-        )
-        directives = parse_legacy_directives(self._query)
-        if not directives:
-            return (
-                '(Needle 2 engine not found and no ### BUILDER: directives '
-                'were given. Supported fallback lines: create_node, wire, '
-                'edit — see the builder help.)'
-            )
-        out = []
-        for name, args in directives:
-            out.append(execute_builder_call(name, args, self._ctx))
-        return '\n\n'.join(out)
+
+class _IngestWorker(QThread):
+    """Read a source and write it into the selected node."""
+
+    done = pyqtSignal(object)
+    failed = pyqtSignal(str, str)
+
+    def __init__(self, job, parent=None):
+        super().__init__(parent)
+        self._job = job
+
+    def run(self):
+        try:
+            self.done.emit(self._job())
+        except BaseException as exc:
+            logger.exception('builder content ingest failed')
+            self.failed.emit(str(exc) or exc.__class__.__name__,
+                             traceback.format_exc())
 
 
 class BuilderPanel(QWidget):
-    """Side-docked builder chat (agent-mode look; canvas stays visible)."""
+    """Side-docked chain analyst (agent-mode look; canvas stays visible)."""
 
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self.main_window = main_window
         self._gui = _GuiProxy()
-        self._state = {}          # shared mutable turn state (description...)
-        self._pos_counter = 0
         self._stop_event = threading.Event()
         self._worker = None
-        self._pending_ask = None  # (kind, event, answer-holder)
-        # Recent exchanges handed to the assistant each turn (its memory).
-        self._history = []
-        # Processing indicator state (spinner + live step text).
+        self._ingest_worker = None
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._log_bubble = None
+        self._log_lines = []
+        # Chat is per CHAIN, not per app session: the tail the model sees is
+        # keyed by ``graph_view._chain_epoch``, and the visible chat is cleared
+        # when the canvas becomes a different chain.  Otherwise every new chain
+        # inherits the previous chain's questions and answers.
+        self._sessions = {}
+        self._session_id = None
+        self._session_timer = QTimer(self)
+        self._session_timer.setInterval(800)
+        self._session_timer.timeout.connect(self._sync_session)
+        self._session_timer.start()
         self._status_phrases = []
         self._status_index = 0
         self._status_until = 0.0
-        # Record card state: the node-attached recorder runs while the
-        # worker waits in its ask; this timer advances the card when the
-        # recording file lands.
-        self._record_kind = ''
-        self._record_node_id = ''
-        self._record_card = None
-        self._record_hold = None
-        self._record_timer = QTimer(self)
-        self._record_timer.setInterval(700)
-        self._record_timer.timeout.connect(self._poll_recording)
+        # Visual walkthrough (a smoke test that runs NOTHING): the timer steps
+        # one entry of ``player/builder/flow.py``'s script at a time.
+        self._walk_steps = []
+        self._walk_index = 0
+        self._walk_timer = QTimer(self)
+        self._walk_timer.setInterval(1800)
+        self._walk_timer.timeout.connect(self._walk_next)
 
         self.setFixedWidth(PANEL_WIDTH)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.setAcceptDrops(True)
         self._build_ui()
 
     # ------------------------------------------------------------- UI
@@ -276,9 +254,8 @@ class BuilderPanel(QWidget):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(0)
 
-        # The card floats over the canvas like the agent overlay: same
-        # surface, same radius, hairline border.
         self._card = QFrame(self)
+        self._card.setObjectName("builderCard")
         self._card.setStyleSheet(
             "QFrame#builderCard {"
             f" background: {BG_RGBA};"
@@ -287,15 +264,14 @@ class BuilderPanel(QWidget):
             "}"
             "QFrame#builderCard QLabel { background: transparent; }"
         )
-        self._card.setObjectName("builderCard")
         layout.addWidget(self._card, 1)
 
         card = QVBoxLayout(self._card)
         card.setContentsMargins(0, 0, 0, 0)
         card.setSpacing(0)
 
-        # Header (same surface language as the overlay header).
         header = QFrame(self._card)
+        header.setObjectName("builderHeader")
         header.setStyleSheet(
             "QFrame#builderHeader {"
             f" background: {HEADER_RGBA};"
@@ -303,7 +279,6 @@ class BuilderPanel(QWidget):
             f" border-top-right-radius: {RADIUS_LG}px;"
             "}"
         )
-        header.setObjectName("builderHeader")
         header.setFixedHeight(44)
         hlay = QHBoxLayout(header)
         hlay.setContentsMargins(14, 6, 8, 6)
@@ -312,11 +287,30 @@ class BuilderPanel(QWidget):
         title.setStyleSheet(
             f"color: {TEXT_COLOR}; font-weight: 600; font-size: 13px;")
         hlay.addWidget(title)
-        subtitle = QLabel(_("scaffolds the canvas"), header)
-        subtitle.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px;")
+        subtitle = QLabel(_("reads the chain"), header)
+        subtitle.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         hlay.addWidget(subtitle)
         hlay.addStretch(1)
+        self._clear_btn = HoverGlowButton(
+            "ERASER", size=32, icon=14, parent=header)
+        self._clear_btn.setToolTip(
+            _("Clear the boxes and the walk highlight (the chain is untouched)"))
+        self._clear_btn.clicked.connect(self._on_clear_annotations)
+        hlay.addWidget(self._clear_btn)
+        self._describe_btn = HoverGlowButton(
+            "NOTES", size=32, icon=14, parent=header)
+        self._describe_btn.setToolTip(_(
+            "Re-describe this chain now, one connection at a time: one small "
+            "model call per wire, so a local model can do the whole chain"))
+        self._describe_btn.clicked.connect(self._on_describe)
+        hlay.addWidget(self._describe_btn)
+        self._walk_btn = HoverGlowButton(
+            "EYE", size=32, icon=14, parent=header)
+        self._walk_btn.setToolTip(_(
+            "Walk the chain node by node on the canvas — no model is asked, "
+            "and nothing is run"))
+        self._walk_btn.clicked.connect(self._on_walk)
+        hlay.addWidget(self._walk_btn)
         self._settings_btn = HoverGlowButton(
             "ADJUSTMENTS", size=32, icon=14, parent=header)
         self._settings_btn.setToolTip(_("Builder settings"))
@@ -329,12 +323,9 @@ class BuilderPanel(QWidget):
         hlay.addWidget(self._stop_btn)
         card.addWidget(header)
 
-        # Settings subpanel (hidden until the gear is clicked): the model and
-        # engine the builder reasons with.
         self._settings_row = self._build_settings(self._card)
         card.addWidget(self._settings_row)
 
-        # Chat: scrollable bubble column (same bubble colors as agent mode).
         self._chat_scroll = QScrollArea(self._card)
         self._chat_scroll.setWidgetResizable(True)
         self._chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -351,14 +342,13 @@ class BuilderPanel(QWidget):
         self._chat_scroll.setWidget(chat_host)
         card.addWidget(self._chat_scroll, 1)
 
-        # Processing status: spinner + live step text (hidden when idle).
         self._status_row = QFrame(self._card)
         self._status_row.setStyleSheet("QFrame { background: transparent; }")
         srow = QHBoxLayout(self._status_row)
         srow.setContentsMargins(14, 2, 14, 4)
         srow.setSpacing(8)
-        self._spinner = _Spinner(self._status_row)
-        srow.addWidget(self._spinner, 0, Qt.AlignVCenter)
+        self._loader = MitosisLoader(self._status_row, size=72)
+        srow.addWidget(self._loader, 0, Qt.AlignVCenter)
         self._status_label = QLabel('', self._status_row)
         self._status_label.setStyleSheet(
             f"color: {TEXT_MUTED}; font-size: 11px;"
@@ -366,13 +356,10 @@ class BuilderPanel(QWidget):
         srow.addWidget(self._status_label, 1)
         card.addWidget(self._status_row)
         self._status_row.setVisible(False)
-        # Generic phase rotation that keeps the text moving between the
-        # router's real step events (see _advance_phase).
         self._phase_timer = QTimer(self)
         self._phase_timer.setInterval(1600)
         self._phase_timer.timeout.connect(self._advance_phase)
 
-        # Input bar (well background + pill focus, like the overlay input).
         bar = QFrame(self._card)
         bar.setStyleSheet("QFrame { background: transparent; }")
         blay = QHBoxLayout(bar)
@@ -380,7 +367,7 @@ class BuilderPanel(QWidget):
         blay.setSpacing(8)
         self._input = QLineEdit(bar)
         self._input.setPlaceholderText(
-            _("Ask about the chain, or describe what to build..."))
+            _("Ask what this chain does, how a node behaves, what a port carries…"))
         self._input.setStyleSheet(
             f"QLineEdit {{"
             f" background: {WELL_BG}; color: {TEXT_COLOR};"
@@ -392,21 +379,26 @@ class BuilderPanel(QWidget):
             f"QLineEdit:focus {{ border-color: {ACCENT_COLOR}; }}"
         )
         self._input.returnPressed.connect(self._on_send)
+        self._attach_btn = HoverGlowButton(
+            "PAPERCLIP", size=32, icon=14, parent=bar)
+        self._attach_btn.setToolTip(
+            _("Load a file into the selected node"))
+        self._attach_btn.clicked.connect(self._on_attach)
+        blay.addWidget(self._attach_btn)
         blay.addWidget(self._input, 1)
-        self._send_btn = HoverGlowButton(
-            "SEND", size=32, icon=14, parent=bar)
+        self._send_btn = HoverGlowButton("SEND", size=32, icon=14, parent=bar)
         self._send_btn.setToolTip(_("Send"))
         self._send_btn.clicked.connect(self._on_send)
         blay.addWidget(self._send_btn)
         card.addWidget(bar)
 
-        self._append('system',
-                     _("Ask me about this chain or any node — select nodes "
-                       "to focus me, and tell me to prompt, configure or "
-                       "fill them. Ask for a skill and I build the ladder: "
-                       "input → steps → output with a shared context pool."))
-
-    # ------------------------------------------------------------- settings
+        self._append('system', _(
+            "Ask what this chain does, how a node behaves, or what a port "
+            "carries. I read the canvas — I never change it. Ask me to box "
+            "the sections or to smoke-test the chain and I draw on the "
+            "canvas: boxes around each part, one ring per step, nothing "
+            "executed. With one node selected, the paperclip loads a file "
+            "into the field that node reads."))
 
     def _settings_label(self, text):
         label = QLabel(text)
@@ -416,37 +408,30 @@ class BuilderPanel(QWidget):
         return label
 
     def _build_settings(self, parent):
-        """The builder's model / engine subpanel (hidden until toggled)."""
+        """Engine / model of the builder's own model call."""
         from player.builder import settings as bsettings
         cfg = bsettings.load()
         row = QFrame(parent)
-        row.setStyleSheet("QFrame { background: transparent; }")
+        row.setObjectName("builderSettings")
+        row.setStyleSheet("QFrame#builderSettings { background: transparent; }")
         grid = QGridLayout(row)
         grid.setContentsMargins(14, 4, 14, 6)
         grid.setSpacing(6)
         combo_style = (
-            f"QComboBox, QSpinBox {{ background: {WELL_BG};"
+            f"QComboBox {{ background: {WELL_BG};"
             f" color: {TEXT_COLOR}; border: 1px solid {HAIRLINE};"
             f" border-radius: {RADIUS_SM}px; padding: 3px 6px;"
             f" font-size: 11px; font-family: {FONT_FAMILY}; }}"
-            f"QCheckBox {{ color: {TEXT_COLOR}; font-size: 11px;"
-            f" font-family: {FONT_FAMILY}; }}"
         )
-        row.setStyleSheet("QFrame#builderSettings {"
-                          " background: transparent; }")
-        row.setObjectName("builderSettings")
-
         grid.addWidget(self._settings_label(_("Engine")), 0, 0)
         self._engine_combo = QComboBox(row)
         self._engine_combo.setStyleSheet(combo_style)
-        # The shared engine list: llama.cpp, Ollama, every BYOK provider
-        # (pool listed disabled).  Fallback keeps the legacy pair.
         try:
             from NGUI.dialogs.engine_options import engine_items
-            _engines = [(eid, label) for eid, label, _en in engine_items()]
-        except Exception:
-            _engines = list(bsettings.ENGINES)
-        for engine_id, label in _engines:
+            engines = [(eid, label) for eid, label, _on in engine_items()]
+        except ImportError:
+            engines = list(bsettings.ENGINES)
+        for engine_id, label in engines:
             self._engine_combo.addItem(label, engine_id)
         index = self._engine_combo.findData(cfg.get('engine'))
         if index >= 0:
@@ -468,76 +453,135 @@ class BuilderPanel(QWidget):
         refresh.clicked.connect(self._refresh_models)
         grid.addWidget(refresh, 1, 2)
 
-        self._reasoning_check = QCheckBox(_("Reasoning LLM"), row)
-        self._reasoning_check.setChecked(bool(cfg.get('reasoning', True)))
-        self._reasoning_check.setToolTip(_(
-            "Ask the model for the next step before Laya picks the action"))
-        grid.addWidget(self._reasoning_check, 2, 0, 1, 3)
-
-        grid.addWidget(self._settings_label(_("Max steps")), 3, 0)
-        self._steps_spin = QSpinBox(row)
-        self._steps_spin.setStyleSheet(combo_style)
-        self._steps_spin.setRange(1, 20)
-        self._steps_spin.setValue(int(cfg.get('max_steps') or 6))
-        grid.addWidget(self._steps_spin, 3, 1, 1, 2)
-
-        # Connect only after the widgets hold their persisted values, so
-        # populating the panel never writes the settings back.
         self._engine_combo.currentIndexChanged.connect(self._on_engine_changed)
         self._model_combo.activated.connect(
-            lambda _i: self._on_model_changed(self._model_combo.currentText()))
+            lambda _index: self._on_model_changed(self._model_combo.currentText()))
         if self._model_combo.lineEdit() is not None:
             self._model_combo.lineEdit().editingFinished.connect(
                 lambda: self._on_model_changed(self._model_combo.currentText()))
-        self._reasoning_check.toggled.connect(self._on_reasoning_toggled)
-        self._steps_spin.valueChanged.connect(self._on_steps_changed)
 
         row.setVisible(False)
         return row
 
+    # --------------------------------------------------------- settings
+
     def _toggle_settings(self):
-        self._settings_row.setVisible(self._settings_row.isHidden())
+        shown = self._settings_row.isHidden()
+        self._settings_row.setVisible(shown)
+        if shown:
+            # AI Settings edits the same file ("Descriptions — the model that
+            # writes them"), so the panel re-reads before showing its row.
+            self._guard_settings(self._reload_settings)
+
+    def _reload_settings(self):
+        """Show the STORED provider/model, whoever wrote it last."""
+        from player.builder import settings as bsettings
+        cfg = bsettings.load()
+        index = self._engine_combo.findData(cfg.get('engine'))
+        self._engine_combo.blockSignals(True)
+        if index >= 0:
+            self._engine_combo.setCurrentIndex(index)
+        self._engine_combo.blockSignals(False)
+        self._model_combo.blockSignals(True)
+        self._model_combo.setCurrentText(str(cfg.get('model') or ''))
+        self._model_combo.blockSignals(False)
 
     def _save_settings(self, values):
         from player.builder import settings as bsettings
         bsettings.save(values)
 
     def _on_engine_changed(self, _index):
-        self._save_settings({'engine': self._engine_combo.currentData()})
+        """Save the engine AND retarget the model that no longer fits it.
+
+        A model carries its provider in the prefix, so keeping ``groq:…``
+        after switching the engine to DeepSeek made the switch a no-op: the
+        prefix still routed to Groq.  A model that belongs to another provider
+        is dropped (the new provider's default takes over) instead.
+        """
+        from NGUI.dialogs.engine_options import models_for_engine, store_model
+
+        engine = str(self._engine_combo.currentData() or '')
+        model = (self._model_combo.currentText() or '').strip()
+        if model and not models_for_engine([model], engine):
+            model = ''
+            self._model_combo.blockSignals(True)
+            self._model_combo.clear()
+            self._model_combo.blockSignals(False)
+        self._guard_settings(lambda: self._save_settings(
+            {'engine': engine, 'model': store_model(engine, model)}))
+        # The engine decides which provider's models are offered: listing the
+        # gateway's whole merged list let an Ollama tag sit under glama.
+        self._refill_model_combo()
 
     def _on_model_changed(self, text):
-        self._save_settings({'model': str(text or '').strip()})
+        """Persist a model pick, ALWAYS in the form the gateway routes.
 
-    def _on_reasoning_toggled(self, checked):
-        self._save_settings({'reasoning': bool(checked)})
+        A bare ``deepseek-v4-pro`` under a cloud engine is prefixed with that
+        engine (the engine is the provider the user chose); an empty box is not
+        a choice — clearing the combo for a Refresh used to wipe the stored
+        model and leave the turn routing to a default that does not exist.
+        """
+        from player.builder import settings as bsettings
+        from NGUI.dialogs.engine_options import store_model
 
-    def _on_steps_changed(self, value):
-        self._save_settings({'max_steps': int(value)})
+        text = str(text or '').strip()
+        engine = str(self._engine_combo.currentData() or '')
+        if not text:
+            try:
+                if str(bsettings.load().get('model') or '').strip():
+                    return
+            except Exception:
+                pass
+        self._guard_settings(lambda: self._save_settings(
+            {'model': store_model(engine, text)}))
+
+    def _guard_settings(self, action):
+        try:
+            action()
+        except Exception as exc:
+            self._hard_error(_('Builder settings'), str(exc))
+
+    def _refill_model_combo(self):
+        """Show only the models the SELECTED engine serves."""
+        from NGUI.dialogs.engine_options import engine_id, models_for_engine
+        names = models_for_engine(
+            getattr(self, '_gateway_models', None) or [],
+            engine_id(self._engine_combo))
+        current = (self._model_combo.currentText() or '').strip()
+        self._model_combo.blockSignals(True)
+        try:
+            self._model_combo.clear()
+            for name in names:
+                self._model_combo.addItem(name)
+            if current:
+                # Keep what was chosen even when this engine's list does not
+                # carry it: an edited combo is still the user's model, and a
+                # blank one silently falls back to a default that may not exist.
+                self._model_combo.setCurrentText(current)
+        finally:
+            self._model_combo.blockSignals(False)
 
     def _refresh_models(self):
-        from player.builder import reasoning as breasoning
-        names = breasoning.list_models()
-        current = (self._model_combo.currentText() or '').strip()
-        self._model_combo.clear()
-        for name in names:
-            self._model_combo.addItem(name)
-        if current:
-            self._model_combo.setCurrentText(current)
-        self._append('tool', _("models: %s")
-                     % (', '.join(names) or _('none listed')))
+        try:
+            from player.builder import reasoning as breasoning
+            names = breasoning.list_models()
+        except Exception as exc:
+            self._hard_error(_('Builder model list'), str(exc))
+            return
+        self._gateway_models = list(names)
+        self._refill_model_combo()
+        shown = [self._model_combo.itemText(i)
+                 for i in range(self._model_combo.count())]
+        self._append('tool', _("models: %s") % (', '.join(shown) or _('none')))
 
-    # ------------------------------------------------------------- chat
+    # ------------------------------------------------------------ chat
 
-    def _append_bubble(self, text, is_user, muted=False, danger=False):
+    def _append_bubble(self, text, is_user=False, muted=False, danger=False):
         bubble = QLabel(text)
         bubble.setWordWrap(True)
         bubble.setTextInteractionFlags(Qt.TextSelectableByMouse)
         bubble.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         color = DANGER_COLOR if danger else (TEXT_MUTED if muted else TEXT_COLOR)
-        # The prompt and the answer share one bubble layout — only the tint
-        # differs.  The old user branch built a style but never applied it and
-        # pushed the label right inside a stretched row, so sent prompts showed
-        # as bare text at the right edge while answers filled the frame.
         bg, border = ((USER_BUBBLE_BG, USER_BUBBLE_BORDER) if is_user
                       else (AGENT_BUBBLE_BG, AGENT_BUBBLE_BORDER))
         bubble.setStyleSheet(
@@ -549,6 +593,7 @@ class BuilderPanel(QWidget):
         )
         self._chat_layout.addWidget(bubble)
         self._scroll_to_bottom()
+        return bubble
 
     def _scroll_to_bottom(self):
         def _scroll():
@@ -556,155 +601,47 @@ class BuilderPanel(QWidget):
             bar.setValue(bar.maximum())
         QTimer.singleShot(0, _scroll)
 
-    def _append_card(self, title, body='', options=None, on_choice=None,
-                     editable=None, editable_hint=''):
-        """An interactive card in the chat: title, body, an optional
-        description field and option buttons.
-
-        Clicking one option calls ``on_choice(value, card)`` once and
-        disables the row (the handler may update the status line).  Returns
-        the ``_ChatCard`` handle.
-        """
-        frame = QFrame()
-        frame.setObjectName('chatCard')
-        frame.setStyleSheet(
-            "QFrame#chatCard {"
-            f" background: {AGENT_BUBBLE_BG};"
-            f" border: 1px solid {AGENT_BUBBLE_BORDER};"
-            f" border-radius: {RADIUS_SM}px;"
-            "}"
-            "QFrame#chatCard QLabel { background: transparent; }"
-        )
-        lay = QVBoxLayout(frame)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(6)
-        heading = QLabel(str(title))
-        heading.setWordWrap(True)
-        heading.setStyleSheet(
-            f"color: {TEXT_COLOR}; font-size: 12px; font-weight: 600;"
-            f" font-family: {FONT_FAMILY};")
-        lay.addWidget(heading)
-        if body:
-            description = QLabel(str(body))
-            description.setWordWrap(True)
-            description.setStyleSheet(
-                f"color: {TEXT_MUTED}; font-size: 11px;"
-                f" font-family: {FONT_FAMILY};")
-            lay.addWidget(description)
-        edit = None
-        if editable is not None:
-            edit = QLineEdit(frame)
-            edit.setText(str(editable))
-            if editable_hint:
-                edit.setPlaceholderText(str(editable_hint))
-                edit.setToolTip(str(editable_hint))
-            edit.setStyleSheet(
-                f"QLineEdit {{ background: {WELL_BG}; color: {TEXT_COLOR};"
-                f" border: 1px solid {HAIRLINE};"
-                f" border-radius: {RADIUS_SM}px; padding: 5px 8px;"
-                f" font-size: 11px; font-family: {FONT_FAMILY}; }}"
-                f"QLineEdit:focus {{ border-color: {ACCENT_COLOR}; }}")
-            lay.addWidget(edit)
-        status = QLabel('')
-        status.setWordWrap(True)
-        status.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px;"
-            f" font-family: {FONT_FAMILY};")
-        status.setVisible(False)
-        row = QHBoxLayout()
-        row.setSpacing(6)
-        buttons = {}
-        card = _ChatCard(frame, edit, buttons, status)
-
-        def _click(value):
-            if card.clicked:
-                return
-            card.clicked = True
-            card.disable()
-            if callable(on_choice):
-                try:
-                    on_choice(value, card)
-                except Exception:
-                    logger.exception('builder card action failed')
-
-        for label, value, primary in (options or []):
-            btn = QPushButton(str(label), frame)
-            btn.setCursor(Qt.PointingHandCursor)
-            if primary:
-                btn.setStyleSheet(
-                    f"QPushButton {{ background: {ACCENT_COLOR};"
-                    f" color: {BTN_PRIMARY_TEXT}; border: none;"
-                    f" border-radius: {RADIUS_SM}px; padding: 4px 12px;"
-                    f" font-size: 11px; font-weight: 600;"
-                    f" font-family: {FONT_FAMILY}; }}"
-                    f"QPushButton:hover {{ background: {ACCENT_HOVER}; }}"
-                    f"QPushButton:disabled {{ background: {WELL_BG};"
-                    f" color: {TEXT_MUTED}; }}")
-            else:
-                btn.setStyleSheet(
-                    f"QPushButton {{ background: {WELL_BG};"
-                    f" color: {TEXT_COLOR}; border: 1px solid {HAIRLINE};"
-                    f" border-radius: {RADIUS_SM}px; padding: 4px 10px;"
-                    f" font-size: 11px; font-family: {FONT_FAMILY}; }}"
-                    f"QPushButton:hover {{ border-color: {ACCENT_COLOR}; }}"
-                    f"QPushButton:disabled {{ color: {TEXT_MUTED}; }}")
-            btn.clicked.connect(lambda _=False, v=value: _click(v))
-            buttons[value] = btn
-            row.addWidget(btn)
-        row.addStretch(1)
-        lay.addLayout(row)
-        lay.addWidget(status)
-        self._chat_layout.addWidget(frame)
-        self._scroll_to_bottom()
-        return card
-
     def _append(self, kind, text):
         if kind == 'user':
             self._append_bubble(text, is_user=True)
         elif kind == 'tool':
-            self._append_bubble(text, is_user=False, muted=True)
+            self._append_bubble(text, muted=True)
         elif kind == 'error':
-            self._append_bubble(text, is_user=False, danger=True)
+            self._append_bubble(text, danger=True)
         else:
-            self._append_bubble(text, is_user=False)
+            self._append_bubble(text)
 
-    def _on_toggle(self, checked):
-        self._append('system', _("Builder mode is ON — describe the bot.") if
-                     checked else
-                     _("Builder mode is OFF — the panel will not scaffold."))
-
-    # ------------------------------------------------- processing status
+    # --------------------------------------------------- processing row
 
     def _phrases(self):
         return [
-            _("Reading the graph…"),
-            _("Reasoning the outcome…"),
-            _("Analyzing approaches…"),
-            _("Checking the canvas…"),
+            _("Reading the canvas…"),
+            _("Resolving the ports…"),
+            _("Walking the execution order…"),
+            _("Writing the description…"),
         ]
 
     def _start_busy(self, text=None):
-        """Show the spinner + live status row for the duration of a turn."""
         self._status_phrases = self._phrases()
         self._status_index = 0
         self._status_until = 0.0
         self._status_row.setVisible(True)
-        self._spinner.start()
+        self._loader.start()
         self._set_status(text or self._status_phrases[0], sticky=False)
         self._phase_timer.start()
 
     def _stop_busy(self):
         self._phase_timer.stop()
-        self._spinner.stop()
+        self._loader.stop()
         self._status_row.setVisible(False)
 
     def _set_status(self, text, sticky=True):
+        import time
         self._status_label.setText(str(text))
-        # A real step stays readable for a moment before the generic rotation
-        # resumes, so updates are seen rather than instantly overwritten.
         self._status_until = time.monotonic() + 1.5 if sticky else 0.0
 
     def _advance_phase(self):
+        import time
         if self._status_row.isHidden() or not self._status_phrases:
             return
         if time.monotonic() < self._status_until:
@@ -712,403 +649,616 @@ class BuilderPanel(QWidget):
         self._status_index = (self._status_index + 1) % len(self._status_phrases)
         self._status_label.setText(self._status_phrases[self._status_index])
 
-    def _tool_phrase(self, name):
-        return {
-            'read_graph': _("Reading the graph…"),
-            'create_node': _("Placing a node…"),
-            'wire': _("Wiring the nodes…"),
-            'edit_node': _("Editing node properties…"),
-            'set_description': _("Writing the chain description…"),
-            'save_chain': _("Saving the system chain…"),
-            'ask_user': _("Waiting for your answer…"),
-            'read_node': _("Reading the node…"),
-            'build_skill': _("Building the skill ladder…"),
-        }.get(name, _("Working…"))
-
     def _on_status(self, event):
-        """Router progress ping (GUI thread): update the live step text."""
-        ev = str(event or '')
-        if ev.startswith('tool:'):
-            self._set_status(self._tool_phrase(ev[5:]), sticky=True)
-        elif ev == 'thinking':
-            self._set_status(_("Reasoning the outcome…"), sticky=True)
+        event = str(event or '')
+        if event == 'reading':
+            self._set_status(_("Reading the canvas…"))
+        elif event.startswith('tool:'):
+            self._set_status(_("Running %s…") % event[5:])
 
     def _on_trace(self, message):
-        """A builder trace line (goal, Laya verdict, stored args, needle
-        reasoning, question) — shown dimmed so the build stays legible."""
         text = str(message or '')
-        if text:
-            self._append('tool', text)
+        if not text or text.startswith(('you:', 'round ', 'model:',
+                                        'selection:')):
+            return
+        self._log_lines.append(text)
+        if self._log_bubble is None:
+            self._log_bubble = self._append_bubble(text, muted=True)
+        else:
+            self._log_bubble.setText('\n'.join(self._log_lines))
+            self._scroll_to_bottom()
 
-    def _on_stop(self):
-        self._stop_event.set()
-        self._stop_busy()
-        self._record_timer.stop()
-        self._record_hold = None
-        if self._pending_ask is not None:
-            kind, evt, holder = self._pending_ask
-            holder[0] = ''
-            evt.set()
+    def _on_reply_delta(self, text):
+        text = str(text or '')
+        if not text.strip():
+            return
+        self._reply_text = text
+        if self._reply_bubble is None:
+            self._reply_bubble = self._append_bubble(text)
+        else:
+            self._reply_bubble.setText(text)
+            self._scroll_to_bottom()
+
+    # -------------------------------------------------------- selection
+
+    def _selected_nodes(self):
+        return list(self.main_window.graph_view.node_graph.selected_nodes()
+                    or [])
+
+    # ---------------------------------------------------------- content
+
+    def _on_attach(self):
+        """Paperclip: browse the system and write the file into the node."""
+        if self._single_selected() is None:
+            return
+        paths, _filter = QFileDialog.getOpenFileNames(
+            self, _('Load content into the node'), '',
+            _('All files (*.*)'))
+        if not paths:
+            return
+        self._start_ingest([('file', path) for path in paths])
+
+    def _single_selected(self):
+        nodes = self._selected_nodes()
+        if len(nodes) != 1:
+            self._hard_error(
+                _('Load content'),
+                _('Select exactly one node first — the content is written into '
+                  'that node\'s own field. (%d selected)') % len(nodes))
+            return None
+        return nodes[0]
+
+    def _start_ingest(self, sources):
+        node = self._single_selected()
+        if node is None:
+            return
+        if self._ingest_worker is not None and self._ingest_worker.isRunning():
+            self._hard_error(_('Load content'),
+                             _('A content load is already running.'))
+            return
+        node_id = str(getattr(node, 'id', '') or '')
+        slot = None        # the slot follows the source's kind (default_slot)
+        ctx = self._make_ctx()
+        self._append('tool', _("loading %d source(s) into %s…")
+                     % (len(sources), node_id))
+
+        def _job():
+            from player.builder import content as bcontent
+            written = []
+            for kind, value in sources:
+                if kind == 'file':
+                    written.extend(bcontent.ingest_file(ctx, node_id, value, slot))
+                elif kind == 'folder':
+                    written.extend(bcontent.ingest_folder(ctx, node_id, value, slot))
+                else:
+                    written.extend(bcontent.ingest_text(ctx, node_id, value, slot))
+            return written
+
+        self._ingest_worker = _IngestWorker(_job, parent=self)
+        self._ingest_worker.done.connect(self._on_ingest_done)
+        self._ingest_worker.failed.connect(self._on_ingest_failed)
+        self._ingest_worker.start()
+
+    def _on_ingest_done(self, results):
+        self._ingest_worker = None
+        for result in (results or []):
+            self._append('system', result.line())
+
+    def _on_ingest_failed(self, message, detail):
+        self._ingest_worker = None
+        logger.error('content ingest failed: %s\n%s', message, detail)
+        self._append('error', _("Content not loaded: %s") % message)
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle(_('Content not loaded'))
+        box.setText(str(message))
+        box.setDetailedText(str(detail))
+        box.exec_()
+
+    # ------------------------------------------------ drag and drop
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasText():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        sources = []
+        mime = event.mimeData()
+        if mime.hasUrls():
+            for url in mime.urls():
+                path = url.toLocalFile()
+                if not path:
+                    continue
+                sources.append(('folder', path) if os.path.isdir(path)
+                               else ('file', path))
+        elif mime.hasText() and mime.text().strip():
+            sources.append(('text', mime.text()))
+        if not sources:
+            return
+        event.acceptProposedAction()
+        self._start_ingest(sources)
+
+    # ------------------------------------------------------------- turn
 
     def _on_send(self):
         text = self._input.text().strip()
         self._input.clear()
         if not text:
             return
-        # A pending ask consumes the line as the answer.
-        if self._pending_ask is not None:
-            kind, evt, holder = self._pending_ask
-            holder[0] = text
-            evt.set()
-            return
+        self._sync_session()
         self._append('user', text)
         self._remember('user', text)
+        # Every message is a turn.  The walkthrough and the description are the
+        # header buttons (deterministic, one click), so the chat never routes
+        # to them and never has to guess what the user wanted instead.
         self._start_turn(text)
 
-    # ------------------------------------------------------------- turn
-
     def _make_ctx(self):
-        """The build-side ctx: every canvas access marshals to the GUI thread."""
+        """The read-side ctx; every canvas access marshals to the GUI thread."""
         graph_view = self.main_window.graph_view
 
         def _graph_manager():
             return graph_view.graph_manager
 
-        def _config_manager():
-            return graph_view.config_manager
+        def _selection_ids():
+            nodes = list(graph_view.node_graph.selected_nodes() or [])
+            return [str(getattr(n, 'id', '')) for n in nodes
+                    if getattr(n, 'id', '')]
 
-        def _chains_dir():
-            return str(graph_view.chains_folder or '')
-
-        def _selection_text():
-            """The user's selected nodes as a readable detail block."""
-            try:
-                nodes = list(graph_view.node_graph.selected_nodes() or [])
-            except Exception:
-                nodes = []
-            if not nodes:
-                return ''
-            try:
-                from player.builder.devtools import describe_node
-            except Exception:
-                return ''
-            blocks = []
-            for node in nodes[:3]:
-                try:
-                    blocks.append(describe_node(node))
-                except Exception:
-                    continue
-            return '\n\n'.join(blocks)
-
-        def _selection_node_ids():
-            """The ids of the nodes the user selected (its test TARGET)."""
-            try:
-                nodes = list(graph_view.node_graph.selected_nodes() or [])
-            except Exception:
-                nodes = []
-            ids = []
-            for node in nodes:
-                nid = getattr(node, 'id', None)
-                if nid:
-                    ids.append(str(nid))
-            return ids
+        def _stored_flow():
+            graph = getattr(self.main_window, 'graph_view', None)
+            getter = getattr(graph, 'get_flow', None)
+            if callable(getter):
+                return dict(getter() or {})
+            return {}
 
         return {
             'graph_manager': lambda: self._gui.call(_graph_manager),
-            'config_manager': lambda: self._gui.call(_config_manager),
-            'chains_dir': self._gui.call(_chains_dir),
-            'state': self._state,
-            'ask': self._ask,
-            'position_hint': self._position_hint,
-            # Every canvas OP (not just the manager getter) runs on the GUI
-            # thread — node and port objects included.  ask_user is the one
-            # exception the executor makes: it blocks on the user.
             'run_on_gui': self._gui.call,
             'stop': self._stop_event.is_set,
-            # The assistant's turn context: the nodes the user selected
-            # (its focus), their ids (its test TARGET — a single selection
-            # tests THAT node, not the whole chain) and the recent exchange
-            # tail (its memory).
-            'selection_text': lambda: self._gui.call(_selection_text),
-            'selection_node_ids': lambda: self._gui.call(_selection_node_ids),
-            'history': list(self._history),
+            'selection_node_ids': lambda: self._gui.call(_selection_ids),
+            'stored_flow': _stored_flow,
+            'history': list(self._session_history()),
         }
-
-    def _position_hint(self):
-        self._pos_counter += 1
-        col = (self._pos_counter - 1) % 4
-        row = (self._pos_counter - 1) // 4
-        return [40.0 + col * 320.0, 40.0 + row * 220.0]
 
     def _start_turn(self, message):
         if self._worker is not None and self._worker.isRunning():
-            self._append('system', _("Still building — wait for the current "
-                                     "turn to finish."))
+            self._hard_error(_('Builder'),
+                             _('Still answering — wait for the current reply.'))
             return
+        # A new question ends the previous walkthrough: its bubbles belong to
+        # the old answer and its ring would sit on an unrelated node.
+        self._stop_walk()
+        from player.builder.assistant import BuilderAssistant
         self._stop_event.clear()
-        self._start_busy(_("Reading the graph…"))
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._log_bubble = None
+        self._log_lines = []
+        self._start_busy(_("Reading the canvas…"))
         ctx = self._make_ctx()
-        # The assistant reads the canvas + the user's selection itself, so
-        # a turn is just the raw message.
-        router = self._make_router(ctx)
-        self._worker = _BuilderWorker(
-            ctx, message, router, self._stop_event, parent=self)
+        self._worker = _TurnWorker(
+            ctx, message, BuilderAssistant(ctx), self._stop_event, parent=self)
         self._worker.finished_turn.connect(self._on_turn_finished)
+        self._worker.failed.connect(self._on_turn_failed)
         self._worker.status.connect(self._on_status)
         self._worker.trace.connect(self._on_trace)
+        self._worker.reply_delta.connect(self._on_reply_delta)
         self._worker.start()
 
-    def _make_router(self, ctx):
-        """The panel's brain is the building assistant — the composer and
-        the teach flow stay importable modules, off this path by design."""
-        try:
-            from player.builder.assistant import BuilderAssistant
-            return BuilderAssistant(ctx)
-        except Exception:
-            return None
-
-    def _on_turn_finished(self, text):
+    def _on_turn_finished(self, payload):
+        payload = payload if isinstance(payload, dict) else {'reply': str(payload or '')}
+        text = str(payload.get('reply') or '')
         self._remember('assistant', text)
-        for line in str(text or '').splitlines():
-            if not line.strip():
-                continue
-            self._append('tool' if line.startswith(('created', 'wired',
-                                                    'set ', 'saved',
-                                                    'built', 'Canvas',
-                                                    'user said',
-                                                    'bound ')) else
-                         ('error' if line.startswith('(') else 'system'),
-                         line)
+        final = self._reply_text.strip() or text.strip()
+        if final:
+            if self._reply_bubble is not None:
+                self._reply_bubble.setText(final)
+            else:
+                self._append_bubble(final)
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._log_bubble = None
+        self._log_lines = []
         self._stop_event.set()
+        self._stop_busy()
+        self._annotate(payload)
+
+    def _on_turn_failed(self, message):
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._log_bubble = None
+        self._log_lines = []
+        self._stop_event.set()
+        self._stop_busy()
+        self._append('error', _("Builder failed: %s") % message)
+        self._hard_error(_('Builder failed'), message)
+
+    def _on_stop(self):
+        self._stop_event.set()
+        self._stop_walk()
         self._stop_busy()
 
     def _remember(self, role, text):
-        """Keep the last exchanges for the assistant's turn context."""
+        history = self._session_history()
+        history.append({'role': str(role), 'text': str(text or '')[:800]})
+        del history[:-10]
+
+    # ------------------------------------------------------- sessions
+
+    def _chain_id(self):
+        """Identity of the chain on the canvas (a new one is a new session).
+
+        ``graph_view._chain_epoch`` is bumped when a chain is opened or the
+        canvas is cleared, which is exactly when the conversation must not
+        carry over.  Saving an unsaved chain does NOT bump it, so naming a
+        chain mid-conversation keeps the session.
+        """
+        graph = getattr(self.main_window, 'graph_view', None)
+        return int(getattr(graph, '_chain_epoch', 0) or 0)
+
+    def _session_history(self):
+        if self._session_id is None:
+            self._session_id = self._chain_id()
+        return self._sessions.setdefault(self._session_id, [])
+
+    def _sync_session(self):
+        """Start a fresh chat when the canvas holds a different chain."""
+        if self._session_id is None:
+            self._session_id = self._chain_id()
+            self._sessions.setdefault(self._session_id, [])
+            return
+        chain_id = self._chain_id()
+        if chain_id == self._session_id:
+            return
+        if self._worker is not None and self._worker.isRunning():
+            return                  # finish the turn, then rotate
+        self._session_id = chain_id
+        self._sessions.setdefault(chain_id, [])
+        self._reset_chat()
+
+    def _reset_chat(self):
+        """Drop the visible conversation, keep the panel and its settings."""
+        self._walk_timer.stop()
+        self._walk_steps = []
+        self._walk_index = 0
+        while self._chat_layout.count():
+            item = self._chat_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._log_bubble = None
+        self._log_lines = []
+        cm = getattr(getattr(self.main_window, 'graph_view', None),
+                     'config_manager', None)
+        path = str(getattr(cm, '_current_chain_file', '') or '')
+        label = os.path.basename(path) if path else _('unsaved chain')
+        self._append('system', _(
+            "New session — %s. I read this chain's canvas and I never change "
+            "it.") % label)
+
+    # ------------------------------------------------------ annotations
+
+    def _overlay(self):
+        """The canvas annotation layer, or None (with a dialog) when absent."""
+        graph_view = self.main_window.graph_view
+        getter = getattr(graph_view, 'flow_overlay', None)
+        if not callable(getter):
+            self._hard_error(_('Canvas annotations'), _(
+                'this canvas cannot be annotated: its graph view has no flow '
+                'overlay'))
+            return None
+        return getter()
+
+    def _config(self):
+        cfg = getattr(self.main_window.graph_view, 'config_manager', None)
+        if cfg is None:
+            raise RuntimeError('the canvas has no chain configuration')
+        return cfg
+
+    def _graph_view(self):
+        graph = getattr(self.main_window, 'graph_view', None)
+        if graph is None:
+            raise RuntimeError('the canvas is not available')
+        return graph
+
+    def _snapshot(self):
+        """The live canvas, read on the GUI thread (the panel's own thread)."""
+        from player.builder import snapshot as bsnapshot
+        return bsnapshot.build(self.main_window.graph_view.graph_manager)
+
+    def _on_describe(self):
+        """Re-describe the OPEN chain NOW, one connection at a time.
+
+        Nodes first (their own settings, no model), then one small model call
+        per wire, then the boxes and the summary.  No full-canvas prompt is
+        ever built, so a small local model can do the whole chain; it takes
+        one call per connection and the panel says which one is running.
+        """
+        if self._worker is not None and self._worker.isRunning():
+            self._hard_error(_('Describe chain'), _(
+                'Still answering — wait for the current reply.'))
+            return
+        self._stop_walk()
+        self._stop_event.clear()
+        self._reply_bubble = None
+        self._reply_text = ''
+        self._append('system', _(
+            'describing one connection at a time — a model call per wire, so '
+            'this is slow on a small model and every wire still gets its own '
+            'sentence'))
+        self._start_busy(_('Reading the canvas…'))
+        self._worker = _DescribeWorker(self._make_ctx(), self._stop_event,
+                                       parent=self)
+        self._worker.progress.connect(self._on_describe_progress)
+        self._worker.done.connect(self._on_describe_done)
+        self._worker.failed.connect(self._on_describe_failed)
+        self._worker.start()
+
+    def _on_describe_progress(self, event):
+        self._set_status(_('Describing %s…') % str(event or ''))
+
+    def _on_describe_done(self, result):
+        """Store what the pass described, and say what did not answer."""
+        self._worker = None
+        self._stop_event.set()
+        self._stop_busy()
+        result = result if isinstance(result, dict) else {}
+        failed = list(result.get('failed') or ())
         try:
-            self._history.append({'role': str(role),
-                                  'text': str(text or '')[:800]})
-            del self._history[:-10]
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------- ask
-
-    def _ask(self, question, kind):
-        """Block the worker until the user answers (chat line or recording)."""
-        evt = threading.Event()
-        holder = [None]
-        self._gui.call(lambda: self._begin_ask(question, kind, evt, holder))
-        while not evt.wait(0.2):
-            if self._stop_event.is_set():
-                return ''
-        return self._gui.call(lambda: self._take_ask_answer(kind, holder))
-
-    def _begin_ask(self, question, kind, evt, holder):
-        self._pending_ask = (kind, evt, holder)
-        if kind == 'teach_card':
-            payload = (question if isinstance(question, dict)
-                       else {'step': str(question or '')})
-            step = str(payload.get('step') or '')
-            attempt = str(payload.get('attempt') or '').strip()
-            body = _('No tool does this yet. Teach me: record it in your '
-                     'browser or on your desktop — or let me build it.')
-            if attempt:
-                body = _('I tried it myself first — %s') % attempt[:280] \
-                    + '\n' + body
-            self._append_card(
-                title=_('How do I: %s?') % step[:140],
-                body=body,
-                options=[(_('Record web'), 'web', True),
-                         (_('Record desktop'), 'desktop', False),
-                         (_('Build LLM step'), 'llm', False),
-                         (_('Build a brain'), 'brain', False),
-                         (_('Skip'), 'skip', False)],
-                on_choice=lambda value, _card: self._resolve_ask(value))
+            self._store_flow(result.get('flow') or {})
+        except Exception as exc:
+            logger.exception('flow metadata rejected')
+            self._hard_error(_('Flow metadata not stored'), str(exc))
             return
-        if kind in ('record_sequence', 'record_web_sequence'):
-            self._begin_record_card(str(question or ''), kind)
+        self._append('system', _(
+            'connections described: %d of %d (one model call each)')
+            % (int(result.get('done') or 0), int(result.get('total') or 0)))
+        if not failed:
             return
-        if kind == 'confirm':
-            # A confirmation is a yes/no QUESTION: the two answers are offered
-            # as buttons, never as a single tap target carrying the whole
-            # question text (which read as a silent default "yes").
-            self._append_card(
-                title=str(question or ''),
-                options=[(_('Yes'), 'yes', True), (_('No'), 'no', False)],
-                on_choice=lambda value, _card: self._resolve_ask(value))
-            return
-        self._append('system', _("%s\n(Reply with your answer.)") % (
-            question,))
+        lines = ['%s — %s' % (label, error) for label, error in failed[:6]]
+        if len(failed) > 6:
+            lines.append(_('… %d more (see the log)') % (len(failed) - 6))
+        logger.warning('staged describe: %d connection(s) unanswered:\n%s',
+                       len(failed), '\n'.join(lines))
+        self._append('error', _(
+            '%d connection(s) got no answer and kept their derived wording:\n%s')
+            % (len(failed), '\n'.join(lines)))
+        self._hard_error(_('Describe chain'), _(
+            'The description was stored, but the model did not answer for %d '
+            'connection(s). Those kept the wording derived from the canvas.\n\n'
+            '%s') % (len(failed), '\n'.join(lines)))
 
-    def _resolve_ask(self, value):
-        """Answer the pending ask (the worker picks it up on its poll)."""
-        if self._pending_ask is None:
-            return
-        _kind, evt, holder = self._pending_ask
-        holder[0] = str(value or '')
-        evt.set()
-
-    def _begin_record_card(self, question, kind):
-        """The record ask as a card: Start runs the recorder on the
-        placeholder node; the card advances when the file lands."""
-        node_id = str(self._state.get('last_node_id') or '')
-        prefill = ''
-        node = None
+    def _on_describe_failed(self, message, detail):
+        """The pass itself failed: the canvas still describes the chain."""
+        self._worker = None
+        self._stop_event.set()
+        self._stop_busy()
+        logger.error('staged describe failed: %s\n%s', message, detail)
+        self._append('error', _('Builder failed: %s') % message)
+        self._hard_error(_('Builder failed'), message)
         try:
-            node = self.main_window.graph_view.graph_manager.get_node_by_id(
-                node_id)
-        except Exception:
-            node = None
-        if node is not None:
-            try:
-                prefill = str(node.get_property('description') or '')
-            except Exception:
-                prefill = ''
-            if not prefill:
-                try:
-                    prefill = str(node.name() or '')
-                except Exception:
-                    prefill = ''
-        self._record_kind = kind
-        self._record_node_id = node_id
-        self._record_hold = None
-        self._record_card = self._append_card(
-            title=question or _('Record the step'),
-            body=_('Click Start — the recorder opens and captures your '
-                   'actions. Press ESC when you finish; the tool is wrapped '
-                   'the moment it is saved.'),
-            options=[(_('Start recording'), 'start', True),
-                     (_('I cannot record it'), 'cancel', False)],
-            on_choice=self._on_record_choice,
-            editable=prefill,
-            editable_hint=_('What does this tool do? (the orchestrator '
-                            'reads this)'))
+            self._describe_from_canvas(_(
+                'the model call failed — described from the canvas instead'))
+        except Exception as exc:
+            logger.exception('describe failed')
+            self._hard_error(_('Describe chain'), str(exc))
 
-    def _on_record_choice(self, value, card):
-        if value != 'start':
-            self._record_timer.stop()
-            self._record_card = None
-            self._record_hold = None
-            self._resolve_ask('')
+    def _describe_from_canvas(self, reason=''):
+        """Describe the canvas deterministically (no model, no run).
+
+        Every sentence comes from the node it describes, so this is both the
+        fallback when a model answer carries no ``flow`` and the tool used when
+        a model is not available at all.  Stored refs this canvas does not have
+        are dropped rather than raised: describing again is the whole point.
+        """
+        getter = getattr(self._graph_view(), 'get_flow', None)
+        stored = dict(getter() or {}) if callable(getter) else {}
+        from player.builder import flow as bflow
+        stored, dropped = bflow.prune(self._snapshot(), stored)
+        if dropped:
+            logger.warning('describe: dropped %d ref(s) this canvas does not '
+                           'have', dropped)
+        if reason:
+            self._append('system', reason)
+        self._store_flow(stored, force=True)
+
+    def _annotate(self, payload):
+        """The side effects of a chat turn: a change is written to the file.
+
+        The edit itself already happened on the GUI thread (``tools.edit_node``
+        / ``tools.wire_nodes``), so all that is left is making it permanent —
+        exactly what the Describe button does for a description.  Writing the
+        description or starting the walkthrough is not a turn's business: those
+        are the panel's buttons.
+        """
+        if not payload.get('changed'):
             return
-        description = ''
-        if card is not None and card.edit is not None:
-            description = card.edit.text().strip()
-        if self._start_recording(self._record_node_id,
-                                 self._record_kind == 'record_web_sequence',
-                                 description):
-            card.set_status(_('Recording… press ESC when you are done.'))
-            self._record_timer.start()
+        config = getattr(getattr(self.main_window, 'graph_view', None),
+                         'config_manager', None)
+        path = str(getattr(config, '_current_chain_file', '') or '')
+        if not (path and os.path.exists(path)):
+            self._append('system', _(
+                'nothing written yet: this canvas has no chain file — save the '
+                'chain once and the change becomes permanent'))
+            return
+        self._graph_view().save_chain(path)
+        self._append('system', _('chain written to %s') % os.path.basename(path))
+
+    def _store_flow(self, raw, force=False):
+        """Validate, keep in the chain and draw the boxes of one flow object.
+
+        ``force`` (the canvas fallback) re-derives every sentence and note;
+        a model's answer is merged instead — its own words always win over the
+        derivation.  Either way the chain file is rewritten and the panel says
+        whether the description CHANGED, so a no-op can never masquerade as a
+        rewrite.
+        """
+        from player.builder import flow as bflow
+        graph = self._graph_view()
+        previous = _prose(getattr(graph, 'get_flow', lambda: {})() or {})
+        snapshot = self._snapshot()
+        metadata = bflow.check_nodes(snapshot, bflow.normalise(raw))
+        # A model writes a paragraph; it will not enumerate every node.  Fill in
+        # a description for everything it left out (its own words always win),
+        # so the chain says what EACH node does instead of only the gist.
+        metadata = bflow.complete(snapshot, metadata, force=force)
+        # A section the model left without a note gets one derived from its own
+        # nodes (and it is STORED, so the next reader sees it too): the box
+        # prints the note, so a title-only section is a headline with no body.
+        metadata['sections'] = bflow.sections(snapshot, metadata,
+                                              force_notes=force)
+        # The node's OWN description field is where the full sentence lives:
+        # every node dialog shows it (ModernDialog.add_description) and the
+        # save carries it, so the text sits on the node the user is looking at.
+        self._write_descriptions(metadata)
+        setter = getattr(graph, 'set_flow', None)
+        if not callable(setter):
+            raise RuntimeError(
+                'this canvas cannot store flow metadata (no set_flow)')
+        setter(metadata)
+        overlay = self._overlay()
+        if overlay is not None:
+            overlay.show_sections(bflow.sections(snapshot, metadata))
+        self._append('system', _(
+            '%s (%d section(s), %d node(s), %d step(s)) — %s')
+            % (_('flow metadata re-described') if force
+               else _('flow metadata stored'), len(metadata['sections']),
+               len(metadata['nodes']), len(metadata['steps']),
+               _('the wording changed') if _prose(metadata) != previous
+               else _('the wording came out IDENTICAL to what was stored')))
+        # A chain that already has a file is updated NOW, so the description
+        # stays permanent even if this session never saves again.
+        path = str(getattr(self._config(), '_current_chain_file', '') or '')
+        if path and os.path.exists(path):
+            graph.save_chain(path)
+            self._append('system', _('written to %s')
+                         % os.path.basename(path))
         else:
-            card.set_status(_("Could not start the recorder — use the "
-                              "node's Record button, then type DONE."))
+            self._append('system', _(
+                'nothing written: this canvas has no chain file yet — save the '
+                'chain once and the description becomes permanent'))
 
-    def _start_recording(self, node_id, is_web, description=''):
-        """Start the node-attached recorder; True when it launched."""
-        try:
-            graph_view = self.main_window.graph_view
-            node = (graph_view.graph_manager.get_node_by_id(node_id)
-                    if node_id else None)
+    def _write_descriptions(self, metadata):
+        """Copy each node's sentence into that node's ``description`` property.
+
+        A node without the property raises: every type declares it, so a raise
+        here means a type was added without one — a defect, not a fallback.
+        """
+        manager = self.main_window.graph_view.graph_manager
+        written = 0
+        for entry in metadata.get('nodes') or ():
+            node = manager.get_node_by_id(entry['node'])
             if node is None:
-                return False
-            if description:
-                node.set_property('description', description)
-            if is_web:
-                graph_view.record_web_session(node)
-                self._record_hold = {'web': True, 'node': node}
-                return True
-            from player.builder.node_templates import slugify
-            name = slugify(node.name() or 'step') or 'step'
-            node.set_property('sequence_file', name + '.json')
-            seq_dir = str(getattr(graph_view, 'sequences_folder', '') or '')
-            watch = os.path.join(seq_dir, name + '.json') if seq_dir else ''
-            pre_mtime = None
-            try:
-                if watch and os.path.exists(watch):
-                    pre_mtime = os.path.getmtime(watch)
-            except Exception:
-                pre_mtime = None
-            self._record_hold = {'web': False, 'node': node,
-                                 'watch': watch, 'pre_mtime': pre_mtime}
-            self.main_window.start_recording(name)
-            return True
-        except Exception:
-            logger.exception('could not start recording')
-            return False
+                continue
+            node.set_property('description', str(entry.get('does') or ''))
+            written += 1
+        if written:
+            self._append('system', _(
+                'description written into %d node(s) — open any node to read '
+                'it in full') % written)
 
-    def _poll_recording(self):
-        """Timer tick: advance the record card once the recording lands."""
-        hold = self._record_hold or {}
-        if not hold:
-            self._record_timer.stop()
+    def _on_walk(self):
+        """Header button: the per-node highlight, with NO model at all.
+
+        A walkthrough is deterministic — ``flow.steps`` builds every line from
+        the node's own settings — so asking a model for one only bought a
+        whole-canvas prompt, and that request is exactly what a small model
+        refuses ("please reduce the length of the messages").
+        """
+        try:
+            self._start_walk()
+        except Exception as exc:
+            logger.exception('walkthrough failed')
+            self._hard_error(_('Smoke test'), str(exc))
+
+    def _start_walk(self):
+        """The visual smoke test: ring each executed node, explain it, run nothing."""
+        from player.builder import flow as bflow
+        snapshot = self._snapshot()
+        getter = getattr(self._graph_view(), 'get_flow', None)
+        stored = getter() if callable(getter) else {}
+        metadata = bflow.normalise(stored or {})
+        # A description written by an older session can name nodes this canvas
+        # does not have; walking it would raise on the first dead ref instead of
+        # showing the rest of the chain.
+        metadata, dropped = bflow.prune(snapshot, metadata)
+        if dropped:
+            logger.warning('walkthrough: skipped %d ref(s) this canvas does '
+                           'not have', dropped)
+        steps = bflow.steps(snapshot, metadata)
+        if not steps:
+            self._hard_error(_('Smoke test'), _(
+                'this chain has no execution step to walk: no node starts it'))
+            return
+        overlay = self._overlay()
+        if overlay is None:
+            return
+        overlay.show_sections(bflow.sections(snapshot, metadata))
+        self._walk_steps = steps
+        self._walk_index = 0
+        self._append('system', _(
+            'visual walkthrough — %d step(s); nothing is executed') % len(steps))
+        self._walk_timer.start()
+        self._walk_next()
+
+    def _walk_next(self):
+        """Ring the next step and say what it does and how it connects."""
+        if self._walk_index >= len(self._walk_steps):
+            self._stop_walk(finished=True)
+            return
+        step = self._walk_steps[self._walk_index]
+        self._walk_index += 1
+        overlay = self._overlay()
+        if overlay is None:
+            self._stop_walk()
             return
         try:
-            if hold.get('web'):
-                node = hold.get('node')
-                path = (str(node.get_property('session_file') or '')
-                        if node is not None else '')
-                if path:
-                    self._finish_recording()
-                return
-            watch = str(hold.get('watch') or '')
-            if watch and os.path.exists(watch):
-                if hold.get('pre_mtime') is None:
-                    self._finish_recording()
-                    return
-                try:
-                    if os.path.getmtime(watch) != hold.get('pre_mtime'):
-                        self._finish_recording()
-                except Exception:
-                    pass
-        except Exception:
-            logger.debug('record poll failed', exc_info=True)
+            overlay.highlight([step['id']])
+        except Exception as exc:
+            self._hard_error(_('Smoke test'), str(exc))
+            self._stop_walk()
+            return
+        body = '\n'.join('· ' + line for line in step['body'])
+        self._append_bubble(_('Step %d/%d — %s [%s]\n%s')
+                            % (step['index'], len(self._walk_steps),
+                               step['title'], step['role'], body))
 
-    def _finish_recording(self):
-        self._record_timer.stop()
-        hold = self._record_hold or {}
-        self._record_hold = None
-        card = self._record_card
-        self._record_card = None
-        node = hold.get('node')
-        if card is not None and card.edit is not None and node is not None:
-            try:
-                text = card.edit.text().strip()
-                if text:
-                    node.set_property('description', text)
-            except Exception:
-                pass
-        if card is not None:
-            card.set_status(_('Recorded — wrapping it into a tool…'))
-        self._resolve_ask('')
+    def _stop_walk(self, finished=False):
+        """End the walkthrough (the boxes stay: they are the chain's sections)."""
+        self._walk_timer.stop()
+        self._walk_steps = []
+        self._walk_index = 0
+        overlay = self._overlay()
+        if overlay is not None:
+            overlay.clear_highlights()
+        if finished:
+            self._append('system', _('walkthrough finished — nothing was run'))
 
-    def _take_ask_answer(self, kind, holder):
-        if self._pending_ask is not None:
-            self._pending_ask = None
-        answer = str(holder[0] or '').strip()
-        if kind in ('record_sequence', 'record_web_sequence'):
-            # The builder creates the node FIRST: its recorded file path is
-            # the real answer, whatever the user typed.
-            path = self._last_recorded_path()
-            return path if path else (answer or '')
-        return answer
+    def _on_clear_annotations(self):
+        """Header button: drop the boxes and the ring, leave the chain alone."""
+        self._walk_timer.stop()
+        self._walk_steps = []
+        self._walk_index = 0
+        overlay = self._overlay()
+        if overlay is None:
+            return
+        overlay.clear()
+        self._append('system', _('annotations cleared'))
 
-    def _last_recorded_path(self):
-        """sequence_file of the most recently created node, or ''."""
-        last_id = self._state.get('last_node_id') or ''
-        try:
-            graph_view = self.main_window.graph_view
+    # ------------------------------------------------------- hard error
 
-            def _read():
-                if not last_id:
-                    return ''
-                node = graph_view.graph_manager.get_node_by_id(last_id)
-                if node is None:
-                    return ''
-                try:
-                    return str(node.get_property('sequence_file')
-                               or node.get_property('session_file') or '')
-                except Exception:
-                    return ''
-            return self._gui.call(_read)
-        except Exception:
-            return ''
+    def _hard_error(self, title, message):
+        """Show a failure the user cannot miss (chat + dialog + log)."""
+        logger.error('%s: %s', title, message)
+        if not message:
+            return
+        self._append('error', _("%s: %s") % (title, message))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle(str(title))
+        box.setText(str(message))
+        box.exec_()

@@ -485,6 +485,26 @@ def _strip_think_tags(text):
 _PROBE_LATENCY_WARNED = False
 
 
+def _looks_like_question(line: str) -> bool:
+    """True when a generated line can be a retrieval PROBE.
+
+    A probe is a question; a python sketch ("def pipeline_plan():"), a
+    section header or a plan statement is never one.  Accepting those burned
+    a full model round trip plus three critique retries before the validator
+    rejected them.
+    """
+    text = str(line or "").strip()
+    if not text:
+        return False
+    if text.endswith("?"):
+        return True
+    try:
+        from AI.comorag_engine import _starts_interrogative
+        return bool(_starts_interrogative(text))
+    except Exception:
+        return False
+
+
 def _generate_intent_plan(enhanced_intent, llm_config, api_url):
     """Create the INITIAL INTENT PLAN that drives all probe derivation.
 
@@ -503,15 +523,17 @@ def _generate_intent_plan(enhanced_intent, llm_config, api_url):
             "Output exactly three sections:\n"
             "INTENT SUMMARY: <2-3 sentences synthesizing what the pipeline "
             "needs to know, based ONLY on the CONTEXT>\n"
-            "SEARCH PLAN: <2-4 items, one per line starting with '-', each "
-            "naming a concrete detail/entity to find AND where in the "
-            "context to look>\n"
+            "SEARCH PLAN: <2-4 items, one per line starting with '-', each a "
+            "short noun phrase naming a concrete detail/entity to find (no "
+            "verbs such as 'search for') and where in the context to look>\n"
             "EXPECTED ANSWER SHAPE: <1-2 sentences describing what the final "
             "response should cover>\n\n"
             "Use ONLY terms that appear in the CONTEXT. Never invent "
-            "details. Never repeat the GOAL verbatim.\n\n"
+            "details. Never repeat the GOAL verbatim.\n"
+            "Write PLAIN TEXT only: no code, no function definitions, no "
+            "imports, no JSON, no code fences.\n\n"
             f"Material:\n{str(enhanced_intent or '')[:2200]}\n\n"
-            "Plan: "
+            "PLAN:\nINTENT SUMMARY: "
         )
         # NO timeout: probing may be collecting context from huge sources
         # (and may sit behind a per-node model switch in multi-model chains)
@@ -546,22 +568,8 @@ def _generate_llamacpp_probe(enhanced_intent, consumed_facts, llm_config,
     """
     global _PROBE_LATENCY_WARNED
     try:
-        use_llamacpp = str(llm_config.get("use_llamacpp", False)).lower() in (
-            "true", "1", "yes", "on",
-        )
-        if not use_llamacpp:
-            return None
-        model_path = (llm_config.get("llamacpp_model_path") or "").strip()
-        if not os.path.isabs(model_path):
-            try:
-                from AI.config_loader import get_models_dir
-                model_path = os.path.normpath(
-                    os.path.join(get_models_dir(), model_path)
-                )
-            except Exception:
-                return None
-        if not os.path.exists(model_path):
-            return None
+        # The engine (llama.cpp GGUF vs the node's own gateway model) is
+        # resolved by the raw-completion call below.
 
         # Guidance survives the prefix slice: split the engine's appended
         # INTENT PLAN / BASE CONTEXT / PREVIOUS PROBES / PREVIOUS PROBE
@@ -707,6 +715,23 @@ def _generate_llamacpp_probe(enhanced_intent, consumed_facts, llm_config,
                 + _semantic_desc[:400]
                 + "\n\n"
             )
+        # Hard rules for EVERY probe prompt variant, last before the anchor:
+        # a small model drifts into code/markdown as soon as the material has
+        # any programming shape, then answers the next call by continuing the
+        # sketch (observed: "def pipeline_plan():" emitted as a probe).
+        if _critique_mode:
+            probe_prompt += (
+                "\nNever write code, function definitions, imports or JSON. "
+                "Every 'Corrected probe:' line must be a QUESTION ending "
+                "with '?'.\n"
+            )
+        else:
+            probe_prompt += (
+                "\nNever write code, function definitions, imports or JSON. "
+                "Output ONLY questions, one per line, each ending with '?'. "
+                "Never copy a SEARCH PLAN item verbatim — turn it into a "
+                "question.\n"
+            )
         # Anchor for raw completion mode (no chat template): the model
         # continues after "Probe question:" instead of starting a reasoning
         # block.
@@ -755,25 +780,22 @@ def _generate_llamacpp_probe(enhanced_intent, consumed_facts, llm_config,
                 # Reflection template: take the text after the marker.
                 _after_marker = True
                 _rest = line.split(":", 1)[1].strip() if ":" in line else ""
-                if _rest and _rest[:200] not in _probes:
+                if _rest and _looks_like_question(_rest) and \
+                        _rest[:200] not in _probes:
                     _probes.append(_rest[:200])
                 continue
-            if _after_marker:
-                if line[:200] not in _probes:
-                    _probes.append(line[:200])
-            elif line.endswith("?"):
-                if line[:200] not in _probes:
-                    _probes.append(line[:200])
-        if _critique_mode and not _probes:
-            # Reflection wrapped without the marker — last line wins.
-            _probes = [text.splitlines()[-1].strip()[:200]]
-        elif not _probes:
-            # No '?'-terminated line: fall back to the first non-empty line
-            # (a truncated interrogative is still valid — the engine's
-            # validator accepts interrogative starts).
-            _probes = [
-                ln.strip()[:200] for ln in text.splitlines() if ln.strip()
-            ][:1]
+            if _critique_mode and not _after_marker:
+                # The critique template opens with a reflection block; those
+                # sentences (some of them questions) are not probes.
+                continue
+            if _looks_like_question(line) and line[:200] not in _probes:
+                _probes.append(line[:200])
+        if not _probes:
+            # No question line at all: a fragment, a plan statement or a code
+            # sketch is NOT a probe.  Return nothing so the consolidator uses
+            # its deterministic ladder instead of paying another model call
+            # for the same rejection.
+            return None
         _probes = [p for p in _probes if p][:3]
         if not _probes:
             return None
@@ -813,39 +835,43 @@ def _llamacpp_raw_completion(
     prompt, llm_config, api_url, max_tokens=64, temperature=0.3,
     attempts=4, retry_delay=2.0,
 ) -> Optional[str]:
-    """Call the node's own llamacpp model in raw-completion mode.
+    """Call the NODE'S OWN model in raw-completion mode (consolidation hooks).
 
-    Raw ``/completion`` (no chat template) so the model answers immediately
-    instead of emitting a think block that the chat path strips.  Retries
-    transient gateway errors (the engine may be starting or mid-restart).
-    NO timeout: a local generation finishes when it finishes — probing must
-    never time out because it may be collecting context from huge sources or
-    waiting behind a per-node model switch in multi-model chains.  Returns
-    the response text or None on any failure.
+    llama.cpp nodes hit the engine's raw ``/completion`` (no chat template) so
+    the model answers immediately instead of emitting a think block that the
+    chat path strips.  Every other engine (Ollama, BYOK providers) hits the
+    gateway's ``/generate`` with the node's own model, so ComoRAG consolidation
+    is not silently a llama.cpp-only feature.  Retries transient gateway
+    errors (the engine may be starting or mid-restart).  NO timeout: a local
+    generation finishes when it finishes — probing must never time out because
+    it may be collecting context from huge sources or waiting behind a
+    per-node model switch in multi-model chains.  Returns the response text
+    or None on any failure.
     """
     try:
         use_llamacpp = str(llm_config.get("use_llamacpp", False)).lower() in (
             "true", "1", "yes", "on",
         )
-        if not use_llamacpp:
-            return None
-        model_path = (llm_config.get("llamacpp_model_path") or "").strip()
-        if not os.path.isabs(model_path):
-            try:
-                from AI.config_loader import get_models_dir
-                model_path = os.path.normpath(
-                    os.path.join(get_models_dir(), model_path)
-                )
-            except Exception:
+        model_path = ""
+        gpu_layers, threads, context_size = 0, -1, 0
+        if use_llamacpp:
+            model_path = (llm_config.get("llamacpp_model_path") or "").strip()
+            if not os.path.isabs(model_path):
+                try:
+                    from AI.config_loader import get_models_dir
+                    model_path = os.path.normpath(
+                        os.path.join(get_models_dir(), model_path)
+                    )
+                except Exception:
+                    return None
+            if not os.path.exists(model_path):
                 return None
-        if not os.path.exists(model_path):
-            return None
+            gpu_layers = int(llm_config.get("llamacpp_gpu_layers", 0) or 0)
+            threads = int(llm_config.get("llamacpp_threads", -1) or -1)
+            context_size = int(llm_config.get("llamacpp_context_size", 0) or 0)
 
-        gpu_layers = int(llm_config.get("llamacpp_gpu_layers", 0) or 0)
-        threads = int(llm_config.get("llamacpp_threads", -1) or -1)
-        context_size = int(llm_config.get("llamacpp_context_size", 0) or 0)
-
-        if _direct_transport is not None and _direct_transport.is_direct_mode():
+        if use_llamacpp and _direct_transport is not None and \
+                _direct_transport.is_direct_mode():
             result = _direct_transport.generate(
                 model=model_path,
                 prompt=prompt,
@@ -870,31 +896,49 @@ def _llamacpp_raw_completion(
             return None
         import requests as _rq
         _last = ""
+        if not use_llamacpp:
+            # Ollama / BYOK provider node: one plain generation on its own
+            # model through the gateway (the prefix routes it).
+            _endpoint = f"{_base}/generate"
+            _payload = {
+                "model": str(llm_config.get("model") or "").strip(),
+                "prompt": prompt,
+                "system": "",
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+                # Part of the node's consolidation burst — keep the model
+                # loaded between probe calls.
+                "cleanup_after": False,
+            }
+        else:
+            _endpoint = f"{_base}/llamacpp/generate"
+            _payload = {
+                "model": model_path,
+                "prompt": prompt,
+                "system": "",
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+                "use_llamacpp": True,
+                "gpu_layers": gpu_layers,
+                "threads": threads,
+                "context_size": context_size,
+                "raw_completion": True,
+                # Part of the node's consolidation burst — the model
+                # must stay loaded for the next probe; the burst is
+                # released by one /llamacpp/release at node end.
+                "cleanup_after": False,
+                # One round only: a consolidation hook asks for a short
+                # structured reply, and continuing a rambling small
+                # model can run for minutes per call.
+                "max_rounds": 1,
+            }
         for _attempt in range(attempts):
             try:
                 _resp = _rq.post(
-                    f"{_base}/llamacpp/generate",
-                    json={
-                        "model": model_path,
-                        "prompt": prompt,
-                        "system": "",
-                        "temperature": temperature,
-                        "max_tokens": max_tokens,
-                        "stream": False,
-                        "use_llamacpp": True,
-                        "gpu_layers": gpu_layers,
-                        "threads": threads,
-                        "context_size": context_size,
-                        "raw_completion": True,
-                        # Part of the node's consolidation burst — the model
-                        # must stay loaded for the next probe; the burst is
-                        # released by one /llamacpp/release at node end.
-                        "cleanup_after": False,
-                        # One round only: a consolidation hook asks for a short
-                        # structured reply, and continuing a rambling small
-                        # model can run for minutes per call.
-                        "max_rounds": 1,
-                    },
+                    _endpoint,
+                    json=_payload,
                 )
             except Exception as _exc:
                 _last = str(_exc)
@@ -1411,8 +1455,15 @@ class LLMExecutor:
                     model = os.path.basename(_gguf_name)
             elif not model:
                 # Ollama engine with no explicit model: fall back here ONLY —
-                # llama.cpp nodes never reach this branch.
+                # llama.cpp nodes never reach this branch.  Say so: a node
+                # that lost its model (or whose provider engine was never
+                # persisted) otherwise runs an unrelated Ollama tag in silence.
                 model = "llama3.2:latest"
+                logger.warning(
+                    "LLM node %s has no model configured — falling back to "
+                    "the Ollama tag '%s'; set an engine + model in the node "
+                    "dialog", llm_config.get("node_id") or "?", model,
+                )
         except Exception:
             pass
         logger.info(f"Resolved model for execution: '{model}'")
@@ -2730,25 +2781,27 @@ class LLMExecutor:
         # its accumulated context (context node / docs / outputs) through
         # embedding retrieval instead of raw injection.  No thresholds.
         consolidated_context = None
-        # Hooks are wired ONLY for the llama.cpp engine (see the _intent_planner
-        # / _probe_gen / _fact_gen / _judge_gen / _resp_gen block below).  An
-        # Ollama node with the flag on used to run the engine with EVERY hook
-        # unset, so the "multi-cycle sweep" degenerated into the deterministic
-        # ladder over raw chunks — strictly worse than single-pass retrieval.
-        use_consolidation = _ctx_consolidation_enabled and _use_llamacpp_flag
-        if _ctx_consolidation_enabled and not _use_llamacpp_flag:
+        # Every hook runs on the NODE'S OWN engine (llama.cpp GGUF or the
+        # gateway model of an Ollama/BYOK node — see _llamacpp_raw_completion),
+        # so the flag alone decides.  Only a node with no reachable engine at
+        # all (no gateway URL in HTTP mode, no GGUF for the local engine)
+        # degrades to single-pass retrieval, and it says so.
+        use_consolidation = _ctx_consolidation_enabled and bool(
+            api_url or _direct_active or _use_llamacpp_flag
+        )
+        if _ctx_consolidation_enabled and not use_consolidation:
             logger.warning(
                 "Context Consolidation disabled for node %s: requested, but "
-                "the ollama engine wires no consolidation hooks (planner / "
-                "prober / composer / judge / synthesis) — using single-pass "
-                "retrieval instead of a sweep without hooks",
+                "neither the local engine nor a gateway URL is available to "
+                "run the consolidation hooks (planner / prober / composer / "
+                "judge / synthesis) — using single-pass retrieval instead",
                 _node_id,
             )
         logger.info(
-            "Context Consolidation: %s for node %s (embedding model='%s', engine=%s)",
+            "Context Consolidation: %s for node %s (embedding model='%s', model=%s)",
             "ENABLED" if use_consolidation else "disabled",
             _node_id, rag_embedding_model,
-            "llamacpp" if _use_llamacpp_flag else "ollama",
+            "llamacpp" if _use_llamacpp_flag else (model or "ollama"),
         )
         try:
             if use_consolidation:
@@ -2926,20 +2979,18 @@ class LLMExecutor:
                     # invented from the bare request.  Any failure falls
                     # back to lexical.
                     _probe_gen = (
-                        (lambda intent, r: _generate_llamacpp_probe(
+                        lambda intent, r: _generate_llamacpp_probe(
                             intent, r, llm_config, api_url,
                             user_prompt=str(original_prompt or ""),
-                        ))
-                        if _use_llamacpp_flag else None
+                        )
                     )
                     # Per-cycle responder: the LLM answers each probe using
                     # its retrieved evidence — the answer's facts enter the
                     # memory pool (ComoRAG cycle step).
                     _fact_gen = (
-                        (lambda q, ev: _generate_fact_answer(
+                        lambda q, ev: _generate_fact_answer(
                             q, ev, llm_config, api_url,
-                        ))
-                        if _use_llamacpp_flag else None
+                        )
                     )
                     # Sufficiency judge (ComoRAG meta-loop gate): after each
                     # probe's facts it decides whether the goal is
@@ -2955,10 +3006,8 @@ class LLMExecutor:
                         return sufficiency_or(
                             g, f, ev,
                             fallback=(
-                                (lambda: _generate_sufficiency_judgment(
-                                    g, f, ev, llm_config, api_url))
-                                if _use_llamacpp_flag else None
-                            ),
+                                lambda: _generate_sufficiency_judgment(
+                                    g, f, ev, llm_config, api_url)),
                         )
                     # Relevance verdict (one call per finding): the
                     # lexical topicality gate keeps a finding that reuses a
@@ -2971,21 +3020,26 @@ class LLMExecutor:
                         return relevance_or(
                             q, claims,
                             fallback=(
-                                (lambda: _generate_finding_relevance(
-                                    q, claims, llm_config, api_url))
-                                if _use_llamacpp_flag else None
-                            ),
+                                lambda: _generate_finding_relevance(
+                                    q, claims, llm_config, api_url)),
                         )
+
+                    # Absence verdict: "does this finding only say the value
+                    # is MISSING?".  REQUIRED: Laya retries and then raises, so
+                    # the run stops loudly instead of falling back to a phrase
+                    # list that can only know the phrasings someone added.
+                    def _absence_verdict(claim):
+                        from AI.laya_hooks import absence_required
+                        return absence_required(claim)
                     # Final synthesis (ComoRAG): ONE response from ALL the
                     # accumulated facts, anchored to the enhanced intent and
                     # grounded on the VERBATIM evidence chunks (sources win
                     # over self-generated facts).
                     _resp_gen = (
-                        (lambda intent, f, ev: _generate_consolidated_response(
+                        lambda intent, f, ev: _generate_consolidated_response(
                             str(original_prompt or ""), intent, f, ev,
                             llm_config, api_url,
-                        ))
-                        if _use_llamacpp_flag else None
+                        )
                     )
                     # Initial INTENT PLAN: the node's own model synthesizes
                     # WHAT the pipeline needs to know / WHERE to look / WHAT
@@ -2994,10 +3048,9 @@ class LLMExecutor:
                     # the user prompt).  Any failure falls back to raw
                     # enhanced-intent probing.
                     _intent_planner = (
-                        (lambda intent: _generate_intent_plan(
+                        lambda intent: _generate_intent_plan(
                             intent, llm_config, api_url,
-                        ))
-                        if _use_llamacpp_flag else None
+                        )
                     )
                     consolidated_context = consolidator.consolidate(
                         prompt=original_prompt,  # Use original prompt (before RAG injection) for clean probe extraction
@@ -3009,6 +3062,9 @@ class LLMExecutor:
                         response_generator=_resp_gen,
                         judge=_judge_gen,
                         relevance_judge=_rel_judge,
+                        # "An absence is not knowledge": a Laya verdict, not a
+                        # phrase list - the same guard the form filler wires.
+                        absence_judge=_absence_verdict,
                         stop_flag=stop_flag,
                     )
 
@@ -3058,6 +3114,16 @@ class LLMExecutor:
                 # shows the engine error) instead of silently skipping.
                 logger.error(
                     "Context Consolidation HARD STOP — embedding failure: %s",
+                    cons_exc,
+                )
+                raise
+            from AI.laya_hooks import LayaUnavailable
+            if isinstance(cons_exc, LayaUnavailable):
+                # Hard break, same rule: Laya ships with the app, so a verdict
+                # it could not give is a FAULT - never a reason to fall back to
+                # a phrase list or an LLM in its place.
+                logger.error(
+                    "Context Consolidation HARD STOP — Laya unavailable: %s",
                     cons_exc,
                 )
                 raise

@@ -1,12 +1,12 @@
 """runbook.py — the Arrow node runbook: one structured source of truth.
 
-Every node type the builder may create: what it is FOR, the ports it exposes
+Every node type a chain can contain: what it is FOR, the ports it exposes
 (collected from ``NGUI/nodes_resources/*.py`` — the source of truth), the
-fields that matter (aligned with ``node_templates.NODE_EDIT_FIELDS``), when to
-use it, and when the builder must ASK the user instead of guessing.
+fields that describe it (aligned with ``node_templates.NODE_FIELDS``), and the
+cases it is for.
 
-Consumed by the builder chat (``laya_grades.pick_node_type`` criteria,
-``node_templates.NODE_PURPOSES``) and rendered to ``docs/NODE_RUNBOOK.md``:
+Consumed by the analyst prompt (``capability_registry``), by the digest's node
+vocabulary, and rendered to ``docs/NODE_RUNBOOK.md``:
 
     python -m player.builder.runbook --write     # regenerate the doc
     python -m player.builder.runbook --print     # stdout
@@ -28,6 +28,7 @@ RUNBOOK: Dict[str, dict] = {
         ),
         "ports_in": ("input",),
         "ports_out": ("output", "data"),
+        "ports_out_modes": {"decision_mode / route_on_answer": ("true", "false")},
         "fields": {
             "label": "the slot's name; agent_modifiable slots are advertised "
                      "by this label (bind_input targets it)",
@@ -127,6 +128,13 @@ RUNBOOK: Dict[str, dict] = {
         "ports_out": ("output", "context"),
         "ports_in_orch_add": ("tools", "brains"),
         "ports_out_orch_add": ("trace", "route"),
+        "ports_named": {
+            "input": "execution trigger only",
+            "prompt": "text REPLACES the prompt template (system_message is untouched)",
+            "context": "history / pool material appended to the call",
+            "tools": "deterministic chains (orchestrator mode)",
+            "brains": "sub-brains (orchestrator mode)",
+        },
         "fields": {
             "prompt": "the prompt template ({variable} placeholders allowed); "
                       "text wired to the 'prompt' port REPLACES it",
@@ -194,6 +202,11 @@ RUNBOOK: Dict[str, dict] = {
         ),
         "ports_in": ("input",),
         "ports_out": ("output", "error"),
+        "ports_named": {
+            "input": "execution trigger only — data arrives on the DECLARED input variables",
+            "output": "execution continuation only — data leaves on the DECLARED output variables",
+            "error": "taken when the script raises",
+        },
         "fields": {
             "code": ("the Python source; reads the named input var, sets "
                      "the named output var"),
@@ -229,6 +242,9 @@ RUNBOOK: Dict[str, dict] = {
         ),
         "ports_in": ("input",),
         "ports_out": ("true", "false"),
+        "ports_out_modes": {
+            "file loop (loop_type + sequence_file)": ("output",),
+        },
         "fields": {
             "label": "what the branch decides",
             "decision_criterion": "the natural-language condition",
@@ -245,6 +261,11 @@ RUNBOOK: Dict[str, dict] = {
             "code": "python for condition_type code: set result True/False",
             "description": "what this check decides (orchestrator routing "
                            "context)",
+            "loop_type": "file-loop kind (while/until/...); with sequence_file "
+                         "the node loops the file and exposes a single output",
+            "loop_position": "where the loop sits relative to the file (pre/post)",
+            "sequence_file": "the recording a FILE-LOOP conditional replays",
+            "max_loops": "cap on loop passes for a file loop",
         },
         "modes": {
             "desktop visual": "web_mode OFF: routes on the screen — "
@@ -419,8 +440,11 @@ RUNBOOK: Dict[str, dict] = {
         "ports_in": ("input", "data"),
         "ports_out": ("output", "data"),
         "fields": {
-            "prompt": "the on-screen goal (e.g. 'open the messages menu')",
-            "description": "what this handle is for (agent routing)",
+            "action_type": "click or drag (which grounded action the node "
+                           "performs)",
+            "goal_description": "the on-screen goal to locate (click target, "
+                               "or drag source)",
+            "target_description": "where a drag ends (drag only)",
         },
         "modes": {
             "click / drag": "action_type: one grounded action per "
@@ -456,6 +480,10 @@ RUNBOOK: Dict[str, dict] = {
             "clear_on_finish": "wipe the store when the chain completes",
             "max_history": "how many turn records to keep",
             "scope": "local (this chain only) or global (shared store)",
+            "documents": "JSON list of file paths (or literal notes) the pool "
+                        "reads and serves as its Documents stream",
+            "skills": "JSON list of skill files / free-text notes served as "
+                      "its Skills stream",
         },
         "modes": {
             "persistent": "keep turn records across runs (off = per-run)",
@@ -471,6 +499,33 @@ RUNBOOK: Dict[str, dict] = {
             "Whether memory should persist between runs.",
         ),
         "example": "Context -> ctx_in; LLM context port <- ctx_out.",
+    },
+    "action": {
+        "label": "Action",
+        "purpose": (
+            "Legacy single-action node: one simple action with an execution "
+            "output. Recordings belong to Sequence / Web Sequence and "
+            "vision-grounded actions to Handle."
+        ),
+        "ports_in": ("input",),
+        "ports_out": ("output",),
+        "fields": {
+            "label": "what the action does",
+            "action_type": "the action kind the node performs",
+            "description": "what this action does (agent routing context)",
+        },
+        "modes": {
+            "single action": "performs its one action when execution reaches "
+                             "it, then continues on output",
+        },
+        "when_to_use": (
+            "A chain needs one simple action that has no recording.",
+        ),
+        "when_to_ask": (
+            "Whether the step should be recorded instead (a Sequence replays "
+            "exactly what the user showed).",
+        ),
+        "example": "(legacy) Action 'press Enter'.",
     },
     "mcp": {
         "label": "MCP",
@@ -618,49 +673,59 @@ def purpose_line(node_type: str) -> str:
     return str(entry.get("purpose") or "") if entry else ""
 
 
-def criteria_for(node_type: str) -> str:
-    """Purpose + first usage hint + mode names — the description Laya
-    chooses over when it picks the node type for a tool."""
-    entry = RUNBOOK.get(str(node_type or "").strip().lower())
-    if not entry:
-        return ""
-    text = str(entry.get("purpose") or "")
-    uses = entry.get("when_to_use") or ()
-    if uses:
-        text += " Use when: " + str(uses[0])
-    modes = entry.get("modes") or {}
-    if modes:
-        text += " Modes: " + ", ".join(modes) + "."
-    return text[:400]
+#: One wiring note per node — the "connect what to what" half of the
+#: capability registry (the base rule output -> next input is implied).
+WIRE_NOTES: Dict[str, str] = {
+    "input": "output -> next input (exec); data -> an LLM's prompt port "
+             "(REPLACES the template); true/false ports when routing on "
+             "the answer",
+    "output": "only sinks: the last step's output -> input",
+    "llm": "output -> next input; context -> context node ctx_in; "
+           "input/prompt ports take a wired input's text",
+    "conditional": "true -> continue, false -> the other branch",
+    "sequence": "output -> next input (replays its recorded actions)",
+    "web_sequence": "output -> next input (replays its web recording)",
+    "chain_import": "output -> next input; into an orchestrator's "
+                    "'tools' (chains) or 'brains' (sub-brains)",
+    "code": "NAMED IO ports only: previous -> first named input, first "
+            "named output -> next",
+    "context": "ctx_in <- llm context outputs; ctx_out -> the llm that "
+               "summarizes them",
+    "form_filler": "output -> next input (fills the form autonomously)",
+    "handle": "output -> next input (vision-grounded click/drag)",
+    "mcp": "output -> next input (external tool call)",
+    "container": "wire through its input/output",
+    "action": "output -> next input (performs its one action)",
+}
 
 
-def cheat_sheet() -> str:
-    """Compact node catalogue + wiring rules for the builder LLM's prompts.
+def capability_registry() -> str:
+    """What each node is FOR, its PORTS and how they WIRE.
 
-    The planning / reasoning model must know the real Arrow building
-    blocks — node types, what each mode changes, and how ports connect —
-    before it can write a buildable tool list.  Bounded so a small local
-    model is not flooded.
+    The single injection the analyst prompt carries: a node's purpose, its port
+    names and the wiring rule — so a description names the real ports and the
+    behaviour they create instead of guessing from the node's title.
+
+    COMPACT on purpose.  The first version also carried "when to use" advice and
+    every mode name (5.2k chars): that is authoring guidance, and it made the
+    system prompt 14k characters — an 8k model then refused the whole turn.
+    Reading a chain needs the purpose, the ports and the wire rule, nothing else.
     """
     lines = [
-        "Arrow building blocks (name these when planning tools). Wiring: "
-        "output -> input flows data; conditional routes true/false; text "
-        "wired to an LLM's prompt port REPLACES its template; an "
-        "orchestrator LLM takes deterministic chains on 'tools' and "
-        "sub-brains on 'brains'; context nodes use ctx_in/ctx_out; prefer "
-        "recorded sequences/web_sequences over handle, and code for exact "
-        "transformations; output SHOWS the result."
+        "NODE TYPES (purpose, ports, how they wire — read behaviour from these):",
+        "- base wiring: output -> next input moves EXECUTION; data ports move "
+        "VALUES; an orchestrator LLM takes chains on 'tools', sub-brains on "
+        "'brains'.",
     ]
     for node_type, entry in RUNBOOK.items():
-        if node_type in DECLINED_TYPES:
-            continue
-        purpose = str(entry.get("purpose") or "").strip()
-        line = "- %s: %s" % (node_type, purpose[:130])
-        modes = entry.get("modes") or {}
-        if modes:
-            line += " [modes: %s]" % ", ".join(modes)
-        lines.append(line)
-    return "\n".join(lines)[:3000]
+        purpose = " ".join(str(entry.get("purpose") or "").split())[:110]
+        ports_in = ", ".join(entry.get("ports_in") or ())
+        ports_out = ", ".join(entry.get("ports_out") or ())
+        wire = WIRE_NOTES.get(node_type, "output -> next input")
+        lines.append("- %s: %s | in(%s) out(%s) | %s"
+                     % (node_type, purpose, ports_in or "none",
+                        ports_out or "none", wire))
+    return "\n".join(lines)[:2500]
 
 
 def model_using_fields() -> List[str]:
@@ -675,74 +740,37 @@ def model_using_fields() -> List[str]:
 
 _DOC_HEADER = """# Arrow Node Runbook
 
-Complete reference for building Arrow chains: what every node does, how to
-connect them, and when the builder chat must ask the user instead of guessing.
+Reference for reading and authoring Arrow chains: what every node does, the
+role of every port it exposes, and how the wiring composes behaviour.
 
 > Generated from `LoOper/player/builder/runbook.py` — edit the source, then
 > run `python -m player.builder.runbook --write`.
 
-## The template pipeline — never emit node JSON
+## Ports carry roles, not just names
 
-Chains are strictly typed templates. The builder runs as a pipeline: the
-builder LLM reasons about WHAT node is needed, FOR WHAT, and WHICH arguments
-it carries (prose only); Laya selects the node type from this catalogue;
-needle2 fills the selected template's arguments field by field; Python
-creates the node, wires the ports and writes the chain file — the only
-writer. This runbook therefore documents each node as intent (purpose,
-ports, usage cases, when to ask), not as JSON anyone types.
+An Arrow chain has two kinds of edge, and they are never interchangeable:
 
-## How the builder composes a system chain
+- **Execution edges** decide *when* a node runs: `output` (exec out) into
+  `input` (exec in). A conditional routes on `true` / `false`; a FILE-LOOP
+  conditional (`loop_type` + `sequence_file`) exposes a single `output`.
+- **Data edges** decide *what* a node sees, and every destination port has
+  its own meaning: `input.data -> llm.prompt` REPLACES the prompt template;
+  `llm.context -> context.ctx_in` STORES that turn; `context.ctx_out ->
+  llm.context` SERVES the pool; code nodes use their declared NAMED IO
+  ports (their base `output` only carries execution, `error` is the failure
+  branch); an orchestrator LLM takes chains on `tools` and sub-brains on
+  `brains`. A context pool is PASSIVE: never executed, only written and
+  consulted through its data ports.
 
-Structure is never a model decision — the composer assembles the same shape
-the hand-built system chains use:
+## How chains are built
 
-1. Skeleton, always: `input -> orchestrator LLM -> output`, wired
-deterministically (`input.output -> input`, `input.data -> prompt`,
-`llm.output -> output`).
-2. The reasoning LLM decomposes the goal into 3-6 TOOL lines (prose —
-reusable capabilities the bot needs, not screen micro-steps).
-3. Each tool is matched against the existing chains in the library with the
-runtime direct-chain gate's measured rules: the chain's routing signal
-(description + served examples; learned artifacts by examples only), the
-goal-framed Laya read, and a floor + object-confirmation + margin gate.
-A match becomes a `chain_import` wired to `tools` (or `brains` when the
-chain file contains an orchestrator, via `classify_chain`).
-A plan line that NAMES its own node type ("input (ask): …",
-"llm (vanilla): …", "web_sequence (dom replay, repeating set): …") routes
-itself: input/output/orchestrator lines ARE the skeleton (skipped, never
-matched — matching them stole real tools' chains); llm lines are DESIGNED
-LLM steps (authored prompt, chain file, wired import); code lines are REAL
-code steps (the Python is authored ONCE, compile-validated, and the code
-node runs it deterministically — a broken script falls back to an LLM
-step); conditional lines become CHECK steps (input -> LLM conditional over
-the line's criterion -> true/false outputs); an llm line with an
-orchestrator modifier becomes a sub-brain. Designed steps never match the
-library (matching these picked stale artifacts at the margins), and every
-designed step runs on the LOCAL engine by default — the build-time
-provider never leaks into the artifact. Only the remaining lines are
-matched.
-4. A tool with no matching chain is TAUGHT, cheapest first (one teach
-round per unmatched tool — the plan is the budget):
-- a WEB routine is DEMONSTRATED first: the configured provider drives the
-shared browser itself (navigate / click / type / scroll / press) until the
-routine works; every executed action is recorded with the recorder's own
-event schema, frozen into `web_sequences/<tool>.json`, wrapped into its
-own sub-chain file and wired to `tools` — no user involvement. An attempt
-that gets stuck stops and reports what it tried.
-- the teach card is the fallback (its body carries the failed attempt):
-`web`/`desktop` = the user records it on a fresh node and it is WRAPPED
-into its own sub-chain file (the recording file itself is never touched);
-`llm` = the builder AUTHORS the instruction prompt and Python writes an
-`input -> LLM step -> output` chain file (local engine + app GGUF by
-default; the prompt is never empty — the tool line is the fallback);
-`brain` = a nested system chain is written with the subtask as its
-`orch_goal` and imported wired to `brains`.
-Only when teaching is declined or unavailable is the tool reported
-instead; it is never faked with an empty node.
-5. Description + save close the pass; the result is a real
-`collection="System"` chain, ready for agent mode. The user audits and
-edits the topology in the graph; on-the-fly chain learning stays a
-runtime agent-mode feature, not a build-time one.
+The builder chat is read-only: it explains a chain from its topology and
+never creates, edits, wires or records anything. Chains are authored on the
+canvas (nodes + their dialogs) and recorded with the recorders; the panel
+can load documents into a selected node's own field — a context node's
+Documents / Skills streams, an LLM's system message, a sequence's recording
+path.
+
 """
 
 

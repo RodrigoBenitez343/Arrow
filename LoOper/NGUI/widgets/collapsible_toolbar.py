@@ -750,6 +750,14 @@ def _painter_icon_form_filler(size: int) -> QIcon:
 
 _ICON_CACHE = {}
 
+#: Shared node-card metrics. The toolbar cards and the chains-library cards
+#: use the same row height, glyph size, corner radius and label size, so the
+#: two panels read as one list style.
+CARD_HEIGHT = 32
+CARD_ICON = 20
+CARD_RADIUS = 8
+CARD_FONT_PX = 11
+
 def get_node_icon(node_type: str, size: int) -> QIcon:
     key = (node_type, size)
     cached = _ICON_CACHE.get(key)
@@ -806,6 +814,15 @@ def get_node_icon(node_type: str, size: int) -> QIcon:
 class DraggableButton(QPushButton):
     """Colored node-type button supporting drag-to-add and click-to-add."""
 
+    # Compact node card: a square glyph in a fixed left gutter, label centred.
+    # Every size below is in LOGICAL pixels and the glyph is re-scaled on each
+    # paint from a high-resolution source, so a DPI / resolution change can
+    # neither resize nor shift it.
+    HEIGHT = CARD_HEIGHT
+    ICON_SRC = 96      # source raster resolution (scaled down on paint)
+    ICON_PX = CARD_ICON  # drawn glyph size
+    ICON_GUTTER = 30   # left column the glyph stays centred in
+
     def __init__(self, label: str, node_type: str, bg_color: str, click_handler, parent=None):
         super().__init__(label, parent)
         self.node_type = node_type
@@ -813,8 +830,8 @@ class DraggableButton(QPushButton):
         self._click_handler = click_handler
         self._icon_pm = None
         self.setCursor(Qt.OpenHandCursor)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(30)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.setFixedHeight(self.HEIGHT)
         # Colored background to reflect node type
         self.setStyleSheet(
             f"""
@@ -823,10 +840,9 @@ class DraggableButton(QPushButton):
                 color: {TEXT_COLOR};
                 border: 1px solid #14FFFFFF;
                 border-top: 1px solid #33FFFFFF;
-                padding: 4px 10px;
-                border-radius: 12px;
-                min-width: 96px;
-                min-height: 40px;
+                padding: 2px 6px;
+                border-radius: {CARD_RADIUS}px;
+                font-size: {CARD_FONT_PX}px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
@@ -839,29 +855,37 @@ class DraggableButton(QPushButton):
             """
         )
 
-    # The icon is drawn oversized, pinned to the card's left edge, while the text
-    # stays centred across the whole card. QPushButton's default icon+text
-    # grouping centres the pair together, so the glyph is held as a pixmap and
-    # painted separately, after the styled button (bg + centred text) is drawn.
-    ICON_PX = 30
-    ICON_LEFT = 12
-
+    # The icon is drawn pinned to the card's left edge, while the text stays
+    # centred across the whole card. QPushButton's default icon+text grouping
+    # centres the pair together, so the glyph is held as a pixmap and painted
+    # separately, after the styled button (bg + centred text) is drawn.
     def set_node_icon(self, icon):
-        """Store the node glyph as a pixmap (drawn manually in paintEvent)."""
+        """Store the node glyph as a high-res pixmap (drawn in paintEvent)."""
         try:
-            self._icon_pm = icon.pixmap(self.ICON_PX, self.ICON_PX)
+            pm = icon.pixmap(QSize(self.ICON_SRC, self.ICON_SRC))
+            # Drop any devicePixelRatio: the pixmap is now just a source image
+            # whose physical pixels are scaled into the logical target square.
+            pm.setDevicePixelRatio(1.0)
+            self._icon_pm = pm
         except Exception:
             self._icon_pm = None
 
     def paintEvent(self, event):
         super().paintEvent(event)  # styled background + centred text
         pm = getattr(self, "_icon_pm", None)
-        if pm is not None and not pm.isNull():
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.drawPixmap(self.ICON_LEFT,
-                               (self.height() - pm.height()) // 2, pm)
-            painter.end()
+        if pm is None or pm.isNull():
+            return
+        # Square target, centred in the fixed left gutter and vertically, so
+        # the glyph never drifts when the card height or the screen scale
+        # changes.
+        side = float(min(self.ICON_PX, max(8, self.height() - 8)))
+        x = (self.ICON_GUTTER - side) / 2.0
+        y = (self.height() - side) / 2.0
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.drawPixmap(QRectF(x, y, side, side), pm, QRectF(pm.rect()))
+        painter.end()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -1174,6 +1198,10 @@ class ModernDeleteDialog(ModernDialog):
 class CollapsibleToolbar(QWidget):
     """Collapsible right toolbar with special node creation buttons."""
 
+    #: Compact column width - the buttons read as node cards, not full-width
+    #: bars.  The floating panel layout sizes the panel from this hint.
+    PANEL_WIDTH = 124
+
     scheduler_requested = pyqtSignal()
     ai_settings_requested = pyqtSignal()
     agent_mode_requested = pyqtSignal()
@@ -1187,7 +1215,7 @@ class CollapsibleToolbar(QWidget):
     def _build_ui(self):
         # Start expanded
         self.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
-        self.setMinimumWidth(160)
+        self.setMinimumWidth(self.PANEL_WIDTH)
         # No maximum – let the splitter resize us
         main_layout = QVBoxLayout(self)
         # Minimal margins so we can shrink to near-zero
@@ -1206,10 +1234,20 @@ class CollapsibleToolbar(QWidget):
             f"QFrame#toolbarContent {{ background-color: {SIDE_PANEL_BG}; border-radius: 10px; }}"
         )
         content_layout = QVBoxLayout(self._content_frame)
-        content_layout.setContentsMargins(8, 8, 8, 8)
-        content_layout.setSpacing(6)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
-        # Node creation buttons – directly in content layout, no scroll area
+        # The cards live in a scroll area: their height is fixed, so on a
+        # shorter window (smaller resolution or a higher display scale) they
+        # must scroll instead of being squeezed, which collapsed the gaps and
+        # made the cards overlap.
+        self._cards = QWidget()
+        self._cards.setStyleSheet("background: transparent;")
+        cards_layout = QVBoxLayout(self._cards)
+        cards_layout.setContentsMargins(8, 8, 8, 8)
+        cards_layout.setSpacing(6)
+
+        # Node creation buttons – stacked cards, compact height
         for label, ntype, color, handler, tip in [
             (_("LLM"), "llm", LLM_COLOR, lambda: self.graph_view.add_llm_node(), _("Add LLM Node")),
             (_("Chain"), "chain_import", CHAIN_IMPORT_COLOR, lambda: self.graph_view.add_chain_import_node(), _("Add Chain Import Node")),
@@ -1224,9 +1262,20 @@ class CollapsibleToolbar(QWidget):
             (_("Web"), "web_sequence", WEB_SEQUENCE_COLOR, lambda: self.graph_view.add_web_sequence_node(), _("Add Web Sequence Node")),
         ]:
             btn = self._make_node_button(label, ntype, color, handler, tooltip=tip)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            btn.setMinimumHeight(40)
-            content_layout.addWidget(btn, 1)
+            cards_layout.addWidget(btn)
+        # Cards keep their compact height and stack from the top instead of
+        # stretching to fill the panel.
+        cards_layout.addStretch(1)
+
+        scroll = QScrollArea(self._content_frame)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.viewport().setAutoFillBackground(False)
+        scroll.setWidget(self._cards)
+        content_layout.addWidget(scroll)
 
         # The Scheduler / Agent Mode / AI Settings buttons used to sit here; they
         # now live in the window's top bar, which keeps this bar focused on node
@@ -1272,7 +1321,7 @@ class CollapsibleToolbar(QWidget):
                 self._anim = QPropertyAnimation(self, b"maximumWidth")
                 self._anim.setDuration(200)
                 self._anim.setStartValue(0)
-                self._anim.setEndValue(160)
+                self._anim.setEndValue(self.PANEL_WIDTH)
                 self._anim.setEasingCurve(QEasingCurve.InOutQuad)
                 self._anim.finished.connect(self._on_expand_finished)
                 self._anim.start(QAbstractAnimation.DeleteWhenStopped)
@@ -1289,10 +1338,18 @@ class CollapsibleToolbar(QWidget):
         QTimer.singleShot(0, self._position_nodes_toggle)
 
     def _on_expand_finished(self):
-        self.setMinimumWidth(160)
+        self.setMinimumWidth(self.PANEL_WIDTH)
         self.setMaximumWidth(16777215)  # clear fixed max so splitter can resize
         QTimer.singleShot(0, self._position_nodes_toggle)
 
+
+    def sizeHint(self):
+        """Hug the card stack: the scroll area's own hint is ~20px shorter,
+        which would leave a needless scrollbar on a full-size window."""
+        try:
+            return QSize(self.PANEL_WIDTH, self._cards.sizeHint().height())
+        except Exception:
+            return super().sizeHint()
 
     def refresh_sequences_list(self, path=None):
         """Stub kept for backward compatibility - sequences moved to left sidebar."""
@@ -1357,7 +1414,7 @@ class CollapsibleToolbar(QWidget):
     def _make_node_button(self, label, node_type, color, click_handler, tooltip=None):
         btn = DraggableButton(label, node_type, color, click_handler, self)
         try:
-            btn.set_node_icon(get_node_icon(node_type, DraggableButton.ICON_PX))
+            btn.set_node_icon(get_node_icon(node_type, DraggableButton.ICON_SRC))
         except Exception:
             pass
         if tooltip:
