@@ -50,6 +50,49 @@ _BOILERPLATE = (
     "following question", "extracted keywords",
 )
 
+# Words that carry no search intent: a rewrite made of nothing else is not a
+# query, it is a sentence.
+_STOPWORDS = frozenset("""
+    the a an of to in on for and or is are was were be been being what which who
+    whom whose how when where why does do did this that these those with without
+    from by at as it its you your we our they their he she his her then than
+    please reply answer following question field form
+""".split())
+
+
+def _words(text):
+    """Lower-case intent tokens (stopwords dropped) for the guard below."""
+    return {w for w in re.findall(r"[a-z0-9']+", str(text or "").lower())
+            if len(w) > 2 and w not in _STOPWORDS}
+
+
+def _grounded(parts, question, document):
+    """The keywords that are about the QUESTION or present in the DOCUMENT.
+
+    A 3B left to itself answers the few-shot instead of the question - live it
+    returned the example's own "Henry Feilden, occupation" for a question about
+    an employment contract, and the corrective sweep then searched the resume
+    for a person who is not in it (top score 0.264, 27 forwards, 43.3 s, three
+    junk strips).  So a keyword is kept only when it is about the question or
+    the text being searched; a reply that names neither is discarded and the
+    caller keeps the original question.
+    """
+    ask = _words(question)
+    doc = _words(document) if document else set()
+    kept = []
+    for part in parts:
+        words = _words(part)
+        if not words:
+            continue
+        # A keyword must be something ONE of the two sides knows: the question
+        # it rewrites, or the text it will search.  "occupation" survives (the
+        # question asks for experience), "Django" survives (the resume lists
+        # it), "Henry Feilden" survives neither.
+        if not (words & ask) and not (words & doc):
+            continue
+        kept.append(part)
+    return kept
+
 
 def _clean_line(line: str) -> str:
     """One reply line without its list marker / 'query:' prefix / quotes."""
@@ -74,11 +117,15 @@ def _first_line(text: str) -> str:
 
 
 def rewrite_query(question: str, llm: Optional[Callable[[str, str], str]],
-                  max_keywords: int = _MAX_KEYWORDS) -> str:
+                  max_keywords: int = _MAX_KEYWORDS,
+                  document: str = "") -> str:
     """The keyword query for *question*, or ``""`` when it cannot be made.
 
     An empty result is not an error: the caller keeps the original question,
-    which is what CRAG does when the rewrite call fails.
+    which is what CRAG does when the rewrite call fails - and what it must do
+    when the model hands back somebody else's question.  ``document`` (the text
+    the corrected query will search) turns the guard into a real filter: a
+    keyword that appears nowhere in it cannot be in there to be found.
     """
     body = str(question or "").strip()[:600]
     if not body or not callable(llm):
@@ -92,8 +139,10 @@ def rewrite_query(question: str, llm: Optional[Callable[[str, str], str]],
     if not line:
         return ""
     parts = [p.strip() for p in line.split(",") if p.strip()]
+    parts = _grounded(parts, body, document)
     if not parts:
-        return line[:200]
+        logger.info("CRAG rewrite discarded as ungrounded: %r", line[:120])
+        return ""
     return ", ".join(parts[:max(1, int(max_keywords))])[:200]
 
 

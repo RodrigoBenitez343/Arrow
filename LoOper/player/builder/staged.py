@@ -14,12 +14,15 @@ every prompt stays a few hundred tokens:
    in walk order — the model receives only the source node, the target node and
    the ports that wire joins, and answers with one sentence: what that
    connection hands on and what the target does with it.
-4. **Assembly** (no model).  Sections are the topology's phases; each box's note
-   is the sentences of the wires inside it plus the one it hands to the next
-   box.  The summary is one last small call over those notes.
+4. **Boxes** (one model call each).  Sections are the topology's phases; the
+   note of each box is one small call over ITS OWN nodes and wires, so the box
+   says what the stretch achieves.  Gluing the wire sentences together instead
+   produced a transcript ("This wire hands… This wire hands…" eleven times for
+   a seven-node box) that never states the point.
+5. **Assembly** (no model).  The summary is one last small call over the notes.
 
-Slow by design: N wires means N calls.  Nothing is truncated, so nothing has to
-be guessed — the point is that a small model can finish the job.
+Slow by design: N wires means N + boxes + 1 calls.  Nothing is truncated, so
+nothing has to be guessed — the point is that a small model can finish the job.
 """
 
 from . import describe as _describe
@@ -174,15 +177,41 @@ def prompt_for(job, snapshot, short, order_text):
     return '\n'.join(lines)
 
 
-def answer_text(reply):
-    """One usable sentence from a model reply ('' when there is none)."""
+#: A box note is ONE statement about the stretch, not a transcript of its
+#: wires: at most this many characters (the canvas prints it under the title).
+BOX_NOTE_CHARS = 600
+#: Text one box call may read (its member lines and its wire sentences share
+#: this budget).  A box holding half the canvas is cut here, so no single call
+#: grows past a small model's window.
+BOX_PROMPT_CHARS = 2600
+
+_BOX_SYSTEM = (
+    "You describe ONE part of an automation chain as a whole. You are given what "
+    "the nodes of that part do, in execution order, and the wires that join "
+    "them. Answer with ONE or TWO sentences of at most 45 words, third person, "
+    "present tense: what this stretch of the automation ACHIEVES as a single "
+    "step, from its first action to where it leads. Say the outcome, not the "
+    "parts — do not walk through the nodes one by one, do not start with 'This "
+    "wire', do not repeat a sentence you were given. Never mention node names, "
+    "recording file names, ids or ports. No lists, no headings, no quotes, no "
+    "preamble. Name only values the nodes you were given actually mention."
+)
+
+
+def _clean_reply(reply):
+    """A model reply without list markers, quotes or a "Wire:" label."""
     text = ' '.join(str(reply or '').split())
     text = text.lstrip('-*·>#').strip().strip('"\'“”')
     if ':' in text[:24]:
         head, rest = text.split(':', 1)
         if len(head.split()) <= 3 and rest.strip():
             text = rest.strip()          # "Wire: ..." / "Outcome: ..."
-    return _clip(text, MAX_ANSWER)
+    return text
+
+
+def answer_text(reply):
+    """One usable sentence from a model reply ('' when there is none)."""
+    return _clip(_clean_reply(reply), MAX_ANSWER)
 
 
 # --------------------------------------------------------------- assembly
@@ -193,9 +222,7 @@ def _summary_text(reply):
     ``answer_text`` clips at one sentence's budget (``MAX_ANSWER``), which cut
     every summary mid-word -- a chain described as "...and finally run…".
     """
-    text = ' '.join(str(reply or '').split())
-    return _clip(text.lstrip('-*·>#').strip().strip('"\'“”'),
-                 _flow.MAX_SUMMARY)
+    return _clip(_clean_reply(reply), _flow.MAX_SUMMARY)
 
 
 def _cover(snapshot, boxes):
@@ -228,13 +255,13 @@ def _cover(snapshot, boxes):
     return boxes
 
 
-def _sentence(text):
-    """A wire answer as one clean sentence (capitalised, closed)."""
-    text = _clip(text, MAX_ANSWER)
+def _sentence(text, limit=None):
+    """A reply as one clean sentence (capitalised, closed)."""
+    text = _clip(text, MAX_ANSWER if limit is None else limit)
     if not text:
         return ''
     text = text[0].upper() + text[1:]
-    return text if text[-1] in '.!?' else text + '.'
+    return text if text[-1] in '.!?…' else text + '.'
 
 
 def _lower_first(text):
@@ -275,6 +302,63 @@ def _section_notes(snapshot, boxes, outcomes):
             box['note'] = _clip(' '.join(p for p in parts if p),
                                 _flow.MAX_NOTE)
     return boxes
+
+
+def _box_text(reply):
+    """One box's answer as its note: two sentences, capitalised and closed."""
+    return _sentence(_clean_reply(reply), BOX_NOTE_CHARS)
+
+
+def _box_prompt(snapshot, box, lines, outcomes):
+    """Everything ONE box's call needs: its members, its wires, its exits.
+
+    Not the chain: a box is described from what its own nodes do (the stage-1
+    sentences, never the canvas, never the chain file) plus the wire sentences
+    that run inside it.  Bounded by ``BOX_PROMPT_CHARS`` so a box holding half
+    the canvas still fits a small model's window.
+    """
+    members = [nid for nid in box['nodes'] if snapshot.node(nid) is not None]
+    body, used = [], 0
+    for position, node_id in enumerate(members):
+        line = '- ' + prompt_summary(lines.get(node_id, ''))
+        if used + len(line) > BOX_PROMPT_CHARS:
+            body.append('- … %d more node(s)' % (len(members) - position))
+            break
+        body.append(line)
+        used += len(line) + 1
+    parts = ['THE PART: %s (%d node(s), in execution order)'
+             % (box['title'], len(members)),
+             'WHAT ITS NODES DO:\n' + ('\n'.join(body) or '- (none)')]
+
+    inner = [_sentence(text) for (src, dst, _kind), text in outcomes.items()
+             if src in members and dst in members]
+    if inner:
+        keeps = []
+        for position, text in enumerate(inner):
+            line = '- ' + _clip(text, 160)
+            if used + len(line) > BOX_PROMPT_CHARS:
+                keeps.append('- … %d more wire(s)' % (len(inner) - position))
+                break
+            keeps.append(line)
+            used += len(line) + 1
+        parts.append('THE WIRES INSIDE IT:\n' + '\n'.join(keeps))
+
+    # Where the part hands execution on: the one fact a stretch needs to make
+    # sense of its own end (a check's two branches are its outcome).
+    exits = []
+    for node_id in members:
+        for edge in snapshot.exec_out_edges(node_id):
+            if edge.dst_id in members:
+                continue
+            target = snapshot.node(edge.dst_id)
+            exits.append('%s%s' % (
+                _clip((target.name or target.type or edge.dst_id)
+                      if target else edge.dst_id, 32), _branch(edge.src_role)))
+    if exits:
+        parts.append('WHERE IT LEADS: hands execution to %s'
+                     % ', '.join(exits))
+    parts.append('Write what this part of the chain achieves.')
+    return '\n'.join(parts)
 
 
 def _summary_prompt(snapshot, boxes, lines, order, order_text):
@@ -425,6 +509,24 @@ def describe(snapshot, generate, settings=None, progress=None, cancel=None):
     boxes = _cover(snapshot, _flow.sections(snapshot, {}))
     boxes = _section_notes(snapshot, boxes, outcomes)
     boxes = _cap(boxes)
+    # Stage 4: one call per box, over the box alone.  ``_section_notes`` has
+    # already written the glued wires, so a box whose call fails keeps a note
+    # instead of losing it.
+    for index, box in enumerate(boxes, 1):
+        if _stop():
+            break
+        _say('box %d/%d — %s' % (index, len(boxes), box['title']))
+        try:
+            reply = generate(_box_prompt(snapshot, box, lines, outcomes),
+                             _BOX_SYSTEM, settings)
+        except Exception as exc:          # one box, not the whole pass
+            failed.append((box['title'], str(exc) or exc.__class__.__name__))
+            continue
+        note = _box_text(reply)
+        if not note:
+            failed.append((box['title'], 'the model answered nothing usable'))
+            continue
+        box['note'] = note
     summary = ''
     if boxes and not _stop():
         _say('summary — %d box(es)' % len(boxes))

@@ -75,9 +75,19 @@ def refresh_file(path):
         logger.warning('chain description not refreshed, malformed flow: %s '
                        '(%s)', path, exc)
         return FAILED
+    if (stored.get('nodes') or ()) and not (updated.get('nodes') or ()):
+        # The file names no node entries, so there is nothing to derive the
+        # sentences FROM: a refresh here would replace them with the empty set
+        # and erase the only description the chain has.
+        logger.warning('chain description not refreshed: the file carries no '
+                       'node entries to derive it from: %s', path)
+        return CURRENT
     data[flow_module.FLOW_KEY] = updated
     # ``description`` is derived, never typed: it is refreshed with the flow so
-    # the file never carries a sentence older than the metadata beside it.
+    # the file never carries a sentence older than the metadata beside it.  The
+    # NODE's own field is refreshed too — the canvas prints that one first, so a
+    # chain whose flow block was current still showed the old wording on it.
+    data = _with_node_descriptions(data, updated.get('nodes'))
     data['description'] = chain_brief.brief(data)
     try:
         _write(path, data)

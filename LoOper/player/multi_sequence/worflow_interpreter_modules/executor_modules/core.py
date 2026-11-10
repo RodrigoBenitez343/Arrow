@@ -1189,6 +1189,28 @@ class WorkflowExecutor(DependenciesMixin, SequenceMixin, ConditionalMixin, LLMMi
                     if nd.get('type') != 'context':
                         continue
                     node_data = nd.get('data', {})
+                    # TEMPORAL corpus (``index_ephemeral``): the block VECTORS
+                    # of this node's streams die with the run that scraped
+                    # them.  Off by default - a stable corpus keeps its index,
+                    # which is what makes a repeat run cost one COUNT instead
+                    # of one embed pass per field.  Never fatal.
+                    if node_data.get('index_ephemeral', False):
+                        try:
+                            from AI import context_index as _ctx_index
+                            _purged = _ctx_index.get_store().purge(
+                                chain_id=chain_id, node_id=nid)
+                            logger.info(
+                                "Context node %s: purged %d indexed "
+                                "block(s) (index_ephemeral)", nid, _purged)
+                            try:
+                                from AI import engine_metrics as _metrics
+                                _metrics.record("index_purge", blocks=_purged)
+                            except Exception:
+                                pass
+                        except Exception as purge_err:
+                            logger.debug(
+                                "index_ephemeral purge failed for %s: %s",
+                                nid, purge_err)
                     if node_data.get('clear_on_finish', False):
                         logger.info("Task 13: Clearing context node %s (clear_on_finish=true)", nid)
                         # Clear port-scoped store entries

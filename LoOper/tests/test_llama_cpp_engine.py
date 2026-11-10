@@ -19,6 +19,20 @@ from conftest import FakeResponse, FakeSession
 import contextlib
 
 
+def _spawn_cmd(popen_calls):
+    """The llama-server SPAWN command, not the ``--help`` capability probe.
+
+    ``_flag_supported`` runs ``[exe, '--help']`` through ``subprocess.run``,
+    which itself goes through ``Popen`` - so a patched ``Popen`` records that
+    probe before the real spawn.  The spawn is the call carrying ``--model``.
+    """
+    for entry in popen_calls:
+        cmd = entry[0] if isinstance(entry, tuple) else entry
+        if "--model" in list(cmd or []):
+            return cmd
+    raise AssertionError("no llama-server spawn command was captured")
+
+
 @contextlib.contextmanager
 def _patched_os_name(name):
     """Temporarily set the global ``os.name``, restoring it BEFORE the test's
@@ -727,7 +741,7 @@ def test_start_server_nonblocking(monkeypatch, tmp_path):
         assert engine.start_server(blocking=False) is True
         assert engine.is_running is True
         assert engine.server_process is not None
-        cmd = popen_calls[0][0]
+        cmd = _spawn_cmd(popen_calls)
         assert cmd[0] == str(exe)
         assert "--model" in cmd and "--port" in cmd
 
@@ -768,7 +782,7 @@ def test_start_server_moe_capability_adds_cpu_moe(monkeypatch, tmp_path):
             model_type="text", is_moe=True, needs_special_tokens=False,
         )
         assert engine.start_server(blocking=False) is True
-        cmd = popen_calls[0]
+        cmd = _spawn_cmd(popen_calls)
         assert "--gpu-layers" in cmd
         assert cmd.index("--cpu-moe") > cmd.index("--gpu-layers")
 
@@ -809,7 +823,7 @@ def test_start_server_dense_no_cpu_moe(monkeypatch, tmp_path):
             model_type="text", is_moe=False, needs_special_tokens=False,
         )
         assert engine.start_server(blocking=False) is True
-        assert "--cpu-moe" not in popen_calls[0]
+        assert "--cpu-moe" not in _spawn_cmd(popen_calls)
 
 
 def test_start_server_moe_file_fallback_adds_cpu_moe(monkeypatch, tmp_path):
@@ -850,7 +864,7 @@ def test_start_server_moe_file_fallback_adds_cpu_moe(monkeypatch, tmp_path):
         })
         monkeypatch.setattr(engine, "_ensure_port_free", lambda: True)
         assert engine.start_server(blocking=False) is True
-        assert "--cpu-moe" in popen_calls[0]
+        assert "--cpu-moe" in _spawn_cmd(popen_calls)
 
 
 def test_start_server_releases_laya_before_allocating(monkeypatch, tmp_path):

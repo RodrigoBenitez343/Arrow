@@ -16,7 +16,9 @@ Two classes are provided:
   plain fallback dict.  Keeps existing code working during migration.
 """
 
+import json
 import logging
+import os
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -191,7 +193,8 @@ class PortScopedStore:
         return counters[node_id]
 
     def add_turn(self, chain_id: str, node_id: str,
-                 turn_data: dict, max_turns: Optional[int] = None) -> dict:
+                 turn_data: dict, max_turns: Optional[int] = None,
+                 max_chars: Optional[int] = None) -> dict:
         """Append a turn record.
 
         The *turn_data* dict is augmented with ``turn`` number and
@@ -199,6 +202,14 @@ class PortScopedStore:
         newest *max_turns* records for THIS node are kept — older turns are
         dropped so the in-memory history stays bounded ("oldest turns dropped
         by turn-count").  Returns the enriched dict.
+
+        *max_chars* bounds the same history by SIZE, which is what the model
+        actually pays for: a turn count says nothing when one tool result is
+        4000 chars and another is 40.  ``None`` reads
+        ``LOOPER_CONTEXT_MAX_CHARS`` (0 = off).  Kept verbatim: the FIRST turn
+        of the node (its instructions) and the newest turns that fit; the
+        middle becomes one marker turn.  Nothing is summarised — no extra
+        model call, no extra cost.
         """
         turn = dict(turn_data)
         turn["turn"] = self._next_turn_number(chain_id, node_id)
@@ -215,7 +226,92 @@ class PortScopedStore:
                 drop = set(node_idx[:excess])
                 history[:] = [t for i, t in enumerate(history)
                               if i not in drop]
+        budget = self._char_budget(max_chars)
+        if budget > 0:
+            self._trim_by_chars(history, node_id, budget)
         return turn
+
+    @staticmethod
+    def _char_budget(max_chars: Optional[int]) -> int:
+        """The char budget for one node's turns (0 = unbounded)."""
+        if max_chars is None:
+            raw = (os.getenv("LOOPER_CONTEXT_MAX_CHARS") or "").strip()
+            try:
+                max_chars = int(raw) if raw else 0
+            except ValueError:
+                max_chars = 0
+        try:
+            return max(0, int(max_chars or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    _TRIM_MARKER = "[older turns dropped"
+
+    @classmethod
+    def _is_trim_marker(cls, turn: dict) -> bool:
+        """True for the marker a previous trim left behind."""
+        return (str(turn.get("role") or "") == "note"
+                and str(turn.get("content") or "").startswith(cls._TRIM_MARKER))
+
+    @staticmethod
+    def _turn_chars(turn: dict) -> int:
+        """Approximate prompt size of one turn (bookkeeping excluded)."""
+        if not isinstance(turn, dict):
+            return len(str(turn))
+        body = {k: v for k, v in turn.items()
+                if k not in ("turn", "context_node_id")}
+        try:
+            return len(json.dumps(body, ensure_ascii=False, default=str))
+        except Exception:
+            return len(str(body))
+
+    def _trim_by_chars(self, history: list[dict], node_id: str,
+                       budget: int) -> int:
+        """Keep head + newest tail inside *budget*; return turns dropped."""
+        rows = [t for t in history if t.get("context_node_id") == node_id]
+        if not rows:
+            return 0
+        before = sum(self._turn_chars(t) for t in rows)
+        if before <= budget:
+            return 0
+
+        head = next((t for t in rows if not self._is_trim_marker(t)), None)
+        used = self._turn_chars(head) if head is not None else 0
+        tail: list[dict] = []
+        for turn in reversed(rows):
+            if turn is head:
+                break
+            size = self._turn_chars(turn)
+            if used + size > budget:
+                break
+            used += size
+            tail.append(turn)
+        tail.reverse()
+
+        kept_ids = {id(head)} | {id(t) for t in tail}
+        kept_ids.discard(id(None))
+        dropped = [t for t in rows
+                   if id(t) not in kept_ids and not self._is_trim_marker(t)]
+        rebuilt: list[dict] = []
+        if head is not None:
+            rebuilt.append(head)
+        if dropped:
+            rebuilt.append({"role": "note",
+                            "content": "%s: %d]" % (self._TRIM_MARKER,
+                                                    len(dropped)),
+                            "context_node_id": node_id})
+        rebuilt.extend(tail)
+
+        others = [t for t in history if t.get("context_node_id") != node_id]
+        history[:] = others + rebuilt
+        after = sum(self._turn_chars(t) for t in rebuilt)
+        try:
+            from AI import engine_metrics as _metrics
+            _metrics.record("context_trim", turns_dropped=len(dropped),
+                            chars_before=before, chars_after=after)
+        except Exception:
+            pass
+        return len(dropped)
 
     def get_turns(self, chain_id: str,
                   node_id: str | None = None,

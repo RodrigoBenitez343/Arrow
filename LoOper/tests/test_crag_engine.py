@@ -146,7 +146,7 @@ def _pipeline(scores, blocks=None, config=None):
     external = CRAGExternalKnowledge(
         [ChunkStore(retrieve=lambda q: blocks or [])])
     return CRAGPipeline(ev, external=external,
-                        rewrite_llm=lambda p, s: "rewritten query",
+                        rewrite_llm=lambda p, s: "start date",
                         config=config or CRAGConfig(external=True))
 
 
@@ -180,7 +180,7 @@ def test_an_incorrect_verdict_is_replaced_by_external_knowledge_only():
     result = pipeline.run("Start date",
                           chunks=["Location: Buenos Aires, Argentina."])
     assert result.action == "incorrect"
-    assert result.rewritten == "rewritten query"
+    assert result.rewritten == "start date"
     assert "Available April" in result.material
     assert "Buenos Aires" not in result.material
 
@@ -256,10 +256,53 @@ def test_the_rewrite_keeps_at_most_three_keywords():
     assert rewrite_query(
         "What is Henry Feilden's occupation?",
         lambda p, s: "Henry Feilden, occupation, London, extra",
+        document="Henry Feilden was a carpenter by occupation in London.",
     ) == "Henry Feilden, occupation, London"
     # A failed / empty rewrite leaves the caller on the original question.
     assert rewrite_query("q?", lambda p, s: "") == ""
     assert rewrite_query("q?", lambda p, s: (_ for _ in ()).throw(IOError())) == ""
+
+
+def test_a_rewrite_of_somebody_elses_question_is_discarded():
+    """The few-shot example must never become the query.
+
+    Live, the 3B answered the example instead of the question and returned
+    'What is Henry Feilden's occupation?' for an employment-contract field; the
+    corrective sweep then searched the resume for a stranger, scored 0.264,
+    spent 27 forwards and kept three junk strips.
+    """
+    contract = ("This is a local employment relationship and not a contractor "
+                "or B2B role. Are you happy to proceed on this basis?")
+    resume = ("# Rodrigo Benitez\nExperience: five years of Python "
+              "automation for a language services company")
+
+    assert rewrite_query(
+        contract,
+        lambda p, s: "What is Henry Feilden's occupation?",
+        document=resume,
+    ) == "", "a stranger's name is about neither the question nor the document"
+
+    # ...while a rewrite that IS about the question and the text survives.
+    assert rewrite_query(
+        contract,
+        lambda p, s: "employment, contractor, proceed",
+        document="Employment: contractor for five years, happy to proceed.",
+    ) == "employment, contractor, proceed"
+
+
+def test_a_rewrite_must_not_name_what_neither_side_mentions():
+    """A keyword the corpus cannot contain would waste the whole sweep."""
+    resume = "# Rodrigo Benitez\nSkills: Python, FastAPI, Postgres"
+    assert rewrite_query(
+        "Which Python framework do you use?",
+        lambda p, s: "Python, django",
+        document=resume,
+    ) == "Python", "django is in neither the question nor the resume"
+    assert rewrite_query(
+        "Which Python framework do you use?",
+        lambda p, s: "Python, framework",
+        document=resume,
+    ) == "Python, framework", "both sides ground these"
 
 
 # ── the generation contract ──────────────────────────────────────────────

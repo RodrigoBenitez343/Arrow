@@ -32,6 +32,24 @@ from .common import (
     logger,
 )
 
+_LOCAL_ENGINES = ("", "llamacpp", "llama.cpp", "llama_cpp")
+
+
+def _ff_engine_is_local(node):
+    """True when this pass generates with the local llama.cpp server.
+
+    Only that engine is a burst resource of THIS process: holding it for a pass
+    is what removes the per-field cold start.  A cloud/BYOK provider or Ollama
+    lives in another process (or another machine) and must not be pinned here.
+    """
+    engine = str(((node or {}).get("data") or {}).get("engine") or "")
+    engine = engine.strip().lower()
+    try:
+        from AI import byok
+        return bool(byok.is_local_engine(engine or "llamacpp"))
+    except Exception:
+        return engine in _LOCAL_ENGINES
+
 
 class FormFillerNodeMixin:
     """The node shell: the field loop, the per-field table and the output."""
@@ -858,7 +876,65 @@ class FormFillerNodeMixin:
                   % (label, "verified by the user" if manual else "derived"))
         return ("%s\n\n%s" % (source_text, entry)).strip() if source_text else entry
 
+    @staticmethod
+    def _ff_hold_engines(node=None):
+        """Keep Laya, the embedding server and the generator loaded for ONE pass.
+
+        A pass scores and ranks once per field, and the burst policy stops an
+        engine as soon as one sweep ends: without this hold EVERY field paid a
+        cold load (~2 s for Laya, a llama-server start for the embed side, and
+        one for the GENERATOR - 29 of them in a 44 min live pass, 121.9 s of
+        startup plus a full prompt re-prefill each time).
+        A machine below ``LOOPER_RESIDENT_BUDGET_MB`` refuses the hold and
+        keeps the burst policy (see ``AI/engine_residency.py``).
+        """
+        held = []
+        try:
+            from AI import laya_client
+            if laya_client.hold():
+                held.append(laya_client)
+        except Exception as exc:
+            logger.debug("[FORM] Laya hold unavailable: %s", exc)
+        try:
+            from AI import embedding_server
+            if embedding_server.hold():
+                held.append(embedding_server)
+        except Exception as exc:
+            logger.debug("[FORM] embedding hold unavailable: %s", exc)
+        if node is not None and _ff_engine_is_local(node):
+            try:
+                from AI import generation_hold
+                if generation_hold.hold():
+                    held.append(generation_hold)
+            except Exception as exc:
+                logger.debug("[FORM] generator hold unavailable: %s", exc)
+        return held
+
+    @staticmethod
+    def _ff_release_engines(held):
+        """Undo :meth:`_ff_hold_engines` (never raises)."""
+        for module in held or []:
+            try:
+                module.unhold()
+            except Exception:
+                pass
+
     def _execute_form_filling_node(self, node, stop_flag):
+        """One form pass, with the burst engines held for its duration."""
+        held = self._ff_hold_engines(node)
+        if held:
+            log_block(
+                logger, logging.INFO, "Form Filler Residency",
+                "holding %d engine(s) loaded for this pass (%s) - no cold "
+                "load between fields"
+                % (len(held), ", ".join(
+                    str(m.__name__).rsplit(".", 1)[-1] for m in held)))
+        try:
+            return self._execute_form_filling_node_inner(node, stop_flag)
+        finally:
+            self._ff_release_engines(held)
+
+    def _execute_form_filling_node_inner(self, node, stop_flag):
         if not self._runtime_initialized:
             try:
                 self._initialize_chain_runtime()
@@ -899,7 +975,11 @@ class FormFillerNodeMixin:
                     cfg.get("crag_cycles", 1),)),
                 ("Verify / repair", "%s / %s (%s attempt(s))" % (
                     cfg["verify"], cfg["repair"], cfg["repair_attempts"])),
-                ("Answer 'No' with no evidence", cfg["answer_no"]),
+                # No evidence = no answer, so this toggle only reaches a field
+                # the sources DO speak about (it never asserts a negative on an
+                # empty evidence block).
+                ("Answer 'No' when the evidence cannot support 'Yes'",
+                 cfg["answer_no"]),
                 ("Answer 'N/A' when unanswerable", cfg["answer_na"]),
                 ("Ask user (fills + learns)", cfg["ask_user"]),
                 ("Include / skip labels", "%s / %s" % (
@@ -1294,32 +1374,16 @@ class FormFillerNodeMixin:
                     # A user answer is VERIFIED: it outranks auto records.
                     source_text = self._ff_learn(label, value, source_text,
                                                  manual=True)
-                # Nothing grounded the field.  A CHOICE field with nothing
-                # behind it takes the option that asserts the negative ("no
-                # evidence -> no"), decided by MEANING: handing it to the model
-                # let it pick from an option list that had collapsed to the
-                # question, and the question was written into the page.  A free
-                # text control still asks the model for the control's own
-                # none / no wording - the harness never classifies the question.
-                if (not value and cfg["answer_no"]
-                        and not self._ff_halt(stop_flag)):
-                    value = (self._ff_negative_option(label, options)
-                             if options else
-                             self._ff_extract(
-                                 label, "", cfg, stop_flag, options=options,
-                                 multiline=multiline, format_hint=format_spec,
-                                 max_chars=_as_int(field.get("maxlength"), 0),
-                                 kind=kind,
-                                 retry_note=(
-                                     "The sources hold NOTHING for this field. "
-                                     "If the control offers an answer meaning "
-                                     "none / no / not applicable, return it "
-                                     "EXACTLY as the control spells it; "
-                                     "otherwise reply exactly N/A.\n"
-                                 ),
-                             ))
-                    if value:
-                        note = "nothing was retrieved - answered %r" % value
+                # NOTHING IS ASSERTED.  This branch used to pick the negative
+                # option and, for free text, to ask the model for its own
+                # none / no wording.  A negative is a FACT the page records, and
+                # with an EMPTY evidence block no source stated one: live, that
+                # wrote 'No' into 'Are you legally authorised to work in
+                # Argentina', 'Have you submitted your CV in English' and
+                # 'comfortable commuting 2 days a week' - three wrong answers,
+                # all of them grounded on nothing.  An unanswered field is
+                # recoverable (the user fills it, and it is learned); a stated
+                # falsehood is not.
                 # A field that CANNOT be answered at all gets N/A (the last
                 # resort); everything else is SKIPped (left alone).
                 if not value and cfg["answer_na"] and _ff_na_value(options):
@@ -1508,38 +1572,35 @@ class FormFillerNodeMixin:
                 if landed and not self._ff_choice_landed(landed, value, options):
                     landed = ""
                 if not landed:
-                    value2 = self._ff_extract(
-                        label, evidence, cfg, stop_flag, options=options,
-                        multiline=multiline, format_hint=format_spec,
-                        max_chars=_as_int(field.get("maxlength"), 0),
-                        retry_note="Your previous answer did not land. Return ONLY the value.\n",
-                        kind=kind,
-                    )
+                    # A read-back that comes back EMPTY is a WRITE problem, not
+                    # an answer problem: the live log says the target was
+                    # 'unresolved or not editable' and the page kept its own
+                    # value.  Regenerating the answer cost ~30 s per field and
+                    # changed the VALUE - 'No' where 'Yes' was meant - which is
+                    # how three wrong negations were written.  Retry the WRITE
+                    # once with the same value instead: no inference, and no new
+                    # claim about a field nothing grounded.
                     log_block(
                         logger, logging.INFO,
-                        "Form Field Re-ask: %s (read-back was %s)" % (
-                            label,
-                            "empty" if not (read_back or "").strip()
-                            else "not the option that was answered"),
-                        value2 or "(empty)",
+                        "Form Field Re-write: %s (read-back was empty)" % label,
+                        "the answer stands as %r - the page did not take it, so "
+                        "the write is retried once (no re-ask)"
+                        % str(value or "")[:80],
                     )
-                    if value2:
-                        wrote = self._ff_write(field, value2, stop_flag) or wrote
-                        value = value2
-                        read_back = self._ff_read(field, stop_flag)
-                        landed = (read_back or "").strip()
-                        if (not landed
-                                or not self._ff_choice_landed(landed, value,
-                                                              options)):
-                            wrote = False
-                    elif options and kind == "choice":
-                        # Nothing was re-asked AND the option never landed: a
-                        # choice holding none of its own options is NOT filled.
-                        # An empty read-back must never be reported as success -
-                        # a hijacked marker can aim the write at another
+                    wrote = bool(self._ff_write(field, value, stop_flag)) or wrote
+                    read_back = self._ff_read(field, stop_flag)
+                    landed = (read_back or "").strip()
+                    if (not landed
+                            or not self._ff_choice_landed(landed, value,
+                                                          options)):
+                        # A hijacked marker can aim the write at another
                         # question's free-text control, which accepts anything
-                        # and reads back exactly what was written.
+                        # and reads back exactly what was written - so an empty
+                        # read-back is never reported as success.
                         wrote = False
+                        note = note or (
+                            "the answer %r could not be written - the page "
+                            "kept its own value" % str(value or "")[:60])
 
             status = "filled" if wrote else "failed"
             _res = {"id": field.get("id"), "label": label,

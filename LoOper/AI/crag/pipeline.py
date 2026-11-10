@@ -217,7 +217,11 @@ class CRAGPipeline:
 
         rewritten = ""
         if cfg.rewrite:
-            rewritten = rewrite_query(body, self.rewrite_llm)
+            # The guard gets the text the rewritten query will actually search,
+            # so a keyword the corpus never mentions (a stranger's name the
+            # model invented out of the few-shot) cannot become the query.
+            rewritten = rewrite_query(body, self.rewrite_llm,
+                                      document=" ".join(chunks or ()))
         result.rewritten = rewritten
         external_query = rewritten or body
 

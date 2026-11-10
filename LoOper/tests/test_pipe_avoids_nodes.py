@@ -104,5 +104,166 @@ def test_backward_wire_clears_own_card(qapp):
                                         [in_pt])
 
 
+def _arrow_heading(item):
+    """Scene-space heading of the pipe's direction pointer."""
+    from PyQt5.QtCore import QPointF
+    d = item._dir_pointer
+    base = d.mapToScene(QPointF(0.0, 0.0))
+    tip = d.mapToScene(QPointF(0.0, -9.0))
+    return (tip.x() - base.x(), tip.y() - base.y())
+
+
+def _angle(u, v):
+    import math
+    lu = math.hypot(*u) or 1e-9
+    lv = math.hypot(*v) or 1e-9
+    c = (u[0] * v[0] + u[1] * v[1]) / (lu * lv)
+    return math.degrees(math.acos(max(-1.0, min(1.0, c))))
+
+
+@pytest.mark.parametrize("backwards", [False, True])
+@pytest.mark.parametrize("redraw", [None, "in", "out"])
+def test_direction_arrow_follows_flow(qapp, backwards, redraw):
+    """The wire arrow points output -> input, including on loopback wires
+    and no matter which port triggered the redraw."""
+    from NodeGraphQt import NodeGraph
+    from NGUI.nodes_resources.sequence_node import SequenceNode
+
+    graph = NodeGraph()
+    graph.register_node(SequenceNode)
+    src = graph.create_node("sequence.SequenceNode",
+                            pos=[600, 200] if backwards else [0, 0])
+    dst = graph.create_node("sequence.SequenceNode",
+                            pos=[0, 0] if backwards else [600, 200])
+    dst.input_ports()[0].connect_to(src.output_ports()[0])
+
+    item = _pipe_item(graph, src, dst)
+    if redraw == "in":
+        item.draw_path(item.input_port, item.output_port)
+    elif redraw == "out":
+        item.draw_path(item.output_port, item.input_port)
+
+    out_pt = _port_center(item.output_port)
+    in_pt = _port_center(item.input_port)
+    flow = (in_pt.x() - out_pt.x(), in_pt.y() - out_pt.y())
+    assert _angle(_arrow_heading(item), flow) < 20.0
+
+
+def _render(scene, rect):
+    from PyQt5.QtCore import QRectF
+    from PyQt5.QtGui import QImage, QPainter
+    img = QImage(int(rect.width()), int(rect.height()), QImage.Format_ARGB32)
+    img.fill(0xFF101418)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.translate(-rect.left(), -rect.top())
+    scene.render(p, QRectF(rect), rect)
+    p.end()
+    return img
+
+
+def _pulse_centroid(img, base):
+    xs = ys = n = 0
+    for y in range(0, img.height(), 2):
+        for x in range(0, img.width(), 2):
+            if img.pixel(x, y) != base.pixel(x, y):
+                xs += x
+                ys += y
+                n += 1
+    assert n, "no flow pulse painted"
+    return xs / n, ys / n
+
+
+def test_flow_pulse_travels_output_to_input(qapp):
+    """The animated pulse is painted and walks from the source node to the
+    target node on a loopback wire (right to left here)."""
+    from NodeGraphQt import NodeGraph
+    from NodeGraphQt.qgraphics import pipe as pipe_mod
+    from NGUI.nodes_resources.sequence_node import SequenceNode
+
+    graph = NodeGraph()
+    graph.register_node(SequenceNode)
+    src = graph.create_node("sequence.SequenceNode", pos=[600, 200])
+    dst = graph.create_node("sequence.SequenceNode", pos=[0, 0])
+    dst.input_ports()[0].connect_to(src.output_ports()[0])
+
+    item = _pipe_item(graph, src, dst)
+    scene = graph.scene()
+    rect = scene.itemsBoundingRect().adjusted(-40, -40, 40, 40)
+
+    enabled, clock = pipe_mod.FLOW_ANIM_ENABLED, pipe_mod._flow_time
+    count_spacing = pipe_mod.FLOW_SPACING
+    length = item.path().length()
+    try:
+        # one dot per wire so the centroid tracks a single travelling dot
+        pipe_mod.FLOW_SPACING = length * 2.0
+        # same paint path for the base and the pulsed frames
+        item.setCacheMode(item.NoCache)
+        pipe_mod.FLOW_ANIM_ENABLED = False
+        base = _render(scene, rect)
+        pipe_mod.FLOW_ANIM_ENABLED = enabled
+
+        xs = []
+        for frac in (0.15, 0.45, 0.75):
+            pipe_mod._flow_time = lambda f=frac: f * length / pipe_mod.FLOW_SPEED
+            xs.append(_pulse_centroid(_render(scene, rect), base)[0])
+        assert xs[0] > xs[1] > xs[2], xs
+    finally:
+        pipe_mod._flow_time = clock
+        pipe_mod.FLOW_ANIM_ENABLED = enabled
+        pipe_mod.FLOW_SPACING = count_spacing
+
+
+def test_flow_dots_never_stop(qapp):
+    """Dots wrap around, so a wire shows the stream at every moment -
+    nothing starts or stops between laps."""
+    from NodeGraphQt import NodeGraph
+    from NodeGraphQt.qgraphics import pipe as pipe_mod
+    from NGUI.nodes_resources.sequence_node import SequenceNode
+
+    graph = NodeGraph()
+    graph.register_node(SequenceNode)
+    src = graph.create_node("sequence.SequenceNode", pos=[0, 0])
+    dst = graph.create_node("sequence.SequenceNode", pos=[600, 200])
+    dst.input_ports()[0].connect_to(src.output_ports()[0])
+
+    item = _pipe_item(graph, src, dst)
+    scene = graph.scene()
+    rect = scene.itemsBoundingRect().adjusted(-40, -40, 40, 40)
+
+    enabled, clock = pipe_mod.FLOW_ANIM_ENABLED, pipe_mod._flow_time
+    try:
+        item.setCacheMode(item.NoCache)
+        pipe_mod.FLOW_ANIM_ENABLED = False
+        base = _render(scene, rect)
+        pipe_mod.FLOW_ANIM_ENABLED = enabled
+
+        gap = pipe_mod.FLOW_SPACING / pipe_mod.FLOW_SPEED
+        for i in range(10):
+            pipe_mod._flow_time = lambda f=i: f * gap / 10.0
+            _pulse_centroid(_render(scene, rect), base)   # asserts pixels
+    finally:
+        pipe_mod._flow_time = clock
+        pipe_mod.FLOW_ANIM_ENABLED = enabled
+
+
+def test_flow_dot_count_follows_wire_length(qapp):
+    """A wire twice as long carries about twice as many dots."""
+    from NodeGraphQt import NodeGraph
+    from NodeGraphQt.qgraphics import pipe as pipe_mod
+    from NGUI.nodes_resources.sequence_node import SequenceNode
+
+    def dots_across(spacing_x):
+        graph = NodeGraph()
+        graph.register_node(SequenceNode)
+        src = graph.create_node("sequence.SequenceNode", pos=[0, 0])
+        dst = graph.create_node("sequence.SequenceNode", pos=[spacing_x, 0])
+        dst.input_ports()[0].connect_to(src.output_ports()[0])
+        length = _pipe_item(graph, src, dst).path().length()
+        return max(1, int(round(length / pipe_mod.FLOW_SPACING)))
+
+    assert dots_across(1200) >= 2 * dots_across(600) - 1
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

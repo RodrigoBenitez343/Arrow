@@ -46,9 +46,52 @@ _HEALTH_CHECK_TTL = 5.0
 # by the generation start_server and self-unloads once its burst is done.
 _EMB_SEQ = 0          # bumped per embed request; the idle unloader compares it
 _EMB_INFLIGHT = 0     # embeds currently in flight — never killed mid-batch
+# Balances of :func:`hold`.  While > 0 the server is a RESIDENT resource for
+# the duration of a node execution: no idle unload, and ``release()`` refuses
+# (``AI/engine_residency.py`` decides whether the machine can afford it).
+_HOLDS = 0
 _EMB_KEEP_ALIVE_SECONDS = float(
     os.getenv("LLAMA_EMBED_KEEP_ALIVE_SECONDS", "0") or 0
 )
+
+
+def _metrics():
+    """The shared time/compute recorder, or None when it cannot load."""
+    try:
+        from AI import engine_metrics
+        return engine_metrics
+    except Exception:
+        return None
+
+
+def hold() -> bool:
+    """Keep the server loaded until the matching :func:`unhold`.
+
+    A form pass ranks once per field; without a hold every field pays a cold
+    llama-server start (and, before 1d, killed Laya on the way up).  Refused
+    when the machine cannot afford it, so a small box keeps the burst policy.
+    """
+    global _HOLDS
+    try:
+        from AI.engine_residency import residents_allowed
+        if not residents_allowed():
+            return False
+    except Exception:
+        return False
+    _HOLDS += 1
+    return True
+
+
+def unhold() -> None:
+    """Release one :func:`hold` (idempotent floor at zero)."""
+    global _HOLDS
+    if _HOLDS > 0:
+        _HOLDS -= 1
+
+
+def held() -> bool:
+    """True while a caller is holding the server resident."""
+    return _HOLDS > 0
 
 
 def _find_free_port(start: int = 8090, max_attempts: int = 100) -> int:
@@ -127,6 +170,7 @@ def get_embed_client():
             _EMBED_PORT = _find_free_port()
 
         from AI.llama_cpp_engine import LlamaCppEngine
+        started = time.perf_counter()
         engine = LlamaCppEngine({
             "model_path": model_path,
             "server_port": _EMBED_PORT,
@@ -165,10 +209,17 @@ def get_embed_client():
             "Embedding server ready (model=%s, port=%d)",
             os.path.basename(model_path), _EMBED_PORT,
         )
+        recorder = _metrics()
+        if recorder is not None:
+            _load_ms = round((time.perf_counter() - started) * 1000, 1)
+            recorder.record(
+                "engine_load", engine_code=recorder.engine_code("embed"),
+                ms=_load_ms, load_ms=_load_ms,
+                kv_bytes=recorder.kv_bytes(model_path, 2048, "f16"))
         return _emb_engine
 
 
-def release(wait: float = 5.0) -> bool:
+def release(wait: float = 5.0, force: bool = False) -> bool:
     """Stop the embedding server NOW, freeing its RAM; next embed relaunches it.
 
     Called by the generation ``start_server`` (ONE model per memory pool) and
@@ -177,8 +228,13 @@ def release(wait: float = 5.0) -> bool:
     it, then give up and return False (the server stays up; the caller keeps
     its vectors).  The port is kept so the next start reuses it and its
     ``_ensure_port_free`` clears any leftover — never a second embed server.
+
+    While a caller HOLDS the server (``hold()``) this refuses unless *force*
+    is set: the generation start path passes ``force=True``.
     """
     global _emb_engine
+    if _HOLDS > 0 and not force:
+        return False
     deadline = time.time() + max(0.0, float(wait or 0.0))
     while _EMB_INFLIGHT > 0 and time.time() < deadline:
         time.sleep(0.02)
@@ -213,8 +269,8 @@ def _unload_after_idle(seq_at_schedule: int) -> None:
 
 def _schedule_unload(seq_at_schedule: int) -> None:
     """Arm the idle unloader after every completed embed request."""
-    if _EMB_KEEP_ALIVE_SECONDS < 0:
-        return  # operator pinned the embedding model resident
+    if _EMB_KEEP_ALIVE_SECONDS < 0 or _HOLDS > 0:
+        return  # pinned resident (operator) or held for a node execution
     threading.Thread(
         target=_unload_after_idle, args=(seq_at_schedule,),
         daemon=True, name="embed-idle-unloader",
@@ -234,6 +290,7 @@ def embed_texts(texts: List[str]) -> Optional[List[List[float]]]:
     _EMB_SEQ += 1
     _seq = _EMB_SEQ
     _EMB_INFLIGHT += 1
+    _started = time.perf_counter()
     try:
         engine = get_embed_client()
         if engine is None:
@@ -257,6 +314,10 @@ def embed_texts(texts: List[str]) -> Optional[List[List[float]]]:
     finally:
         _EMB_INFLIGHT -= 1
         _schedule_unload(_seq)
+        recorder = _metrics()
+        if recorder is not None:
+            recorder.record("embed", count=len(texts),
+                            ms=round((time.perf_counter() - _started) * 1000, 1))
 
 
 def shutdown() -> None:

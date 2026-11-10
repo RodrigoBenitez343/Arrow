@@ -66,6 +66,13 @@ class ContextNode(BaseNode):
         self.create_property('max_history', 0)    # Recent entries to keep/serve (0=all)
         self.create_property('persistent', True)  # Keep context across runs
         self.create_property('clear_on_finish', False)  # Task 13: Clear all stored data after chain finishes
+        # TEMPORAL corpus: the persisted BLOCK VECTORS of this node's streams
+        # are dropped when the chain finishes.  Off by default - a stable
+        # corpus (a resume, a profile) must keep its index, that is what makes
+        # a repeat run cost one COUNT instead of one embed pass per field.
+        # Turn it ON only for material that is scraped for one run and never
+        # read again.
+        self.create_property('index_ephemeral', False)
         # Documents stream: a JSON list of file paths (a resume / knowledge
         # document) held ALONGSIDE the chat history, as a separate stream.  The
         # pool reads them to text and serves them, so a node wired to ctx_out
@@ -90,6 +97,7 @@ class ContextNode(BaseNode):
             'max_history': int(self.get_property('max_history') or 0),
             'persistent': bool(self.get_property('persistent')),
             'clear_on_finish': bool(self.get_property('clear_on_finish')),
+            'index_ephemeral': bool(self.get_property('index_ephemeral')),
             'scope': str(self.get_property('scope') or 'local'),
             'shared_context_chain_file': str(self.get_property('shared_context_chain_file') or ''),
             'shared_context_node_id': str(self.get_property('shared_context_node_id') or ''),

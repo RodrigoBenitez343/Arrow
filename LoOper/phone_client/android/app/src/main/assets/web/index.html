@@ -797,8 +797,9 @@
   function beginVoiceAnswer() {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     askVoiceMode = true;
-    // Tap-to-stop while the ask is pending (auto-started recording has no
-    // pressed state to release, so click toggles instead).
+    // Tap-to-record while the ask is pending (no pressed state to release, so
+    // click toggles instead of hold-to-talk).  The mic is never started here:
+    // auto-listening on every ask recorded the question being spoken.
     micBtn.onmousedown = null;
     micBtn.onmouseup = null;
     micBtn.onmouseleave = null;
@@ -806,9 +807,7 @@
     micBtn.ontouchend = null;
     micBtn.ontouchcancel = null;
     micBtn.onclick = toggleAskRecording;
-    micBtn.title = "Tap to stop speaking";
-    addMsg("Listening \u2014 speak your answer, tap the mic when done.", "agent");
-    startRecording();
+    micBtn.title = "Tap to record your answer";
   }
 
   function endVoiceAnswer() {

@@ -289,18 +289,18 @@ def test_zero_fields_is_noop():
     assert summary["filled"] == 0 and summary["failed"] == 0
 
 
-def test_field_without_evidence_asks_the_model_for_a_none_answer():
-    """Nothing retrieved: the MODEL is asked ONCE, with the control's own
-    options in the prompt, for the answer that means none / no - and the
-    last-resort N/A is what lands when even that yields nothing.  With the
-    policy off the field is left alone."""
+def test_field_without_evidence_is_never_asked_of_the_model():
+    """Nothing retrieved: the model is NOT asked.  It used to be, and it filled
+    the gap with a guess - live, three Yes/No questions were answered 'No'
+    against an empty evidence block.  The last-resort N/A is what lands now;
+    with the policy off the field is left alone."""
     h = _Harness()
     _wire(h, fields=[{"id": "f0", "label": "Email"}], evidence="",
           llm_value="N/A", reads=["N/A"])
     h._execute_form_filling_node(_node(), None)
     summary = json.loads(h.get_variable("node_ff1_output"))
     assert summary["filled"] == 1 and summary["answered_na"] == 1
-    assert len(h.llm_calls) == 1     # one call, and it is made with no evidence
+    assert h.llm_calls == [], "no evidence means no generation"
     assert h.writes == [("f0", "N/A")]
 
     h2 = _Harness()
@@ -309,6 +309,7 @@ def test_field_without_evidence_asks_the_model_for_a_none_answer():
     h2._execute_form_filling_node(_node(answer_no=False, answer_na=False), None)
     assert json.loads(h2.get_variable("node_ff1_output"))["skipped"] == 1
     assert h2.writes == []
+    assert h2.llm_calls == []
 
 
 def test_already_filled_field_is_skipped_by_the_harness():
@@ -572,16 +573,23 @@ def test_one_field_filled_and_bound_by_runtime():
     assert summary["fields"][0]["value"] == "a@b.com"
 
 
-def test_verify_reasks_this_field_once_on_empty_readback():
+def test_an_empty_readback_retries_the_write_not_the_answer():
+    """A read-back that comes back EMPTY is a WRITE failure.
+
+    The live log says 'target unresolved or not editable' - the control never
+    took the value.  Re-generating the answer cost ~30 s and CHANGED it ('No'
+    where 'Yes' was meant), so the same answer is written again instead.
+    """
     h = _Harness()
-    # First read-back is empty -> one re-ask; second read-back lands.
+    # First read-back is empty -> one re-write; second read-back lands.
     _wire(h, fields=[{"id": "f0", "label": "Email"}],
           reads=["", "a@b.com"], llm_value="a@b.com")
     h._execute_form_filling_node(_node(), None)
-    # initial extract + exactly one re-ask + the semantic verdict (an untyped
-    # field's answer is judged by meaning as well as by the read-back)
-    assert len(h.llm_calls) == 3
+    # initial extract + the semantic verdict - NO second generation.
+    assert len(h.llm_calls) == 2
     assert len(h.writes) == 2           # initial write + one rewrite
+    assert all(value == "a@b.com" for _fid, value in h.writes), \
+        "the retried write carries the SAME answer"
     summary = json.loads(h.get_variable("node_ff1_output"))
     assert summary["filled"] == 1
 
@@ -742,18 +750,23 @@ def test_prompt_valued_select_is_corrected_from_the_context():
     assert h.writes == [("c0", "Ireland (+353)")]
 
 
-def test_switch_without_evidence_is_answered_by_the_model():
-    """A toggle is a boolean whatever its label reads: with nothing to ground a
-    'Yes' the model is asked for the control's own none answer, and 'No' lands
-    (a real value), not a switch left switching on nothing."""
+def test_a_switch_without_evidence_is_never_answered_no():
+    """A toggle is a boolean, but 'No' is still a fact nobody stated.
+
+    With no evidence the old rail wrote 'No' (the control's own none answer),
+    which is exactly what an eligibility/consent question must never be told on
+    a guess.  Nothing is asserted now: the last-resort N/A lands instead.
+    """
     h = _Harness()
     _wire(h, fields=[{"id": "s0", "label": "I agree to the terms",
                       "kind": "switch", "tag": "button"}], evidence="",
-          llm_value="No", reads=["No"])
+          llm_value="No", reads=["N/A"])
     h._execute_form_filling_node(_node(), None)
     summary = json.loads(h.get_variable("node_ff1_output"))
-    assert summary["filled"] == 1
-    assert h.writes == [("s0", "No")]
+    assert h.llm_calls == [], "no evidence means no generation"
+    assert "No" not in [value for _fid, value in h.writes], \
+        "a negative is a fact, and no source stated one"
+    assert summary["answered_na"] == 1
 
 
 def test_a_field_validated_on_a_previous_pass_is_skipped_via_the_pool(caplog):

@@ -11,7 +11,12 @@ This module writes that state on close and restores it on start:
      "chain_config": {...the live chain, exactly as the editor held it...},
      "workspace":    "job-hunt",
      "builder_panel_open": true,
-     "view": {"zoom": 0.9, "center": [x, y]}}
+     "view": {"zoom": 0.9, "center": [x, y]},
+     "ui": {"logs_metrics": true}}
+
+``ui`` holds small UI preferences (a dialog toggle) that must survive a
+restart but belong to no chain: :func:`ui_flag` / :func:`set_ui_flag` read and
+write one key at a time and preserve everything else in the file.
 
 The LIVE chain config is stored, not just the file path: a chain that was never
 saved, or was edited after the last save, resumes with those edits.  Restoring
@@ -27,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 VERSION = 1
 _FILENAME = 'app_state.json'
+#: Small UI preferences: ``{name: bool}``.
+UI_KEY = 'ui'
 #: Node lists a restored chain may carry; an empty one restores nothing.
 _NODE_KEYS = ('sequences', 'web_sequences', 'conditional_nodes', 'llm_nodes',
               'chain_import_nodes', 'form_filler_nodes', 'code_nodes',
@@ -123,9 +130,64 @@ def snapshot(window):
     }
 
 
+# ------------------------------------------------------- ui preferences
+
+def load_ui():
+    """The ``ui`` block of the state file ({} when there is none)."""
+    try:
+        target = path()
+        if not os.path.isfile(target):
+            return {}
+        with open(target, 'r', encoding='utf-8') as handle:
+            data = json.load(handle)
+    except (OSError, ValueError, AppStateError):
+        return {}
+    block = data.get(UI_KEY) if isinstance(data, dict) else None
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def ui_flag(name, default=False):
+    """One boolean UI preference (the Logs metrics toggle, ...)."""
+    value = load_ui().get(str(name))
+    return default if value is None else bool(value)
+
+
+def set_ui_flag(name, value):
+    """Store one UI preference; False when it could not be written.
+
+    The rest of the state file is read first and written back, so setting a
+    flag never costs the chain the editor is holding.
+    """
+    try:
+        target = path()
+        data = {}
+        if os.path.isfile(target):
+            with open(target, 'r', encoding='utf-8') as handle:
+                loaded = json.load(handle)
+            if isinstance(loaded, dict):
+                data = loaded
+        block = data.get(UI_KEY)
+        if not isinstance(block, dict):
+            block = {}
+        block[str(name)] = bool(value)
+        data[UI_KEY] = block
+        data.setdefault('version', VERSION)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        temporary = target + '.tmp'
+        with open(temporary, 'w', encoding='utf-8') as handle:
+            json.dump(data, handle, ensure_ascii=False, indent=1)
+        os.replace(temporary, target)
+        logger.debug('ui flag %s=%s saved', name, bool(value))
+        return True
+    except (OSError, ValueError, AppStateError):
+        logger.warning('could not persist the UI flag %r', name, exc_info=True)
+        return False
+
+
 def save(window):
     """Write the window's state (raises ``AppStateError`` on failure)."""
     data = snapshot(window)
+    data[UI_KEY] = load_ui()
     target = path()
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)

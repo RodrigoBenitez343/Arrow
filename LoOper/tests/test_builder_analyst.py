@@ -712,7 +712,27 @@ def test_a_phase_covers_a_whole_stretch_not_one_node():
     snap = snapshot.build(graph)
 
     boxes = flow.sections(snap)
-    assert ['0x1', '0x2', '0x3'] in [box['nodes'] for box in boxes], boxes
+    assert any({'0x1', '0x2', '0x3'} <= set(box['nodes']) for box in boxes), \
+        boxes
+
+
+def _connected_within(snap, ids):
+    """True when the box's OWN wires reach every one of its members."""
+    ids = set(ids)
+    reached = {min(ids)} if ids else set()
+    grown = True
+    while grown:
+        grown = False
+        for edge in snap.edges:
+            if edge.src_id in reached and edge.dst_id in ids \
+                    and edge.dst_id not in reached:
+                reached.add(edge.dst_id)
+                grown = True
+            elif edge.dst_id in reached and edge.src_id in ids \
+                    and edge.src_id not in reached:
+                reached.add(edge.src_id)
+                grown = True
+    return reached == ids
 
 
 def test_boxes_fall_back_to_the_phases_of_the_walk():
@@ -720,10 +740,43 @@ def test_boxes_fall_back_to_the_phases_of_the_walk():
 
     snap = snapshot.build(chain())
     boxes = flow.sections(snap)
-    assert [b['nodes'] for b in boxes] == [['0x1', '0x2', '0x3'], ['0x4', '0x5']]
+    assert [b['nodes'] for b in boxes] == [['0x1', '0x2', '0x3', '0x4', '0x5']]
     assert boxes[0]['title'].startswith('P1')
     stored = flow.normalise({'sections': [{'title': 'mine', 'nodes': ['0x2']}]})
     assert flow.sections(snap, stored)[0]['title'] == 'mine'
+
+
+def test_no_box_collects_nodes_that_share_no_wire():
+    """The walk hops between sibling branches; a box follows wires only."""
+    from player.builder import flow, snapshot
+
+    snap = snapshot.build(chain())
+    for box in flow.sections(snap):
+        assert _connected_within(snap, box['nodes']), box['nodes']
+
+
+def test_an_outcome_of_a_check_never_stands_in_a_box_alone():
+    """A leaf the check feeds directly hangs off that box, not beside it."""
+    from player.builder import flow, snapshot
+
+    snap = snapshot.build(chain())
+    boxes = flow.sections(snap)
+
+    assert [len(box['nodes']) for box in boxes] == [5], boxes
+
+
+def test_an_orphan_node_keeps_a_box_of_its_own():
+    from player.builder import flow, snapshot
+
+    graph = chain()
+    orphan = FakeNode('0x7', 'output', 'orphan', props={'label': 'orphan'})
+    graph._nodes[orphan.id] = orphan
+    snap = snapshot.build(graph)
+    boxes = flow.sections(snap)
+
+    assert ['0x7'] in [box['nodes'] for box in boxes], boxes
+    for box in boxes:
+        assert _connected_within(snap, box['nodes']), box['nodes']
 
 
 def test_walkthrough_steps_follow_the_walk_and_name_the_wiring():

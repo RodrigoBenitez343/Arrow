@@ -1212,7 +1212,8 @@ class GraphViewWidget(QWidget):
             # whatever happened to sit in between.  Draw nothing and say so.
             boxes = ([] if had_sections and not flow.get('sections')
                      else bflow.sections(snap, flow))
-            self.flow_overlay().show_sections(boxes)
+            self.flow_overlay().show_sections(
+                boxes, node_texts=bflow.node_texts(flow, snap))
             logger.info("Stored flow metadata drawn: %d section(s)", len(boxes))
         except Exception:
             logger.warning(

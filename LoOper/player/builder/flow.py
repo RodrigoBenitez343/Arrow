@@ -58,6 +58,14 @@ MAX_DOES = 4000
 #: Box hues cycled when the metadata names none (readable on the dark plane).
 HUES = ('#22D3EE', '#4A90E2', '#A78BFA', '#F59E0B', '#34D399', '#F472B6')
 
+#: Bumped whenever ``describe`` learns to say something better about a node.
+#: It is part of every stamp, so a sentence written by an OLDER describer reads
+#: as stale and is derived again.  Without it a stored line stood forever: the
+#: node had not changed, so a better describer could never reach a chain that
+#: had already been described (measured: every check kept saying "the element it
+#: was picked for this check" after the checks learned to name their target).
+DERIVATION = 2
+
 #: A chain file's node lists -> the builder's short TYPE name.  ``acting`` keys
 #: on the type, so a chain can be described WITHOUT a canvas (an agent reload,
 #: a workspace sweep) from the file the editor already wrote.
@@ -370,6 +378,7 @@ def fingerprint(nodes):
     payload = sorted(
         json.dumps([ntype, props], sort_keys=True, default=str)
         for ntype, props in nodes)
+    payload.append('derivation:%d' % DERIVATION)
     return hashlib.sha1('\n'.join(payload).encode('utf-8')).hexdigest()[:16]
 
 
@@ -530,25 +539,84 @@ def _section_note(snapshot, node_ids):
     return _clip(' → '.join(part for part in parts if part), MAX_DERIVED_NOTE)
 
 
+def _wired(snapshot, src_id, dst_id):
+    """True when a wire runs from *src_id* to *dst_id* (either kind)."""
+    if src_id is None:
+        return False
+    edges = (list(snapshot.exec_out_edges(src_id))
+             + list(snapshot.data_out_edges(src_id)))
+    return any(edge.dst_id == dst_id for edge in edges)
+
+
 def _phase_groups(snapshot, order):
-    """The walk cut into phases: every CHECK/LOOP closes one.
+    """The walk cut into phases: every CHECK/LOOP closes one, and a phase
+    never jumps between nodes without a wire.
 
     Topology, not geometry: a section is a stretch of execution ("ask, then
     draft, then check"), which is what a reader needs.  Splitting on canvas
     distance instead produced one box per node on a chain laid out wide.
+
+    The walk is depth-first, so it leaves one branch's subtree and enters its
+    SIBLING with no wire between the two: left unfixed, one box held both
+    outcomes of a check (or a branch and an unrelated root) as if they ran
+    together.  A wire is what keeps two steps in one box.
+
+    The cut then leaves a branch's own LEAF alone (the check closes the phase,
+    the leaf follows it with one wire and nothing after it), so every one-node
+    phase joins the phase it is wired to — see ``_absorb_leaves``.
     """
     groups, current = [], []
+    previous = None
     for node_id in order:
         node = snapshot.node(node_id)
         if node is None:
             raise FlowMetadataError(
                 'the walk reached unknown node %s' % node_id)
+        if current and not _wired(snapshot, previous, node_id):
+            groups.append(current)
+            current = []
         current.append(node)
+        previous = node_id
         if node.role in ('CHECK', 'LOOP'):
             groups.append(current)
             current = []
     if current:
         groups.append(current)
+    return _absorb_leaves(snapshot, groups, order)
+
+
+def _absorb_leaves(snapshot, groups, order):
+    """Fold a one-node phase into the phase it is wired to.
+
+    A check hands execution to two siblings, so the walk visits one branch and
+    then the other: the wire cut closes a phase per leaf, and a leaf that its
+    check feeds directly stood ALONE in a box — a box of its own for a node
+    that shares a wire with the box beside it.  Nothing here joins nodes with
+    no wire between them: a lone node keeps its own box when it is wired to
+    nothing (an orphan on the canvas).
+    """
+    rank = {node_id: index for index, node_id in enumerate(order)}
+    groups = [list(group) for group in groups]
+    changed = True
+    while changed:
+        changed = False
+        for index, group in enumerate(groups):
+            if len(group) != 1:
+                continue
+            node = group[0]
+            for host_index, host in enumerate(groups):
+                if host_index == index:
+                    continue
+                if any(_wired(snapshot, node.id, member.id)
+                       or _wired(snapshot, member.id, node.id)
+                       for member in host):
+                    groups[host_index] = sorted(
+                        host + group, key=lambda n: rank.get(n.id, 0))
+                    del groups[index]
+                    changed = True
+                    break
+            if changed:
+                break
     return groups
 
 
@@ -587,8 +655,8 @@ def sections(snapshot, flow=None, force_notes=False):
     the phases of the walk.
 
     The fallback exists so boxing works on a loose chain that has never been
-    described: every CHECK/LOOP closes a phase, which is exactly how the
-    digest already groups a long chain.  Every box leaves here with a note —
+    described: every CHECK/LOOP closes a phase, and a phase never crosses a
+    hop with no wire (``_phase_groups``).  Every box leaves here with a note —
     the box draws it, so an empty note is a headline with no body.
 
     ``force_notes`` re-derives the note of every box from the nodes it holds,
@@ -620,6 +688,29 @@ def sections(snapshot, flow=None, force_notes=False):
         if force_notes or not section.get('note'):
             section['note'] = _section_note(snapshot, section['nodes'])
     return out
+
+
+def node_texts(flow, snapshot=None):
+    """``{node_id: sentence}`` for the canvas to print under each node.
+
+    ``flow['nodes']`` is the metadata's own per-node list.  When a *snapshot*
+    of the live canvas is given, a node's own ``description`` property wins:
+    that property is the wording a node dialog edits, so an edited sentence
+    shows up without re-describing the chain.
+    """
+    texts = {}
+    for entry in (flow or {}).get('nodes') or ():
+        if isinstance(entry, dict):
+            text = ' '.join(str(entry.get('does') or '').split())
+            if text:
+                texts[str(entry.get('node') or '')] = text
+    for node_id, node in (getattr(snapshot, 'nodes', None) or {}).items():
+        described = ' '.join(
+            str((getattr(node, 'properties', None) or {}).get('description')
+                or '').split())
+        if described:
+            texts[str(node_id)] = described
+    return texts
 
 
 def prune(snapshot, flow):

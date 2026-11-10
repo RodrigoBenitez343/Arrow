@@ -1,5 +1,7 @@
 #!/usr/bin/python
 import math
+import time
+import weakref
 
 from Qt import QtCore, QtGui, QtWidgets
 
@@ -19,6 +21,52 @@ PIPE_STYLES = {
     PipeEnum.DRAW_TYPE_DASHED.value: QtCore.Qt.DashLine,
     PipeEnum.DRAW_TYPE_DOTTED.value: QtCore.Qt.DotLine
 }
+
+# Flow animation: bright dots run along every active wire from its output
+# port to its input port, so the data direction reads at a glance (loopbacks
+# included). Dot count follows the wire length, so every wire shows the same
+# dot spacing and the same travel speed, and the train wraps around so the
+# stream never starts or stops. Set FLOW_ANIM_ENABLED = False to freeze them.
+FLOW_ANIM_ENABLED = True
+FLOW_SPACING = 90.0    # scene units between dots
+FLOW_SPEED = 110.0     # scene units per second, identical on every wire
+FLOW_DOT_SIZE = 5.5    # dot diameter in scene units
+_FLOW_TICK_MS = 40
+
+_flow_items = None      # weak set of pipes currently painting the dots
+_flow_timer = None
+
+
+def _flow_time():
+    """
+    Returns:
+        float: seconds, the clock the dot train rides.
+    """
+    return time.monotonic()
+
+
+def _flow_tick():
+    """Repaint every wire that drew a pulse on its last paint."""
+    for item in list(_flow_items):
+        try:
+            if item.scene() is not None:
+                item.update()
+        except RuntimeError:        # C++ item already torn down
+            _flow_items.discard(item)
+
+
+def _flow_register(item):
+    """Keep the pulse wires on one shared repaint timer."""
+    global _flow_items, _flow_timer
+    if _flow_items is None:
+        _flow_items = weakref.WeakSet()
+        _flow_timer = QtCore.QTimer()
+        _flow_timer.setInterval(_FLOW_TICK_MS)
+        _flow_timer.timeout.connect(_flow_tick)
+        _flow_timer.start()
+    # a cached pixmap would freeze the pulse, so animated wires paint live
+    item.setCacheMode(QtWidgets.QGraphicsItem.NoCache)
+    _flow_items.add(item)
 
 
 class PipeItem(QtWidgets.QGraphicsPathItem):
@@ -105,8 +153,51 @@ class PipeItem(QtWidgets.QGraphicsPathItem):
         painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
         painter.drawPath(self.path())
 
+        if self._flow_animating():
+            self._paint_flow(painter)
+            _flow_register(self)
+
         # QPaintDevice: Cannot destroy paint device that is being painted.
         painter.restore()
+
+    def _flow_animating(self):
+        """
+        Returns:
+            bool: true when this wire should show the flow pulse.
+        """
+        return bool(FLOW_ANIM_ENABLED
+                    and self._input_port is not None
+                    and self._output_port is not None
+                    and not self.disabled())
+
+    def _paint_flow(self, painter):
+        """
+        Draw the travelling dots on top of the wire, from output to input
+        (the path is always drawn in that order). The dot count comes from
+        the wire length, so spacing and speed stay the same on every wire;
+        the last dot wraps to the source, so the stream never stops.
+        """
+        path = self.path()
+        if path.isEmpty():
+            return
+        length = path.length()
+        if length <= 0.0:
+            return
+        count = max(1, int(round(length / FLOW_SPACING)))
+        spacing = length / count
+
+        pen = self.pen()
+        color = pen.color().lighter(190)
+        color.setAlpha(250)
+        radius = max(FLOW_DOT_SIZE, pen.widthF() * 1.6) / 2.0
+        painter.setPen(QtCore.Qt.NoPen)
+        painter.setBrush(color)
+
+        offset = (_flow_time() * FLOW_SPEED) % spacing
+        for i in range(count):
+            arc = (offset + i * spacing) % length
+            pt = path.pointAtPercent(arc / length)
+            painter.drawEllipse(pt, radius, radius)
 
     def shape(self):
         """
@@ -145,7 +236,9 @@ class PipeItem(QtWidgets.QGraphicsPathItem):
         tgt_pt = self.path().pointAtPercent(0.51)
         radians = math.atan2(tgt_pt.y() - loc_pt.y(),
                              tgt_pt.x() - loc_pt.x())
-        degrees = math.degrees(radians) - 90
+        # +90 puts the polygon tip (drawn pointing up) along the tangent;
+        # -90 pointed it back down the wire.
+        degrees = math.degrees(radians) + 90
         self._dir_pointer.setRotation(degrees)
         self._dir_pointer.setPos(self.path().pointAtPercent(0.5))
 
@@ -421,6 +514,15 @@ class PipeItem(QtWidgets.QGraphicsPathItem):
         """
         if not start_port:
             return
+
+        # always draw a finished wire output -> input: the direction arrow
+        # reads its heading off the path, so a redraw triggered from the
+        # input port (or a backward wire routed by _bend_around_nodes) must
+        # not decide which way the arrow points.
+        if end_port is not None and start_port is not end_port:
+            if (start_port.port_type == PortTypeEnum.IN.value
+                    and end_port.port_type == PortTypeEnum.OUT.value):
+                start_port, end_port = end_port, start_port
 
         # get start / end positions.
         pos1 = start_port.scenePos()

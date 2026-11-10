@@ -1122,7 +1122,11 @@ class BuilderPanel(QWidget):
         setter(metadata)
         overlay = self._overlay()
         if overlay is not None:
-            overlay.show_sections(bflow.sections(snapshot, metadata))
+            # The section frames print each member node's own sentence too, so
+            # the canvas explains every step, not only every part.
+            overlay.show_sections(bflow.sections(snapshot, metadata),
+                                  node_texts=bflow.node_texts(metadata,
+                                                              snapshot))
         self._append('system', _(
             '%s (%d section(s), %d node(s), %d step(s)) — %s')
             % (_('flow metadata re-described') if force
@@ -1197,7 +1201,8 @@ class BuilderPanel(QWidget):
         overlay = self._overlay()
         if overlay is None:
             return
-        overlay.show_sections(bflow.sections(snapshot, metadata))
+        overlay.show_sections(bflow.sections(snapshot, metadata),
+                              node_texts=bflow.node_texts(metadata, snapshot))
         self._walk_steps = steps
         self._walk_index = 0
         self._append('system', _(

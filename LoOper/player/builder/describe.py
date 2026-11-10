@@ -20,6 +20,7 @@ it.
 
 import json
 import os
+import re
 
 from . import artifacts as _artifacts
 from . import ports as _ports
@@ -80,13 +81,107 @@ def _value(node, *names):
     return '', ''
 
 
-def _code_head(code, limit=130):
+def _code_head(code, limit=130, markers=('#')):
     """The first line of code that says something (comments are skipped)."""
     for line in str(code or '').splitlines():
         text = line.strip()
-        if text and not text.startswith('#'):
+        if text and not text.startswith(markers):
             return _clip_text(text, limit)
     return _clip_text(str(code or '').strip(), limit)
+
+
+def _js_head(code, limit=130):
+    """The first line of page JavaScript that says something.
+
+    JavaScript comments open with ``//`` (or a ``*`` continuation inside a
+    block), not ``#``: the default snippet in the node is all comment, so a
+    ``#``-only check quoted the explaining comment and never the test.
+    """
+    return _code_head(code, limit, ('//', '/*', '*', '*/'))
+
+
+def _result_line(code, limit=130):
+    """The statement of a code check that DECIDES: the one setting ``result``.
+
+    A check's first line is usually preparation (``data = str(input_data)
+    .lower()``); quoting that named the setup instead of the criterion, so a
+    reader learned that something was computed and not what was tested.  The
+    LAST assignment wins because it is the one the branch reads; a snippet
+    without one falls back to its last statement, which is where a check
+    returns.
+    """
+    lines = [line.strip() for line in str(code or '').splitlines()]
+    lines = [line for line in lines if line and not line.startswith('#')]
+    for line in reversed(lines):
+        if re.match(r'^(result|return)\b', line):
+            return _clip_text(line, limit)
+    return _clip_text(lines[-1], limit) if lines else ''
+
+
+#: Lines of a classification prompt that say HOW to answer, not what to decide.
+_CLASSIFIER_NOISE = re.compile(
+    r'^(you are|respond|answer|reply|return|output|print|do not|don.t|never|'
+    r'no other|only|use |keep |follow |format|think|be |the response)',
+    re.IGNORECASE)
+#: An unedited criterion: the template's ``[describe the condition here]``.
+_CRITERION_SLOT = re.compile(r'^\[[^\]]*\]$')
+
+
+def _criterion(text, limit=140):
+    """The CONDITION out of a classification prompt (never the boilerplate).
+
+    A model check is prompted like a classifier — "You are a strict routing
+    classifier. Respond with EXACTLY one word..." — and the criterion is one
+    line somewhere after that.  Quoting from the top spent the whole budget on
+    the instructions, so the condition itself never reached the description.
+    The labelled line is taken first; otherwise the instruction lines are
+    dropped and what is left is the question being asked.
+    """
+    raw = str(text or '')
+    labelled = re.search(
+        r'condition[^:\n]*[:\-]\s*(.+)', raw, re.IGNORECASE | re.DOTALL)
+    if labelled:
+        raw = labelled.group(1)
+    keep = []
+    for line in raw.splitlines():
+        text_line = ' '.join(line.split())
+        if not text_line or _CLASSIFIER_NOISE.match(text_line):
+            continue
+        keep.append(text_line)
+    text = ' '.join(keep).strip()
+    if _CRITERION_SLOT.match(text):
+        return ''            # still the template: no criterion was written
+    return _clip_text(text or '', limit)
+
+
+def _template(props):
+    """How a check names the picture it looks for ('' when none is attached)."""
+    img = _image_label(props)
+    if img:
+        return '"%s"' % img
+    if str((props or {}).get('image_data') or '').strip():
+        return 'pasted into the node'
+    return ''
+
+
+def _quoted(text):
+    """*text* as one value inside a sentence, in the quote style that fits.
+
+    A criterion is often a sentence that quotes its own target ("the text \"x\"
+    is visible"); wrapping that in double quotes again read as a typo, so such a
+    text is quoted with single ones instead.
+    """
+    text = str(text or '').strip().rstrip('.')
+    if '"' in text:
+        return "'%s'" % text if "'" not in text else text
+    return '"%s"' % text
+
+
+def _spot(props):
+    """A layout check's target rectangle as ``x, y, w, h`` ('' when unset)."""
+    parts = [str((props or {}).get(name) or '').strip()
+             for name in ('target_x', 'target_y', 'target_w', 'target_h')]
+    return ', '.join(parts) if all(parts) else ''
 
 
 def _locator_text(raw):
@@ -157,6 +252,19 @@ def _branch_targets(node, snapshot):
         legs.append('%s → %s' % (word, ', '.join(names) if names
                                  else 'nothing (dead end)'))
     return ' — %s' % '; '.join(legs)
+
+
+#: What a DESKTOP check looks for, grouped the way the engine dispatches it
+#: (``conditional_ops._evaluate_conditional`` maps presence/absence/ocr onto
+#: ``presence_trigger`` / ``absence_trigger`` / ``ocr_trigger``).  A token left
+#: out of these groups fell through to "branches on the condition ..." — the
+#: mechanism, never the thing being evaluated.
+_DESKTOP_PRESENCE = ('presence', 'presence_trigger', 'wait_presence',
+                     'visual', 'visual_trigger')
+_DESKTOP_ABSENCE = ('absence', 'absence_trigger', 'wait_absence')
+_DESKTOP_OCR = ('ocr', 'ocr_trigger', 'ocr_text', 'text', 'text_present')
+_DESKTOP_LAYOUT = ('layout_match', 'layout_match_trigger',
+                   'layout_match_conditional')
 
 
 def acting(node, snapshot=None):
@@ -232,6 +340,10 @@ def acting(node, snapshot=None):
         lowered = kind.lower()
         where = _branch_targets(node, snapshot)
         tail = ' and sends execution down true or false%s' % where
+        # The engine decides web mode from ``web_mode`` FIRST and only falls back
+        # to the type (``conditional_ops._is_web_conditional``); reading the type
+        # alone described a web check as a desktop look-up for a picture.
+        web = _truthy(props.get('web_mode')) or lowered == 'web'
         # A file-loop repeats its inner chain while a condition holds; that
         # condition lives in ``loop_condition`` (NOT the visual fields), so it
         # is read first — otherwise every loop said 'loops while "the criterion"'.
@@ -248,7 +360,7 @@ def acting(node, snapshot=None):
                                         120),
                        (' (up to %s times)' % _clip_text(tries, 6))
                        if tries not in ('', '0') else '', where))
-        if lowered == 'web':
+        if web:
             # ``web_condition_type`` is the MECHANISM; the engine
             # (``web_conditions.evaluate``) dispatches on several alias names per
             # variant.  Map EVERY alias to the condition it checks — a variant
@@ -262,10 +374,14 @@ def acting(node, snapshot=None):
                 if to not in ('', '0') else ''
             if check in ('element_located', 'element', 'visual',
                          'visual_trigger'):
-                target = _locator_text(props.get('web_element_locator'))
-                return ('checks that the element %s is on the page%s%s'
-                        % ('"%s"' % target if target
-                           else 'it was picked for this check', when, tail))
+                target = (_locator_text(props.get('web_element_locator'))
+                          or _clip_text(props.get('web_target_text') or '', 60))
+                if not target:
+                    return ('looks for a page element, but none is picked — the '
+                            'check can never match, so every pass takes the '
+                            'false branch%s' % tail)
+                return ('checks that the element "%s" is on the page%s%s'
+                        % (target, when, tail))
             if check in ('text_present', 'text', 'loop', 'conditional_loop'):
                 # The text to look for lives in ``web_target_text`` and the
                 # scope in ``web_text_locator``/``web_text_source`` (page vs
@@ -276,14 +392,18 @@ def acting(node, snapshot=None):
                 span = (' in the element "%s"' % on_el) if on_el else (
                     ' in the selected element'
                     if str(scope or '').lower() == 'element' else '')
-                return ('checks that the page shows the text %s%s%s%s'
-                        % ('"%s"' % _clip_text(want, 60) if want
-                           else 'it expects', span, when, tail))
+                if not want:
+                    return ('looks for page text, but no target text is set — '
+                            'the check can never match%s%s' % (span, tail))
+                return ('checks that the page shows the text "%s"%s%s%s'
+                        % (_clip_text(want, 60), span, when, tail))
             if check in ('browser_js', 'js', 'code', 'code_condition'):
-                js = _value(node, 'web_js')[1]
-                return ('runs a page script %s in the browser and takes the '
-                        'true branch when it returns truthy%s'
-                        % ('"%s"' % _code_head(js) if js else 'it holds', tail))
+                js = _js_head(props.get('web_js'))
+                if not js:
+                    return ('runs a page script, but no script is set — the '
+                            'check can never match%s' % tail)
+                return ('runs a page script "%s" in the browser and takes the '
+                        'true branch when it returns truthy%s' % (js, tail))
             if check in ('layout_match', 'layout'):
                 target = _locator_text(props.get('web_layout_locator')
                                        or props.get('web_element_locator'))
@@ -292,63 +412,96 @@ def acting(node, snapshot=None):
                         % ('"%s"' % target if target else 'it was picked',
                            when, tail))
             if check in ('llm', 'llm_condition', 'ai'):
-                asked = _value(node, 'web_llm_prompt', 'llm_prompt')[1]
-                return ('asks the model %s about the page and branches on the '
-                        'answer%s'
-                        % ('"%s"' % _clip_text(asked, 120) if asked
-                           else 'whether its condition holds', tail))
+                asked = _criterion(props.get('web_llm_prompt')
+                                   or props.get('llm_prompt'))
+                if not asked:
+                    return ('asks the model about the page, but no criterion '
+                            'is written — its prompt is still the template, so '
+                            'it decides nothing%s' % tail)
+                return ('asks the model %s about the page and branches on '
+                        'the answer%s' % (_quoted(asked), tail))
             # Unmapped/passthrough type: name what it looks at (its picked
-            # element or text), only falling back to the token when nothing is
-            # set — a bare type with no criterion is genuinely unknown.
+            # element, its text, its script), only falling back to the token
+            # when nothing is set — a bare type has no criterion at all.
             target = (_locator_text(props.get('web_element_locator'))
-                      or _clip_text(props.get('web_target_text') or '', 60))
+                      or _clip_text(props.get('web_target_text') or '', 60)
+                      or _js_head(props.get('web_js'), 60)
+                      or _criterion(props.get('web_llm_prompt'), 80))
             return ('decides a web condition on %s%s'
                     % ('"%s"' % target if target else _clip_text(check, 120),
                        tail))
-        if lowered == 'code':
+        if lowered in ('code', 'code_conditional', 'python'):
             # Read the RAW code: whitespace is collapsed by ``_value``, and a
             # collapsed program is one long first line.
-            detail = _code_head(props.get('code'))
+            detail = _result_line(props.get('code'))
             return ('runs a code test %s and branches on the value it leaves in '
-                    'result%s' % ('"%s"' % detail if detail else 'it holds',
+                    'result%s' % (_quoted(detail) if detail else 'it holds',
                                   where))
         if 'llm' in lowered:
             _n, asked = _value(node, 'llm_prompt', 'web_llm_prompt')
+            criterion = _criterion(asked)
             seen = (' after reading the screen' if _truthy(
                 props.get('llm_use_vision')) else '')
+            if not criterion:
+                return ('asks the model whether its condition holds%s — but no '
+                        'criterion is written, so the prompt still holds the '
+                        'template%s' % (seen, where))
             return ('asks the model %s%s and branches on the answer%s'
-                    % ('"%s"' % _clip_text(asked, 120) if asked
-                       else 'whether its condition holds', seen, where))
-        if lowered in ('presence', 'absence', 'layout_match', 'presence_trigger'):
-            img = _image_label(props)
-            named = '"%s"' % img if img else 'the template it holds'
-            if lowered == 'absence':
-                return ('checks that the image %s is NOT on the screen%s'
-                        % (named, tail))
-            if lowered == 'layout_match':
-                return ('scrolls the screen until the image %s reaches the '
-                        'target spot%s' % (named, tail))
+                    % (_quoted(criterion), seen, where))
+        # Desktop visual checks.  The engine maps several spellings onto the
+        # same three evaluators (``conditional_ops._evaluate_conditional``), so
+        # every spelling names its target the same way; an unmapped one used to
+        # fall through to 'branches on the condition "absence_trigger"' — the
+        # mechanism, never what was being evaluated.
+        if lowered in _DESKTOP_PRESENCE or lowered in _DESKTOP_ABSENCE:
+            absent = lowered in _DESKTOP_ABSENCE
+            named = _template(props)
+            verb = 'is absent from the screen' if absent else 'is on the screen'
+            if not named:
+                return ('checks whether a template %s, but none is attached — '
+                        'the check can never match, so it always takes the '
+                        'false branch%s' % (verb, tail))
             thr = str(props.get('threshold') or props.get('confidence')
                       or '').strip()
-            return ('checks that the image %s is on the screen%s%s'
-                    % (named, (' (match ≥ %s)' % thr) if thr and img else '',
-                       tail))
-        _n, detail = _value(node, 'target_text', 'ocr_text')
-        if not detail:
-            # Some checks carry nothing but the sentence saying what they ask.
-            _n, detail = _value(node, 'description')
+            return ('checks that the image %s %s%s%s'
+                    % (named, verb, (' (match ≥ %s)' % thr) if thr
+                       and named.startswith('"') else '', tail))
+        if lowered in _DESKTOP_OCR:
+            _n, want = _value(node, 'ocr_text', 'target_text')
+            _n, region = _value(node, 'region')
+            box = ' in a picked screen region' \
+                if region and region != '[]' else ''
+            if not want:
+                return ('reads the screen%s with OCR, but no text is set — the '
+                        'check can never match%s' % (box, tail))
+            loose = '' if _truthy(props.get('case_sensitive')) \
+                else ', ignoring case'
+            return ('reads the screen%s with OCR and takes the true branch when '
+                    'the text "%s" is there%s%s'
+                    % (box, _clip_text(want, 120), loose, tail))
+        if lowered in _DESKTOP_LAYOUT:
+            named = _template(props) or 'its template'
+            spot = _spot(props)
+            return ('scrolls the screen until the image %s reaches the target '
+                    'spot%s%s' % (named, (' (%s)' % spot) if spot else '',
+                                  tail))
         if lowered == 'wait':
             _n, secs = _value(node, 'wait_time')
             return ('waits %s before continuing%s'
                     % ('%s s' % secs[1] if secs[1] else 'a moment', where))
+        _n, detail = _value(node, 'target_text', 'ocr_text')
+        if not detail:
+            # Some checks carry nothing but the sentence saying what they ask.
+            _n, detail = _value(node, 'description')
         if detail:
             _n, region = _value(node, 'region')
             where_txt = ' in a picked screen region' \
                 if region and region != '[]' else ''
             return ('reads the screen%s for the text "%s"%s'
                     % (where_txt, _clip_text(detail, 120), tail))
-        return ('branches on the condition "%s"%s'
-                % (_clip_text(kind or 'its condition', 120), tail))
+        return ('branches on the condition "%s", whose settings are empty — '
+                're-open the node and pick what it should check%s'
+                % (_clip_text(kind or 'unset', 60), tail))
     if ntype in ('sequence', 'web_sequence', 'chain_import'):
         artifact = _artifacts.describe(ntype, props)
         return artifact['text'] or artifact['problem']

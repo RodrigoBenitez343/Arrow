@@ -107,6 +107,63 @@
    "ok": 1,
    "fail": 0,
    "updated": "2026-10-31T13:14:48"
+  },
+  {
+   "goal": "find me jobs on linkedin and apply to them for me, i need to start my job search",
+   "steps": [
+    {
+     "chain": "jobs",
+     "why": "find jobs on linkedin",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 0,
+   "fail": 1,
+   "updated": "2026-11-09T12:57:34"
+  },
+  {
+   "goal": "start my job search and apply to all you find",
+   "steps": [
+    {
+     "chain": "jobsearch",
+     "why": "start my job search",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 0,
+   "fail": 1,
+   "updated": "2026-11-09T18:34:12"
+  },
+  {
+   "goal": "find and apply to some jobs on linkedin.",
+   "steps": [
+    {
+     "chain": "network",
+     "why": "find some jobs on linkedin",
+     "inputs": {}
+    },
+    {
+     "chain": "network",
+     "why": "apply to some jobs on linkedin",
+     "inputs": {}
+    },
+    {
+     "chain": "open linkedin",
+     "why": "open the LinkedIn Jobs page and click \"Show all\" to list available job opportunities",
+     "inputs": {}
+    },
+    {
+     "chain": "jobsearch",
+     "why": "run the jobsearch chain to open a job listing and click Easy Apply",
+     "inputs": {}
+    }
+   ],
+   "runs": 1,
+   "ok": 0,
+   "fail": 1,
+   "updated": "2026-11-09T19:27:08"
   }
  ],
  "transitions": {
@@ -114,12 +171,24 @@
    "jobs": {
     "ok": 1,
     "fail": 0
+   },
+   "network": {
+    "ok": 0,
+    "fail": 1
+   },
+   "open linkedin": {
+    "ok": 0,
+    "fail": 1
    }
   },
   "open linkedin": {
    "jobs": {
     "ok": 1,
     "fail": 0
+   },
+   "jobsearch": {
+    "ok": 0,
+    "fail": 1
    }
   }
  }

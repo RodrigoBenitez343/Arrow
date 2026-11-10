@@ -476,6 +476,14 @@ class ConfigManager:
 
             if file_path and os.path.exists(file_path):
                 logger.debug(f"Loading configuration from: {file_path}")
+                # The per-node sentences are DERIVED, so bring them up to date
+                # with the describer that ships today BEFORE the canvas reads
+                # them: a reopened chain otherwise showed wording a newer
+                # Builder would never write (a check that named its target read
+                # as "the element it was picked for this check").  No model, no
+                # canvas, and only a stale description is rewritten.
+                from player import chain_refresh
+                chain_refresh.refresh_file(file_path)
                 # UTF-8 with or without BOM: the locale codec (cp1252 on
                 # Windows) silently MOJIBAKES a real em dash and CRASHES on the
                 # bytes it leaves undefined (measured 2026-09-24: a chain with
@@ -1342,6 +1350,7 @@ class ConfigManager:
                 "max_history": config.get("max_history", 0),
                 "persistent": config.get("persistent", True),
                 "clear_on_finish": config.get("clear_on_finish", False),
+                "index_ephemeral": config.get("index_ephemeral", False),
                 "scope": config.get("scope", "local"),
                 "shared_context_chain_file": config.get("shared_context_chain_file", ""),
                 "shared_context_node_id": config.get("shared_context_node_id", ""),
@@ -2621,6 +2630,10 @@ class ConfigManager:
                     node.set_property("persistent", _persistent)
                     node.set_property(
                         "clear_on_finish", _cof
+                    )
+                    node.set_property(
+                        "index_ephemeral",
+                        bool(context_data.get("index_ephemeral", False))
                     )
                     node.set_property("scope", str(context_data.get("scope", "local")))
                     node.set_property("shared_context_chain_file", str(context_data.get("shared_context_chain_file", "")))

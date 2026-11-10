@@ -114,19 +114,20 @@ def test_extract_includes_choice_options_in_prompt():
     assert "EXACTLY ONE" in seen["system"]
 
 
-def test_missing_evidence_asks_the_model_for_the_controls_own_none_answer():
-    """With NO evidence the MODEL reads the control (its own options ride in the
-    prompt) and returns the answer that means none / no.  The harness no longer
-    classifies the question from an English verb list."""
+def test_missing_evidence_never_reaches_the_model():
+    """With NO evidence the model is not asked at all: it used to be, and it
+    answered from nothing - live, an empty evidence block turned 'Are you
+    legally authorised to work in Argentina' into 'No'.  The harness writes the
+    last-resort N/A instead (or leaves the field alone with that policy off)."""
     h = _Harness()
     _wire(h, fields=[{"id": "q1", "label": "Have you worked before?",
                       "kind": "text"}], evidence="", llm_value="No",
-          reads=["No"])
+          reads=["N/A"])
     h._execute_form_filling_node(_node(), None)
     summary = json.loads(h.get_variable("node_ff1_output"))
-    assert summary["filled"] == 1
-    assert h.writes == [("q1", "No")]
-    assert h.llm_calls          # the model IS asked - no verb list decides this
+    assert h.llm_calls == [], "nothing retrieved, so nothing is generated"
+    assert summary["answered_na"] == 1
+    assert h.writes == [("q1", "N/A")]
 
 
 def test_answer_no_disabled_answers_na_not_no():

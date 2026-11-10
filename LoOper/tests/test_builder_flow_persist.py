@@ -203,18 +203,18 @@ def test_the_stored_description_draws_when_the_chain_opens(qapp):
     boxes = view.overlay._boxes
     # The stored boxes are drawn as stored — no box is invented for the nodes
     # they leave out (a guessed frame rounds whatever sits in between).
-    assert [section['title'] for section, _item in boxes] == ['ask',
-                                                              'think + check']
-    for section, item in boxes:
-        assert item.isVisible(), section['title']
+    assert [section['title'] for section, _frame, _label, _notes in boxes] == [
+        'ask', 'think + check']
+    for section, frame, label, _notes in boxes:
+        assert frame.isVisible(), section['title']
         assert set(section['nodes']) <= file_ids, section['nodes']
 
-    # The box PRINTS the note: a title-only box is a headline with no body.
-    from NGUI.graph_elements import flow_overlay
-
-    for section, item in boxes:
-        assert item._note, section['title']
-        assert item.head_height(400.0) > flow_overlay._MIN_BAND
+    # The label PRINTS the note: a title-only section is a headline with no
+    # body.  The height that shows the whole note has to be at least that.
+    for section, _frame, label, _notes in boxes:
+        assert label._note, section['title']
+        assert label.head_height(400.0) > 0.0
+        assert label.preferred_height(400.0) > label.head_height(400.0)
 
 
 def test_get_flow_translates_the_files_ids_onto_this_sessions_nodes(
@@ -325,8 +325,9 @@ def test_one_stale_section_no_longer_hides_the_others(qapp):
     view = _view(graph, stored)
     GraphViewWidget._show_stored_flow(view)
 
-    assert [section['title'] for section, _item in view.overlay._boxes] == [
-        'ask', 'think + check']
+    assert [section['title'] for section, _frame, _label, _notes
+            in view.overlay._boxes] == ['ask', 'think + check']
     assert 'gone' not in [section['title']
-                          for section, _item in view.overlay._boxes]
+                          for section, _frame, _label, _notes
+                          in view.overlay._boxes]
 

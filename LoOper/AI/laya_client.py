@@ -72,6 +72,10 @@ _SESSION_DISABLED = False
 _SEQ = 0
 _INFLIGHT = 0
 _LAUNCH_TRIED = False
+# Balances of :func:`hold` calls.  While > 0 the daemon is a RESIDENT resource
+# for the duration of a node execution: the idle unloader stands down and
+# ``release()`` refuses (see ``AI/engine_residency.py`` for the RAM gate).
+_HOLDS = 0
 
 
 def _disabled() -> bool:
@@ -213,6 +217,46 @@ def available() -> bool:
     return status() == "ready"
 
 
+def _metrics():
+    """The shared time/compute recorder, or None when it cannot load."""
+    try:
+        from AI import engine_metrics
+        return engine_metrics
+    except Exception:
+        return None
+
+
+def hold() -> bool:
+    """Keep the daemon loaded until the matching :func:`unhold`.
+
+    A form pass scores one burst per field; without a hold every field pays a
+    cold load (~2 s) because the burst policy stops the daemon as soon as one
+    sweep ends.  Holding is refused when the machine cannot afford it
+    (``AI.engine_residency``), so a small box keeps the burst policy.
+    """
+    global _HOLDS
+    try:
+        from AI.engine_residency import residents_allowed
+        if not residents_allowed():
+            return False
+    except Exception:
+        return False
+    _HOLDS += 1
+    return True
+
+
+def unhold() -> None:
+    """Release one :func:`hold` (idempotent floor at zero)."""
+    global _HOLDS
+    if _HOLDS > 0:
+        _HOLDS -= 1
+
+
+def held() -> bool:
+    """True while a caller is holding the daemon resident."""
+    return _HOLDS > 0
+
+
 def ensure_running() -> bool:
     """Lazily start the daemon once, then report readiness.
 
@@ -236,6 +280,7 @@ def ensure_running() -> bool:
         _disable_for_session("no Laya GGUF under AI/models/laya-GGUF")
         return False
     _LAUNCH_TRIED = True
+    _load_started = time.perf_counter()
     cmd = [exe, "daemon", model, "--device", "cpu", "--threads", str(_threads())]
     try:
         kwargs = {}
@@ -276,6 +321,11 @@ def ensure_running() -> bool:
             _disable_for_session("daemon exited during startup — check AI/bin/laya.exe")
             return False
         time.sleep(0.2)
+    _load_ms = round((time.perf_counter() - _load_started) * 1000, 1)
+    recorder = _metrics()
+    if recorder is not None:
+        recorder.record("engine_load", engine_code=recorder.engine_code("laya"),
+                        ms=_load_ms, load_ms=_load_ms)
     return True
 
 
@@ -298,17 +348,26 @@ def _stop_daemon(reason: str) -> bool:
         except queue.Empty:
             break
     logger.info("Laya model unloaded (%s) — load -> use -> unload per burst", reason)
+    recorder = _metrics()
+    if recorder is not None:
+        recorder.record("engine_unload", engine_code=recorder.engine_code("laya"))
     return True
 
 
-def release(wait: float = 5.0) -> bool:
+def release(wait: float = 5.0, force: bool = False) -> bool:
     """Stop the daemon NOW, freeing its RAM; the next request relaunches it.
 
     Called by the llama-server start path (ONE model per memory pool) and by
     the idle unloader once a burst ends.  A forward in flight is never killed
     out from under its caller: wait up to *wait* s for it, then give up and
     return False (the daemon stays up; the caller keeps its verdict).
+
+    While a caller HOLDS the daemon (``hold()``) this refuses unless *force*
+    is set: the generation server's start path passes ``force=True`` because
+    its KV cache must be sized with this engine's RAM back in the pool.
     """
+    if _HOLDS > 0 and not force:
+        return False
     deadline = time.time() + max(0.0, float(wait or 0.0))
     while _INFLIGHT > 0 and time.time() < deadline:
         time.sleep(0.02)
@@ -328,8 +387,8 @@ def _unload_after_idle(seq_at_schedule: int) -> None:
 
 def _schedule_unload(seq_at_schedule: int) -> None:
     """Arm the idle unloader after every completed request."""
-    if _KEEP_ALIVE_SECONDS < 0:
-        return  # operator pinned the model resident
+    if _KEEP_ALIVE_SECONDS < 0 or _HOLDS > 0:
+        return  # pinned resident (operator) or held for a node execution
     threading.Thread(
         target=_unload_after_idle, args=(seq_at_schedule,),
         daemon=True, name="laya-idle-unloader",
@@ -360,11 +419,16 @@ def _request(payload: Dict, timeout: Optional[float] = None) -> Optional[dict]:
             _INFLIGHT -= 1
             logger.debug("Laya daemon write failed: %s", e)
             return None
+    started = time.perf_counter()
     try:
         resp = _wait_response(req_id, timeout)
     finally:
         _INFLIGHT -= 1
         _schedule_unload(req_id)  # burst end: unload unless a newer request lands
+    recorder = _metrics()
+    if recorder is not None:
+        recorder.record("forward", engine_code=recorder.engine_code("laya"),
+                        ms=round((time.perf_counter() - started) * 1000, 1))
     if resp is None:
         logger.debug("Laya daemon gave no response for id=%s", req_id)
     return resp
@@ -441,7 +505,7 @@ def rerank(premise: str, options: Sequence[str]) -> Optional[int]:
 
 
 def _shutdown() -> None:
-    release(wait=1.0)
+    release(wait=1.0, force=True)
 
 
 atexit.register(_shutdown)

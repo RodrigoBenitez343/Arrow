@@ -62,6 +62,27 @@ def _dump_reasoning(reasoning: str) -> str:
         return ''
 
 
+def _release_burst_engine(module, wait: float = 5.0) -> None:
+    """Force a sibling burst engine down, whatever its ``release`` signature.
+
+    The real modules take ``force=``; a test double (or an older caller) may
+    not.  A swallowed TypeError here would leave the memory pool occupied -
+    the exact condition this call exists to prevent - so a narrower signature
+    gets the plain call instead of nothing.
+    """
+    try:
+        module.release(wait=wait, force=True)
+        return
+    except TypeError:
+        pass
+    except Exception:  # noqa: BLE001 - a release never breaks a start
+        return
+    try:
+        module.release(wait=wait)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _flag_supported(exe: str, flag: str) -> bool:
     """True when *exe* lists *flag* in --help (cached per binary).
 
@@ -355,6 +376,11 @@ class LlamaCppEngine:
 
         # Model capability descriptor (optional, set by caller)
         self.capability = None
+        # What the last command actually applied (KV type, keep, shift,
+        # cache-reuse).  Filled by ``_server_cmd``; reported by
+        # ``_record_engine_start`` so the metrics log says what the process was
+        # really started with, never what was merely requested.
+        self._kv_flags = {}
 
     def _find_server_executable(self) -> Optional[str]:
         """Find the llama-server executable"""
@@ -957,6 +983,64 @@ class LlamaCppEngine:
                 "Enabled --embeddings (embedding server mode, port %d)",
                 self.server_port,
             )
+        # ── KV-cache footprint and window reuse ────────────────────
+        # The cache is allocated ONCE at --ctx-size, so a wide window is a
+        # permanent RAM cost.  
+        #   q8 KV         halves that cost (2 bytes -> 1 per element)
+        #   --keep N      the instructions survive a context shift
+        #   --context-shift  when the window fills, the OLDEST tokens go
+        #                 instead of the request failing outright
+        #   --cache-reuse   re-use the prefix KV between turns
+        # Every flag is probed first: an unknown argument makes the server
+        # exit at startup, and an older WinGet build may predate them.
+        if not self._embedding_mode:
+            _kv_type = (os.getenv("LOOPER_LLAMACPP_KV_TYPE", "q8_0")
+                        or "").strip()
+            _kv_applied = ""
+            if _kv_type and _flag_supported(server_exe, "--cache-type-k"):
+                cmd.extend(["-ctk", _kv_type])
+                _kv_applied = _kv_type
+                if _flag_supported(server_exe, "--cache-type-v"):
+                    cmd.extend(["-ctv", _kv_type])
+                _eng_logger.info("KV cache type: %s", _kv_type)
+            _ctx = int(self.context_size or 0)
+            _keep_raw = (os.getenv("LOOPER_LLAMACPP_CONTEXT_KEEP") or "").strip()
+            if _keep_raw:
+                try:
+                    _keep = max(0, int(_keep_raw))
+                except ValueError:
+                    _keep = 0
+            else:
+                _keep = min(512, max(64, _ctx // 8)) if _ctx > 0 else 256
+            _keep_applied = 0
+            if _keep and _flag_supported(server_exe, "--keep"):
+                cmd.extend(["--keep", str(_keep)])
+                _keep_applied = _keep
+            _shift_off = (os.getenv("LOOPER_LLAMACPP_CONTEXT_SHIFT", "1")
+                          or "").strip().lower() in ("0", "off", "false", "no")
+            _shift_applied = 0
+            if _shift_off:
+                if _flag_supported(server_exe, "--no-context-shift"):
+                    cmd.append("--no-context-shift")
+            elif _flag_supported(server_exe, "--context-shift"):
+                cmd.append("--context-shift")
+                _shift_applied = 1
+            _reuse_raw = (os.getenv("LOOPER_LLAMACPP_CACHE_REUSE", "256")
+                          or "").strip()
+            try:
+                _reuse = max(0, int(_reuse_raw))
+            except ValueError:
+                _reuse = 0
+            _reuse_applied = 0
+            if _reuse and _flag_supported(server_exe, "--cache-reuse"):
+                cmd.extend(["--cache-reuse", str(_reuse)])
+                _reuse_applied = _reuse
+            # What ACTUALLY went into the command, for the engine_start sample
+            # (a flag the binary does not know is not reported as applied).
+            self._kv_flags = {"kv_type": _kv_applied, "keep": _keep_applied,
+                             "context_shift": _shift_applied,
+                             "cache_reuse": _reuse_applied}
+
         if getattr(self, '_no_mmap', False):
             cmd.append("--no-mmap")
 
@@ -971,6 +1055,65 @@ class LlamaCppEngine:
             cmd.extend(['--reasoning-budget', _rb])
         _eng_logger.info("llama-server cmd: %s", " ".join(cmd[1:]))
         return cmd
+
+    def _release_sibling_bursts(self) -> None:
+        """Free the other burst engines before this server sizes its KV cache.
+
+        ONE model per memory pool: measured 2026-09-23, a resident Laya
+        starved this startup (native context collapsed 262144 -> 1024 tokens)
+        and OOM'd the Vulkan KV-cache allocation.  The release happens BEFORE
+        the RAM-aware cap reads available memory.
+
+        SKIPPED for the embedding server (which is a LlamaCppEngine too): its
+        own cold start used to kill Laya and its sibling, so every form field
+        became an embed load -> Laya load ping-pong.  A HELD engine is still
+        released (``force=True``): this server is the one whose KV cache must
+        be sized with the pool to itself.
+        """
+        if self._embedding_mode:
+            return
+        try:
+            from AI import laya_client as _laya_client
+            _release_burst_engine(_laya_client)
+        except Exception:
+            pass
+        try:
+            from AI import embedding_server as _embed_srv
+            _release_burst_engine(_embed_srv)
+        except Exception:
+            pass
+
+    def _record_engine_start(self, started: float) -> None:
+        """One ``engine_start`` sample: wall time, window, KV bytes, flags.
+
+        A cold start is the most expensive thing this engine does (seconds to
+        minutes), and its RAM cost is the KV cache the window implies.  Both
+        belong in the metrics log next to the knobs that produced them.
+        """
+        try:
+            from AI import engine_metrics as metrics
+        except Exception:
+            return
+        flags = getattr(self, "_kv_flags", None) or {}
+        elapsed = round((time.perf_counter() - started) * 1000.0, 1)
+        ctx = int(self.context_size or 0)
+        kv_type = str(flags.get("kv_type") or "f16") or "f16"
+        try:
+            metrics.record(
+                "engine_start",
+                engine_code=metrics.engine_code("embed" if self._embedding_mode
+                                                else "llama"),
+                ms=elapsed, load_ms=elapsed,
+                ctx=ctx,
+                kv_bytes=metrics.kv_bytes(self.model_path, ctx, kv_type),
+                keep=int(flags.get("keep") or 0),
+                context_shift=int(flags.get("context_shift") or 0),
+                cache_reuse=int(flags.get("cache_reuse") or 0),
+                embedding=int(bool(self._embedding_mode)),
+                rss_mb=metrics.rss_mb("llama-server"),
+            )
+        except Exception:  # noqa: BLE001 - measurement never breaks a start
+            pass
 
     def start_server(self, blocking: bool = False) -> bool:
         """
@@ -1007,26 +1150,10 @@ class LlamaCppEngine:
             return False
 
         # ── ONE model per memory pool (load -> use -> unload) ────────────
-        # The Laya scorer is a burst resource too; measured 2026-09-23: a
-        # resident Laya starved this startup (native context collapsed
-        # 262144 -> 1024 tokens) and OOM'd the Vulkan KV-cache allocation.
-        # Release it BEFORE the RAM-aware cap below reads available memory —
-        # Laya relaunches (~2 s) on its next use.
-        try:
-            from AI import laya_client as _laya_client
-            _laya_client.release(wait=5.0)
-        except Exception:
-            pass
-
-        # The RAG embedding server is a sibling burst resource on its own port;
-        # release it too so only ONE llama.cpp model is resident while this
-        # server's KV cache is sized (one instance per turn on low-RAM devices).
-        # It relaunches lazily on the next embed, mirroring Laya.
-        try:
-            from AI import embedding_server as _embed_srv
-            _embed_srv.release(wait=5.0)
-        except Exception:
-            pass
+        # Free the sibling burst engines first; see the method for why the
+        # embedding server itself skips this.
+        self._release_sibling_bursts()
+        _load_started = time.perf_counter()
 
         # ── RAM-aware native-context resolution ──────────────────────────
         # context_size <= 0 means "model's native training context".  For
@@ -1507,6 +1634,7 @@ class LlamaCppEngine:
                             # /completion is ready, which on Windows can manifest
                             # as [Errno 22] Invalid argument.
                             time.sleep(0.5)
+                            self._record_engine_start(_load_started)
                             return True
                     except requests.exceptions.ConnectionError:
                         # Connection refused \u2014 server hasn't started listening yet
@@ -1582,6 +1710,7 @@ class LlamaCppEngine:
             else:
                 # Non-blocking - assume it will start
                 self.is_running = True
+                self._record_engine_start(_load_started)
                 return True
 
         except Exception as e:

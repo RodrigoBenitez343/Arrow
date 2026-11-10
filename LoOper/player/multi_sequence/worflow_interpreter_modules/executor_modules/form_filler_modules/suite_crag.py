@@ -142,6 +142,105 @@ def test_a_field_is_scored_once_per_pass():
     assert "benitezrodrigo169@gmail.com" in again
 
 
+def test_a_field_scores_four_segments_and_no_more():
+    """The candidate budget IS the per-field time budget: one Laya forward per
+    scored sentence, ~2.7 s each.  Live, nine candidates at 13.6 forwards per
+    field burned 1283 s of a 44 min session, so the sweep is capped at four and
+    the pass must not pay for a fourth-twice."""
+    from . import crag
+
+    h = _harness({"benitezrodrigo169@gmail.com": 0.9})
+    cfg = _cfg(h)
+    entries = h._ff_crag_corpus(cfg, h.pool, [])
+    cand = h._ff_crag_candidates("Email address", entries, cfg)
+    assert 0 < len(cand) <= crag._MAX_CANDIDATE_SEGMENTS == 4
+    assert len([c for c in cand if c.get("head")]) <= crag._IDENTITY_SEGMENT_SLOTS
+    h._ff_retrieve("Email address*", cfg, h.pool, [])
+    assert h.ev.forwards == len(cand), (
+        "one forward per candidate, no re-scoring: %d for %d"
+        % (h.ev.forwards, len(cand)))
+
+
+def test_a_line_is_scored_once_per_question(monkeypatch):
+    """The answer scores are cached per (question, LINE), not per batch.
+
+    The subject block is scored first and its lines then come back as
+    candidates; the next consolidation cycle offers the same header inside a
+    different batch.  A batch key charged each of those a second forward.
+    """
+    from types import MethodType
+
+    import AI.laya_hooks as hooks
+    from . import crag
+
+    batches = []
+
+    def fake(question, texts):
+        batches.append(list(texts))
+        return [0.25 * (index + 1) for index in range(len(texts))]
+
+    monkeypatch.setattr(hooks, "answer_scores", fake)
+    h = _harness({})
+    h._ff_answer_scores = MethodType(crag.FormFillerCragMixin._ff_answer_scores, h)
+
+    first = h._ff_answer_scores("Q?", ["line a", "line b"])
+    second = h._ff_answer_scores("Q?", ["line b", "line c"])
+
+    assert batches == [["line a", "line b"], ["line c"]], \
+        "only the unseen line reaches the engine"
+    assert second[0] == first[1], "a cached line keeps its own score"
+    assert second[1] == fake("Q?", ["x"])[0]
+
+
+YEARS = ("Less than 4 years", "4-6 years", "6-8 years", "8+ years")
+
+
+def test_a_choice_verdict_needs_one_of_the_controls_own_options():
+    """``correct`` is a claim that the strip ANSWERS the question, and the
+    encoder only measured topic overlap: live, strips about a junior role came
+    back ``correct`` (0.63) for a years question, holding no number, no date and
+    none of the control's options - the extractor then invented '4-6 years'.
+    """
+    pool = ("# Rodrigo Benitez\n\n## Experience\n"
+            "Junior Developer (Intern) at Byron RPS\n"
+            "Worked in a shared Python codebase with reviews\n")
+    h = _harness({"Junior Developer": 0.9})
+    cfg = _cfg(h)
+    field = {"id": "f", "label": "How many years of experience with Python?",
+             "kind": "choice", "options": list(YEARS)}
+    h._ff_retrieve("How many years of experience with Python?", cfg, pool, [],
+                   field=field)
+    assert h._ff_last_action == "ambiguous", \
+        "no option and no number in the strips means no answer"
+    assert "ambiguous" in h._ff_last_route
+
+
+def test_a_choice_verdict_with_the_option_in_the_strip_stays_correct():
+    pool = ("# Rodrigo Benitez\n\n## Summary\n"
+            "8+ years building Python backends in production\n")
+    h = _harness({"8+ years": 0.9})
+    cfg = _cfg(h)
+    field = {"id": "f", "label": "How many years of experience with Python?",
+             "kind": "choice", "options": list(YEARS)}
+    h._ff_retrieve("How many years of experience with Python?", cfg, pool, [],
+                   field=field)
+    assert h._ff_last_action == "correct"
+
+
+def test_a_prose_field_is_not_held_to_an_option():
+    """A multiline control is answered by sentences, and a sentence has no
+    answer shape to test for - the verdict must not be second-guessed."""
+    pool = ("# Rodrigo Benitez\n\n## Summary\n"
+            "I build local-first automation for regulated environments\n")
+    h = _harness({"local-first": 0.9})
+    cfg = _cfg(h)
+    field = {"id": "f", "label": "Walk us through a backend system you built",
+             "kind": "textarea", "multiline": True}
+    h._ff_retrieve("Walk us through a backend system you built", cfg, pool, [],
+                   field=field)
+    assert h._ff_last_action == "correct"
+
+
 def test_the_learned_answer_leads_the_pack():
     """The user's own answer for THIS field outranks retrieved material: they
     chose the wording, and the extractor may only adapt it."""
@@ -288,6 +387,42 @@ def test_the_subject_lines_follow_the_score_not_the_document_order(tmp_path):
         "a job-history city is not the candidate's own"
 
 
+def test_the_header_is_scored_from_both_ends(tmp_path):
+    """Four forwards for the header, so take the two ends of it.
+
+    A resume header is the name plus a run of taglines, and the contact line
+    (city · phone · email) is the LAST line before the first section.  Scoring
+    the block's first four lines spent the budget on taglines and a
+    'Location (city)' field never saw its own city.
+    """
+    doc = tmp_path / "resume.md"
+    doc.write_text(
+        "# Rodrigo David Benitez\n\n"
+        "**Tagline one about applied AI**\n\n"
+        "**Tagline two about regulated environments**\n\n"
+        "**Tagline three about local-first inference**\n\n"
+        "**Tagline four about agentic automation**\n\n"
+        "Buenos Aires, Argentina · +54 11 5498 0148\n",
+        encoding="utf-8")
+    h = _harness({})
+    scored = []
+
+    def flat(question, texts):
+        scored.extend(texts)
+        return [0.05 for _ in texts]
+
+    h._ff_answer_scores = flat
+    cfg = _cfg(h)
+    entries = h._ff_crag_corpus(cfg, "", [str(doc)])
+    h._ff_crag_candidates("Location (city)*", entries, cfg,
+                          field={"id": "f", "label": "Location (city)*",
+                                 "kind": "combo"})
+    assert any("Buenos Aires" in text for text in scored), \
+        "the last header line (the contact line) must be scored"
+    assert not any("Tagline two" in text for text in scored), \
+        "the middle taglines are what the budget skips"
+
+
 def test_a_single_valued_field_stays_inside_one_section(tmp_path):
     """A candidate set that mixes the header with an employer's rows is what let
     the extractor glue 'Buenos Aires' to 'Saint Paul'.  One value = one section;
@@ -384,8 +519,8 @@ def test_a_correct_sweep_ends_the_consolidation():
 
 BIG_DOC = "\n".join(
     ["# Person Name", "City, Country · +00 0000 0000"]
-    + ["Fact line number %d about something unrelated \u2014 detail %d"
-       % (i, i) for i in range(1, 19)])
+    + ["Fact line %d about something unrelated \u2014 detail %d" % (i, i)
+       for i in range(1, 19)])
 
 
 def test_a_sweep_that_finds_nothing_goes_into_unscored_material(tmp_path):
@@ -416,12 +551,29 @@ def test_a_sweep_that_finds_nothing_goes_into_unscored_material(tmp_path):
 def test_the_best_sweep_wins_and_is_never_merged(tmp_path):
     """Two sweeps are two answers, not one: the pack comes from the sweep that
     scored highest, so a later sweep can never add its strips to an earlier
-    one's (that merge is what let two sections answer one field)."""
-    doc = tmp_path / "big.md"
-    doc.write_text(BIG_DOC, encoding="utf-8")
-    # Cycle 1 scores nothing on topic; the SECOND sweep's section does.
-    h = _harness({"Fact line number 12": 0.9}, default=0.05)
+    one's (that merge is what let two sections answer one field).
+
+    The candidate sets are supplied here on purpose: WHICH stretch of the
+    document ranks first is the ranker's business (and an embedding ranking),
+    while this test is about the consolidation rule that consumes them.
+    """
+    h = _harness({"WINNER strip": 0.9}, default=0.05)
     cfg = _cfg(h, crag_cycles=2, crag_external=False)
-    pack = h._ff_retrieve("Passport number*", cfg, "", [str(doc)])
-    assert "Fact line number 12" in pack
+    rounds = [
+        ["loser strip one", "loser strip two"],
+        ["WINNER strip here", "cycled strip"],
+    ]
+    calls = []
+
+    def fake(query, entries, c, field=None, skip=None):
+        calls.append(list(skip or ()))
+        picked = rounds[len(calls) - 1]
+        return [{"text": t, "head": False, "section": "S"} for t in picked]
+
+    h._ff_crag_candidates = fake
+    pack = h._ff_retrieve("Passport number*", cfg, "one line of pool", [])
+    assert len(calls) == 2, "an unanswered sweep must cycle"
+    assert calls[1], "the second sweep is told what the first already scored"
+    assert "WINNER strip here" in pack
+    assert "loser strip" not in pack, "the losing sweep is not merged"
     assert h._ff_last_action == "correct"

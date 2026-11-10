@@ -394,7 +394,8 @@ class FormFillerDialog(ModernDialog):
         )
         beh_layout.addWidget(self.verify_checkbox, 1, 0, 1, 2)
         self.answer_no_checkbox = ModernToggle(
-            text=_("Answer 'No' to a yes/no question when nothing grounds a 'Yes'")
+            text=_("Answer 'No' to a yes/no question the evidence cannot "
+                   "support a 'Yes' for (never on EMPTY evidence)")
         )
         beh_layout.addWidget(self.answer_no_checkbox, 2, 0, 1, 2)
         self.ask_user_checkbox = ModernToggle(

@@ -114,11 +114,28 @@ NODE_FIELDS = {
     ),
     "code": ("code", "gen_model", "input_vars", "output_vars",
              "description"),
+    # A check is its CRITERION: the file it looks for, the text it reads, the
+    # snippet it runs, the sentence it asks.  Leaving those out of this list
+    # made every live check describe itself as "a condition it was picked for"
+    # — the mechanism, never the thing being evaluated.
     "conditional": (
         "condition_type", "decision_criterion", "decision_evaluator",
+        # desktop visual / OCR / wait payload: WHAT the check looks at
+        "image_path", "image_data", "threshold", "confidence", "timeout",
+        "wait_time", "max_attempts", "target_text", "ocr_text", "region",
+        "case_sensitive", "target_x", "target_y", "target_w", "target_h",
+        # a small model classifies what the prompt asks about
         "llm_model", "llm_engine", "llm_prompt", "llm_timeout",
-        "llm_use_vision", "code", "description", "web_mode",
-        "web_condition_type", "loop_type", "loop_position", "sequence_file",
+        "llm_use_vision",
+        # a Python snippet decides the branch
+        "code", "description",
+        # web mode reads the live page instead of the desktop screen
+        "web_mode", "web_condition_type", "web_timeout",
+        "web_element_locator", "web_layout_locator", "web_text_source",
+        "web_text_locator", "web_target_text", "web_js", "web_llm_prompt",
+        "web_llm_model", "web_llm_engine", "web_case_sensitive",
+        # a file loop replays a chain while its own criterion holds
+        "loop_type", "loop_position", "sequence_file", "loop_condition",
         "max_loops",
     ),
     "chain_import": (
@@ -142,8 +159,8 @@ NODE_FIELDS = {
     "handle": ("action_type", "goal_description", "target_description",
                "description"),
     "context": (
-        "label", "persistent", "clear_on_finish", "max_history", "scope",
-        "documents", "skills", "description",
+        "label", "persistent", "clear_on_finish", "index_ephemeral",
+        "max_history", "scope", "documents", "skills", "description",
     ),
     "action": ("label", "action_type", "description"),
     "mcp": ("label", "description"),
@@ -153,8 +170,8 @@ NODE_FIELDS = {
 #: Fields whose value is a free-text document body; the digest never prints
 #: them in full (they belong to ``read_node``, which prints a clipped copy).
 LONG_FIELDS = ("prompt", "system_message", "code", "llm_prompt",
-               "instruction", "orch_goal", "orch_synthesis_system", "skills",
-               "documents")
+               "web_js", "instruction", "orch_goal", "orch_synthesis_system",
+               "skills", "documents")
 
 
 def short_type(node_type):

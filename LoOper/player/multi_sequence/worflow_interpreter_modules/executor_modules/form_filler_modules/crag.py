@@ -26,6 +26,7 @@ is never confused with the candidate's own contact block.
 import logging
 import os
 import re
+import time
 
 from AI.crag import (CRAGPipeline, CRAGUnavailable, ChunkStore,
                      CRAGExternalKnowledge, PoolStreams, default_config_from,
@@ -54,20 +55,34 @@ _ff_plain_source = _corpus.plain_source
 _ff_segments = _corpus.segments
 _ff_blocks = _corpus.blocks
 
-# Segments that reach the evaluator per field.  One Laya forward is ~2 s on 12
-# threads, so this is the per-field time budget as much as a quality choice.
-_MAX_CANDIDATE_SEGMENTS = 9
+# Segments that reach the evaluator per field.  One Laya forward is ~2.7 s on
+# 6 threads, so this is the per-field time budget as much as a quality choice:
+# the live run paid 13.6 forwards per field (1283 s of a 44 min session) to
+# score nine strips whose best six were header lines.  Four scored strips answer
+# a single-value field as well as nine did, for less than half the forwards.
+_MAX_CANDIDATE_SEGMENTS = 4
 # Segments GUARANTEED to the document's identity section (the block that names
 # its SUBJECT - a person, an account, an issuer).  Guaranteed, not prepended:
 # those values embed poorly against a short field label, but they must never
 # consume the whole budget - when every candidate slot went to the header, the
 # rest of the document became unreachable for every question (live: 42 of 42
 # retrieved strips came from the first two blocks, and only the header's own
-# fields could be answered from the document at all).
-_IDENTITY_SEGMENT_SLOTS = 4
+# fields could be answered from the document at all).  Two of four: half the
+# budget for the header would leave the document reachable only by accident.
+_IDENTITY_SEGMENT_SLOTS = 2
 # How many segments one ranked block may contribute, so a single long section
-# cannot take the budget either.
-_MAX_SEGMENTS_PER_BLOCK = 4
+# cannot take the budget either.  Half the budget, so one block can never BE
+# the budget.
+_MAX_SEGMENTS_PER_BLOCK = 2
+
+
+def _ff_metrics():
+    """The shared time/compute recorder, or None when it cannot load."""
+    try:
+        from AI import engine_metrics
+        return engine_metrics
+    except Exception:
+        return None
 
 
 def _ff_question_head(label, limit=300):
@@ -105,16 +120,80 @@ def _ff_question_head(label, limit=300):
 # all - is a semantic judgement: Laya scores it (``_ff_answer_scores``).  This
 # file therefore holds no vocabulary of field names, languages or value
 # shapes; a form in any language, in either mode, is read the same way.
-# Capped because every line costs one forward pass.
-_MAX_IDENTITY_PROBES = 12
+# Capped because every line costs one forward pass.  The header of a resume
+# holds a dozen lines and its best four are always among them; scoring the rest
+# bought nothing but forwards.
+_MAX_IDENTITY_PROBES = 4
 # Body sections compared with the subject block before a single-valued field
 # is answered from one of them.  Each one is a forward pass, and the best few
 # are all a document needs: the rest rank below them anyway.
-_MAX_SECTION_PROBES = 3
+_MAX_SECTION_PROBES = 2
 # Probes per field.  The question, plus the control's own words when it has
 # any - more than that buys nothing and every probe is text the embedding
 # server has to encode.
 _MAX_PROBES = 2
+# (question, line) answer scores kept for the pass.  One form asks ~20
+# questions over ~170 segments, so this holds a whole page plus its repairs
+# and still bounds the memory.
+_ANSWER_CACHE_LIMIT = 4096
+
+
+_ANSWER_NUMBER_RE = re.compile(r"\d")
+
+
+def _ff_answer_shaped(texts, options=()):
+    """True when the kept strips carry an ANSWER, not just the subject.
+
+    The verdict scores "is this passage about the question", and a small
+    encoder says yes to a passage that merely shares its subject: live, six
+    strips about 'Junior Developer (Intern) ... Python codebase' came back
+    ``correct`` (0.63) for "How many years of professional experience do you
+    have building high-scale backend systems with Python?" - no number, no date
+    and none of the control's own options - and the extractor then invented
+    '4-6 years' for a resume that says 8+.
+
+    A CHOICE field's answer IS one of its options, so a strip that shows none of
+    them cannot be `correct`.  Everything else is answer-shaped when it carries
+    a value shape: a number/date/currency, an email or a URL.  Free text that
+    carries none of those (a name, a city, a sentence) is not downgraded - there
+    is no shape to test for, and the extractor still reads the strip.
+    """
+    body = " ".join(str(t or "") for t in (texts if isinstance(texts, (list, tuple))
+                                           else [texts]))
+    if not body.strip():
+        return False
+    if _ANSWER_NUMBER_RE.search(body) or "@" in body or "://" in body:
+        return True
+    opts = [o for o in (options or ()) if str(o).strip()]
+    if not opts:
+        return True
+    hay = _ff_norm(body)
+    for option in opts:
+        needle = _ff_norm(option)
+        if len(needle) >= 2 and needle in hay:
+            return True
+    return False
+
+
+def _ff_identity_rows(entries):
+    """The header lines worth SCORING for a field: the name and the CONTACT RUN.
+
+    A resume header is the name, a run of taglines, then its contact run - the
+    last lines before the first section, where the city, phone and email sit.
+    Scoring in document order spent the whole four-forward budget on taglines
+    and a 'Location (city)' field never saw its own city (live: the header's
+    first four lines were two taglines and a project note).  So the budget goes
+    to the first line and the END of the block, which is where a value lives.
+    """
+    rows = [e for e in entries if e.get("head")]
+    cap = _MAX_IDENTITY_PROBES
+    if len(rows) <= cap:
+        return rows
+    picked = []
+    for entry in rows[:1] + rows[-(cap - 1):]:
+        if entry not in picked:
+            picked.append(entry)
+    return picked[:cap]
 
 
 def _ff_identity_order(identity, scores):
@@ -355,7 +434,7 @@ class FormFillerCragMixin:
         # `_ff_subject_choice`), so no keyword decides what a field wants.
         identity, answered_by_head = self._ff_subject_choice(
             " ".join(probes),
-            [e for e in entries if e.get("head")][:_MAX_IDENTITY_PROBES],
+            _ff_identity_rows(entries),
             ranked)
         single = not bool((field or {}).get("multiline"))
         out, seen = [], set()
@@ -501,7 +580,7 @@ class FormFillerCragMixin:
         embed = self._ff_embed_call(cfg)
         ranked = None
         try:
-            vectors = list(embed(probes + [g[0]["block_text"]
+            vectors = list(embed(probes + [(g[0][0].get("block_text") or "")
                                            for g in groups]) or [])
             if len(vectors) == len(probes) + len(groups) and any(vectors):
                 qvs = [v for v in vectors[:len(probes)] if v]
@@ -630,12 +709,17 @@ class FormFillerCragMixin:
         language is answered by meaning rather than by a keyword table.  An
         engine fault propagates (``LayaUnavailable``): a missing engine is
         never a reason to decide a meaning some other way.
+
+        Cached per (question, LINE), not per batch: the same header line comes
+        back in the next consolidation cycle inside a DIFFERENT batch (the
+        subject block is scored first, then reappears among the candidates),
+        and a batch key charged it a second forward every time.  Only the lines
+        this call has not scored yet reach the engine.  Bounded FIFO, so a
+        long form cannot grow the cache without limit.
         """
         rows = [str(t or "") for t in (texts or [])]
         if not rows:
             return []
-        # The corrective stage asks the SAME question again with the same
-        # lines; one forward per line per PASS is the budget.
         cache = getattr(self, "_ff_answer_cache", None)
         if not isinstance(cache, dict):
             cache = {}
@@ -643,13 +727,27 @@ class FormFillerCragMixin:
                 self._ff_answer_cache = cache
             except Exception:
                 pass
-        key = (str(question or "")[:400], tuple(rows))
-        if key in cache:
-            return list(cache[key])
+        ask = str(question or "")[:400]
+        out = [None] * len(rows)
+        missing = []
+        for index, row in enumerate(rows):
+            if (ask, row) in cache:
+                out[index] = cache[(ask, row)]
+            else:
+                missing.append(index)
+        if not missing:
+            return out
         from AI.laya_hooks import answer_scores
-        scores = list(answer_scores(question, rows) or [])
-        cache[key] = scores
-        return list(scores)
+        fresh = list(answer_scores(ask, [rows[i] for i in missing]) or [])
+        for slot, index in enumerate(missing):
+            score = fresh[slot] if slot < len(fresh) else None
+            out[index] = score
+            if score is not None:
+                if len(cache) >= _ANSWER_CACHE_LIMIT:
+                    for _k in list(cache.keys())[:max(1, _ANSWER_CACHE_LIMIT // 8)]:
+                        cache.pop(_k, None)
+                cache[(ask, rows[index])] = score
+        return out
 
     def _ff_subject_choice(self, question, identity, ranked):
         """Is this question answered by the SUBJECT block?  ``(rows, answered)``.
@@ -761,6 +859,8 @@ class FormFillerCragMixin:
             return pack
 
         evaluator = self._ff_crag_evaluator(cfg, stop_flag)
+        _field_started = time.perf_counter()
+        _forwards0 = int(getattr(evaluator, "forwards", 0) or 0)
         rewrite_llm = None
         if cfg.get("crag_rewrite", True):
             rewrite_llm = lambda prompt, system: self._ff_llm_call(
@@ -809,9 +909,33 @@ class FormFillerCragMixin:
                 if broken and _ff_norm(broken) != _ff_norm(query):
                     query = "%s\n%s" % (question, broken)
         finally:
-            # Laya is a burst resource: it shares one memory pool with
-            # llama-server, and the extraction completion comes next.
-            evaluator.release()
+            # Laya and the embedding server are burst resources, but a FORM
+            # PASS holds them (``AI/engine_residency.py``): releasing per field
+            # is what made every field pay a cold load.  Only an unheld engine
+            # is released here, so a standalone call still frees the pool.
+            _held = False
+            try:
+                from AI import laya_client as _laya
+                _held = bool(_laya.held())
+            except Exception:
+                _held = False
+            if not _held:
+                evaluator.release()
+            recorder = _ff_metrics()
+            if recorder is not None:
+                _verdict = (str(best.get("action") or "").lower()
+                            if isinstance(best, dict) else "")
+                recorder.record(
+                    "form_field",
+                    ms=round((time.perf_counter() - _field_started) * 1000, 1),
+                    forwards=max(0, int(getattr(evaluator, "forwards", 0) or 0)
+                                 - _forwards0),
+                    kept=int(best.get("kept", 0)) if isinstance(best, dict) else 0,
+                    # 2 correct / 1 ambiguous / 0 incorrect / -1 unknown: the
+                    # verdict as a NUMBER, because this log holds numbers only.
+                    action={"correct": 2, "ambiguous": 1,
+                            "incorrect": 0}.get(_verdict, -1),
+                    held=1 if _held else 0)
 
         if best is None:
             pack = self._ff_single_pass([], learned)
@@ -894,6 +1018,23 @@ class FormFillerCragMixin:
                     "route": "single-pass (CRAG failed)",
                     "plain": passages}
 
+        action = str(result.action or "")
+        if (action == "correct"
+                and not (field or {}).get("multiline")
+                and not _ff_answer_shaped(result.material,
+                                         (field or {}).get("options"))):
+            # `correct` is a claim that the strip ANSWERS the question, and the
+            # encoder only measured topic overlap.  Downgrade instead of
+            # handing the extractor strips that cannot hold the value, so the
+            # consolidation cycle may still look elsewhere.
+            log_block(
+                logger, logging.WARNING, "CRAG",
+                "verdict downgraded to ambiguous: the kept strips hold no "
+                "answer shape (no number/date, none of the control's own "
+                "options) for %r" % question[:60])
+            action = "ambiguous"
+            result.action = action
+
         rows = [
             ("Question", question[:200]),
             ("Cycle", "%d of %d (ceiling)" % (cycle[0], cycle[1])),
@@ -903,7 +1044,7 @@ class FormFillerCragMixin:
             ("Evaluator", "%s (%d forward(s))" % (
                 result.evaluator, result.forwards)),
             ("Verdict", "%s (>= %.2f correct, >= %.2f ambiguous)" % (
-                result.action, cfg.get("crag_upper_threshold", 0.60),
+                action, cfg.get("crag_upper_threshold", 0.60),
                 cfg.get("crag_lower_threshold", 0.40))),
             ("Passages", "%d scored, top %.3f" % (
                 len(result.chunk_scores), result.top_score)),
@@ -921,11 +1062,11 @@ class FormFillerCragMixin:
         upper = float(cfg.get("crag_upper_threshold", 0.60) or 0.60)
         return {
             "pack": self._ff_crag_pack(result, candidates),
-            "action": result.action,
+            "action": action,
             "kept": result.kept,
             "scored": result.kept + result.dropped,
             "score": float(result.top_score or 0.0),
-            "done": (result.action == "correct"
+            "done": (action == "correct"
                      or float(result.top_score or 0.0) >= upper),
             "rewritten": str(result.rewritten or ""),
             "route": result.summary(),

@@ -305,6 +305,68 @@ class ContextChunkStore:
         except Exception as exc:  # noqa: BLE001
             logger.debug("[CTX-INDEX] drop failed: %s", exc)
 
+    def purge(self, chain_id=None, node_id=None, shas=None, model=None) -> int:
+        """Delete this node's claims on a corpus, then any orphaned vectors.
+
+        A TEMPORAL corpus (scraped for one run, discarded after it) should not
+        keep its vectors: they cost disk and never get a second reader.  A
+        stable one (a resume, a profile) must keep them - hence the purge is
+        opt-in per Context node (``index_ephemeral``) and never implicit.
+
+        Owners go first, so a block still claimed by another node/chain keeps
+        its vectors.  Returns the number of chunk rows removed; never raises.
+        """
+        want_shas = [str(s) for s in (shas or []) if s]
+        if not (chain_id or node_id or want_shas):
+            return 0
+        sql = "SELECT DISTINCT sha256, model FROM ctx_chunk_owners WHERE 1=1"
+        del_sql = "DELETE FROM ctx_chunk_owners WHERE 1=1"
+        args = []
+        if chain_id:
+            sql += " AND chain_id=?"
+            del_sql += " AND chain_id=?"
+            args.append(str(chain_id))
+        if node_id:
+            sql += " AND node_id=?"
+            del_sql += " AND node_id=?"
+            args.append(str(node_id))
+        if model:
+            sql += " AND model=?"
+            del_sql += " AND model=?"
+            args.append(str(model))
+        if want_shas:
+            marks = ",".join("?" * len(want_shas))
+            sql += " AND sha256 IN (%s)" % marks
+            del_sql += " AND sha256 IN (%s)" % marks
+            args.extend(want_shas)
+        try:
+            with _TABLE_LOCK:
+                conn = self._conn()
+                pairs = [(row[0], row[1]) for row in conn.execute(sql, args)]
+                if not pairs:
+                    return 0
+                # Only THIS node's claims go; a sibling node's claim on the
+                # same version keeps the vectors alive (checked below).
+                conn.execute(del_sql, args)
+                removed = 0
+                for sha, mid in pairs:
+                    left = conn.execute(
+                        "SELECT COUNT(*) FROM ctx_chunk_owners "
+                        "WHERE sha256=? AND model=?", (sha, mid)).fetchone()[0]
+                    if int(left or 0) > 0:
+                        continue  # another node/chain still points at it
+                    removed += int(conn.execute(
+                        "DELETE FROM ctx_chunks WHERE sha256=? AND model=?",
+                        (sha, mid)).rowcount or 0)
+                conn.commit()
+            if removed:
+                logger.info("[CTX-INDEX] purged %d block(s) (%d corpus "
+                            "version(s))", removed, len(pairs))
+            return removed
+        except Exception as exc:  # noqa: BLE001 - a purge is never fatal
+            logger.debug("[CTX-INDEX] purge failed: %s", exc)
+            return 0
+
     def rank(self, shas, model, query_vector, top_k=6):
         """Position-free block ranking: cosine of ONE query against the store."""
         return self.rank_multi(shas, model, [query_vector], top_k=top_k)

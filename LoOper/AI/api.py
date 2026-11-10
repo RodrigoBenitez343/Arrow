@@ -2368,6 +2368,26 @@ async def llamacpp_generate(request: ChatRequest, background_tasks: BackgroundTa
                                          unload_after=True)
 
 
+@app.post("/llamacpp/hold")
+async def llamacpp_hold():
+    """Pin the generation server for one node execution.
+
+    A pass that asks the same model once per field holds it for its duration,
+    so the llama-server start and the evidence prefill are paid ONCE instead of
+    once per field.  Refused below the resident budget (the burst policy then
+    stands as before).
+    """
+    held = hold_llamacpp()
+    return {"held": bool(held), "depth": _LLAMACPP_HOLDS}
+
+
+@app.post("/llamacpp/unhold")
+async def llamacpp_unhold():
+    """Drop one hold; the last one releases the burst engine."""
+    unhold_llamacpp()
+    return {"held": llamacpp_held(), "depth": _LLAMACPP_HOLDS}
+
+
 @app.post("/llamacpp/release")
 async def llamacpp_release():
     """Burst-end release: unload the current model as soon as it is no longer
@@ -2376,8 +2396,11 @@ async def llamacpp_release():
     The node executor fires this once its whole call burst (main generation +
     consolidation probes + recursion) has finished.  The unload is
     seq-guarded under the lifecycle lock: if a newer inference request already
-    claimed the engine, the model stays loaded for it.
+    claimed the engine, the model stays loaded for it.  A HELD engine ignores
+    it: the cost of unload-then-reload is the whole reason the hold exists.
     """
+    if llamacpp_held():
+        return {"status": "ok", "held": True}
     with _LLAMACPP_LIFECYCLE_LOCK:
         _eng = LLAMACPP_ENGINE
         if _eng is not None and getattr(_eng, "is_running", False):
@@ -2649,6 +2672,70 @@ _LLAMACPP_REQUEST_SEQ = 0
 _LLAMACPP_UNLOAD_IDLE_SECONDS = float(
     os.getenv("LLAMACPP_KEEP_ALIVE_SECONDS", "0") or 0
 )
+# Ref-counted RESIDENT hold on the generation server.  ``cleanup_after=False``
+# keeps the model for one client's burst, but any other client's request - or
+# its /llamacpp/release - still unloads it mid-pass.  A form pass runs for
+# minutes and asks the same model once per field: under the burst policy every
+# field paid a llama-server start (~3.5 s) AND a full prompt re-prefill,
+# because no KV state survived to be reused (live: 29 starts / 121.9 s of pure
+# startup in a 44 min pass, 30 s of prefill for a 2-char reply).  A hold makes
+# the server resident for the pass, which is what lets --cache-reuse / --keep
+# carry the evidence prefix from one field to the next.  Below
+# ``LOOPER_RESIDENT_BUDGET_MB`` the hold is refused and the burst policy stands
+# (see ``AI/engine_residency.py``).
+_LLAMACPP_HOLDS = 0
+_LLAMACPP_HOLD_LOCK = threading.Lock()
+
+
+def _record_hold(held: bool) -> None:
+    """One numeric sample per hold change (the Logs charts read this)."""
+    try:
+        from AI import engine_metrics as _metrics
+        _metrics.record("engine_hold",
+                        engine_code=_metrics.engine_code("llama"),
+                        held=1 if held else 0, depth=_LLAMACPP_HOLDS)
+    except Exception:
+        pass
+
+
+def hold_llamacpp() -> bool:
+    """Pin the generation server for one node execution; False = refused."""
+    global _LLAMACPP_HOLDS
+    try:
+        from AI.engine_residency import residents_allowed
+        if not residents_allowed():
+            _api_logger.info("[llamacpp] hold refused: resident budget")
+            _record_hold(False)
+            return False
+    except Exception:
+        pass
+    with _LLAMACPP_HOLD_LOCK:
+        _LLAMACPP_HOLDS += 1
+    _record_hold(True)
+    return True
+
+
+def unhold_llamacpp() -> None:
+    """Drop one hold; the last one schedules the unload it was standing in for."""
+    global _LLAMACPP_HOLDS
+    with _LLAMACPP_HOLD_LOCK:
+        _LLAMACPP_HOLDS = max(0, _LLAMACPP_HOLDS - 1)
+        depth = _LLAMACPP_HOLDS
+    _record_hold(depth > 0)
+    if depth:
+        return
+    with _LLAMACPP_LIFECYCLE_LOCK:
+        engine = LLAMACPP_ENGINE
+        if engine is None or not getattr(engine, "is_running", False):
+            return
+        seq = _bump_llamacpp_request_seq()
+        threading.Thread(target=_unload_llamacpp_after_idle,
+                         args=(seq,), daemon=True).start()
+
+
+def llamacpp_held() -> bool:
+    """True while a node execution is holding the generation server."""
+    return _LLAMACPP_HOLDS > 0
 
 
 def _bump_llamacpp_request_seq() -> int:
@@ -2681,6 +2768,10 @@ def _unload_llamacpp_after_idle(seq_at_schedule: int) -> None:
     if _LLAMACPP_UNLOAD_IDLE_SECONDS > 0:
         time.sleep(_LLAMACPP_UNLOAD_IDLE_SECONDS)
     with _LLAMACPP_LIFECYCLE_LOCK:
+        if _LLAMACPP_HOLDS > 0:
+            # A node execution is holding the server (a form pass asks the same
+            # model once per field).  The last unhold schedules this unload.
+            return
         if _LLAMACPP_REQUEST_SEQ != seq_at_schedule:
             return  # a newer request is using the engine - keep it loaded
         engine = LLAMACPP_ENGINE

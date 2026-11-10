@@ -99,8 +99,9 @@ def test_every_node_type_gets_its_own_action_line(qapp):
     assert 'asks the user "What should the reply be about?"' in digest
     assert 'TYPED on the real desktop' in digest
     assert 'writes text with the model "llama3.2:1b"' in digest
-    assert 'decides a code check: "result = ' in digest, digest
-    assert "and sends execution down true or false" in digest
+    assert 'runs a code test "result = ' in digest, digest
+    assert 'and branches on the value it leaves in result' in digest
+    assert 'true → "result"; false → "result"' in digest, digest
     assert 'prints "reply"' in digest
 
 
@@ -130,7 +131,7 @@ def test_read_node_answers_with_does_before_its_wiring(qapp):
     role_at = next(i for i, line in enumerate(lines) if line.startswith("ROLE:"))
     does_at = next(i for i, line in enumerate(lines) if line.startswith("DOES:"))
     assert does_at == role_at + 1, lines[:5]
-    assert "decides a code check" in lines[does_at]
+    assert "runs a code test" in lines[does_at]
 
 
 # ------------------------------------------------------- stored, permanent
@@ -227,7 +228,7 @@ def test_a_section_note_is_derived_when_none_was_written(qapp):
     assert all(section["note"] for section in boxes), boxes
     assert 'supplies the value "ask"' in boxes[0]["note"]
     assert 'writes text with the model' in boxes[1]["note"]
-    assert 'decides a code check' in boxes[1]["note"], \
+    assert 'runs a code test' in boxes[1]["note"], \
         'the whole stretch, not just its first node'
     assert boxes[2]["note"] == "author's own words", \
         "authored words win over the derived ones"
